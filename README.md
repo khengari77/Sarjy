@@ -113,3 +113,33 @@ CranL apps `sarjy-api` and `sarjy-web` were created in Netherlands with protecti
 ## GitHub release workflow
 
 The repository must remain private. Review ignore rules and the complete staged diff before any commit; never publish local databases, provider credentials or artifacts. Develop on `main`; promote only commits whose `checks` workflow passed to `deploy/api`, verify the API, then promote that same commit to `deploy/web`. CranL builds from repository root using `infra/api.Dockerfile` (port 8000) and `infra/web.Dockerfile` (port 3000). Keep PR previews disabled. Configure protection and all server-side secrets before first boot. Preserve Supabase and reconcile the budget ledger before enabling hosted inference. Record the last successful SHA for recovery; database rollback is never automatic.
+
+## Hosted Day 1 verification
+
+Frontend: https://sarjy-web-dev-otbaod.cranl.net (password required). API: https://sarjy-api-dev-hiqked.cranl.net. Anonymous page/static access and direct API requests are blocked. Authenticated frontend conversation creation and Supabase persistence were verified through Chromium; the local HTTP client's TLS stack was reset by the edge. Credentials remain only in ignored deployment storage.
+
+Deployment branches add the appropriate root `Dockerfile` to the same tested source revision; CranL's nested Dockerfile build did not include repository-root files. The API and frontend root-Dockerfile branch checks passed.
+
+Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source and the worker Dockerfile. Inject secrets separately through LiveKit. Worker deployment and live English voice acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.
+
+## Retryable voice-session cleanup
+
+Session admission status and confirmed room cleanup are separate. An ended session releases capacity immediately; failed room deletion returns `503 ROOM_CLEANUP_FAILED` with `cleanup: pending` and can be retried. Successful deletion or the specific LiveKit `not_found` code records completion. Later requests return `already_complete` without another delete. Missing cleanup credentials return `ROOM_CLEANUP_NOT_CONFIGURED`.
+
+Failed dispatch retains its original error and remains eligible for reconciliation through its original expiry, even after an early successful delete or absent-room response, because remote dispatch can finish late. Early reconciliation reports `pending`; after expiry it can confirm cleanup. Terminal worker bootstrap is rejected. Expiry reaping releases admission capacity but does not itself claim external cleanup.
+
+Apply the additive `0004_voice_cleanup` migration before running this version. Existing terminal sessions are unconfirmed and can be reconciled. No usage/spending reservations are refunded.
+
+Coordinator-only recovery (uses the configured DATABASE_URL; no hosted execution is automatic):
+
+```sh
+uv run python scripts/reconcile_voice_sessions.py             # dry run, at most 20 terminal rows
+uv run python scripts/reconcile_voice_sessions.py --apply     # explicitly delete/reconcile
+uv run python scripts/reconcile_voice_sessions.py --apply --limit 5
+```
+
+Each remote deletion is bounded to 10 seconds. Results report selected/completed/pending/errors; nonzero exit means errors remain. Run again to retry unfinished work after recovery. Active sessions are skipped. Concurrent retries may repeat an idempotent deletion, but confirmed sequential retries skip it; no exactly-once network guarantee is claimed. No scheduler is introduced. Late external creation after the reconciliation window is not covered by an absolute cleanup guarantee.
+
+## Agent contributions
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before claiming work. Use a separate worktree and branch per issue; open a PR and await coordinator review. Authors must not merge.

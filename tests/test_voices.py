@@ -71,7 +71,7 @@ def test_selected_voice_is_frozen_per_call_and_reaches_snapshot(tmp_path, monkey
     # Replace only the external LiveKit control-plane boundary. State and auth are real.
     from livekit import api
     class ControlPlane:
-        def __init__(self,*args):
+        def __init__(self,*args,**kwargs):
             self.agent_dispatch = SimpleNamespace(create_dispatch=self.dispatch)
             self.room = SimpleNamespace(delete_room=self.delete)
         async def dispatch(self,request):
