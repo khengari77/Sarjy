@@ -1,5 +1,6 @@
 import { API_INTERNAL_URL, WEB_SERVICE_SECRET } from '$app/env/private';
 import type { RequestHandler } from '@sveltejs/kit';
+import { proxyTimeoutMs } from '../../../lib/proxy-deadline';
 
 const proxy: RequestHandler = async ({ request, params, url }) => {
  if (!['GET','POST'].includes(request.method)) return new Response(null, {status:405});
@@ -16,7 +17,7 @@ const proxy: RequestHandler = async ({ request, params, url }) => {
   const value = request.headers.get(name); if (value) headers.set(name,value);
  }
  try {
-  const result = await fetch(target, {method:request.method,headers,body:request.method === 'POST' ? await request.arrayBuffer() : undefined,redirect:'manual',signal:AbortSignal.timeout(15000)});
+  const result = await fetch(target, {method:request.method,headers,body:request.method === 'POST' ? await request.arrayBuffer() : undefined,redirect:'manual',signal:AbortSignal.timeout(proxyTimeoutMs(path, request.method))});
   const outgoing = new Headers({'cache-control':'no-store'});
   outgoing.set('content-type',result.headers.get('content-type') || 'application/json');
   for (const cookie of result.headers.getSetCookie()) outgoing.append('set-cookie',cookie);
