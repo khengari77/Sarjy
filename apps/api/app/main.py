@@ -231,6 +231,12 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         voice = await db.get(VoiceSession, session_id)
         if not voice or voice.owner_id != user.id:
             raise HTTPException(404)
+        if voice.status == 'ended':
+            # Ending is idempotent: capacity and room cleanup already happened.
+            return {'status': 'ended', 'cleanup': 'already_ended'}
+        if voice.status == 'failed':
+            # Dispatch never succeeded, so there is no room to delete.
+            return {'status': 'failed', 'cleanup': 'not_required'}
         voice.status = 'ended'
         voice.expires_at = datetime.now(timezone.utc).isoformat()
         await db.commit()
