@@ -12,6 +12,7 @@ from livekit import rtc
 from livekit.agents import Agent, AgentSession, AgentServer, JobContext, cli, llm, function_tool, APIConnectOptions, SessionConnectOptions, room_io
 from livekit.plugins import silero
 from provider_factory import build_providers
+from speech_text import spoken_text
 from config import read_worker_environment, require_values
 
 server = AgentServer()
@@ -50,7 +51,8 @@ class SarjyAgent(Agent):
     async def tts_node(self, text, model_settings):
         async def budgeted_text():
             buffer = ''
-            async for part in text:
+            language = self.pipeline.get('tts', {}).get('language', self.pipeline['llm'].get('language', 'en'))
+            async for part in spoken_text(text, language):
                 buffer += part
                 if len(buffer) >= 64:
                     # Charge before forwarding text. Interrupted/failed reservations are retained.

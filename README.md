@@ -143,3 +143,7 @@ Each remote deletion is bounded to 10 seconds. Results report selected/completed
 ## Agent contributions
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before claiming work. Use a separate worktree and branch per issue; open a PR and await coordinator review. Authors must not merge.
+
+## Spoken weather units
+
+English TTS expands `km/h` to “kilometres per hour” and `°C` to “degrees Celsius”, including when model streaming splits a unit across chunks. Expansion occurs only in the TTS input path; original model text and persisted conversation records keep their notation. Expanded characters are reserved before synthesis against the same 500-character daily allowance. Other languages and unsupported scientific abbreviations remain unchanged. This limited pronunciation map is not a general scientific-notation parser.
