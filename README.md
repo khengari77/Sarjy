@@ -47,7 +47,7 @@ Build images from repository root with `infra/api.Dockerfile`, `infra/web.Docker
 
 LiveKit Build quotas must be checked in the account before testing. Hosted agent minutes and direct provider charges are separate. Calls are capped at ten minutes, one active per identity and two globally. Each identity can reserve three calls; the application can reserve 80 calls per calendar month (at most 800 agent minutes), including failed dispatch reservations. This conservative cap does not account for other LiveKit projects; check the account dashboard. Agent cold starts may take 10–20 seconds. Preserve 200 agent minutes for reviewers. The worker stops after 60 seconds without a browser participant. Raw agent recording is disabled.
 
-**Public URL:** not deployed yet; hosting credentials and provider setup remain required.
+**Development URL:** https://sarjy-web-dev-otbaod.cranl.net (development login required). API and frontend release `4a80697` are deployed; database migration `0004_voice_cleanup` is applied. See [hosted verification](docs/day1-hosted-verification.md).
 
 ## Current limits
 
@@ -55,7 +55,7 @@ LiveKit Build quotas must be checked in the account before testing. Hosted agent
 - Day 1 snapshots capture initial context assembly; tool continuations are retained in the worker but do not yet receive separate request snapshots.
 - Persistent history is implemented; extracted memory and context exclusion/Undo are Day 2 work.
 - Managed DeepSeek/Cartesia fallback candidates are not enabled.
-- Disposable PostgreSQL migration parity passed; Supabase account connectivity remains unverified.
+- Disposable PostgreSQL migration parity and hosted Supabase connectivity/persistence passed; cleanup migration is deployed.
 - Public identity creation needs further abuse controls before unrestricted public exposure.
 - Open-Meteo weather is called server-side, with clarification for ambiguous cities. Weather data: https://open-meteo.com/ . Use is subject to its attribution and service terms.
 
@@ -104,11 +104,11 @@ For a minimal OpenAI-only access check after migrations, run `uv run python scri
 
 Set `DEVELOPMENT_PROTECTED=true` on both web and API. Web requires `DEVELOPMENT_USER`, a strong `DEVELOPMENT_PASSWORD`, and `WEB_SERVICE_SECRET`; API requires the same `WEB_SERVICE_SECRET`. The web server challenges every request with HTTP Basic authentication; the proxy injects the independent backend secret. Worker routes retain worker authentication. Missing required protection secrets fail startup. Deploy only over HTTPS. Keep these values in hosting secrets. Arabic speech validation is deferred to Day 3.
 
-Hosting is not configured yet. Connect CranL with `codex mcp add cranl --url https://app.cranl.com/api/mcp` and `codex mcp login cranl`. Supabase setup and LiveKit eu-central deployment remain pending. Preserve the existing daily budget ledger before switching databases; do not run two independent spending ledgers.
+CranL frontend/API, Supabase persistence, and the LiveKit eu-central worker are configured and verified. Development remains protected. Never create a second spending ledger when running coordinator tools; inject the hosted database URL into the process without overwriting the local .env.
 
-## Hosted development attempt (11 November 2026)
+## Historical failed deployment attempt (superseded)
 
-CranL apps `sarjy-api` and `sarjy-web` were created in Netherlands with protection secrets configured before deployment. Deployment is **not working**: API source deployment returned platform internal errors through inline and signed uploads; the web build reports a missing source directory on CranL's build server and its URL returns 502. Details are in ignored `artifacts/deployment/status.json`; access credentials are in ignored `artifacts/deployment/access.json` (mode 0600). Never publish these artifacts. LiveKit worker deployment and hosted acceptance remain pending. No inference was used during this deployment attempt.
+CranL apps `sarjy-api` and `sarjy-web` were created in Netherlands with protection secrets configured before deployment. That earlier deployment attempt failed: API source deployment returned platform internal errors through inline and signed uploads; the web build reports a missing source directory on CranL's build server and its URL returns 502. Details are in ignored `artifacts/deployment/status.json`; access credentials are in ignored `artifacts/deployment/access.json` (mode 0600). Never publish these artifacts. This historical attempt used no inference. The working releases and remaining human acceptance are recorded in the hosted verification document.
 
 ## GitHub release workflow
 
@@ -120,7 +120,7 @@ Frontend: https://sarjy-web-dev-otbaod.cranl.net (password required). API: https
 
 Deployment branches add the appropriate root `Dockerfile` to the same tested source revision; CranL's nested Dockerfile build did not include repository-root files. The API and frontend root-Dockerfile branch checks passed.
 
-Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source and the worker Dockerfile. Inject secrets separately through LiveKit. Worker deployment and live English voice acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.
+Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source and the worker Dockerfile. Inject secrets separately through LiveKit. Worker deployment, hosted typed-input speech/weather and cleanup are verified. Human microphone, interruption and reconnect/refresh acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.
 
 ## Retryable voice-session cleanup
 
