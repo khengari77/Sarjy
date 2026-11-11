@@ -12,7 +12,7 @@ def test_worker_turn_retry_snapshot_and_finalization(tmp_path):
         owner = client.post('/v1/demo-session').json()['id']
         chat = client.post('/v1/conversations').json()['id']
         with sqlite3.connect(file) as db:
-            db.execute('INSERT INTO voice_sessions VALUES (?,?,?,?,?,?,?)',('session',chat,owner,'room','active',(datetime.now(timezone.utc)+timedelta(minutes=10)).isoformat(),json.dumps({})))
+            db.execute('INSERT INTO voice_sessions (id,conversation_id,owner_id,room_name,status,expires_at,pipeline) VALUES (?,?,?,?,?,?,?)',('session',chat,owner,'room','active',(datetime.now(timezone.utc)+timedelta(minutes=10)).isoformat(),json.dumps({})))
         headers = {'x-agent-secret':'test-service-secret','x-session-id':'session','x-room-name':'room'}
         first = client.post('/internal/agent/turn/start',headers=headers,json={'request_id':'once','text':'Hello'})
         assert first.status_code == 200
