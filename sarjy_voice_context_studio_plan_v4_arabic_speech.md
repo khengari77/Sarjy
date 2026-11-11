@@ -1,17 +1,11 @@
-> **Verified hosted progress:** API and frontend are deployed through private GitHub branches. Root Dockerfiles resolve CranL build-context failures. Anonymous access is rejected; authenticated frontend conversation creation and Supabase persistence passed Chromium verification. Remaining Day 1 gates: non-root LiveKit worker deployment in eu-central, short English voice/weather conversation, interruption/reconnect/cleanup verification. No completion claim before those gates pass.
-
-> **GitHub deployment revision:** Review `.gitignore`, `.dockerignore`, exact staged paths and secret-scan results before the first commit. Keep all artifacts, recordings, databases, credentials, caches and generated files excluded. Use private `khengari77/Sarjy`; CI-tested `main` commits are promoted sequentially to `deploy/api` then `deploy/web`. Use root build context and the existing per-service Dockerfiles. No public anonymous access or paid upgrades. CranL GitHub authorization remains a browser step.
-
-# Current implementation priority
-
-Days 1–2 use English speech as the baseline. Arabic UI remains available; Arabic speech is experimental, with MSA, Libyan dialect and mixed speech validation deferred to Day 3.
-
-Day 1 requires password-protected HTTPS development deployment, never anonymous public access. Enable DEVELOPMENT_PROTECTED on web and API, configure browser credentials and a separate shared WEB_SERVICE_SECRET. Keep worker authentication and spending guards. Europe is selected for hosting. Remaining gates: live English conversation, lifecycle checks, CranL/Supabase setup, migrations, protected deployment and incognito acceptance.
+> **Version 5 policy:** English is the Days 1–2 baseline; Arabic speech remains experimental until Day 3. Development stays password-protected. DeepSeek is the final primary provider, OpenAI the reliability fallback; the temporary OpenAI development default remains until funding confirmation. No public provider/model selector. “Forget” means reversible conversation-scoped exclusion; permanent deletion is deferred.
+>
+> **Progress:** CranL frontend/API and Supabase persistence are verified; the non-root LiveKit worker was deployed and registered. Hosted voice/weather and lifecycle acceptance remain pending. pgvector is not yet installed. Jev has approximately $5 credit reported by the user; key setup and live validation are pending. See the linked execution checklist. Existing application changes are outside this documentation revision.
 
 # Sarjy — Voice Context Studio
-## Detailed implementation, model-provider, Arabic speech, benchmarking, and deployment plan — v4 (CranL hosting)
+## Detailed implementation, model-provider, Arabic speech, benchmarking, and deployment plan — v5 (decision routing and conversational context)
 
-**Status:** Implementation proposal, revised for verified Arabic STT/TTS support, the official **Building Sarjy** assignment, and CranL hosting  
+**Status:** Architecture and execution specification; see [execution checklist](docs/execution_checklist_v5.md) for evidence-based progress
 **Date:** 11 November 2026  
 **Delivery rule:** **Three days to a feature-complete deployed product; day four is strictly revision, testing, bug fixing, and demo rehearsal.**  
 **One-line positioning:** **Talk to the assistant. Talk to its context. See exactly what changed.**
@@ -33,7 +27,7 @@ Day 1 requires password-protected HTTPS development deployment, never anonymous 
 Build one polished **ChatGPT-like voice/text application**, with two display modes over the **same conversation**:
 
 - **Simple mode:** conversation list, typed chat, mic, interruptible audio replies, visible transcripts, session history, and persistent preferences across sessions. Simple mode must remain fully usable without ever seeing developer tools.
-- **Developer mode:** everything above **plus** provider choices, prompt settings, context records, sources/provenance, semantic search, proposed context transformations, before/after diffs, immutable per-turn request snapshots, and compact pipeline measurements.
+- **Developer mode:** everything above **plus** read-only execution diagnostics, context records, sources/provenance, semantic search, proposed context transformations, before/after diffs, immutable per-turn request snapshots, and compact pipeline measurements.
 
 **Hero interaction:** The user speaks or types: *“Forget everything about my trip to Riyadh, but keep the budget.”* The application interprets it as a **context-control command**, runs semantic search, displays **which records match**, lets the user confirm, atomically marks chosen records **excluded for the appropriate scope**, assembles the next model request without them, and shows **Undo + a before/after diff**. The next response is verifiably based on the new context. Normal assistant turns and context-control commands must be unambiguously separated.
 
@@ -44,7 +38,7 @@ Build one polished **ChatGPT-like voice/text application**, with two display mod
 3. The **model-visible prompt is compiled from authoritative, versioned state**. The frontend cannot independently decide what the model knows.
 4. **AI chooses candidates; deterministic code authorizes and commits changes.** Similarity retrieval alone never permanently erases facts.
 5. An external API demonstration must be more than inference/embeddings: use **Open-Meteo weather + geocoding**.
-6. **Feature freeze after day three.** Provider breadth may be exposed through a registry before every option is integrated end-to-end. A supported/unsupported status is preferable to a fake toggle.
+6. **Feature freeze after day three.** Provider breadth remains an internal registry; public controls never select providers. A supported/unsupported status is preferable to a fake toggle.
 7. Day one ends with a **public working URL**, even if it is ugly. Deploy continuously.
 
 ### Must ship / should ship / stretch
@@ -57,7 +51,7 @@ Build one polished **ChatGPT-like voice/text application**, with two display mod
 | P0 | No-setup public URL | Reviewer enters through an isolated demo identity/session |
 | P0 | Context-command demo | Semantic search → preview → exclude → next prompt → undo |
 | P1 | Developer mode | Provenance, compiled context, diff, provider and basic metrics |
-| P1 | DeepSeek + OpenAI selection | At least two LLM paths tested against the same interface |
+| P1 | DeepSeek primary + OpenAI reliability fallback | At least two LLM paths tested against the same interface |
 | P1 | Two remote speech configurations | First prove Deepgram Nova-3 Arabic STT + ElevenLabs Flash v2.5 Arabic TTS; compare an independently verified Arabic-capable fallback |
 | P2 | Third remote STT/TTS mix | Use if already tested, not merely installed |
 | P2 | Browser-local TTS | Working experimental mode or documented benchmark, not day-three release blocker |
@@ -70,7 +64,7 @@ Build one polished **ChatGPT-like voice/text application**, with two display mod
 
 | Requirement | Concrete deliverable | Evidence at demo |
 |---|---|---|
-| Listens and replies by voice | LiveKit room, STT→LLM→TTS, browser microphone/speaker | Hold a call and interrupt it |
+| Listens and replies by voice | LiveKit room, STT→LLM→TTS, browser microphone/speaker | Hold a voice chat and interrupt it |
 | Remembers across sessions | Persisted memories + selection/assembly in Postgres | New chat remembers favorite color or home city |
 | External API | `get_weather(city)` tool using Open-Meteo | Ask for Riyadh weather, see real tool trace |
 | Public deployment | HTTPS app URL, no manual registration | Fresh incognito browser opens demo |
@@ -127,11 +121,11 @@ Four requested speech **selection modes** are not four equivalent API vendors:
 
 **Important current restrictions:** LiveKit **retired ElevenLabs from LiveKit Inference on 31 August 2026**, but the direct ElevenLabs LiveKit plugin remains available with your own API key. Deepgram Nova-3 supports Arabic STT; **Deepgram Aura-2 does not support Arabic TTS**, and **Deepgram Flux TTS currently lists 41 additional languages but no Arabic** in its official [voice catalog](https://developers.deepgram.com/docs/flux-tts/voices). This is a documented catalog limitation as of 11 November 2026, not a claim about all future releases. Deepgram TTS choices must be capability-gated; **fail configuration validation for `language=ar` instead of allowing a broken session or silently switching languages**. ElevenLabs lists Arabic explicitly for [Flash v2.5](https://elevenlabs.io/docs/overview/models), but Arabic voice quality still requires an actual playback test.
 
-### 3.1 LLM choices
+### 3.1 Internal LLM adapter catalog (not user settings)
 
-| User-facing option | Actual model/API ID | Main role | Initial settings |
+| Internal adapter | Actual model/API ID | Main role | Initial settings |
 |---|---|---|---|
-| DeepSeek V4.1 Flash | `deepseek-flash` direct; `deepseek-ai/deepseek-v4.1-flash` via LiveKit | Preferred voice-chat baseline | Stream; disable thinking for ordinary turns if integration allows |
+| DeepSeek V4.1 Flash | `deepseek-flash` direct; `deepseek-ai/deepseek-v4.1-flash` via LiveKit | Preferred voice-chat baseline | Stream; explicitly disable thinking for every conversational turn |
 | GPT-6 Luna | `gpt-6-luna` | Cost-efficient alternative / command parsing | Reasoning none/low when supported; stream |
 | GPT-6.1 Terra | `gpt-6.1-terra` | Higher-quality alternative | Reasoning none/low as appropriate; Responses API |
 | GPT-6.1 Sol | `gpt-6.1-sol` | Optional complex context-command experiments | Low/medium reasoning; not default for low-latency voice |
@@ -201,7 +195,7 @@ class PipelineConfig(BaseModel):
     llm: ModelChoice
     tts: ModelChoice
     turn_detection: str = "default"
-    max_output_tokens: int = Field(default=220, ge=32, le=800)
+    max_output_tokens: int = Field(default=128, ge=64, le=1024)
     revision: int = 1
 ```
 
@@ -282,14 +276,14 @@ class ProviderCapabilities(BaseModel):
     known_limitations: tuple[str, ...] = ()
 ```
 
-The UI can list **available**, **not configured**, **unsupported language**, **experimental**, and **unavailable on this device**. Providers with no credentials or incompatible languages must not be presented as if they will work.
+Internal diagnostics can list **available**, **not configured**, **unsupported language**, **experimental**, and **unavailable on this device**. Providers with no credentials or incompatible languages must not be presented as if they will work.
 
 ### 4.4 Swapping rules
 
-- Providers are chosen when a **voice session starts**. Changing STT/TTS mid-audio requires rebuilding or restarting media pipeline; show *“applies on next call”* rather than silently dropping audio.
+- Internal provider configuration is resolved when a **voice session starts**; users select approved voices, not providers. Changing STT/TTS mid-audio requires rebuilding or restarting media pipeline; show *“applies on next voice session”* rather than silently dropping audio.
 - LLM may be switchable at a turn boundary if the SDK explicitly supports it; otherwise switch on next session too.
 - Memory/context state is **independent** of any provider choice. Changing models does not erase conversations.
-- Expose a small `POST /v1/pipelines/validate` endpoint before the frontend offers *Start Call*.
+- Expose a small `POST /v1/pipelines/validate` endpoint before the frontend offers *Start voice chat*.
 - Capture actual selection in every turn/snapshot for reproducibility.
 
 ---
@@ -500,7 +494,7 @@ POST   /v1/conversations/{id}/context/undo
 GET    /v1/conversations/{id}/context/operations
 ```
 
-### Provider selection + metrics
+### Internal provider validation + read-only metrics
 
 ```text
 GET    /v1/pipelines/providers      -> capability/availability registry (NO secrets)
@@ -563,7 +557,7 @@ A separate confirm request references the server-created proposal. Reject stale 
 
 ```text
 ┌──────────────┬──────────────────────────────┬────────────────────────────────┐
-│ Chats        │ Same live chat + transcript  │ Tabs: CONTEXT / MODELS / STATS│
+│ Chats        │ Same live chat + transcript  │ Tabs: CONTEXT / REQUEST / STATS│
 │              │                              │                                │
 │              │ Selected turn highlights     │ Search memories semantically   │
 │              │ context used for that turn   │ [Everything about travel...]  │
@@ -640,7 +634,7 @@ The reviewer must open the deployed URL without registration. Prefer **anonymous
 - Context snapshots are sensitive. Restrict access by owner and avoid storing raw audio by default.
 - Keep all provider API keys strictly server-side. Browser local speech models do not need keys; browser clients only receive scoped LiveKit tokens.
 - Add per-demo-user voice-minute/session caps and API rate limits. Prevent public demo abuse.
-- Settings for debug/model selection can be used by demo users, but provider choices must be allowlisted and cost-capped.
+- Developer diagnostics are read-only; model/provider selection and paid inference settings are internal only.
 - Audio inputs, retrieved memories and tool results are **untrusted data**. Context commands require authorization before execution.
 - Do not promise Saudi data residency for this personal PoC; it would require verifying all regional endpoints, providers, logs and backups.
 
@@ -728,7 +722,7 @@ DEFAULT_STT_PROVIDER=deepgram_direct
 DEFAULT_STT_MODEL=nova-3
 DEFAULT_TTS_PROVIDER=elevenlabs_direct
 DEFAULT_TTS_MODEL=eleven_flash_v2_5
-DEFAULT_LANGUAGE=ar
+DEFAULT_LANGUAGE=en
 DEMO_SESSION_LIMIT_MINUTES=10
 DEMO_RATE_LIMIT=...
 APP_BASE_URL=https://...
@@ -761,7 +755,7 @@ Never put provider keys or user-profile secrets into anonymous LiveKit room meta
 
 ### Cost discipline
 
-- **Default for Arabic:** Deepgram Nova-3 STT using introductory credits + ElevenLabs Flash v2.5 TTS using the shared monthly free allocation. Measure actual consumption per 5-minute call, and avoid wasting speech credits on text-only context tests.
+- **Day 3 Arabic candidate:** Deepgram Nova-3 STT using introductory credits + ElevenLabs Flash v2.5 TTS using the shared monthly free allocation. Measure actual consumption per 5-minute call, and avoid wasting speech credits on text-only context tests.
 - Keep a **verified Arabic TTS fallback** in the capability registry only if it passed a real synthesis smoke test. If ElevenLabs quota runs out and no fallback passed, surface a clear TTS-unavailable error; do **not** silently route Arabic through Deepgram English TTS.
 - Keep text-only development for memory engine and context commands; this consumes minimal LLM tokens and no speech calls.
 - Enforce short responses (`max_output_tokens`), short sessions, output character caps, limited concurrent demo rooms, and modest context budgets.
@@ -823,7 +817,7 @@ Store repetitions, device/browser, language, model ID, provider/region, network 
 
 ### 15.4 UX for comparisons
 
-Settings can show each provider/model, key status, Arabic capability, streaming and cold-start risk. Include a compact test screen on day four *only if it already exists*; otherwise document the benchmark results and open scripts in the repository.
+Internal benchmark reports show provider/model, capability, streaming and cold-start risk; public settings do not expose provider selection. Include a compact test screen on day four *only if it already exists*; otherwise document the benchmark results and open scripts in the repository.
 
 ---
 
@@ -849,132 +843,43 @@ Use Hypothesis state machines to generate exclude/restore/update sequences. Keep
 
 ---
 
-## 17. Implementation schedule (non-negotiable feature freeze)
+## 17. Implementation schedule and release gates
 
-### Before Day 1 — setup checklist (if preparation time exists)
+The detailed, evidence-based [execution checklist](docs/execution_checklist_v5.md) is the authoritative progress tracker.
 
-- Read official assignment once more and turn requirements into a GitHub issue checklist.
-- Create LiveKit, Deepgram, ElevenLabs, DeepSeek, OpenAI, Supabase, and hosting accounts as needed.
-- Verify actual model access and API keys via tiny standalone test calls.
-- Install `uv`, `pnpm`, `lk` CLI, and provider plugins; pin lockfiles.
-- Create a working monorepo skeleton and one CI check.
+- **Day 1:** finish protected deployed English voice, weather, durable history, interruption/reconnect and cleanup acceptance. Worker deployment has been observed; hosted voice acceptance is still pending. Retain temporary OpenAI until DeepSeek funding confirmation.
+- **Day 2:** atomic persistent memory, pgvector retrieval, authoritative context assembly, typed actions, text-based exclusions/Undo, five response tiers, Jev integration and safe provider failover.
+- **Day 3:** Simple/Developer interface, orb startup, shared voice-controlled settings, memory explorer, spoken exclusions/restoration, actual request inspection, essential metrics, Arabic qualification. Freeze features at the end of the day.
+- **Day 4:** regression tests, bug fixes, deployment/budget checks, measured latency and presentation rehearsal only. No new features.
 
-### Day 1 — voice + weather + deployment (P0 first)
-
-**Morning:**
-
-- Start LiveKit Python agent using documented STT→LLM→TTS template.
-- Use verified credentials. **Pin the Day-1 Arabic configuration:** Deepgram Nova-3 STT + DeepSeek Flash LLM + ElevenLabs `eleven_flash_v2_5` TTS with a tested Arabic-capable voice. Test an actual Arabic utterance immediately.
-- Reject `deepgram_direct` TTS for Arabic in the capability validator; do not waste Day 1 attempting undocumented Deepgram Arabic voices.
-- Demonstrate real mic input and first spoken reply locally; test mute, interrupt, disconnect.
-- Define first `PipelineConfig` + provider factory, even if only one combination works.
-
-**Afternoon:**
-
-- Build SvelteKit chat page, LiveKit client hook, new-conversation sidebar, and message rendering.
-- Add FastAPI `/healthz`, demo auth, room token/dispatch and chat/session endpoints.
-- Add `get_current_weather` tool with a typed response and a visible tool-call trace.
-
-**Evening:**
-
-- Deploy FastAPI, LiveKit agent, and SvelteKit; smoke-test production HTTPS URL from an incognito window.
-- Store session/turn metadata in Postgres. Fix cross-origin, worker callbacks, missing secrets, or broken WebRTC immediately.
-- Commit release tag `day1-voice-deployed`.
-
-**Day 1 must end with:** fully working voice + useful weather API **on a public URL**. History can be simple; memory comes next.
-
-### Day 2 — actual persistent memory and context control
-
-**Morning:**
-
-- Create memory schema and embeddings; save stated preferences.
-- New conversation should retrieve a stated memory from a prior conversation.
-- Build an authoritative pure `compile_context` with included IDs and revision.
-- Create provider config registry and **validate a second LLM path** (`gpt-6-luna` or `gpt-6.1-terra`) with a short text session.
-
-**Afternoon:**
-
-- Build semantic candidate search (`query`, IDs, source turn, score/selection method).
-- Implement typed context commands, proposal preview, confirm, DB transaction, and undo.
-- Ensure weather tool respects excluded context records.
-- Add property-based tests for exclusion invariants, protected context, isolation and undo.
-
-**Evening:**
-
-- End-to-end demo: first chat teaches city/budget → second remembers → command excludes travel facts but retains budget → third response changes appropriately.
-- Commit `day2-memory-context`.
-
-**Day 2 must end with:** durable cross-session memory and deterministic context exclusions **working by text**, even without polished developer UI or speech-command routing.
-
-### Day 3 — developer mode + spoken context control + release
-
-**Morning:**
-
-- Add persistent Simple/Developer mode toggle without reconnecting voice.
-- Context explorer: scoped search, record provenance, active/excluded states, next-request preview.
-- Add “propose context edit” to voice path and clearly distinguish it from normal conversation.
-
-**Afternoon:**
-
-- Before/after context diff and one-click Undo.
-- Add compact latency metrics and current provider config to sidebar.
-- Wire the supported, tested provider choices into the UI with language/capability validation.
-- Test `DeepSeek Flash` and one OpenAI model; compare Deepgram and ElevenLabs **STT** where time permits. For Arabic **TTS**, test ElevenLabs versus a **verified** Arabic-capable alternative only; do not spend the final build day chasing unsupported Deepgram voices.
-
-**Evening — feature freeze:**
-
-- Re-run P0 acceptance flows on deployed URL.
-- Finish README, architecture document, API/key setup and limitations.
-- Verify broken/unsupported providers are correctly disabled rather than crashing.
-- Commit `day3-feature-freeze`.
-
-**Day 3 must end with:** the real final product. **Do not start browser-local inference if it puts any required behavior at risk.** If local speech wasn't completed, the code should provide a sound extension seam and accurate documentation.
-
-### Day 4 — revision only
-
-- End-to-end test in Chrome/Firefox; quick mobile browser smoke test if possible.
-- Fix any security, deployment, stale event, disconnect, or context integrity bugs.
-- Run property tests with more generated cases and critical cross-user authorization tests.
-- Measure latency and write down *actual observed* numbers for the chosen provider combination.
-- Check all API balances, spending caps, service health, Supabase project activity, and demo quota.
-- Rehearse 3–5 minute demo, record short Loom/screen recording, and include the deployed URL in README.
-- **No new models, no new UI panels, no provider migrations, no experimental features.**
-
-### Risk-based cut order
-
-If behind schedule, remove in this order: browser-local STT → browser-local TTS → Deepgram **non-Arabic TTS** comparison → third remote speech provider comparison → optional Sol/OpenAI variants → fancy statistics → extra settings → extensive search ranking features. **Never remove:** working voice, memory across sessions, weather API, deployed URL, or the hero context-exclusion flow once it has been implemented.
+Cut optional wake words, browser-local speech, extra providers, speculative partial routing, elaborate animation/statistics and implicit memory extraction before weakening voice, cross-conversation memory, weather, deployment or context-control requirements.
 
 ---
 
 ## 18. Tests and acceptance scenarios
 
-### Core feature tests
+### Acceptance scenario mapping
 
-- [ ] New demo identity can reach the app without registration.
-- [ ] User can start voice session, say a sentence, hear a relevant spoken response.
-- [ ] User can interrupt, and stale audio/text from the abandoned response doesn't play later.
-- [ ] Typed chat and voice use the same conversation history.
-- [ ] Chat A stores a color preference; chat B recalls it.
-- [ ] Weather tool fetches actual current data and the assistant cites the chosen city.
-- [ ] Context command searches related facts across earlier conversations.
-- [ ] Preview preserves an explicit “keep the budget” exception.
-- [ ] Confirm excludes exactly authorized targeted record IDs from the next compiled prompt.
-- [ ] Context diff and Undo reflect the committed revision.
-- [ ] Context command spoken through STT is routed as a command, not ordinary chat.
-- [ ] Simple↔Developer toggle does not alter the conversation or disconnect audio.
-- [ ] Model selection shows real provider key/capability status and respects unsupported languages.
-- [ ] All settings included in per-turn snapshot.
+Detailed instructions, dependencies, pass/fail criteria, verification and evidence fields live in the [execution checklist](docs/execution_checklist_v5.md). A task is complete only when every criterion passes; code presence alone is insufficient.
 
-### Security / race tests
+| Scenario | Checklist tasks |
+|---|---|
+| Fresh scoped demo identity and protected reviewer access | M0.4, M0.12, D3.13, D4.5 |
+| Spoken reply, interruption, reconnect, shared typed history | D1.3, D1.5, D1.6 |
+| Cross-conversation preference recall | D2.4, D2.17 |
+| Actual weather and included-only remembered location | D1.4, D2.8 |
+| Semantic search, keep-budget preview, exact-ID confirmation | D2.7, D3.8, D3.9 |
+| Revisioned diff, Undo and next-request exclusions | D2.5, D2.7, D2.17, V5 |
+| Spoken command routing and shared GUI actions | D2.6, D2.15, D3.5, V3 |
+| Mode toggle preserves conversation/audio | D3.7 |
+| Internal provider capability checks and approved public settings | M0.6, D3.4 |
+| Settings/context snapshots and actual outgoing requests | D2.5, D3.10 |
+| Cross-owner/protected-record rejection, stale revision and duplicate commit | D2.3, D2.7, D4.4, V1, V5 |
+| Provider failure, missing credentials and safe fallback | D2.11, D2.12, D2.14, V2, V4 |
+| No provider secrets in browser bundles or evidence | M0.11, D3.4, V6 |
+| Presentation and truthful limitations | P1, P2 |
 
-- [ ] User A cannot retrieve, exclude or undo User B's records.
-- [ ] User-originated `system` / protected record mutation is rejected.
-- [ ] Commit fails on stale revision with informative response.
-- [ ] Duplicate commit with the same idempotency key does not duplicate operations.
-- [ ] Provider error does not corrupt conversation/memory state.
-- [ ] Missing key returns a typed configuration error, not a stack trace or fake successful voice session.
-- [ ] Weather tool has no way to bypass the excluded profile location.
-- [ ] Browser bundle contains no provider API secrets.
+These are mappings rather than duplicate progress checkboxes; checklist statuses are authoritative.
 
 ### The exact showcase demo
 
@@ -986,7 +891,7 @@ If behind schedule, remove in this order: browser-local STT → browser-local TT
 6. Display candidate selection and the preserved budget item; confirm.
 7. Show before/after compiled context and revision 7→8; ask something that would normally use the removed travel facts.
 8. Verify no selected/excluded IDs appear in next compiled request; then press Undo and inspect restored context.
-9. Open provider settings; show DeepSeek Flash and an OpenAI model, and two tested speech configurations. Avoid a live switch if it risks session interruption—show “applies on next call.”
+9. Show read-only routing/provider diagnostics and a recorded controlled failover test; provider selection remains internal.
 10. Open code and show: pure transform, Hypothesis property test, provider factory, and weather tool authorization.
 
 Keep one-minute backup clips of key interactions if network/provider demos fail. Never make prerecorded playback look like a live result.
@@ -1134,16 +1039,91 @@ This amendment takes precedence over schematic framework examples above.
 
 ### Voice selection amendment
 
-The TTS voice is a user-selected setting rather than `ELEVEN_VOICE_ID` deployment configuration. Provide a searchable, paginated picker backed by the server-side ElevenLabs account voice catalog. Retain selection in the browser; send it explicitly when starting each call, revalidate availability server-side, and snapshot it with the immutable call pipeline. Changes apply to the next call without reconnecting the current call. Keep API keys server-side; do not silently substitute unavailable voices or claim Arabic quality from a language label. Exclude custom-rate voices from this bounded demo catalog.
+The TTS voice is a user-selected setting rather than `ELEVEN_VOICE_ID` deployment configuration. Provide a searchable, paginated picker backed by the server-side ElevenLabs account voice catalog. Retain selection in the browser; send it explicitly when starting each call, revalidate availability server-side, and snapshot it with the immutable call pipeline. Changes apply to the next voice session without reconnecting the current call. Keep API keys server-side; do not silently substitute unavailable voices or claim Arabic quality from a language label. Exclude custom-rate voices from this bounded demo catalog.
 
 ### Follow-up: conversational voice personalization
 
 The picker is the initial interface. The intended follow-up lets users say, for example, “I want to speak to a British young lady.” An LLM interprets the desired language/accent, perceived gender, age category, and vocal qualities into structured search criteria; deterministic code resolves those criteria against actual accessible catalog voices and applies the selected ID. Never invent a voice ID or use keyword rules to interpret the request. If no close match exists, offer alternatives or ask for the most important characteristic. Provider labels are descriptive metadata, not verified identity or quality guarantees.
 
-For in-call spoken changes, finish/cancel current playback as appropriate and apply the new voice at a safe response boundary. Version the effective pipeline selection and capture the actual voice in subsequent turn snapshots; do not mutate old snapshots or restart the conversation. Live voice switching must be verified against the installed TTS plugin before enabling it. This conversational flow is follow-up work; the initial picker continues to apply changes on the next call.
+For in-call spoken changes, finish/cancel current playback as appropriate and apply the new voice at a safe response boundary. Version the effective pipeline selection and capture the actual voice in subsequent turn snapshots; do not mutate old snapshots or restart the conversation. Live voice switching must be verified against the installed TTS plugin before enabling it. This conversational flow is follow-up work; the initial picker continues to apply changes on the next voice session.
 
 ### Development provider and budget override
 
 User instruction: use OpenAI temporarily; switch DeepSeek back to default only when the user confirms funding. Use `gpt-6-luna` through the Responses API with reasoning disabled and bounded output. The **$1/day limit applies specifically to OpenAI**, not all vendors combined. Enforce shared, persistent, atomic development reservations before inference; reserve $0.02/request conservatively, including tool continuations, and never refund uncertain/failed requests. Guard the bounded text-only context and disable hidden provider/SDK retries. Daily rollover is Africa/Tripoli midnight. Verify prices before any model or request-bound changes.
 
 For ElevenLabs, be more conservative: initially allow at most 500 synthesized characters/day through the same ledger with its own bucket. Prefer text tests, do not run unattended audio simulations or synthesis loops, and do not purchase credits or silently switch providers. Reserve characters before forwarding text to the native streaming plugin. Display budget-exhaustion errors honestly. Guards cover Sarjy development calls; unrelated uses of the same API credentials are outside application enforcement.
+
+## 22. Version 5 decision layer and shared action architecture
+
+### Motivation and boundaries
+
+Jev avoids conversational generation for application controls and selects an appropriate verbal budget for other requests. It is neither the conversational assistant, memory database, nor executor. Adding a remote classifier can increase latency: retain an exact local-command fast path and a complete bypass path.
+
+Verified 11 November 2026: [TypeSafe API](https://docs.typesafe.ai/api/system-one) accepts `POST https://api.typesafe.ai/v1/systemone`, bearer authentication, `state`, `model`, and named `questions`. Pin `jev-1.14.0`. Choice returns an option, probabilities and confidence; Score returns a rubric position and distribution; Noul returns a truth probability. Ask three independent Choice questions in one request: intent, response tier and complexity. Jev cannot generate arbitrary argument strings. [Pricing](https://help.typesafe.ai/articles/5187202169-how-much-does-jev-cost) is $0.042/M input tokens, output free; signups are open without trial credits. Account access and deployed latency remain unverified.
+
+### Processing flow
+
+```text
+Deepgram finalized transcript / typed message
+ -> shared FastAPI turn ingress
+ -> exact local command, otherwise optional Jev
+ -> validate decision and resolve typed arguments
+ -> authorized action handler OR authoritative context assembly
+ -> DeepSeek streaming, thinking disabled
+ -> eligible early failure: budgeted OpenAI fallback
+ -> budgeted ElevenLabs speech
+```
+
+Cache routing by turn/request ID; do not reclassify tool continuations. Jev receives bounded permitted context, never the full memory store. Intent categories are conversation, ui_control, voice_setting, memory_search, memory_modification, conversation_navigation, tool_request and ambiguous. Complexity is simple/complex, independent of verbosity; it can guide retrieval, clarification and observability, never reasoning escalation.
+
+Immutable decision outputs include category, tier, complexity, distributions, source/model, turn ID and policy version. Reject malformed/unknown outputs. Initially require selected-intent probability >=0.90 and a >=0.20 lead for automatic control routing. These are provisional application thresholds, not correctness guarantees. Vendor confidence summarizes its distribution, not independent evidence. Ambiguous/compound commands require clarification; quoted or negated instructions must not execute.
+
+### Shared typed actions
+
+UI and speech dispatch identical actions: AdjustSpeakingSpeed, SetSpeakingSpeed, SelectApprovedVoice, ShowConversationHistory, OpenMemoryExplorer, SetCaptionsVisible, SearchMemory, ProposeContextExclusion and RestoreContextOperation. Presentation actions use one frontend reducer; durable actions use backend-authorized handlers. Neither model can execute arbitrary JavaScript, write database records directly, bypass ownership, or confirm its own context proposal.
+
+Use deterministic extraction for closed-set commands. Use a bounded schema-validated LLM extraction request for free-form memory topics, keep-exceptions and ambiguous references. Search approved account voices only; report no match honestly. Default speed 1.0, initial supported range 0.8–1.2 and relative step 0.1; this conservatively matches the pinned plugin comment despite the vendor's broader documented range. Apply speed/voice changes at the next synthesis boundary, update controls, and show pending/applied state. Fixed acknowledgments need no conversational LLM; optional speech still consumes the character allowance.
+
+### Response policy
+
+| Tier | Maximum output tokens | Use |
+|---|---:|---|
+| 1 | 64 | Short answer or acknowledgment |
+| 2 | 128 | Normal conversation |
+| 3 | 256 | Moderate explanation |
+| 4 | 512 | Detailed explanation |
+| 5 | 1024 | Explicitly detailed response |
+
+Caps are configurable ceilings, never target lengths. Public preferences: Automatic (default), Brief (maximum tier 2), Balanced (maximum tier 3), Detailed (all tiers). Explicit current-turn length instructions override saved preferences within server bounds. Bypass uses deterministic length cues, otherwise tier 2. Difficult mathematics with a one-sentence answer can be complex/tier 1; a long creative story can be simple/tier 5. Update the existing 800-token guard and budget tests before enabling 1024.
+
+### Jev availability and evaluation
+
+Reuse an asynchronous client, disable retries, and impose a 750 ms total decision deadline. Bypass on timeout, invalid output, missing key, exhausted allowance or provider failure. Three consecutive operational failures open a five-minute bypass window. Speculative partial-transcript classification is research only: never act, speak or change state before finalization.
+
+Use 24 labeled text cases across eight intents, five tiers, ambiguity, negation and compound instructions. Separate tuning and holdout cases. Compare local, Jev-assisted and direct-primary routing: intent/tier agreement, false action routing, requests avoided, costs and end-to-end latency. Initial automatic-routing gate: >=90% holdout intent agreement, no unsafe executions, <=250 ms median added conversational overhead. Publish raw observations/sample size, not production reliability claims. Account key setup precedes paid checks.
+
+## 23. Provider-independent generation and failover
+
+An immutable model request carries system instructions, permitted history/memories/provenance, context revision, included/excluded IDs, supported tools/completed results, response policy, settings revision, turn ID and attempt ID. Adapters normalize streaming text, tools, usage, errors and terminal status. Rebuild from authoritative state; do not depend on opaque provider conversation state.
+
+DeepSeek's [documented Chat Completions setting](https://api-docs.deepseek.com/guides/thinking_mode/) is `extra_body={"thinking":{"type":"disabled"}}`, with `stream=True` and model `deepseek-flash`. Thinking is enabled by default, so the override is mandatory. Never invent an `instant` field or dynamically raise reasoning effort. OpenAI fallback uses `gpt-6-luna`, Responses API, reasoning none, store false, guarded requests and no hidden retries.
+
+Permit one primary attempt and at most one fallback for connection failure, timeout, transient rate limiting or server overload before any text/tool-call output in the turn. Do not fall back for invalid configuration, authentication, insufficient balance, application quota, cancellation, or emitted text/tool calls. Preserve partial response status and executed/uncertain tool outcomes; never replay side effects blindly. Stable operation IDs and pending/completed/failed/unknown ledger states replace fresh-per-invocation IDs. LiveKit's native fallback error eligibility is broader than this policy, requiring an application guard.
+
+Initial configurable deadlines: first substantive output 5 seconds, inter-chunk inactivity 8 seconds, overall response attempt 30 seconds. Tools have bounded deadlines within a bounded turn budget. Reserve before every OpenAI attempt; if denied, return an explicit unavailable status. No provider loops or difficulty-based escalation.
+
+## 24. Version 5 interface, memory and operational specification
+
+Use SvelteKit/Svelte 5/TypeScript/Tailwind. Left: conversations; center: interactive orb; right: collapsible memory/settings. Orb states: idle, initializing, listening, processing, speaking, error; keyboard support, reduced motion, captions and accessible microphone controls are mandatory. Simple/Developer switching preserves the live session. Public controls expose speed, approved voice, language, response-length preference, captions and context only. Developer diagnostics may show read-only providers/usage, never selection, credentials, reasoning or paid inference settings.
+
+Add an authorized typed action endpoint, settings read/update, semantic memory search, context proposal/commit/Undo/history and owner-scoped snapshot/metrics endpoints. Regenerate contracts; write operations use idempotency and expected revisions. Migrations add atomic memories with source/version and vector(1536), settings revisions, context proposals/exclusions/operations, immutable snapshots and execution metrics. Enable pgvector; use OpenAI text-embedding-3-small behind a replaceable adapter, owner-filtered exact cosine retrieval initially. Explicit memory requests precede implicit extraction. Corrections create source-aware versions.
+
+Exclusion defaults to the current conversation and requires a server-owned exact-ID preview and confirmation. Keep-exceptions survive atomic commit. Filter excluded IDs at final assembly, including tracked source/derived records; avoid long-term generated summaries initially. Undo requires operation identity and expected revision; stale edits fail without overwriting later changes. Exclusion does not prove semantic erasure of independent records, previous provider inputs or retention. Permanent deletion is deferred and must never be falsely acknowledged.
+
+Capture canonical context/hash separately from the actual serialized outgoing inference payload, without transport secrets. Capture tool continuations and fallback attempts; label unavailable wire capture honestly. Context changes affect the next turn by default, with an explicit indication during active generation.
+
+Retain the shared OpenAI $1/day ceiling for all application/development requests including embeddings and extraction, initially reserving $0.02 each. ElevenLabs remains 500 characters/day. Proposed Jev cap: $0.10/day with conservative $0.003/request reservations against its documented standard context maximum; revalidate on price/context changes. All guards share the durable backend ledger and Africa/Tripoli day boundary; no refunds after uncertain delivery, counter resets, automatic purchases or unattended audio loops. Longer tiers never raise speech quotas: show text with an explicit speech-limit state when necessary. Track actual vendor usage separately from reservations.
+
+Keep CranL web/API, LiveKit eu-central and Supabase London. If CranL blocks progress, use a supported SvelteKit host (Vercel subject to eligibility) and Cloud Run backend container, retaining contracts/database/ledger. Development stays password-protected; reviewer access uses HTTPS and simple credentials without opening anonymous inference. Inspect ignored files and secret scans before releases, preserve root Dockerfile branch overlays, and deploy only CI-tested revisions. Optional local “Hello, Sarjy” wake detection must never stream idle audio to paid models; defer wake words and browser-local inference if mandatory work is at risk.
+
+Presentation: start orb voice chat; teach atomic city/trip/budget facts; recall city in another conversation and fetch weather; speak a speed change and show slider synchronization; inspect provenance; exclude trip except budget; confirm, show revision/diff and actual outgoing input; restore; show controlled failover evidence, property tests and budgets. Label backup recordings explicitly.
