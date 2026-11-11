@@ -28,6 +28,9 @@ Before operations: OpenAI reservations $0.14; ElevenLabs 92 characters. Migratio
 
 ## Remaining gates
 
+Procedure for the unchecked gates below: [Day 1 human acceptance runbook](day1-acceptance-runbook.md), with the
+[pending evidence record](day1-acceptance-evidence.md).
+
 - [ ] Human microphone transcript, audible replies and voice/typed continuity.
 - [ ] Human confirmation of interruption and mute behavior.
 - [ ] Reconnect, refresh and permission-recovery acceptance without manual teardown concealing failures.

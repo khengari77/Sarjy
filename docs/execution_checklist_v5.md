@@ -268,7 +268,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - Real microphone speech yields final English transcript and relevant audible response.
 - reload shows completed user/assistant turns.
 
-**Verification:** Perform one short authenticated hosted conversation, end it and reload; text-only or simulated microphone evidence cannot satisfy this gate.
+**Verification:** Perform one short authenticated hosted conversation, end it and reload; text-only or simulated microphone evidence cannot satisfy this gate. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
@@ -284,7 +284,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - Missing city prompts clarification.
 - explicit Tripoli/LY triggers actual Open-Meteo data and an audible factual answer matching tool output.
 
-**Verification:** Ask weather without city, then supply Tripoli, Libya; inspect persisted tool result and response location/temperature.
+**Verification:** Ask weather without city, then supply Tripoli, Libya; inspect persisted tool result and response location/temperature. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
@@ -300,7 +300,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - Typed follow-up uses the preceding spoken fact and vice versa.
 - both appear once in the same conversation.
 
-**Verification:** Speak a unique harmless fact, ask about it by text, then speak a follow-up; reload and inspect ordered turns.
+**Verification:** Speak a unique harmless fact, ask about it by text, then speak a follow-up; reload and inspect ordered turns. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
@@ -318,7 +318,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - reconnect/refresh/end release or recover state.
 - denied permission offers recovery.
 
-**Verification:** Run each scenario separately; record state transitions, room/session cleanup and absence of late stale text/audio.
+**Verification:** Run each scenario separately; record state transitions, room/session cleanup and absence of late stale text/audio. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
@@ -334,7 +334,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - Evidence names code/deployment revisions, input mode, observed result and ledger delta.
 - no secret or raw voice enters git.
 
-**Verification:** Record evidence in ignored artifacts/deployment; distinguish manual microphone, synthetic audio and text-only checks.
+**Verification:** Record evidence in ignored artifacts/deployment; distinguish manual microphone, synthetic audio and text-only checks. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
@@ -350,7 +350,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - Current docs match observed deployments.
 - every D1 acceptance gate has evidence before release marking.
 
-**Verification:** Review D1.1–D1.7 records and git revision; do not create a baseline release marker while any gate remains pending.
+**Verification:** Review D1.1–D1.7 records and git revision; do not create a baseline release marker while any gate remains pending. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
