@@ -1,4 +1,5 @@
 import sqlite3
+import pytest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -122,7 +123,8 @@ def test_failed_dispatch_releases_capacity_without_resetting_ledger(tmp_path, mo
         # Two active sessions remain the hard cap; the failed one does not add a third.
         carol = TestClient(app)
         assert start(carol, conversation(carol)).status_code == 429
-        assert reserve_ledger(alice) >= reserved
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute('SELECT reserved_units FROM development_budgets').fetchone()[0] == reserved
 
 
 def test_expired_session_is_reaped_and_frees_capacity(tmp_path, monkeypatch):
@@ -146,8 +148,9 @@ def test_expired_session_is_reaped_and_frees_capacity(tmp_path, monkeypatch):
         assert replacement.status_code == 201
         assert session_row(db_path, first.json()['id'])['status'] == 'ended'
         # Reaping an expired reservation is not room cleanup; no room delete was invented.
-        assert state['deleted'] == []
-        assert reserve_ledger(alice) >= reserved
+        assert session_row(db_path, first.json()['id'])['room_cleanup_completed_at'] is None
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute('SELECT reserved_units FROM development_budgets').fetchone()[0] == reserved
 
 
 def test_ending_twice_is_safe_and_cleans_room_once(tmp_path, monkeypatch):
@@ -162,11 +165,11 @@ def test_ending_twice_is_safe_and_cleans_room_once(tmp_path, monkeypatch):
         assert alice.post(f'/v1/voice/sessions/{session_id}/end').status_code == 200
         second = alice.post(f'/v1/voice/sessions/{session_id}/end')
         assert second.status_code == 200
-        assert second.json()['cleanup'] == 'already_ended'
+        assert second.json()['cleanup'] == 'already_complete'
         assert state['deleted'] == [room]
 
 
-def test_room_cleanup_failure_is_actionable_and_retry_does_not_double_delete(tmp_path, monkeypatch):
+def test_room_cleanup_failure_retries_then_skips_after_success(tmp_path, monkeypatch):
     app, alice, state, db_path = build(tmp_path, monkeypatch)
     with alice:
         chat = conversation(alice)
@@ -183,5 +186,198 @@ def test_room_cleanup_failure_is_actionable_and_retry_does_not_double_delete(tmp
         state['delete_fails'] = False
         retried = alice.post(f'/v1/voice/sessions/{session_id}/end')
         assert retried.status_code == 200
-        assert retried.json()['cleanup'] == 'already_ended'
-        assert len(state['deleted']) == 1
+        assert retried.json()['cleanup'] == 'complete'
+        assert len(state['deleted']) == 2
+        assert alice.post(f'/v1/voice/sessions/{session_id}/end').json()['cleanup'] == 'already_complete'
+        assert len(state['deleted']) == 2
+
+
+def ledger(db_path):
+    with sqlite3.connect(db_path) as connection:
+        return connection.execute('SELECT day,provider,reserved_units FROM development_budgets ORDER BY day,provider').fetchall()
+
+
+def reconcile_local(app, settings, *, apply=False, limit=20):
+    import asyncio
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from app.services.session_cleanup import reconcile
+    async def run():
+        engine = create_async_engine(settings.database_url)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                return await reconcile(db, settings, apply=apply, limit=limit)
+        finally:
+            await engine.dispose()
+    return asyncio.run(run())
+
+
+def test_absent_room_is_success_but_other_provider_errors_remain_pending(tmp_path, monkeypatch):
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    with alice:
+        identifier = start(alice, conversation(alice)).json()['id']
+        async def absent(self, request):
+            self.state['deleted'].append(request.room)
+            raise livekit_api.TwirpError('not_found', 'absent', status=404)
+        monkeypatch.setattr(FakeLiveKitAPI, 'delete', absent)
+        assert alice.post(f'/v1/voice/sessions/{identifier}/end').json()['cleanup'] == 'complete'
+        assert session_row(db_path, identifier)['room_cleanup_completed_at'] is not None
+
+
+def test_provider_authentication_failure_is_not_room_absence(tmp_path, monkeypatch):
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    with alice:
+        identifier = start(alice, conversation(alice)).json()['id']
+        async def denied(self, request):
+            raise livekit_api.TwirpError('permission_denied', 'denied', status=403)
+        monkeypatch.setattr(FakeLiveKitAPI, 'delete', denied)
+        response = alice.post(f'/v1/voice/sessions/{identifier}/end')
+        assert response.status_code == 503
+        assert response.json()['detail']['cleanup'] == 'pending'
+        assert session_row(db_path, identifier)['room_cleanup_completed_at'] is None
+
+
+def test_uncertain_dispatch_keeps_reconciling_late_rooms_until_expiry(tmp_path, monkeypatch):
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    rooms = set()
+    async def uncertain(self, request):
+        rooms.add(request.room)  # Remote effect succeeded; acknowledgment was lost.
+        raise TimeoutError('lost dispatch response')
+    async def delete(self, request):
+        self.state['deleted'].append(request.room)
+        if request.room not in rooms:
+            raise livekit_api.TwirpError('not_found', 'absent', status=404)
+        rooms.remove(request.room)
+    monkeypatch.setattr(FakeLiveKitAPI, 'dispatch', uncertain)
+    monkeypatch.setattr(FakeLiveKitAPI, 'delete', delete)
+    with alice:
+        reserve_ledger(alice)
+        before = ledger(db_path)
+        response = start(alice, conversation(alice))
+        assert response.status_code == 503
+        assert response.json()['detail']['code'] == 'VOICE_DISPATCH_FAILED'
+        failed = sessions_with_status(db_path, 'failed')[0]
+        assert not rooms  # Best-effort early deletion succeeded.
+        assert failed['room_cleanup_completed_at'] is None
+        settings = app.state.settings
+        assert reconcile_local(app, settings, apply=True)['pending'] == 1  # Early not-found is not final.
+        rooms.add(failed['room_name'])  # Delayed remote creation after early absence.
+        expire(db_path, failed['id'])
+        assert reconcile_local(app, settings, apply=True)['completed'] == 1
+        assert not rooms
+        assert session_row(db_path, failed['id'])['room_cleanup_completed_at'] is not None
+        assert ledger(db_path) == before
+
+
+def test_reconciliation_is_dry_by_default_bounded_and_skips_active(tmp_path, monkeypatch):
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    with alice:
+        chat = conversation(alice)
+        first = start(alice, chat).json()['id']
+        state['delete_fails'] = True
+        assert alice.post(f'/v1/voice/sessions/{first}/end').status_code == 503
+        second = start(alice, chat).json()['id']
+        state['delete_fails'] = False
+        prior_attempts = list(state['deleted'])
+        assert reconcile_local(app, app.state.settings)['pending'] == 1
+        assert state['deleted'] == prior_attempts
+        assert reconcile_local(app, app.state.settings, apply=True, limit=1)['completed'] == 1
+        assert session_row(db_path, second)['status'] == 'starting'
+        assert session_row(db_path, second)['room_name'] not in state['deleted']
+
+
+def test_wrong_owner_cannot_clean_or_bootstrap_terminal_session(tmp_path, monkeypatch):
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    with alice:
+        identifier = start(alice, conversation(alice)).json()['id']
+        bob = TestClient(app)
+        conversation(bob)
+        assert bob.post(f'/v1/voice/sessions/{identifier}/end').status_code == 404
+        assert state['deleted'] == []
+        assert alice.post(f'/v1/voice/sessions/{identifier}/end').status_code == 200
+        row = session_row(db_path, identifier)
+        response = alice.post('/internal/agent/bootstrap', headers={'x-agent-secret':AGENT_SECRET,'x-session-id':identifier,'x-room-name':row['room_name']})
+        assert response.status_code == 403
+        assert session_row(db_path, identifier)['status'] == 'ended'
+
+
+def test_reconciliation_after_restart_and_expiry(tmp_path, monkeypatch):
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    with alice:
+        first = start(alice, conversation(alice)).json()['id']
+        expire(db_path, first)
+        # Admission reaps expired capacity but does not claim cleanup.
+        assert start(alice, conversation(alice)).status_code == 201
+        assert session_row(db_path, first)['status'] == 'ended'
+        settings = app.state.settings
+    restarted = create_app(settings, voice_catalog=FakeCatalog())
+    assert reconcile_local(restarted, settings, apply=True)['completed'] == 1
+    assert session_row(db_path, first)['room_cleanup_completed_at'] is not None
+
+
+def test_concurrent_endings_converge_without_resetting_budget(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    with alice:
+        identifier = start(alice, conversation(alice)).json()['id']
+        reserve_ledger(alice)
+        before = ledger(db_path)
+        cookies = dict(alice.cookies)
+        def end():
+            with TestClient(app) as client:
+                client.cookies.update(cookies)
+                return client.post(f'/v1/voice/sessions/{identifier}/end').status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            assert list(pool.map(lambda _: end(), range(2))) == [200,200]
+        assert session_row(db_path, identifier)['room_cleanup_completed_at'] is not None
+        assert ledger(db_path) == before
+        attempts = len(state['deleted'])
+        assert alice.post(f'/v1/voice/sessions/{identifier}/end').json()['cleanup'] == 'already_complete'
+        assert len(state['deleted']) == attempts
+
+
+@pytest.mark.parametrize('error',[TimeoutError('timeout'),ConnectionError('connection')])
+def test_transport_failures_leave_retryable_cleanup(tmp_path, monkeypatch, error):
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    with alice:
+        identifier = start(alice, conversation(alice)).json()['id']
+        async def broken(self, request):
+            raise error
+        monkeypatch.setattr(FakeLiveKitAPI, 'delete', broken)
+        response = alice.post(f'/v1/voice/sessions/{identifier}/end')
+        assert response.status_code == 503
+        assert response.json()['detail']['code'] == 'ROOM_CLEANUP_FAILED'
+        assert session_row(db_path,identifier)['room_cleanup_completed_at'] is None
+
+
+def test_missing_configuration_and_reconcile_errors_remain_pending(tmp_path, monkeypatch):
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    with alice:
+        identifier = start(alice, conversation(alice)).json()['id']
+        app.state.settings.livekit_api_key = ''
+        response = alice.post(f'/v1/voice/sessions/{identifier}/end')
+        assert response.status_code == 503
+        assert response.json()['detail']['code'] == 'ROOM_CLEANUP_NOT_CONFIGURED'
+        assert state['deleted'] == []
+        result = reconcile_local(app,app.state.settings,apply=True)
+        assert result['errors'] == 1 and result['completed'] == 0
+        assert session_row(db_path,identifier)['room_cleanup_completed_at'] is None
+
+
+def test_hung_provider_is_cancelled_by_total_cleanup_deadline(tmp_path, monkeypatch):
+    import asyncio
+    from app.services import session_cleanup
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    cancelled = []
+    async def hung(self, request):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(request.room)
+    monkeypatch.setattr(FakeLiveKitAPI,'delete',hung)
+    monkeypatch.setattr(session_cleanup,'CLEANUP_TIMEOUT_SECONDS',0.02)
+    with alice:
+        identifier = start(alice, conversation(alice)).json()['id']
+        response = alice.post(f'/v1/voice/sessions/{identifier}/end')
+        assert response.status_code == 503
+        assert cancelled
+        assert session_row(db_path,identifier)['room_cleanup_completed_at'] is None

@@ -20,6 +20,7 @@ from app.domain.context import ContextRecord, compile_context
 from app.infrastructure.database import Base, Identity, Conversation, Turn, VoiceSession, SessionGate, ToolCall
 from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogError
 from app.services.budget import reserve as reserve_development_budget
+from app.services.session_cleanup import cleanup_room
 from app.services.weather import get_current_weather, WeatherError
 
 COOKIE = 'sarjy_demo'
@@ -222,8 +223,13 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
             token = api.AccessToken(config.livekit_api_key, config.livekit_api_secret).with_identity(user.id).with_ttl(timedelta(minutes=10)).with_grants(api.VideoGrants(room_join=True, room=voice.room_name, can_publish=True, can_subscribe=True, can_publish_data=True)).to_jwt()
             return {'id':voice.id, 'url':config.livekit_url, 'token':token, 'expires_at':voice.expires_at}
         except Exception:
-            voice.status = 'failed'
+            await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id).values(status='failed'))
             await db.commit()
+            await db.refresh(voice)
+            try:
+                await cleanup_room(db, voice, config)
+            except ValueError:
+                await db.rollback()
             raise HTTPException(503, detail={'code':'VOICE_DISPATCH_FAILED'})
 
     @app.post('/v1/voice/sessions/{session_id}/end')
@@ -231,23 +237,15 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         voice = await db.get(VoiceSession, session_id)
         if not voice or voice.owner_id != user.id:
             raise HTTPException(404)
-        if voice.status == 'ended':
-            # Ending is idempotent: capacity and room cleanup already happened.
-            return {'status': 'ended', 'cleanup': 'already_ended'}
-        if voice.status == 'failed':
-            # Dispatch never succeeded, so there is no room to delete.
-            return {'status': 'failed', 'cleanup': 'not_required'}
-        voice.status = 'ended'
-        voice.expires_at = datetime.now(timezone.utc).isoformat()
-        await db.commit()
-        if config.livekit_api_key:
-            from livekit import api
-            try:
-                async with api.LiveKitAPI(config.livekit_url, config.livekit_api_key, config.livekit_api_secret) as lk:
-                    await lk.room.delete_room(api.DeleteRoomRequest(room=voice.room_name))
-            except Exception:
-                raise HTTPException(503, detail={'code':'ROOM_CLEANUP_FAILED'})
-        return {'status':'ended'}
+        if voice.status in {'starting','active'}:
+            await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id, VoiceSession.status.in_(['starting','active'])).values(status='ended', expires_at=datetime.now(timezone.utc).isoformat()))
+            await db.commit()
+            await db.refresh(voice)
+        try:
+            outcome = await cleanup_room(db, voice, config)
+        except ValueError as exc:
+            raise HTTPException(503, detail={'code':str(exc), 'cleanup':'pending'}) from exc
+        return {'status':voice.status, 'cleanup':outcome}
 
     @app.post('/internal/development/reserve')
     async def development_reservation(body: BudgetReservation, request: Request, db: AsyncSession = Depends(database)):
@@ -261,8 +259,10 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
     @app.post('/internal/agent/bootstrap')
     async def bootstrap(request: Request, db: AsyncSession = Depends(database)):
         voice = await worker_session(request, db)
-        voice.status = 'active'
+        changed = await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id, VoiceSession.status.in_(['starting','active']), VoiceSession.expires_at > datetime.now(timezone.utc).isoformat()).values(status='active'))
         await db.commit()
+        if not changed.rowcount:
+            raise HTTPException(403, detail={'code':'SESSION_NOT_ACTIVE'})
         return {'pipeline':voice.pipeline, 'expires_at':voice.expires_at}
 
     @app.post('/internal/agent/turn/start')
