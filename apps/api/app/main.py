@@ -14,7 +14,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.config import Settings
+from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy
 from app.domain.pipeline import PipelineConfig, validate_pipeline, PRESET, KEYS
+from app.domain.policy import pipeline_instructions
 from app.domain.sessions import admission_error
 from app.domain.context import ContextRecord, compile_context
 from app.infrastructure.database import Base, Identity, Conversation, Turn, VoiceSession, SessionGate, ToolCall
@@ -28,6 +30,8 @@ class StartVoice(BaseModel):
     conversation_id: str
     language: Literal["ar", "en"] = "en"
     voice_id: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+    response_tier: int | None = Field(default=None, ge=1, le=len(TIER_CAPS))
+    response_preference: ResponsePreference = ResponsePreference.AUTOMATIC
 
 class BudgetReservation(BaseModel):
     provider: Literal['openai','elevenlabs']
@@ -188,9 +192,14 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         await owned(body.conversation_id, user, db)
         required = ['livekit_url', 'livekit_api_key', 'livekit_api_secret', 'agent_service_secret']
         missing = [name.upper() for name in required if not getattr(config, name)]
-        pipeline = PipelineConfig(stt={'provider':'deepgram_direct','model':'nova-3'}, llm={'provider':default_llm()[0],'model':default_llm()[1]}, tts={'provider':'elevenlabs_direct','model':'eleven_flash_v2_5','voice_id':body.voice_id})
-        for choice in (pipeline.stt, pipeline.llm, pipeline.tts):
-            choice.language = body.language
+        policy = resolve_response_policy(body.response_preference, body.response_tier)
+        pipeline = PipelineConfig(
+            stt={'provider':'deepgram_direct','model':'nova-3','language':body.language},
+            llm={'provider':default_llm()[0],'model':default_llm()[1],'language':body.language},
+            tts={'provider':'elevenlabs_direct','model':'eleven_flash_v2_5','voice_id':body.voice_id,'language':body.language},
+            response_tier=policy.tier,
+            response_preference=policy.preference,
+        )
         errors = validate_pipeline(pipeline, configured_keys())
         configuration_errors = [error for error in errors if error["code"] != "VOICE_REQUIRED"]
         if missing or configuration_errors:
@@ -257,7 +266,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         voice = await worker_session(request, db)
         voice.status = 'active'
         await db.commit()
-        return {'pipeline':voice.pipeline, 'expires_at':voice.expires_at}
+        return {'pipeline':voice.pipeline, 'instructions':pipeline_instructions(voice.pipeline), 'expires_at':voice.expires_at}
 
     @app.post('/internal/agent/turn/start')
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
@@ -269,7 +278,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
             return {'turn_id':existing.id, 'context':existing.snapshot}
         history = (await db.scalars(select(Turn).where(Turn.conversation_id == voice.conversation_id, Turn.status == 'completed').order_by(Turn.created_at.desc()).limit(20))).all()
         turn = Turn(id=str(uuid4()), conversation_id=voice.conversation_id, request_id=body.request_id, role='user', text=body.text, status='completed')
-        records = (ContextRecord('system','system','You are Sarjy, a concise bilingual voice assistant. Reply in the language explicitly requested. Use the weather tool for current weather. Ask for a city when absent; never invent weather.'),) + tuple(ContextRecord(t.id,t.role,t.text) for t in reversed(history)) + (ContextRecord(turn.id,'user',turn.text),)
+        records = (ContextRecord('system','system',pipeline_instructions(voice.pipeline)),) + tuple(ContextRecord(t.id,t.role,t.text) for t in reversed(history)) + (ContextRecord(turn.id,'user',turn.text),)
         turn.snapshot = compile_context(records, conversation.revision)
         turn.snapshot['pipeline_config'] = voice.pipeline
         conversation_id = voice.conversation_id

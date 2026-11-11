@@ -67,7 +67,8 @@ def test_unavailable_voice_never_reserves_or_dispatches_a_call(tmp_path):
             assert db.execute('SELECT COUNT(*) FROM voice_sessions').fetchone()[0] == 0
 
 
-def test_selected_voice_is_frozen_per_call_and_reaches_snapshot(tmp_path, monkeypatch):
+@pytest.fixture
+def livekit_control_plane(monkeypatch):
     # Replace only the external LiveKit control-plane boundary. State and auth are real.
     from livekit import api
     class ControlPlane:
@@ -83,6 +84,9 @@ def test_selected_voice_is_frozen_per_call_and_reaches_snapshot(tmp_path, monkey
         async def __aexit__(self,*args):
             return None
     monkeypatch.setattr(api,'LiveKitAPI',ControlPlane)
+
+
+def test_selected_voice_is_frozen_per_call_and_reaches_snapshot(tmp_path, livekit_control_plane):
     service = ElevenLabsVoices('tts-test',transport=httpx.MockTransport(catalog_transport))
     with TestClient(create_app(configured(tmp_path),voice_catalog=service)) as client:
         client.post('/v1/demo-session')
@@ -101,6 +105,37 @@ def test_selected_voice_is_frozen_per_call_and_reaches_snapshot(tmp_path, monkey
         assert snapshot['pipeline_config']['tts']['voice_id'] == 'arabic-voice'
         assert client.post(f'/v1/voice/sessions/{session_id}/end').status_code == 200
         assert start('other-voice').status_code == 201
+
+
+def test_start_voice_resolves_tier_from_preference_and_bootstrap_carries_guidance(tmp_path, livekit_control_plane):
+    service = ElevenLabsVoices('tts-test',transport=httpx.MockTransport(catalog_transport))
+    with TestClient(create_app(configured(tmp_path),voice_catalog=service)) as client:
+        client.post('/v1/demo-session')
+        chat = client.post('/v1/conversations').json()['id']
+
+        def start(**extra):
+            response = client.post('/v1/voice/sessions',json={'conversation_id':chat,'voice_id':'arabic-voice',**extra})
+            assert response.status_code == 201
+            session = response.json()
+            with sqlite3.connect(tmp_path/'voice.db') as db:
+                room,pipeline = db.execute('SELECT room_name,pipeline FROM voice_sessions WHERE id=?',(session['id'],)).fetchone()
+            session.update(room=room,pipeline=json.loads(pipeline))
+            return session
+
+        def bootstrap(session):
+            headers = {'x-agent-secret':'worker-secret','x-session-id':session['id'],'x-room-name':session['room']}
+            return client.post('/internal/agent/bootstrap',headers=headers).json()
+
+        # An explicit request is clamped by the saved preference, not the reverse.
+        brief = start(response_tier=5,response_preference='brief')
+        assert (brief['pipeline']['response_tier'],brief['pipeline']['max_output_tokens']) == (2,128)
+        assert client.post(f"/v1/voice/sessions/{brief['id']}/end").status_code == 200
+
+        detailed = start(response_tier=4,response_preference='detailed')
+        assert (detailed['pipeline']['response_tier'],detailed['pipeline']['max_output_tokens']) == (4,512)
+        instructions = bootstrap(detailed)['instructions']
+        assert 'about 180 words or fewer' in instructions
+        assert '512' not in instructions and 'token' not in instructions.lower()
 
 
 def test_provider_errors_are_typed_and_do_not_leak_response(tmp_path):
