@@ -41,6 +41,12 @@ pnpm --dir apps/web test:browser
 
 Pure tests use immutable records and Hypothesis invariants. Database/API tests cover real persistence and authorization.
 
+Optional PostgreSQL migration parity against a disposable database (never a hosted one):
+
+```sh
+TEST_POSTGRES_URL='postgresql+asyncpg://postgres:test@127.0.0.1:55432/sarjy' uv run pytest -q tests/test_migrations.py
+```
+
 ## Deployment
 
 Build images from repository root with `infra/api.Dockerfile`, `infra/web.Dockerfile`, and `infra/agent.Dockerfile`. Use CranL for frontend/API, LiveKit Build for the worker, and Supabase PostgreSQL. Set `DATABASE_URL` to an asyncpg SQLAlchemy URL, run `uv run alembic upgrade head` before API startup, and set `COOKIE_SECURE=true` in production. Never expose provider secrets to the frontend. Configure SvelteKit's trusted public origin for the deployed proxy; retain CSRF checks.
