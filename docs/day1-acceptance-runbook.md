@@ -22,11 +22,67 @@ heard live. D1.7 and D1.8 are recorded only from the results of this run.
 - No other active call, and no second browser tab holding a session. The application allows one active
   session per identity and two globally; a stale session returns `429`.
 - Session cap is ten minutes; the worker stops 60 seconds after the browser participant leaves.
+- The microphone control reflects the real call state: a successful **Start call** enables microphone
+  capture and the control reads **Mute**. Typed input sent with no live call (`connect(false)`) creates a
+  session with capture off, so the control reads **Enable microphone** until it is pressed. Do not add an
+  extra enable step after a successful **Start call**.
 
 Expected provider spend for one full pass: roughly 10–20 LLM requests and a few hundred ElevenLabs
 characters, subject to the existing `$1/day` and `500 characters/day` guards. If a
 `DAILY_BUDGET_EXHAUSTED` or `BUDGET_SERVICE_UNAVAILABLE` error appears, stop and record the stopping
 point; do not reset or refund the ledger.
+
+## Session reservations (read before starting)
+
+Each admitted `POST /v1/voice/sessions` consumes one reservation permanently, even if the call later
+fails, times out or is abandoned. A `429` admission rejection consumes none. The defaults are
+`demo_calls_per_identity=3` counted **all-time per owner** and `demo_session_budget=80` counted per
+calendar month, with at most one active session per identity and two globally. Earlier hosted checks may
+already have consumed part of the identity allowance, so check before running.
+
+Read-only capacity checks (owner id is the coordinator's identity; do not write to these tables):
+
+```sh
+psql "$DATABASE_URL" -c \
+  "SELECT owner_id, count(*) FROM voice_sessions WHERE owner_id = '<owner-id>' GROUP BY owner_id;"
+psql "$DATABASE_URL" -c \
+  "SELECT count(*) FROM voice_sessions WHERE expires_at >= date_trunc('month', now());"
+psql "$DATABASE_URL" -c \
+  "SELECT count(*) FROM voice_sessions WHERE status IN ('starting', 'active');"
+```
+
+`remaining = 3 - identity_used`; also require `month_used < 80` and `active_now = 0` before starting.
+The month figure counts sessions whose `expires_at` falls in the current month, so a session started just
+before midnight can land in the next month's count; record the observed values.
+
+The procedure needs at most three reservations, allocated as follows. Do not start a fourth.
+
+| Reservation | Scenarios | Notes |
+|---|---|---|
+| S1 | D1.3, D1.4, D1.5, end/cleanup, post-end reload | One live call and one conversation; the reload after **End call** verifies the durable turns and the tool panel. |
+| S2 | D1.6 microphone denial and recovery, then mute and interruption | Denial is attempted first; if it leaves a live session, recovery through **Enable microphone** reuses it. |
+| S3 | D1.6 reconnect, then refresh mid-call | Reconnect first; if the session survives, reload to exercise refresh. |
+
+Allocate by remaining allowance:
+
+| Remaining | Run | Leave pending |
+|---|---|---|
+| 3 | S1, S2, S3 | nothing |
+| 2 | S1, S2 | S3 (reconnect, refresh) |
+| 1 | S1 | D1.6 scenarios |
+| 0 | none | every gate |
+
+Rules that keep this honest:
+
+- Never reset counters, rotate identities, create a second owner, or raise a limit to fit the procedure.
+- A failed start (`AGENT_START_TIMEOUT`, provider error, no audible output) has consumed its reservation.
+  Record the failure and move on; do not retry blindly and do not start extra sessions to "make up" for it.
+- Reconnect and refresh are only tested while a session is live. If reconnect ends the call, refresh
+  mid-call cannot run in that reservation; leave it pending rather than opening a fourth session.
+- A typed **Send** during a live call reuses that session and consumes nothing. A typed **Send** with no
+  live call starts a session and consumes a reservation; use it only if the allowance covers it.
+- The ten-minute session cap and the daily budget guards stay in force. End the call before the cap; do
+  not extend the TTL, and do not reset the ledger to continue.
 
 ## Evidence rules
 
@@ -54,23 +110,27 @@ point; do not reset or refund the ledger.
 
 ## D1.3 — Hosted English microphone, audible reply, durable turns
 
+This is the first part of reservation **S1**. Keep the call live afterwards for D1.4 and D1.5; the
+post-end reload at the end of D1.5 covers this gate's durable-turn check.
+
 1. Start from a fresh conversation (**New conversation +**) with English selected (the toggle should read
    **العربية**, meaning the current language is English) and a voice chosen.
-2. Press **Start call** and grant microphone permission when prompted. Wait for the status line to show
-   `listening` (cold starts can take 10–20 seconds).
+2. Press **Start call** and grant microphone permission when prompted. A successful start enables capture,
+   so the microphone control reads **Mute**. Wait for the status line to show `listening` (cold starts can
+   take 10–20 seconds).
 3. Say: **"Hello, can you hear me? Please reply in one short sentence."**
 4. Confirm all three observations:
    - a final English user transcript appears (not partial text that never settles);
    - a relevant spoken reply is audible through the speakers/headphones;
    - no error banner appears.
-5. Press **End call**, then reload the page. Confirm the same conversation shows exactly one completed user
-   turn and one completed assistant turn, in order.
 
 Pass requires a real spoken utterance and actually hearing the reply. A typed message does not count.
 
 ## D1.4 — Weather clarification and an audible factual answer
 
-1. Start a new call (or continue after D1.3) and ask with no city: **"What is the weather?"**
+Continue in the same live call (reservation **S1**) after the D1.3 turn.
+
+1. Ask with no city: **"What is the weather?"**
 2. Confirm the assistant asks for a city and does not invent weather.
 3. Answer: **"Tripoli, Libya."**
 4. Confirm the spoken answer names Tripoli and a temperature.
@@ -78,63 +138,74 @@ Pass requires a real spoken utterance and actually hearing the reply. A typed me
    - `city` is `Tripoli`, `country` is `Libya`;
    - `current.temperature_2m` matches the spoken temperature;
    - `source` is `Open-Meteo` and the timezone is `Africa/Tripoli`.
-6. End the call. Record the assistant text and the matching tool temperature in the evidence record.
+6. Record the assistant text and the matching tool temperature in the evidence record; leave the call live.
 
 ## D1.5 — Typed/voice history continuity
 
-1. Start a call and say a unique, harmless fact: **"My lucky number is 4172."**
-2. Without ending the call, type: **"What is my lucky number?"** and press **Send**.
+Continue in the same live call (reservation **S1**). The typed message must be sent while the call is live;
+a typed message with no live call would start a new session and consume another reservation.
+
+1. Say a unique, harmless fact: **"My lucky number is 4172."**
+2. Without ending the call, type: **"What is my lucky number?"** and press **Send**. This reuses the live
+   session.
 3. Confirm the typed answer repeats 4172 from the spoken turn.
 4. Say: **"Multiply it by two."**
 5. Confirm the spoken answer uses 8344, proving the voice turn also inherited the typed context.
-6. End the call and reload. Confirm both modes appear once each, in order, in one conversation.
+6. Press **End call**, then reload the page. Confirm the D1.3 user/assistant pair, the weather turns and
+   both continuity turns all appear once, in order, in one conversation, and the persisted tool panel
+   still shows the Tripoli result. This also completes D1.6's end-and-cleanup check for S1.
 
 ## D1.6 — Mute, interruption, stale output, reconnect, refresh, end, microphone denial
 
-Run each scenario as a separate call and end the call between scenarios. Record the observed browser status
-line, transcript/audio behaviour, and the session row where noted.
+S1's end/cleanup was covered by the D1.5 reload. The remaining scenarios use reservations **S2** and
+**S3** as allocated above. Record the observed browser status line, transcript/audio behaviour, and the
+session row where noted.
 
-### Mute
+### S2 — Microphone denial and recovery
 
-1. Start a call. The control initially reads **Enable microphone** because the call starts muted; press it,
-   say "Can you confirm you can hear me?", and confirm a transcript appears.
-2. Press **Mute**, then say "This sentence must not be transcribed."
-3. Confirm no new user transcript appears for the muted sentence. Unmute and speak again to confirm recovery.
+1. In browser site settings, block the microphone for the app, then press **Start call**.
+2. Confirm the UI reports `MICROPHONE_UNAVAILABLE` (or an equivalent actionable error).
+3. If the call is still live (the control reads **Enable microphone** and the status is not `idle`), allow
+   the microphone in site settings and press **Enable microphone**. This recovers the same session without
+   a reload or another reservation. Confirm capture works by speaking a short sentence and seeing a
+   transcript.
+4. If denial ended the session instead, record the denial result and stop the S2 scenarios; leave mute and
+   interruption pending rather than opening another session.
 
-### Interruption and stale output
+### S2 — Mute
 
-1. Ask a question with a long answer: **"Describe in detail how you would plan a two-day trip."**
+1. In the recovered live call, confirm the control reads **Mute**, meaning capture is enabled.
+2. Say "Can you confirm you can hear me?" and confirm a transcript appears.
+3. Press **Mute**, then say "This sentence must not be transcribed."
+4. Confirm no new user transcript appears for the muted sentence.
+5. Press **Enable microphone**, speak again, and confirm a new transcript appears (capture restored).
+
+### S2 — Interruption and stale output
+
+1. Ask a short, bounded prompt so synthesis stays cheap: **"Count slowly from one to twenty."**
 2. While the agent is speaking, press **Stop / إيقاف** (or speak over it) and confirm audio stops promptly.
-3. Wait at least two seconds. Confirm no abandoned sentence arrives as new audio or as a late transcript.
-4. Ask a short follow-up and confirm the conversation continues normally.
+3. Wait at least two seconds. Confirm no abandoned sentence arrives as new audio or as a late transcript,
+   and that stopping does not require more than the prompt's own synthesis.
+4. Ask a short follow-up and confirm the conversation continues normally, then press **End call**.
 
-### Reconnect
+### S3 — Reconnect and refresh mid-call
 
 1. Start a call and complete one turn.
 2. Disable the network for about five seconds, then re-enable it.
-3. Confirm the status moves through `reconnecting` back to a live state, or the app cleanly ends the call
-   instead of hanging. In either case, confirm a new call can be started afterwards and history is intact.
-
-### Refresh mid-call
-
-1. Start a call, complete one turn, and reload the page mid-call.
-2. Confirm no orphaned or duplicate turns appear, the conversation history is still readable, and a new call
-   starts normally. Confirm the previous session ends rather than staying `active` (optional SQL read-back).
+3. Confirm the status moves through `reconnecting` back to a live state. If the app instead ends the call
+   cleanly, record that and leave refresh mid-call pending; do not open a fourth session.
+4. If the session is live again, reload the page mid-call. Confirm no orphaned or duplicate turns appear,
+   the conversation history is still readable, and the previous session ends rather than staying `active`
+   (optional SQL read-back).
+5. Do not start another call to test connectivity unless the read-only check at the end of S3 shows a
+   remaining reservation; otherwise record "new call after recovery: pending".
 
 ### End and cleanup
 
-1. Start a call, then press **End call**.
-2. Confirm the status returns to `idle` and the session row is `ended`.
-3. Within a few seconds, confirm `room_cleanup_completed_at` is set (optional SQL read-back). Repeating the
+1. After the **End call** in S1, confirm the status returns to `idle` and the session row is `ended`.
+2. Within a few seconds, confirm `room_cleanup_completed_at` is set (optional SQL read-back). Repeating the
    end request must return `cleanup: already_complete` without another provider delete; if you cannot issue
    that request without exposing credentials, note it as not checked rather than guessing.
-
-### Microphone denial and recovery
-
-1. In browser site settings, block the microphone for the app, reload, and press **Start call**.
-2. Confirm the UI reports `MICROPHONE_UNAVAILABLE` (or an equivalent actionable error) and offers a way back.
-3. Allow the microphone in site settings, then press **Start call** again (or **Enable microphone** if a call
-   is still live) and confirm audio capture recovers without a manual database or room teardown.
 
 ## D1.7 — Record revisions, input mode and guarded usage
 
@@ -144,6 +215,8 @@ Fill the [acceptance record](day1-acceptance-evidence.md) with:
 - input mode per gate: `human_microphone`, `typed_with_audio`, or `text_only`;
 - what was observed (transcript, audible reply, tool values, state transitions, cleanup state);
 - ledger values before/after and the delta, with the read-only command used;
+- reservations: identity-used and month-used before the run, the intended S1–S3 allocation, the
+  reservations actually consumed, and any gate left pending for lack of allowance;
 - artifact filenames under `artifacts/deployment/day1-human-acceptance/`.
 
 Distinguish human microphone, synthetic audio and text-only checks explicitly. Never commit raw voice.
@@ -163,6 +236,7 @@ Do not create the marker while any gate remains pending.
 
 | Gate | Result | Observed | Evidence |
 |---|---|---|---|
+| Reservations (S1–S3, allowance) | pending | | |
 | D1.3 microphone, audible reply, durable turns | pending | | |
 | D1.4 weather clarification and factual answer | pending | | |
 | D1.5 typed/voice continuity | pending | | |

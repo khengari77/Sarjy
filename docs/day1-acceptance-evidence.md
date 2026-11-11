@@ -24,6 +24,35 @@ all of them have passed.
 | Run finished (UTC) | `<timestamp>` |
 | Operator | `<coordinator name>` |
 
+## Session reservation accounting
+
+Read-only capacity before starting; `demo_calls_per_identity=3` is all-time per owner and a failed start
+still consumes a reservation.
+
+| Field | Value |
+|---|---|
+| Identity used before | `<n>` |
+| Identity allowance remaining | `<3 - n>` |
+| Month used before | `<n of 80>` |
+| Active sessions before | `<0 or 1>` |
+| Allocation chosen | `<S1 / S1+S2 / S1+S2+S3 / none>` |
+| S1 consumed | `<yes/no; scenario, outcome>` |
+| S2 consumed | `<yes/no; scenario, outcome>` |
+| S3 consumed | `<yes/no; scenario, outcome>` |
+| Extra reservations and why | `<none, or failed start/recovery detail>` |
+| Gates left pending for allowance | `<list or none>` |
+
+Commands used (read-only; no counter resets, identity rotation or limit changes):
+
+```sh
+psql "$DATABASE_URL" -c \
+  "SELECT owner_id, count(*) FROM voice_sessions WHERE owner_id = '<owner-id>' GROUP BY owner_id;"
+psql "$DATABASE_URL" -c \
+  "SELECT count(*) FROM voice_sessions WHERE expires_at >= date_trunc('month', now());"
+psql "$DATABASE_URL" -c \
+  "SELECT count(*) FROM voice_sessions WHERE status IN ('starting', 'active');"
+```
+
 ## Gate results
 
 | Gate | Result | Input mode | Observed | Evidence file |
