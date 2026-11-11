@@ -224,7 +224,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 ### D1.1 — Review/release pending session-start proxy deadline fix; preserve unrelated working changes
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -237,11 +237,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Review existing proxy diff; check/build web; reproduce delayed dispatch with a fake upstream and run one hosted startup after release.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** [Hosted release verification](day1-hosted-verification.md); source 4a80697, database 0004_voice_cleanup, actual session start/end and historical reconciliation passed. Issue #2 closed. Human voice/lifecycle gates remain in D1.3–D1.6.
 
 ### D1.2 — Verify failed startup, abandoned sessions, expiry and room cleanup release capacity without resetting quotas
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -254,7 +254,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Use isolated sessions for each failure, inspect session rows and room existence before/after; assert ledger unchanged except legitimate reservations.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** [Hosted release verification](day1-hosted-verification.md); source 4a80697, database 0004_voice_cleanup, actual session start/end and historical reconciliation passed. Issue #2 closed. Human voice/lifecycle gates remain in D1.3–D1.6.
 
 ### D1.3 — Verify hosted English microphone input, audible response and durable turns
 
