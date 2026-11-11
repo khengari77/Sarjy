@@ -1,0 +1,112 @@
+import copy
+import json
+import sqlite3
+from types import SimpleNamespace
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+from hypothesis import given, strategies as st
+
+from app.config import Settings
+from app.main import create_app
+from app.services.voices import ElevenLabsVoices, public_catalog
+
+
+@given(st.lists(st.tuples(st.text(min_size=1), st.text()), max_size=20))
+def test_catalog_projection_is_pure_and_exposes_only_voice_choices(entries):
+    payload = {'voices': [{'voice_id':id, 'name':name, 'samples':[{'secret':'private recording'}], 'settings':{'private':'configuration'}} for id,name in entries], 'has_more':False}
+    original = copy.deepcopy(payload)
+    result = public_catalog(payload)
+    assert payload == original
+    assert result == public_catalog(payload)
+    assert [(voice.id,voice.name) for voice in result.voices] == entries
+    for voice in result.model_dump()['voices']:
+        assert set(voice) == {'id','name','languages'}
+
+
+def configured(tmp_path):
+    return Settings(database_url=f'sqlite+aiosqlite:///{tmp_path}/voice.db', livekit_url='wss://test.invalid', livekit_api_key='test-key', livekit_api_secret='test-secret-with-enough-characters', agent_service_secret='worker-secret', deepgram_api_key='stt-test', openai_api_key='llm-test', eleven_api_key='tts-test', _env_file=None)
+
+
+def catalog_transport(request):
+    assert request.headers['xi-api-key'] == 'tts-test'
+    assert request.url.params['include_custom_rates'] == 'false'
+    voices = [{'voice_id':'arabic-voice','name':'Arabic voice','verified_languages':[{'language':'ar'}]}, {'voice_id':'other-voice','name':'Another voice'}]
+    id = request.url.params.get('voice_ids')
+    if id:
+        voices = [voice for voice in voices if voice['voice_id'] == id]
+    return httpx.Response(200,json={'voices':voices,'has_more':False})
+
+
+def test_authenticated_catalog_search_and_safe_response(tmp_path):
+    def handler(request):
+        assert request.url.params['search'] == 'Arabic'
+        return httpx.Response(200,json={'voices':[{'voice_id':'arabic-voice','name':'Arabic voice','samples':['do not expose']}], 'has_more':True,'next_page_token':'next'})
+    service = ElevenLabsVoices('tts-test',transport=httpx.MockTransport(handler))
+    with TestClient(create_app(configured(tmp_path),voice_catalog=service)) as client:
+        assert client.get('/v1/voices').status_code == 401
+        client.post('/v1/demo-session')
+        response = client.get('/v1/voices?search=Arabic')
+        assert response.json() == {'voices':[{'id':'arabic-voice','name':'Arabic voice','languages':[]}], 'next_page_token':'next'}
+        assert 'do not expose' not in response.text
+        assert 'tts-test' not in response.text
+
+
+def test_unavailable_voice_never_reserves_or_dispatches_a_call(tmp_path):
+    settings = configured(tmp_path)
+    service = ElevenLabsVoices('tts-test',transport=httpx.MockTransport(catalog_transport))
+    with TestClient(create_app(settings,voice_catalog=service)) as client:
+        client.post('/v1/demo-session')
+        chat = client.post('/v1/conversations').json()['id']
+        for selection,code in [(None,'VOICE_REQUIRED'),('gone-voice','VOICE_UNAVAILABLE')]:
+            response = client.post('/v1/voice/sessions',json={'conversation_id':chat,'voice_id':selection})
+            assert response.status_code == 422
+            assert response.json()['detail']['code'] == code
+        with sqlite3.connect(tmp_path/'voice.db') as db:
+            assert db.execute('SELECT COUNT(*) FROM voice_sessions').fetchone()[0] == 0
+
+
+def test_selected_voice_is_frozen_per_call_and_reaches_snapshot(tmp_path, monkeypatch):
+    # Replace only the external LiveKit control-plane boundary. State and auth are real.
+    from livekit import api
+    class ControlPlane:
+        def __init__(self,*args):
+            self.agent_dispatch = SimpleNamespace(create_dispatch=self.dispatch)
+            self.room = SimpleNamespace(delete_room=self.delete)
+        async def dispatch(self,request):
+            return None
+        async def delete(self,request):
+            return None
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self,*args):
+            return None
+    monkeypatch.setattr(api,'LiveKitAPI',ControlPlane)
+    service = ElevenLabsVoices('tts-test',transport=httpx.MockTransport(catalog_transport))
+    with TestClient(create_app(configured(tmp_path),voice_catalog=service)) as client:
+        client.post('/v1/demo-session')
+        chat = client.post('/v1/conversations').json()['id']
+        def start(voice):
+            return client.post('/v1/voice/sessions',json={'conversation_id':chat,'voice_id':voice})
+        first = start('arabic-voice')
+        assert first.status_code == 201
+        session_id = first.json()['id']
+        with sqlite3.connect(tmp_path/'voice.db') as db:
+            room,pipeline = db.execute('SELECT room_name,pipeline FROM voice_sessions WHERE id=?',(session_id,)).fetchone()
+        assert json.loads(pipeline)['tts']['voice_id'] == 'arabic-voice'
+        assert start('other-voice').status_code == 429
+        headers = {'x-agent-secret':'worker-secret','x-session-id':session_id,'x-room-name':room}
+        snapshot = client.post('/internal/agent/turn/start',headers=headers,json={'request_id':'utterance','text':'Hello'}).json()['context']
+        assert snapshot['pipeline_config']['tts']['voice_id'] == 'arabic-voice'
+        assert client.post(f'/v1/voice/sessions/{session_id}/end').status_code == 200
+        assert start('other-voice').status_code == 201
+
+
+def test_provider_errors_are_typed_and_do_not_leak_response(tmp_path):
+    service = ElevenLabsVoices('tts-test',transport=httpx.MockTransport(lambda request: httpx.Response(403,text='sensitive upstream detail')))
+    with TestClient(create_app(configured(tmp_path),voice_catalog=service)) as client:
+        client.post('/v1/demo-session')
+        response = client.get('/v1/voices')
+        assert response.status_code == 503
+        assert response.json() == {'detail':{'code':'VOICE_CATALOG_ACCESS_DENIED'}}

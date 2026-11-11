@@ -1,0 +1,25 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: infra/api.Dockerfile
+    env_file: ../.env
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////data/sarjy.db
+      COOKIE_SECURE: 'false'
+    volumes:
+      - sarjy-data:/data
+    ports:
+      - '8000:8000'
+  web:
+    build:
+      context: ..
+      dockerfile: infra/web.Dockerfile
+    environment:
+      API_INTERNAL_URL: http://api:8000
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api
+volumes:
+  sarjy-data:

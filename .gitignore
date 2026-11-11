@@ -1,0 +1,46 @@
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+.venv/
+__pycache__/
+.pytest_cache/
+*.db
+
+.svelte-kit/
+build/
+
+.hypothesis/
+playwright-report/
+test-results/
+
+# Local test recordings (may include provider-generated speech)
+/artifacts/test-videos/
+
+# Local human speech samples
+/artifacts/speech-recordings/
+
+# Deployment archives and local deployment secrets
+/artifacts/deployment/
+
+# Local credentials, data and generated output
+/artifacts/
+*.db-*
+*.sqlite*
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+.venv*/
+venv/
+.cache/
+coverage/
+htmlcov/
+.coverage*
+*.tsbuildinfo
+.DS_Store
+.idea/
+.vscode/

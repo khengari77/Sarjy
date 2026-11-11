@@ -1,0 +1,22 @@
+{
+  "extends": "$app/tsconfig",
+  "compilerOptions": {
+    "strict": true,
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "checkJs": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "src",
+    "test",
+    "*"
+  ],
+  "exclude": [
+    "src/service-worker",
+    "build",
+    ".svelte-kit",
+    "node_modules"
+  ]
+}
