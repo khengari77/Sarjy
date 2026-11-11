@@ -2,7 +2,12 @@ name: checks
 on: [push, pull_request]
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container: mcr.microsoft.com/playwright:v1.65.0-noble
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -19,5 +24,4 @@ jobs:
       - run: uv run pytest -q
         env:
           CI: "true"
-      - run: pnpm --dir apps/web exec playwright install --with-deps chromium
       - run: pnpm --dir apps/web test:browser
