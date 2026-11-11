@@ -113,3 +113,11 @@ CranL apps `sarjy-api` and `sarjy-web` were created in Netherlands with protecti
 ## GitHub release workflow
 
 The repository must remain private. Review ignore rules and the complete staged diff before any commit; never publish local databases, provider credentials or artifacts. Develop on `main`; promote only commits whose `checks` workflow passed to `deploy/api`, verify the API, then promote that same commit to `deploy/web`. CranL builds from repository root using `infra/api.Dockerfile` (port 8000) and `infra/web.Dockerfile` (port 3000). Keep PR previews disabled. Configure protection and all server-side secrets before first boot. Preserve Supabase and reconcile the budget ledger before enabling hosted inference. Record the last successful SHA for recovery; database rollback is never automatic.
+
+## Hosted Day 1 verification
+
+Frontend: https://sarjy-web-dev-otbaod.cranl.net (password required). API: https://sarjy-api-dev-hiqked.cranl.net. Anonymous page/static access and direct API requests are blocked. Authenticated frontend conversation creation and Supabase persistence were verified through Chromium; the local HTTP client's TLS stack was reset by the edge. Credentials remain only in ignored deployment storage.
+
+Deployment branches add the appropriate root `Dockerfile` to the same tested source revision; CranL's nested Dockerfile build did not include repository-root files. The API and frontend root-Dockerfile branch checks passed.
+
+Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source and the worker Dockerfile. Inject secrets separately through LiveKit. Worker deployment and live English voice acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.

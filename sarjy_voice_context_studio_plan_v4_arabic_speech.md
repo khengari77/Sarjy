@@ -1,3 +1,5 @@
+> **Verified hosted progress:** API and frontend are deployed through private GitHub branches. Root Dockerfiles resolve CranL build-context failures. Anonymous access is rejected; authenticated frontend conversation creation and Supabase persistence passed Chromium verification. Remaining Day 1 gates: non-root LiveKit worker deployment in eu-central, short English voice/weather conversation, interruption/reconnect/cleanup verification. No completion claim before those gates pass.
+
 > **GitHub deployment revision:** Review `.gitignore`, `.dockerignore`, exact staged paths and secret-scan results before the first commit. Keep all artifacts, recordings, databases, credentials, caches and generated files excluded. Use private `khengari77/Sarjy`; CI-tested `main` commits are promoted sequentially to `deploy/api` then `deploy/web`. Use root build context and the existing per-service Dockerfiles. No public anonymous access or paid upgrades. CranL GitHub authorization remains a browser step.
 
 # Current implementation priority
