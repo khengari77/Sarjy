@@ -139,3 +139,7 @@ uv run python scripts/reconcile_voice_sessions.py --apply --limit 5
 ```
 
 Each remote deletion is bounded to 10 seconds. Results report selected/completed/pending/errors; nonzero exit means errors remain. Run again to retry unfinished work after recovery. Active sessions are skipped. Concurrent retries may repeat an idempotent deletion, but confirmed sequential retries skip it; no exactly-once network guarantee is claimed. No scheduler is introduced. Late external creation after the reconciliation window is not covered by an absolute cleanup guarantee.
+
+## Agent contributions
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before claiming work. Use a separate worktree and branch per issue; open a PR and await coordinator review. Authors must not merge.
