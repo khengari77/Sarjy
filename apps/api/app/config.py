@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     deepgram_api_key: str = ''
     deepseek_api_key: str = ''
     openai_api_key: str = ''
-    default_llm_provider: Literal['openai_direct','deepseek_direct'] = 'openai_direct'
+    default_llm_provider: Literal['openai_direct','deepseek_direct'] = 'deepseek_direct'
     eleven_api_key: str = ''
     livekit_url: str = ''
     livekit_api_key: str = ''

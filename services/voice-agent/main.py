@@ -3,6 +3,17 @@ import asyncio
 import json
 import os
 import logging
+import sys
+from pathlib import Path
+
+# Source checkout; packaged workers use PYTHONPATH=/app/shared.
+_shared_source = Path(__file__).resolve().parents[2] / "apps/api"
+if _shared_source.is_dir():
+    sys.path.insert(0, str(_shared_source))
+
+from app.domain.contracts import ModelRequest, ModelToolItem, ToolSpec
+from generation import adapter_for, livekit_chunk
+from livekit.agents.llm.utils import build_legacy_openai_schema
 from datetime import datetime, timezone
 from typing import Any, Mapping
 from uuid import uuid4
@@ -107,20 +118,35 @@ class SarjyAgent(Agent):
             task = asyncio.create_task(persist_playout())
             self.pending.add(task)
             task.add_done_callback(self.pending.discard)
-        fresh = llm.ChatContext()
-        for message in snapshot['messages']:
-            fresh.add_message(role=message['role'], content=message['content'])
+        request = ModelRequest.model_validate(snapshot['model_request'])
+        if (request.turn_id != self.current_turn or request.selection.revision != snapshot['revision']
+                or [item.model_dump() for item in request.messages] != snapshot['messages']):
+            raise ValueError('MODEL_SNAPSHOT_MISMATCH')
+        schemas = [build_legacy_openai_schema(tool)['function'] for tool in tools]
+        continuation = []
         index = chat_ctx.items.index(user)
-        fresh.items.extend(chat_ctx.items[index+1:])
+        for item in chat_ctx.items[index+1:]:
+            if isinstance(item, llm.FunctionCall):
+                continuation.append(ModelToolItem(kind='call', call_id=item.call_id,
+                    name=item.name, content=item.arguments))
+            elif isinstance(item, llm.FunctionCallOutput):
+                continuation.append(ModelToolItem(kind='result', call_id=item.call_id,
+                    name=item.name, content=item.output, is_error=item.is_error))
+        request = ModelRequest.model_validate({**request.model_dump(mode='json'),
+            'attempt_id': str(uuid4()), 'tool_history': continuation,
+            'tools': [ToolSpec(name=schema['name'], description=schema.get('description', ''),
+                parameters=schema['parameters']) for schema in schemas]})
         if self.pipeline['llm']['provider'] == 'openai_direct':
-            serialized = json.dumps(fresh.to_dict(), ensure_ascii=False, default=str).encode()
-            # $0.02 reservation covers <=64KB context, the one fixed weather tool
-            # and at most the tier-5 cap (1024), the widest published policy.
-            if not openai_request_within_bounds(serialized, tools, self.pipeline['max_output_tokens']):
+            serialized = json.dumps({key: value for key, value in request.model_dump(mode='json').items()
+                if key in {'messages', 'tool_history', 'tools'}}, ensure_ascii=False).encode()
+            if not openai_request_within_bounds(serialized, tools, request.response_policy.max_output_tokens):
                 raise ValueError('OPENAI_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS')
             await self.reserve('openai')
-        async for chunk in Agent.default.llm_node(self, fresh, tools, model_settings):
-            yield chunk
+        adapter = adapter_for(self.session.llm, self.pipeline['llm']['provider'])
+        async for event in adapter.stream(request, tools, model_settings.tool_choice if model_settings else None):
+            chunk = livekit_chunk(event)
+            if chunk is not None:
+                yield chunk
 
     @function_tool()
     async def get_current_weather(self, city: str, country: str | None = None):

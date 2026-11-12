@@ -14,14 +14,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.config import Settings
-from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy
+from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy, ModelRequest, UserSettings, MemoryRecord, MemorySource
 from app.domain.pipeline import PipelineConfig, validate_pipeline, PRESET, KEYS
 from app.domain.policy import pipeline_instructions, normalize_pipeline
 from app.domain.sessions import admission_error
 from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
 from app.domain.weather_permissions import decide_weather_request
 from app.services.context_assembly import location_evidence, read_context_inputs
-from app.infrastructure.database import Base, Identity, Conversation, Turn, VoiceSession, SessionGate, ToolCall
+from app.infrastructure.database import Base, Identity, Conversation, Turn, VoiceSession, SessionGate, ToolCall, Memory, UserSetting
 from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogError
 from app.services.budget import reserve as reserve_development_budget
 from app.services.session_cleanup import cleanup_room
@@ -421,6 +421,25 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         # The weather decision is frozen with the snapshot: the tool call later
         # authorizes against this revision, never against live or stale state.
         turn.snapshot = {**compiled.to_snapshot(), 'weather_policy': inputs.weather_policy()}
+        settings_row = await db.get(UserSetting, conversation.owner_id)
+        settings_value = UserSettings() if settings_row is None else UserSettings(
+            speaking_speed=settings_row.speaking_speed, captions_visible=settings_row.captions_visible,
+            approved_voice_id=settings_row.approved_voice_id, response_preference=settings_row.response_preference,
+            revision=settings_row.revision)
+        memory_rows = (await db.scalars(select(Memory).where(
+            Memory.owner_id == conversation.owner_id, Memory.id.in_(compiled.included_ids),
+            Memory.status == 'active'))).all()
+        model_request = ModelRequest(
+            turn_id=turn.id, attempt_id=str(uuid4()), instructions=pipeline_instructions(pipeline),
+            selection=compiled.selection, messages=compiled.messages,
+            response_policy=resolve_response_policy(pipeline['response_preference'], pipeline['response_tier']),
+            settings=settings_value, settings_revision=settings_value.revision, language=pipeline.get('llm', {}).get('language', pipeline.get('language', 'en')),
+            memories=tuple(MemoryRecord(id=row.id, owner_id=row.owner_id, content=row.content,
+                source=MemorySource(turn_id=row.source_turn_id,
+                    conversation_id=row.source_conversation_id, created_at=row.created_at), version=row.version)
+                for row in memory_rows))
+        turn.snapshot['model_request'] = model_request.model_dump(mode='json')
+
         validate_assembly(conversation.revision, compiled.manifest, turn.snapshot)
         conversation_id = voice.conversation_id
         db.add(turn)

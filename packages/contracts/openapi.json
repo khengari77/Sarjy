@@ -2553,10 +2553,18 @@
         "additionalProperties": false,
         "properties": {
           "turn_id": {
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Turn Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Turn Id"
           },
           "conversation_id": {
             "maxLength": 100,
@@ -2572,7 +2580,6 @@
           }
         },
         "required": [
-          "turn_id",
           "conversation_id",
           "created_at"
         ],
@@ -2742,6 +2749,70 @@
         "title": "ToolSpec",
         "type": "object"
       },
+      "ModelMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "enum": [
+              "system",
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "ModelMessage",
+        "type": "object"
+      },
+      "ModelToolItem": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "call",
+              "result"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "call_id": {
+            "minLength": 1,
+            "title": "Call Id",
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "is_error": {
+            "default": false,
+            "title": "Is Error",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "call_id",
+          "name",
+          "content"
+        ],
+        "title": "ModelToolItem",
+        "type": "object"
+      },
       "ModelRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2771,6 +2842,22 @@
           },
           "settings": {
             "$ref": "#/components/schemas/UserSettings"
+          },
+          "messages": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ModelMessage"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "tool_history": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ModelToolItem"
+            },
+            "title": "Tool History",
+            "type": "array"
           },
           "memories": {
             "default": [],

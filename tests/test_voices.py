@@ -26,7 +26,7 @@ def test_catalog_projection_is_pure_and_exposes_only_voice_choices(entries):
 
 
 def configured(tmp_path):
-    return Settings(database_url=f'sqlite+aiosqlite:///{tmp_path}/voice.db', livekit_url='wss://test.invalid', livekit_api_key='test-key', livekit_api_secret='test-secret-with-enough-characters', agent_service_secret='worker-secret', deepgram_api_key='stt-test', openai_api_key='llm-test', eleven_api_key='tts-test', _env_file=None)
+    return Settings(default_llm_provider='openai_direct', database_url=f'sqlite+aiosqlite:///{tmp_path}/voice.db', livekit_url='wss://test.invalid', livekit_api_key='test-key', livekit_api_secret='test-secret-with-enough-characters', agent_service_secret='worker-secret', deepgram_api_key='stt-test', openai_api_key='llm-test', eleven_api_key='tts-test', _env_file=None)
 
 
 def catalog_transport(request):
