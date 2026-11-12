@@ -20,9 +20,22 @@ def build_llm(config: dict, credentials: dict[str, str], *, client=None):
     return llm
 
 
+def build_fallback_llm(credentials: dict[str, str], *, client=None):
+    """Optional OpenAI fallback; absent without an approved OpenAI key."""
+    if not credentials.get('OPENAI_API_KEY'):
+        return None
+    return build_llm(
+        {'llm': {'provider': 'openai_direct', 'model': 'gpt-6-luna'}},
+        credentials,
+        client=client,
+    )
+
+
 def build_providers(config: dict, credentials: dict[str, str]):
+    primary = config['llm']['provider']
     return {
         'stt': deepgram.STT(model=config['stt']['model'], language=config['stt']['language'], api_key=credentials['DEEPGRAM_API_KEY']),
         'llm': build_llm(config, credentials),
         'tts': elevenlabs.TTS(model=config['tts']['model'], voice_id=config['tts']['voice_id'], language=config['tts']['language'], api_key=credentials['ELEVEN_API_KEY'], enable_logging=False),
+        'fallback_llm': build_fallback_llm(credentials) if primary == 'deepseek_direct' else None,
     }

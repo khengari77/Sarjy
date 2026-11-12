@@ -26,6 +26,14 @@ from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogErro
 from app.services.budget import reserve as reserve_development_budget
 from app.services.session_cleanup import cleanup_room
 from app.services.weather import get_current_weather, WeatherError
+from app.domain.tool_operations import ToolOperationState, terminal_state
+from app.services.tool_operations import (
+    ToolOperationError,
+    claim_tool_operation,
+    complete_tool_operation,
+    fail_tool_operation,
+    unknown_tool_operation,
+)
 from app.services.context_operations import (
     ContextOperationError,
     confirm_proposal,
@@ -497,21 +505,61 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         )
         if not decision.allowed:
             return {'error': decision.reason or 'LOCATION_EXCLUDED'}
-        existing = await db.scalar(select(ToolCall).where(ToolCall.request_id == body.request_id, ToolCall.turn_id == body.turn_id))
-        if existing:
-            return existing.result
+        try:
+            claim = await claim_tool_operation(
+                db,
+                turn_id=body.turn_id,
+                operation_key=body.request_id,
+                name='get_current_weather',
+            )
+        except ToolOperationError as exc:
+            raise HTTPException(exc.status, detail={'code': exc.code}) from exc
+
+        if claim.kind == 'completed':
+            return claim.result or {}
+        if claim.kind == 'pending':
+            raise HTTPException(409, detail={'code': 'TOOL_OPERATION_IN_PROGRESS'})
+        if claim.kind == 'failed':
+            return claim.result or {'error': claim.error_code or 'TOOL_OPERATION_FAILED'}
+        if claim.kind == 'unknown':
+            raise HTTPException(503, detail={'code': claim.error_code or 'TOOL_OPERATION_UNKNOWN'})
+
+        # The claim is durable before any external effect.
+        await db.commit()
         try:
             result = await get_current_weather(body.city, body.country)
         except WeatherError as exc:
-            result = {'error':str(exc)}
-        db.add(ToolCall(id=str(uuid4()), turn_id=body.turn_id, request_id=body.request_id, name='get_current_weather', result=result))
-        await db.commit()
+            code = str(exc)
+            state = terminal_state(code)
+            if state is ToolOperationState.UNKNOWN:
+                await unknown_tool_operation(db, operation_key=body.request_id, error_code=code)
+            else:
+                await fail_tool_operation(db, operation_key=body.request_id, error_code=code)
+            await db.commit()
+            return {'error': code}
+        except Exception:
+            await unknown_tool_operation(
+                db, operation_key=body.request_id, error_code='TOOL_DELIVERY_UNKNOWN'
+            )
+            await db.commit()
+            raise HTTPException(503, detail={'code': 'TOOL_DELIVERY_UNKNOWN'})
+
+        try:
+            await complete_tool_operation(db, operation_key=body.request_id, result=result)
+            await db.commit()
+        except ToolOperationError as exc:
+            await unknown_tool_operation(
+                db, operation_key=body.request_id, error_code='TOOL_DELIVERY_UNKNOWN'
+            )
+            await db.commit()
+            raise HTTPException(503, detail={'code': 'TOOL_DELIVERY_UNKNOWN'}) from exc
         return result
 
     @app.get('/v1/conversations/{conversation_id}/tool-calls')
     async def tool_calls(conversation_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
         await owned(conversation_id, user, db)
-        rows = (await db.scalars(select(ToolCall).join(Turn).where(Turn.conversation_id == conversation_id))).all()
+        rows = (await db.scalars(select(ToolCall).join(Turn).where(
+            Turn.conversation_id == conversation_id, ToolCall.state == 'completed'))).all()
         return [{'id':row.id, 'turn_id':row.turn_id, 'name':row.name, 'result':row.result} for row in rows]
 
     def proposal_secret() -> str:
