@@ -29,7 +29,8 @@ class WeatherDecision:
 
 def mentions(text: str, name: str) -> bool:
     """Case-insensitive whole-word match; safe for accented/Arabic names."""
-    needle = name.strip()
+    # Treat a qualified tool argument as the same city as its unqualified name.
+    needle = name.split(',', 1)[0].strip()
     if not needle:
         return False
     return re.search(rf'(?<!\w){re.escape(needle)}(?!\w)', text or '', re.IGNORECASE) is not None
@@ -65,7 +66,9 @@ def decide_weather_request(
         return WeatherDecision(True, city, country, 'explicit', included_memory)
     if excluded_memory is not None and included_memory is None:
         return WeatherDecision(False, city, country, 'memory', excluded_memory, LOCATION_EXCLUDED)
-    return WeatherDecision(True, city, country, 'memory' if included_memory else 'explicit', included_memory)
+    if included_memory is not None:
+        return WeatherDecision(True, city, country, 'memory', included_memory)
+    return WeatherDecision(False, city, country, 'memory', reason='LOCATION_CONTEXT_REQUIRED')
 
 
 __all__ = ['LOCATION_EXCLUDED', 'LocationEvidence', 'WeatherDecision', 'decide_weather_request', 'mentions']

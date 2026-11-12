@@ -51,6 +51,23 @@ class ContextCandidate:
     origin: Origin
     source: str | None = None
     status: Literal['active', 'superseded', 'inactive'] = 'active'
+    dependencies: frozenset[str] = frozenset()
+
+
+def freeze_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: freeze_json(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze_json(item) for item in value)
+    return value
+
+
+def json_containers(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: json_containers(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [json_containers(item) for item in value]
+    return value
 
 
 def canonical_json(value: Any) -> str:
@@ -88,7 +105,7 @@ class CompiledContext:
             'excluded_record_ids': sorted(self.excluded_ids),
             'canonical_prompt_sha256': self.canonical_prompt_sha256,
             'manifest': dict(self.manifest),
-            'pipeline_config': dict(self.pipeline_config),
+            'pipeline_config': json_containers(self.pipeline_config),
             'provider_request_capture': PROVIDER_CAPTURE,
         }
 
@@ -124,7 +141,15 @@ def compile_turn_context(
     if not instructions:
         raise ValueError('INSTRUCTIONS_REQUIRED')
     excluded = frozenset(excluded_ids)
-    config = dict(pipeline or {})
+    config = freeze_json(pipeline or {})
+    blocked = set(excluded)
+    candidates = (*history, *memories, *tool_results)
+    while True:
+        derived = {item.id for item in candidates if item.dependencies & blocked}
+        if derived <= blocked:
+            break
+        blocked.update(derived)
+    excluded = frozenset(blocked)
 
     def eligible(candidate: ContextCandidate) -> bool:
         if candidate.id in excluded or not candidate.text:
@@ -178,6 +203,7 @@ def compile_turn_context(
         'turn_id': current_turn.id if current_turn is not None else '',
         'context_revision': revision,
         'pipeline_id': _pipeline_id(config),
+        'pipeline_config_sha256': hashlib.sha256(canonical_json(json_containers(config)).encode()).hexdigest(),
         'included_record_ids': tuple(included_ids),
         'excluded_record_ids': tuple(sorted(excluded)),
         'canonical_prompt_sha256': digest,
@@ -194,7 +220,7 @@ def compile_turn_context(
         messages=tuple(MappingProxyType(dict(message)) for message in messages),
         included_ids=tuple(included_ids),
         excluded_ids=excluded,
-        pipeline_config=MappingProxyType(config),
+        pipeline_config=config,
         manifest=manifest,
         selection=selection,
         canonical_prompt=prompt,
@@ -220,9 +246,15 @@ def validate_assembly(revision: int, manifest: Mapping[str, Any], snapshot: Mapp
         raise ValueError('REVISION_MISMATCH_MANIFEST')
     if snapshot.get('revision') != revision:
         raise ValueError('REVISION_MISMATCH_SNAPSHOT')
-    manifest_messages = manifest.get('canonical_prompt_sha256')
-    if manifest_messages is not None and snapshot.get('canonical_prompt_sha256') != manifest_messages:
+    try:
+        actual = prompt_sha256(snapshot['messages'])
+        config_hash = hashlib.sha256(canonical_json(snapshot['pipeline_config']).encode()).hexdigest()
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError('ASSEMBLY_INVALID') from exc
+    if snapshot.get('canonical_prompt_sha256') != actual or manifest.get('canonical_prompt_sha256') != actual:
         raise ValueError('HASH_MISMATCH_SNAPSHOT')
+    if manifest.get('pipeline_config_sha256') != config_hash:
+        raise ValueError('CONFIG_MISMATCH_SNAPSHOT')
 
 
 def compile_context(records: tuple[ContextRecord, ...], revision: int, excluded_ids: frozenset[str] = frozenset(), max_chars: int = 16000):

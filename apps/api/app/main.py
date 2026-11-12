@@ -18,7 +18,7 @@ from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response
 from app.domain.pipeline import PipelineConfig, validate_pipeline, PRESET, KEYS
 from app.domain.policy import pipeline_instructions, normalize_pipeline
 from app.domain.sessions import admission_error
-from app.domain.context import ContextCandidate, compile_turn_context
+from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
 from app.domain.weather_permissions import decide_weather_request
 from app.services.context_assembly import location_evidence, read_context_inputs
 from app.infrastructure.database import Base, Identity, Conversation, Turn, VoiceSession, SessionGate, ToolCall
@@ -301,6 +301,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         # The weather decision is frozen with the snapshot: the tool call later
         # authorizes against this revision, never against live or stale state.
         turn.snapshot = {**compiled.to_snapshot(), 'weather_policy': inputs.weather_policy()}
+        validate_assembly(conversation.revision, compiled.manifest, turn.snapshot)
         conversation_id = voice.conversation_id
         db.add(turn)
         if conversation.title == 'New conversation':
@@ -326,6 +327,9 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         if existing:
             return {'id':existing.id}
         turn = Turn(id=str(uuid4()), conversation_id=voice.conversation_id, request_id=key, role='assistant', text=body.text, status=body.status)
+        record_ids = (user_turn.snapshot or {}).get('included_record_ids')
+        if isinstance(record_ids, list) and all(isinstance(value, str) for value in record_ids):
+            turn.snapshot = {'derivation': {'turn_id': user_turn.id, 'record_ids': record_ids}}
         conversation_id = voice.conversation_id
         db.add(turn)
         try:
@@ -344,9 +348,6 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         turn = await db.get(Turn, body.turn_id)
         if not turn or turn.conversation_id != voice.conversation_id:
             raise HTTPException(404)
-        existing = await db.scalar(select(ToolCall).where(ToolCall.request_id == body.request_id, ToolCall.turn_id == body.turn_id))
-        if existing:
-            return existing.result
         policy = (turn.snapshot or {}).get('weather_policy') or {}
         decision = decide_weather_request(
             city=body.city,
@@ -357,6 +358,9 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         )
         if not decision.allowed:
             return {'error': decision.reason or 'LOCATION_EXCLUDED'}
+        existing = await db.scalar(select(ToolCall).where(ToolCall.request_id == body.request_id, ToolCall.turn_id == body.turn_id))
+        if existing:
+            return existing.result
         try:
             result = await get_current_weather(body.city, body.country)
         except WeatherError as exc:

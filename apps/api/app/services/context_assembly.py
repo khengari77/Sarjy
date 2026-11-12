@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.context import ContextCandidate, canonical_json
 from app.domain.weather_permissions import LocationEvidence
 from app.infrastructure.database import ContextExclusion, Memory, ToolCall, Turn
+from app.services.memory_eligibility import blocked_memory_ids, blocked_source_turn_ids
 
 HISTORY_LIMIT = 20
 TOOL_RESULT_LIMIT = 50
@@ -27,6 +28,8 @@ class MemoryCandidates:
 
     included: tuple[ContextCandidate, ...] = ()
     denied: tuple[ContextCandidate, ...] = ()
+    inactive: tuple[ContextCandidate, ...] = ()
+    blocked_sources: frozenset[str] = frozenset()
 
     @property
     def excluded_ids(self) -> frozenset[str]:
@@ -58,10 +61,11 @@ class ContextInputs:
     history: tuple[ContextCandidate, ...]
     memories: MemoryCandidates
     tool_results: tuple[ContextCandidate, ...]
+    blocked_ids: frozenset[str] = frozenset()
 
     @property
     def excluded_ids(self) -> frozenset[str]:
-        return self.memories.excluded_ids
+        return self.memories.excluded_ids | self.blocked_ids
 
     def weather_policy(self) -> dict:
         """Location evidence frozen into the turn snapshot at this revision."""
@@ -86,33 +90,28 @@ async def orm_memory_candidates(
     conversation_id: str,
 ) -> MemoryCandidates:
     """Default reader: owner-scoped memories with active conversation exclusions."""
-    excluded_rows = (
-        await db.scalars(
-            select(ContextExclusion).where(
-                ContextExclusion.owner_id == owner_id,
-                ContextExclusion.conversation_id == conversation_id,
-                ContextExclusion.active.is_(True),
-            )
-        )
-    ).all()
-    excluded_ids = {row.memory_id for row in excluded_rows}
+    excluded_ids = await blocked_memory_ids(db, owner_id, conversation_id)
+    sources = await blocked_source_turn_ids(db, owner_id, conversation_id)
     rows = (await db.scalars(select(Memory).where(Memory.owner_id == owner_id).order_by(Memory.id))).all()
     included: list[ContextCandidate] = []
     denied: list[ContextCandidate] = []
+    inactive: list[ContextCandidate] = []
     for row in rows:
         candidate = ContextCandidate(
             id=row.id,
             role='memory',
             text=row.content,
             origin='memory',
-            source=row.source_conversation_id,
+            source=row.source_turn_id,
             status='active' if row.status == 'active' and row.id not in excluded_ids else 'superseded',
         )
         if candidate.status == 'active':
             included.append(candidate)
-        else:
+        elif row.id in excluded_ids:
             denied.append(candidate)
-    return MemoryCandidates(tuple(included), tuple(denied))
+        else:
+            inactive.append(candidate)
+    return MemoryCandidates(tuple(included), tuple(denied), tuple(inactive), sources)
 
 
 async def read_context_inputs(
@@ -124,42 +123,52 @@ async def read_context_inputs(
     history_limit: int = HISTORY_LIMIT,
 ) -> ContextInputs:
     """Read everything the compiler may consider for the next turn."""
-    turns = (
-        await db.scalars(
-            select(Turn)
-            .where(Turn.conversation_id == conversation_id, Turn.status == 'completed')
-            .order_by(Turn.created_at.desc())
-            .limit(history_limit)
-        )
-    ).all()
-    history = tuple(
-        ContextCandidate(id=turn.id, role=turn.role, text=turn.text, origin='history')
-        for turn in reversed(turns)
-    )
-
-    tool_rows = (
-        await db.execute(
-            select(ToolCall, Turn)
-            .join(Turn, ToolCall.turn_id == Turn.id)
-            .where(Turn.conversation_id == conversation_id, Turn.status == 'completed')
-            .order_by(Turn.created_at, ToolCall.id)
-            .limit(TOOL_RESULT_LIMIT)
-        )
-    ).all()
-    tool_results = tuple(
-        ContextCandidate(
-            id=call.id,
-            role='tool',
-            text=canonical_json(call.result),
-            origin='tool',
-            source=call.name,
-        )
-        for call, _turn in tool_rows
-    )
-
     reader = memory_reader or _OrmMemoryReader()
     memories = await reader.candidates(db, owner_id=owner_id, conversation_id=conversation_id)
-    return ContextInputs(history=history, memories=memories, tool_results=tool_results)
+    turns = (await db.scalars(select(Turn).where(
+        Turn.conversation_id == conversation_id, Turn.status == 'completed'
+    ).order_by(Turn.created_at, Turn.id))).all()
+    by_id = {turn.id: turn for turn in turns}
+    blocked = set(memories.excluded_ids | memories.blocked_sources)
+
+    def dependencies(turn):
+        snapshot = turn.snapshot or {}
+        derivation = snapshot.get('derivation')
+        if isinstance(derivation, dict):
+            values = derivation.get('record_ids')
+        else:
+            parent = by_id.get(turn.request_id.removeprefix('reply:')) if turn.request_id.startswith('reply:') else None
+            values = ((parent.snapshot or {}).get('included_record_ids') if parent else None)
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+            return None
+        return frozenset(values)
+
+    # Only generated assistant content inherits model-input dependencies. Independent
+    # user history is retained unless it is the explicitly tracked source of a memory.
+    while True:
+        more = {turn.id for turn in turns if turn.role == 'assistant' and (
+            (dependencies(turn) is not None and dependencies(turn) & blocked)
+            or (memories.excluded_ids and dependencies(turn) is None)
+        )}
+        if more <= blocked:
+            break
+        blocked.update(more)
+    history = tuple(ContextCandidate(id=turn.id, role=turn.role, text=turn.text, origin='history')
+                    for turn in turns[-history_limit:] if turn.id not in blocked)
+    tool_rows = (await db.execute(select(ToolCall, Turn).join(Turn, ToolCall.turn_id == Turn.id).where(
+        Turn.conversation_id == conversation_id, Turn.status == 'completed'
+    ).order_by(Turn.created_at.desc(), ToolCall.id).limit(TOOL_RESULT_LIMIT))).all()
+    tool_results = []
+    for call, turn in tool_rows:
+        values = (turn.snapshot or {}).get('included_record_ids')
+        known = isinstance(values, list) and all(isinstance(value, str) for value in values)
+        deps = frozenset(values) if known else frozenset()
+        if turn.id in blocked or deps & blocked or (memories.excluded_ids and not known):
+            blocked.add(call.id)
+            continue
+        tool_results.append(ContextCandidate(id=call.id, role='tool', text=canonical_json(call.result),
+            origin='tool', source=call.name, dependencies=deps))
+    return ContextInputs(history=history, memories=memories, tool_results=tuple(tool_results), blocked_ids=frozenset(blocked))
 
 
 class _OrmMemoryReader:
