@@ -941,7 +941,7 @@
       },
       "Decision": {
         "additionalProperties": false,
-        "description": "Validated routing output. Confidence cannot authorize mutation by itself.",
+        "description": "Validated routing output. Vendor confidence is informational, not evidence.",
         "properties": {
           "turn_id": {
             "maxLength": 100,
@@ -963,6 +963,7 @@
             "type": "object"
           },
           "confidence": {
+            "description": "Vendor distribution confidence, not the selected probability.",
             "maximum": 1,
             "minimum": 0,
             "title": "Confidence",

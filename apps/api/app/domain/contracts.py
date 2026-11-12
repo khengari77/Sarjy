@@ -3,10 +3,13 @@
 Pure definitions only: no I/O, no provider clients, no database access. Every
 transform returns a new frozen model and never mutates its input.
 """
+import math
+from collections.abc import Mapping as MappingABC
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Annotated, Any, Literal, Mapping, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_serializer, field_validator, model_validator
 
 EMBEDDING_DIMENSIONS = 1536
 EMBEDDING_MODEL = 'text-embedding-3-small'
@@ -16,6 +19,34 @@ SPEAKING_SPEED_STEP = 0.1
 TIER_CAPS: tuple[int, ...] = (64, 128, 256, 512, 1024)
 CONFIDENCE_THRESHOLD = 0.90
 CONFIDENCE_LEAD = 0.20
+DEFAULT_TIER = 2
+PROBABILITY_TOLERANCE = 1e-6
+PROBABILITY_MAX_TOLERANCE = 1e-9
+
+
+def _freeze_json(value: Any) -> Any:
+    """Copy JSON-compatible data into an immutable, key-sorted representation."""
+    if isinstance(value, MappingABC):
+        keys = list(value)
+        if not all(isinstance(key, str) for key in keys):
+            raise ValueError('TOOL_PARAMETERS_NOT_JSON')
+        return MappingProxyType({key: _freeze_json(value[key]) for key in sorted(keys)})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError('TOOL_PARAMETERS_NOT_JSON')
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise ValueError('TOOL_PARAMETERS_NOT_JSON')
+
+
+def _thaw_json(value: Any) -> Any:
+    """Return plain JSON-compatible containers from a frozen value."""
+    if isinstance(value, MappingABC):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
 
 
 class Contract(BaseModel):
@@ -88,49 +119,83 @@ class ResponsePolicy(Contract):
 def resolve_response_policy(
     preference: ResponsePreference = ResponsePreference.AUTOMATIC,
     explicit_tier: int | None = None,
+    *,
+    classified_tier: int | None = None,
 ) -> ResponsePolicy:
-    """Apply a saved preference; an explicit current-turn tier wins within bounds."""
-    limit = PREFERENCE_MAX_TIER[preference]
+    """Resolve a tier: explicit current-turn overrides saved preference caps.
+
+    Saved preferences bound automatic/classified tiers. An explicit current-turn
+    length instruction is validated against the server's 1-5 range and preserved.
+    """
     if explicit_tier is not None:
-        ResponsePolicy.for_tier(explicit_tier)  # reject out-of-range requests before clamping
-    tier = 2 if explicit_tier is None else min(max(explicit_tier, 1), limit)
+        return ResponsePolicy.for_tier(explicit_tier, preference)
+    limit = PREFERENCE_MAX_TIER[preference]
+    if classified_tier is not None:
+        ResponsePolicy.for_tier(classified_tier)  # reject out-of-range before clamping
+        tier = min(classified_tier, limit)
+    else:
+        tier = min(DEFAULT_TIER, limit)
     return ResponsePolicy.for_tier(tier, preference)
 
 
 class Decision(Contract):
-    """Validated routing output. Confidence cannot authorize mutation by itself."""
+    """Validated routing output. Vendor confidence is informational, not evidence."""
 
     turn_id: str = Field(min_length=1, max_length=100)
     intent: Intent
     probabilities: Mapping[Intent, float]
-    confidence: float = Field(ge=0, le=1)
+    confidence: float = Field(ge=0, le=1, description='Vendor distribution confidence, not the selected probability.')
     tier: int = Field(ge=1, le=5)
     complexity: Complexity
     source: DecisionSource
     model: str = Field(min_length=1, max_length=100)
     policy_version: str = Field(min_length=1, max_length=40)
 
+    @field_validator('confidence')
+    @classmethod
+    def confidence_is_finite(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError('CONFIDENCE_NOT_FINITE')
+        return value
+
     @model_validator(mode='after')
     def probabilities_are_consistent(self):
         if set(self.probabilities) != set(Intent):
             raise ValueError('PROBABILITY_OUTCOMES_MISMATCH')
-        total = sum(self.probabilities.values())
-        if abs(total - 1) > 1e-6:
+        for probability in self.probabilities.values():
+            if not math.isfinite(probability) or not 0 <= probability <= 1:
+                raise ValueError('PROBABILITY_RANGE')
+        total = math.fsum(self.probabilities.values())
+        if abs(total - 1) > PROBABILITY_TOLERANCE:
             raise ValueError('PROBABILITY_SUM')
-        if abs(self.probabilities[self.intent] - self.confidence) > 1e-9:
-            raise ValueError('CONFIDENCE_MISMATCH')
+        selected = self.probabilities[self.intent]
+        if selected < max(self.probabilities.values()) - PROBABILITY_MAX_TOLERANCE:
+            raise ValueError('SELECTED_INTENT_NOT_MAXIMUM')
+        object.__setattr__(
+            self,
+            'probabilities',
+            MappingProxyType({intent: self.probabilities[intent] for intent in Intent}),
+        )
         return self
+
+    @field_serializer('probabilities')
+    def serialize_probabilities(self, value: Mapping[Intent, float]) -> dict[str, float]:
+        return {intent.value: value[intent] for intent in Intent}
+
+    @property
+    def selected_probability(self) -> float:
+        return self.probabilities[self.intent]
 
     @property
     def runner_up(self) -> float:
-        return max((value for intent, value in self.probabilities.items() if intent is not self.intent), default=0.0)
+        return max((value for intent, value in self.probabilities.items() if intent != self.intent), default=0.0)
 
     @property
     def lead(self) -> float:
-        return self.confidence - self.runner_up
+        return self.selected_probability - self.runner_up
 
     def permits_automatic_action(self, *, threshold: float = CONFIDENCE_THRESHOLD, lead: float = CONFIDENCE_LEAD) -> bool:
-        return self.intent is not Intent.AMBIGUOUS and self.confidence >= threshold and self.lead >= lead
+        return self.intent is not Intent.AMBIGUOUS and self.selected_probability >= threshold and self.lead >= lead
 
 
 class UserSettings(Contract):
@@ -187,7 +252,16 @@ class ContextSelection(Contract):
 class ToolSpec(Contract):
     name: str = Field(pattern=r'^[a-z][a-z0-9_]{0,63}$')
     description: str = Field(default='', max_length=1000)
-    parameters: Mapping[str, Any] = Field(default_factory=dict)
+    parameters: Mapping[str, Any] = Field(default_factory=lambda: MappingProxyType({}))
+
+    @field_validator('parameters', mode='after')
+    @classmethod
+    def parameters_are_immutable(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return _freeze_json(value)
+
+    @field_serializer('parameters')
+    def serialize_parameters(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return _thaw_json(value)
 
 
 class ModelRequest(Contract):
