@@ -17,10 +17,6 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import uuid4
 
-from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.domain.context_operations import (
     MemoryCandidate,
     classify,
@@ -31,22 +27,23 @@ from app.domain.context_operations import (
     verify_proposal,
 )
 from app.infrastructure.database import (
-    Conversation,
     ContextExclusion,
     ContextOperation,
     ContextRevision,
+    Conversation,
     Memory,
     SessionGate,
     now,
 )
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 SCOPE = 'conversation'
 EXCLUDE = 'exclude'
 RESTORE = 'restore'
 STOPWORDS = frozenset(
-    'a an and about all anything are as at be but by chat conversation do does '
-    'everything for from get has have i in is it its me my of on or please '
-    'remember that the this to was what when where which with you your'.split()
+    ['a', 'an', 'and', 'about', 'all', 'anything', 'are', 'as', 'at', 'be', 'but', 'by', 'chat', 'conversation', 'do', 'does', 'everything', 'for', 'from', 'get', 'has', 'have', 'i', 'in', 'is', 'it', 'its', 'me', 'my', 'of', 'on', 'or', 'please', 'remember', 'that', 'the', 'this', 'to', 'was', 'what', 'when', 'where', 'which', 'with', 'you', 'your']
 )
 TOKEN = re.compile(r'[0-9A-Za-z\u0600-\u06ff]+')
 

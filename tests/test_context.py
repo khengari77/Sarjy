@@ -1,6 +1,7 @@
 from app.domain.context import ContextRecord, compile_context
 from app.domain.pipeline import PipelineConfig, validate_pipeline
 
+
 def test_exclusions_preserve_system_and_determinism():
     records = (ContextRecord("s", "system", "Rules"), ContextRecord("m", "user", "Riyadh"))
     result = compile_context(records, 3, frozenset({"s", "m"}))

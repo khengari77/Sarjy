@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.services.memory import MemoryService, MemoryResult
+from app.services.memory import MemoryResult, MemoryService
 
 
 class MemoryWrite(BaseModel):

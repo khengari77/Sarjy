@@ -3,20 +3,19 @@ import asyncio
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from math import isfinite, sqrt
 from typing import Protocol
 from uuid import uuid4
 
 import httpx
-from fastapi import HTTPException
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 from app.infrastructure.database import Conversation, Memory, MemoryWriteRequest, Turn, now
 from app.services.budget import guarded_openai_request, reserve_in_transaction
 from app.services.memory_eligibility import blocked_memory_ids
+from fastapi import HTTPException
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 EMBEDDING_TIMEOUT_SECONDS = 20
 CLAIM_TIMEOUT_SECONDS = 30
@@ -30,7 +29,7 @@ def validate_embedding(values) -> tuple[float, ...]:
 
 
 def cosine_distance(left, right):
-    return 1 - sum(a*b for a,b in zip(left,right)) / (sqrt(sum(a*a for a in left))*sqrt(sum(b*b for b in right)))
+    return 1 - sum(a*b for a,b in zip(left,right,strict=True)) / (sqrt(sum(a*a for a in left))*sqrt(sum(b*b for b in right)))
 
 
 class Embedder(Protocol):
@@ -136,8 +135,7 @@ class MemoryService:
             raise ValueError('MEMORY_SESSION_HAS_PENDING_WRITES')
         # Authorization/source reads are complete; never hold their transaction across HTTP.
         await self.db.rollback()
-        async with self.sessions() as db:
-            async with db.begin():
+        async with self.sessions() as db, db.begin():
                 existing = await db.scalar(select(MemoryWriteRequest).where(
                     MemoryWriteRequest.owner_id == owner_id, MemoryWriteRequest.request_key == key))
                 if existing is not None:
@@ -182,7 +180,7 @@ class MemoryService:
         if claim['state'] in {'failed', 'unknown'}:
             raise HTTPException(claim['error_status'] or 503, detail={'code': claim['error_code'] or 'MEMORY_REQUEST_UNKNOWN'})
         if claim['state'] == 'reserved':
-            age = (datetime.now(timezone.utc) - datetime.fromisoformat(claim['created_at'])).total_seconds()
+            age = (datetime.now(UTC) - datetime.fromisoformat(claim['created_at'])).total_seconds()
             if age >= CLAIM_TIMEOUT_SECONDS:
                 # No automatic lease takeover: delivery after a process crash is uncertain.
                 raise HTTPException(503, detail={'code': 'MEMORY_REQUEST_UNKNOWN'})
@@ -190,17 +188,15 @@ class MemoryService:
         return None
 
     async def _mark_error(self, identifier, code, status=503, *, uncertain=False):
-        async with self.sessions() as db:
-            async with db.begin():
-                await db.execute(update(MemoryWriteRequest).where(
-                    MemoryWriteRequest.id == identifier,
-                    MemoryWriteRequest.state.in_(['reserved', 'embedded']),
-                ).values(state='unknown' if uncertain else 'failed', error_code=code,
-                    error_status=status, updated_at=now()))
+        async with self.sessions() as db, db.begin():
+            await db.execute(update(MemoryWriteRequest).where(
+                MemoryWriteRequest.id == identifier,
+                MemoryWriteRequest.state.in_(['reserved', 'embedded']),
+            ).values(state='unknown' if uncertain else 'failed', error_code=code,
+                error_status=status, updated_at=now()))
 
     async def _finalize(self, identifier, fingerprint, owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version):
-        async with self.sessions() as db:
-            async with db.begin():
+        async with self.sessions() as db, db.begin():
                 # Short row-local write lock (also effective on SQLite), never held across inference.
                 await db.execute(update(MemoryWriteRequest).where(MemoryWriteRequest.id == identifier).values(updated_at=now()))
                 row = await db.get(MemoryWriteRequest, identifier)
@@ -263,11 +259,10 @@ class MemoryService:
                     else:
                         # Backwards-compatible deterministic test/embedder adapters must not reserve again.
                         vector = validate_embedding(await self.embedder.embed(self.db,content))
-                async with self.sessions() as db:
-                    async with db.begin():
-                        await db.execute(update(MemoryWriteRequest).where(
-                            MemoryWriteRequest.id == claim['id'], MemoryWriteRequest.state == 'reserved',
-                        ).values(state='embedded', embedding=list(vector), updated_at=now()))
+                async with self.sessions() as db, db.begin():
+                    await db.execute(update(MemoryWriteRequest).where(
+                        MemoryWriteRequest.id == claim['id'], MemoryWriteRequest.state == 'reserved',
+                    ).values(state='embedded', embedding=list(vector), updated_at=now()))
             except asyncio.CancelledError:
                 await asyncio.shield(self._mark_error(claim['id'], 'MEMORY_REQUEST_UNKNOWN', uncertain=True))
                 raise

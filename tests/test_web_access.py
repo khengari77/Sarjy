@@ -1,11 +1,10 @@
 """Offline boundary test against the actual production web server."""
-import base64
 import os
-from pathlib import Path
 import shutil
 import socket
 import subprocess
 import time
+from pathlib import Path
 
 import httpx
 import pytest

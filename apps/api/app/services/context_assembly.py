@@ -6,16 +6,16 @@ this narrow seam: the default implementation uses the shared ORM, while tests
 and the not-yet-merged #5 memory service can supply the same shapes through
 ``read_context_inputs``/``MemoryCandidates``.
 """
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, Sequence
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Protocol
 
 from app.domain.context import ContextCandidate, canonical_json
 from app.domain.weather_permissions import LocationEvidence
-from app.infrastructure.database import ContextExclusion, Memory, ToolCall, Turn
+from app.infrastructure.database import Memory, ToolCall, Turn
 from app.services.memory_eligibility import blocked_memory_ids, blocked_source_turn_ids
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 HISTORY_LIMIT = 20
 TOOL_RESULT_LIMIT = 50

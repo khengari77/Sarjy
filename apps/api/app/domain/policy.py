@@ -5,7 +5,8 @@ a softer natural-language target that sits well below it so tokenizer variance,
 Arabic token density and tool-call output rarely hit the ceiling. Models never
 see token counts, and complexity never becomes a reasoning budget.
 """
-from typing import Any, Final, Mapping
+from collections.abc import Mapping
+from typing import Any, Final
 
 from app.domain.contracts import (
     TIER_CAPS,

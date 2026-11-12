@@ -2,8 +2,6 @@ import json
 import sqlite3
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.config import Settings
 from app.domain.context_operations import (
     BUDGET_PATTERN,
@@ -15,6 +13,8 @@ from app.domain.context_operations import (
     verify_proposal,
 )
 from app.main import create_app as real_create_app
+from fastapi.testclient import TestClient
+
 
 class FakeEmbedder:
     async def embed(self, db, text):

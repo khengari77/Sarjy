@@ -1,5 +1,6 @@
 import httpx
 
+
 class WeatherError(Exception):
     pass
 

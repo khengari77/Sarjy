@@ -4,10 +4,11 @@ Pure definitions only: no I/O, no provider clients, no database access. Every
 transform returns a new frozen model and never mutates its input.
 """
 import math
+from collections.abc import Mapping
 from collections.abc import Mapping as MappingABC
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Annotated, Any, Literal, Mapping, Union
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_serializer, field_validator, model_validator
 
@@ -372,18 +373,19 @@ class RestoreContextOperation(Contract):
     operation_id: str = Field(min_length=1, max_length=100)
 
 
-ACTION_TYPES = (
-    AdjustSpeakingSpeed,
-    SetSpeakingSpeed,
-    SelectApprovedVoice,
-    ShowConversationHistory,
-    OpenMemoryExplorer,
-    SetCaptionsVisible,
-    SearchMemory,
-    ProposeContextExclusion,
-    RestoreContextOperation,
+ActionType = (
+    AdjustSpeakingSpeed
+    | SetSpeakingSpeed
+    | SelectApprovedVoice
+    | ShowConversationHistory
+    | OpenMemoryExplorer
+    | SetCaptionsVisible
+    | SearchMemory
+    | ProposeContextExclusion
+    | RestoreContextOperation
 )
-Action = Annotated[Union[ACTION_TYPES], Field(discriminator='kind')]
+ACTION_TYPES = get_args(ActionType)
+Action = Annotated[ActionType, Field(discriminator='kind')]
 ACTION_ADAPTER: TypeAdapter[Action] = TypeAdapter(Action)
 
 

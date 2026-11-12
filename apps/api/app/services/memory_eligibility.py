@@ -1,8 +1,7 @@
 """One conversation-scoped exclusion policy for memory and its tracked descendants."""
+from app.infrastructure.database import ContextExclusion, Memory
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.infrastructure.database import ContextExclusion, Memory
 
 
 def _blocked_query(owner_id: str, conversation_id: str):

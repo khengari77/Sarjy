@@ -4,9 +4,8 @@ Postgres gets pgvector with a 1536-dimension embedding column and private
 grants; SQLite keeps a JSON placeholder so local development and CI run the
 same models without the extension.
 """
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 from app.infrastructure.database import EMBEDDING_TYPE
 
 revision = '0005_day2_context'

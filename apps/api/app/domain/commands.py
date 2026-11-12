@@ -1,6 +1,9 @@
 """Conservative whole-utterance command parsing: no I/O or effects."""
 from app.domain.contracts import (
-    Action, AdjustSpeakingSpeed, OpenMemoryExplorer, SetCaptionsVisible,
+    Action,
+    AdjustSpeakingSpeed,
+    OpenMemoryExplorer,
+    SetCaptionsVisible,
     ShowConversationHistory,
 )
 

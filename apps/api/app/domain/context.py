@@ -14,9 +14,10 @@ manifest, the canonical messages and the snapshot record all carry the same
 """
 import hashlib
 import json
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Iterable, Literal, Mapping, Sequence
+from typing import Any, Literal
 
 from app.domain.contracts import ContextEntry, ContextSelection
 
@@ -158,9 +159,7 @@ def compile_turn_context(
             return False
         if candidate.origin == 'memory' and candidate.status != 'active':
             return False
-        if candidate.origin == 'tool' and candidate.source not in permitted_tools:
-            return False
-        return True
+        return candidate.origin != 'tool' or candidate.source in permitted_tools
 
     selected: list[tuple[str, CandidateRole, str]] = [('system', 'system', instructions)]
     selected.extend((candidate.id, 'memory', f'Memory: {candidate.text}') for candidate in sorted(memories, key=lambda item: item.id) if eligible(candidate))

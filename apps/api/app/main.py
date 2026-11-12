@@ -1,31 +1,46 @@
 import hashlib
-import secrets
 import hmac
 import json
+import secrets
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta
 from typing import Literal
+from uuid import uuid4
 
-from fastapi import FastAPI, Depends, HTTPException, Request, Response, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, update, event, func
+from sqlalchemy import event, func, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import Settings
-from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy, ModelRequest, UserSettings, MemoryRecord, MemorySource
-from app.domain.pipeline import PipelineConfig, validate_pipeline, PRESET, KEYS
-from app.domain.policy import pipeline_instructions, normalize_pipeline
-from app.domain.sessions import admission_error
 from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
+from app.domain.contracts import (
+    TIER_CAPS,
+    MemoryRecord,
+    MemorySource,
+    ModelRequest,
+    ResponsePreference,
+    UserSettings,
+    resolve_response_policy,
+)
+from app.domain.pipeline import KEYS, PRESET, PipelineConfig, validate_pipeline
+from app.domain.policy import normalize_pipeline, pipeline_instructions
+from app.domain.sessions import admission_error
 from app.domain.weather_permissions import decide_weather_request
-from app.services.context_assembly import location_evidence, read_context_inputs
-from app.infrastructure.database import Base, Identity, Conversation, Turn, VoiceSession, SessionGate, ToolCall, Memory, UserSetting
-from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogError
+from app.infrastructure.database import (
+    Base,
+    Conversation,
+    Identity,
+    Memory,
+    SessionGate,
+    ToolCall,
+    Turn,
+    UserSetting,
+    VoiceSession,
+)
 from app.services.budget import reserve as reserve_development_budget
-from app.services.session_cleanup import cleanup_room
-from app.services.weather import get_current_weather, WeatherError
+from app.services.context_assembly import location_evidence, read_context_inputs
 from app.services.context_operations import (
     ContextOperationError,
     confirm_proposal,
@@ -34,6 +49,9 @@ from app.services.context_operations import (
     list_operations,
     undo_operation,
 )
+from app.services.session_cleanup import cleanup_room
+from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogError
+from app.services.weather import WeatherError, get_current_weather
 
 COOKIE = 'sarjy_demo'
 
@@ -200,7 +218,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
     async def identity(request: Request, db: AsyncSession = Depends(database)):
         token = request.cookies.get(COOKIE, '')
         user = await db.scalar(select(Identity).where(Identity.token_hash == hashlib.sha256(token.encode()).hexdigest()))
-        if not user or user.expires_at <= datetime.now(timezone.utc).isoformat():
+        if not user or user.expires_at <= datetime.now(UTC).isoformat():
             raise HTTPException(401, detail={'code': 'DEMO_SESSION_REQUIRED'})
         return user
 
@@ -213,10 +231,10 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
     from app.routes.actions import register_action_routes
     register_action_routes(app, database, identity, owned, catalog)
 
-    from app.routes.memory import memory_router
-    from app.services.memory import OpenAIEmbedder, MemoryService
     from app.domain.context_operations import MemoryCandidate, classify
+    from app.routes.memory import memory_router
     from app.services.context_actions import build_context_action_handlers
+    from app.services.memory import MemoryService, OpenAIEmbedder
     embedder = embedding_adapter or OpenAIEmbedder(config.openai_api_key)
 
     async def semantic_search(db, *, owner_id, conversation_id, query, limit):
@@ -240,10 +258,10 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
     async def demo(request: Request, response: Response, db: AsyncSession = Depends(database)):
         token = request.cookies.get(COOKIE, '')
         existing = await db.scalar(select(Identity).where(Identity.token_hash == hashlib.sha256(token.encode()).hexdigest()))
-        if existing and existing.expires_at > datetime.now(timezone.utc).isoformat():
+        if existing and existing.expires_at > datetime.now(UTC).isoformat():
             return {'id': existing.id}
         token = secrets.token_urlsafe(32)
-        user = Identity(id=str(uuid4()), token_hash=hashlib.sha256(token.encode()).hexdigest(), expires_at=(datetime.now(timezone.utc) + timedelta(hours=config.demo_ttl_hours)).isoformat())
+        user = Identity(id=str(uuid4()), token_hash=hashlib.sha256(token.encode()).hexdigest(), expires_at=(datetime.now(UTC) + timedelta(hours=config.demo_ttl_hours)).isoformat())
         db.add(user)
         await db.commit()
         response.set_cookie(COOKIE, token, httponly=True, secure=config.cookie_secure, samesite='lax', max_age=config.demo_ttl_hours*3600, path='/')
@@ -305,7 +323,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
             raise HTTPException(401, detail={'code': 'WORKER_AUTH_REQUIRED'})
         voice = await db.get(VoiceSession, request.headers.get('x-session-id', ''))
         statuses = {'starting', 'active', 'ended'} if allow_ended else {'starting', 'active'}
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=60 if allow_ended else 0)
+        cutoff = datetime.now(UTC) - timedelta(seconds=60 if allow_ended else 0)
         if not voice or voice.room_name != request.headers.get('x-room-name') or voice.status not in statuses or voice.expires_at <= cutoff.isoformat():
             raise HTTPException(403, detail={'code': 'SESSION_NOT_ACTIVE'})
         return voice
@@ -335,7 +353,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
             raise HTTPException(exc.status, detail={'code':exc.code}) from exc
         # Serialize reservations across API processes on both SQLite and PostgreSQL.
         await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         await db.execute(update(VoiceSession).where(VoiceSession.expires_at <= now.isoformat(), VoiceSession.status.in_(['starting','active'])).values(status='ended'))
         active = (await db.scalars(select(VoiceSession).where(VoiceSession.status.in_(['starting','active'])))).all()
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -361,7 +379,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
                 await cleanup_room(db, voice, config)
             except ValueError:
                 await db.rollback()
-            raise HTTPException(503, detail={'code':'VOICE_DISPATCH_FAILED'})
+            raise HTTPException(503, detail={'code':'VOICE_DISPATCH_FAILED'}) from None
 
     @app.post('/v1/voice/sessions/{session_id}/end')
     async def end_voice(session_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
@@ -369,7 +387,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         if not voice or voice.owner_id != user.id:
             raise HTTPException(404)
         if voice.status in {'starting','active'}:
-            await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id, VoiceSession.status.in_(['starting','active'])).values(status='ended', expires_at=datetime.now(timezone.utc).isoformat()))
+            await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id, VoiceSession.status.in_(['starting','active'])).values(status='ended', expires_at=datetime.now(UTC).isoformat()))
             await db.commit()
             await db.refresh(voice)
         try:
@@ -390,7 +408,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
     @app.post('/internal/agent/bootstrap')
     async def bootstrap(request: Request, db: AsyncSession = Depends(database)):
         voice = await worker_session(request, db)
-        changed = await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id, VoiceSession.status.in_(['starting','active']), VoiceSession.expires_at > datetime.now(timezone.utc).isoformat()).values(status='active'))
+        changed = await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id, VoiceSession.status.in_(['starting','active']), VoiceSession.expires_at > datetime.now(UTC).isoformat()).values(status='active'))
         await db.commit()
         if not changed.rowcount:
             raise HTTPException(403, detail={'code':'SESSION_NOT_ACTIVE'})

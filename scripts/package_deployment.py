@@ -1,7 +1,7 @@
 """Create source-only CranL archives. Never include local data or credentials."""
-from pathlib import Path
 import io
 import tarfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED = {'node_modules', 'build', '.svelte-kit', '__pycache__', 'test-results', 'playwright-report'}

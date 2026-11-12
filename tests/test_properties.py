@@ -1,7 +1,9 @@
-from hypothesis import given, strategies as st
-from app.domain.context import ContextRecord, compile_context
-from app.services.weather import select_location, WeatherError
 import pytest
+from app.domain.context import ContextRecord, compile_context
+from app.services.weather import WeatherError, select_location
+from hypothesis import given
+from hypothesis import strategies as st
+
 
 @given(st.lists(st.text(min_size=1), unique=True, max_size=30), st.sets(st.text(min_size=1), max_size=30))
 def test_visibility_and_compilation_are_pure(ids, excluded):
@@ -25,6 +27,7 @@ def test_budget_preserves_protected_rules_and_newest_fitting_input(texts, budget
     assert sum(len(m['content']) for m in result['messages']) <= max(budget,len('Protected'))
 
 from app.domain.sessions import admission_error
+
 
 @given(st.tuples(st.text(), st.text()), st.text())
 def test_full_call_capacity_always_rejects(active, owner):

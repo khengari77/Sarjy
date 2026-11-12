@@ -1,12 +1,12 @@
 import asyncio
 import json
-import pytest
+
 import httpx
 import openai as sdk
-from livekit.agents import llm, function_tool
-from livekit.plugins import openai
-from app.domain.contracts import ModelRequest, ContextSelection, ResponsePolicy, UserSettings
-from generation import adapter_for, GenerationFailure
+import pytest
+from app.domain.contracts import ContextSelection, ModelRequest, ResponsePolicy, UserSettings
+from generation import GenerationFailure, adapter_for
+from livekit.agents import function_tool
 from provider_factory import build_llm
 
 

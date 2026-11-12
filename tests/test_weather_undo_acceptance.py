@@ -1,8 +1,7 @@
-import sqlite3
-from fastapi.testclient import TestClient
 import app.main as main_module
-from test_context_workflow import configured, create_app, seed
+from fastapi.testclient import TestClient
 from test_context_assembly import start_turn
+from test_context_workflow import configured, create_app, seed
 
 
 def test_weather_eligibility_returns_after_signed_exclusion_and_undo(tmp_path, monkeypatch):

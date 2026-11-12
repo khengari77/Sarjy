@@ -1,7 +1,8 @@
 import asyncio
 import json
-from datetime import datetime,timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
+
 import httpx
 import main as worker
 
@@ -38,7 +39,7 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
             events.append('session-close')
     def upstream(request):
         assert request.headers['x-agent-secret']=='test-secret'
-        return httpx.Response(200,json={'pipeline':{'llm':{'provider':'openai_direct'},'max_output_tokens':128},'instructions':'Test instructions.','expires_at':datetime.now(timezone.utc).isoformat()})
+        return httpx.Response(200,json={'pipeline':{'llm':{'provider':'openai_direct'},'max_output_tokens':128},'instructions':'Test instructions.','expires_at':datetime.now(UTC).isoformat()})
     original=httpx.AsyncClient
     monkeypatch.setattr(worker.httpx,'AsyncClient',lambda **kwargs:original(**kwargs,transport=httpx.MockTransport(upstream)))
     monkeypatch.setattr(worker,'AgentSession',Session)

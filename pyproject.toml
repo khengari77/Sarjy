@@ -19,8 +19,19 @@ dependencies = [
 dev = [
     "hypothesis>=6.170.15",
     "pytest>=8",
+    "ruff>=0.9",
 ]
 [tool.pytest.ini_options]
 pythonpath = ["apps/api", "services/voice-agent"]
 testpaths = ["tests"]
 norecursedirs = [".*", "*.egg", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}", "artifacts", ".hypothesis"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E9", "F", "I", "UP", "SIM", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"apps/api/app/**" = ["B008"]

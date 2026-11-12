@@ -1,17 +1,21 @@
 """Durable request identity protects both provenance and paid delivery."""
 import asyncio
-import json
-from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from fastapi import HTTPException
-from sqlalchemy import select, update
-
-from app.infrastructure.database import ContextExclusion, ContextOperation, DevelopmentBudget, Memory, MemoryWriteRequest, Turn
+from app.infrastructure.database import (
+    ContextExclusion,
+    ContextOperation,
+    DevelopmentBudget,
+    Memory,
+    MemoryWriteRequest,
+    Turn,
+)
 from app.services.memory import MemoryService, OpenAIEmbedder, _fingerprint
 from app.services.memory_eligibility import blocked_memory_ids, blocked_source_turn_ids
+from fastapi import HTTPException
+from sqlalchemy import select, update
 from test_memory import FakeEmbedder, setup
 
 
@@ -98,7 +102,7 @@ def test_embedded_recovery_and_abandoned_claim_do_not_reserve_again(tmp_path):
                 abandoned,_=await service._claim('alice','a1',None,'Other','abandoned',None,None,fingerprint)
             async with sessions() as db:
                 await db.execute(update(MemoryWriteRequest).where(MemoryWriteRequest.id==abandoned['id']).values(
-                    created_at=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat()));await db.commit()
+                    created_at=(datetime.now(UTC)-timedelta(minutes=1)).isoformat()));await db.commit()
             async with sessions() as db:
                 with pytest.raises(HTTPException) as error:
                     await MemoryService(db,fake).create_memory('alice','a1',None,'Other','abandoned')

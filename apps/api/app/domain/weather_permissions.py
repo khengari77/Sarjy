@@ -5,8 +5,9 @@ unless the user explicitly supplied that city in the current turn. The
 imperative shell performs the actual boundary call only after this decision.
 """
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Literal
 
 LOCATION_EXCLUDED = 'LOCATION_EXCLUDED'
 

@@ -1,13 +1,12 @@
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.domain.context import compile_turn_context, validate_assembly
 from app.domain.weather_permissions import LocationEvidence, decide_weather_request
 from app.main import create_app
+from fastapi.testclient import TestClient
 from test_context_assembly import configured, seed_memories
 
 
@@ -59,7 +58,7 @@ def test_real_reader_filters_tracked_sources_derivatives_and_unknown_tools_but_k
                 db.execute('INSERT INTO tool_calls (id,turn_id,request_id,name,result) VALUES (?,?,?,?,?)',
                     (identifier, parent, identifier, 'get_current_weather', json.dumps({'city': 'Paris'})))
             db.execute('INSERT INTO voice_sessions (id,conversation_id,owner_id,room_name,status,expires_at,pipeline) VALUES (?,?,?,?,?,?,?)',
-                ('session', chat, owner, 'room', 'active', (datetime.now(timezone.utc)+timedelta(minutes=10)).isoformat(), '{}'))
+                ('session', chat, owner, 'room', 'active', (datetime.now(UTC)+timedelta(minutes=10)).isoformat(), '{}'))
         headers = {'x-agent-secret': 'test-service-secret', 'x-session-id': 'session', 'x-room-name': 'room'}
         response = client.post('/internal/agent/turn/start', headers=headers, json={'request_id': 'next', 'text': 'What do you remember?'})
         assert response.status_code == 200, response.text

@@ -2,14 +2,11 @@ import ast
 from pathlib import Path
 
 import pytest
-from hypothesis import given, strategies as st
-from pydantic import ValidationError
-
 from app.domain.contracts import (
     PREFERENCE_MAX_TIER,
     TIER_CAPS,
-    ResponsePreference,
     ResponsePolicy,
+    ResponsePreference,
     resolve_response_policy,
 )
 from app.domain.pipeline import PipelineConfig
@@ -23,6 +20,9 @@ from app.domain.policy import (
     pipeline_instructions,
     pipeline_policy,
 )
+from hypothesis import given
+from hypothesis import strategies as st
+from pydantic import ValidationError
 
 WORD_TARGETS = {1: 15, 2: 40, 3: 90, 4: 180, 5: 350}
 ROOT = Path(__file__).resolve().parents[1]

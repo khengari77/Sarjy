@@ -1,6 +1,7 @@
-from fastapi.testclient import TestClient
-from app.main import create_app
 from app.config import Settings
+from app.main import create_app
+from fastapi.testclient import TestClient
+
 
 def test_identity_isolation_and_durable_history(tmp_path):
     settings = Settings(database_url=f'sqlite+aiosqlite:///{tmp_path}/test.db', openai_api_key='', deepseek_api_key='', deepgram_api_key='', eleven_api_key='', _env_file=None)

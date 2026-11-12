@@ -1,5 +1,6 @@
 """Keep backend-owned tables inaccessible through Supabase's public Data API."""
 from alembic import op
+
 revision = '0003'
 down_revision = '0002'
 TABLES = ('identities','conversations','turns','voice_sessions','tool_calls','session_gate','development_budgets')

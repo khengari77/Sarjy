@@ -4,8 +4,8 @@ The repository may contain ignored worktree copies under ``artifacts/``.  Withou
 an explicit ``testpaths`` setting pytest recursively collects those copies and
 fails before it reaches the real suite, so the documented command and CI drift.
 """
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 

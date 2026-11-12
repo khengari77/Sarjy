@@ -5,15 +5,20 @@ import json
 import time
 from uuid import uuid4
 
+from app.domain.contracts import (
+    AdjustSpeakingSpeed,
+    OpenMemoryExplorer,
+    SelectApprovedVoice,
+    SetCaptionsVisible,
+    SetSpeakingSpeed,
+    ShowConversationHistory,
+    UserSettings,
+    apply_settings_action,
+)
+from app.infrastructure.database import ContextOperation, Conversation, SessionGate, SettingRevision, UserSetting, now
 from fastapi import HTTPException
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker
-
-from app.domain.contracts import (
-    AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed,
-    ShowConversationHistory, OpenMemoryExplorer, UserSettings, apply_settings_action,
-)
-from app.infrastructure.database import ContextOperation, Conversation, SessionGate, SettingRevision, UserSetting, now
 
 SETTING_ACTIONS = (AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed)
 
@@ -95,9 +100,8 @@ async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected
             await _delete_preparation(factory, preparation_id)
             raise
     try:
-        async with factory() as effects:
-            async with effects.begin():
-                return await _dispatch_transaction(effects, owner_id=owner_id, conversation_id=conversation_id,
+        async with factory() as effects, effects.begin():
+            return await _dispatch_transaction(effects, owner_id=owner_id, conversation_id=conversation_id,
                     request_id=request_id, expected_revision=expected_revision, action=action, catalog=catalog, handlers=handlers,
                     prepared=prepared, prepared_operation_id=preparation_id)
     except BaseException:
@@ -107,50 +111,49 @@ async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected
 
 
 async def _claim_preparation(factory, *, owner_id, conversation_id, key, fingerprint):
-    async with factory() as claim_db:
-        async with claim_db.begin():
-            conversation = await claim_db.get(Conversation, conversation_id)
-            if not conversation or conversation.owner_id != owner_id:
-                raise HTTPException(404, detail={'code': 'CONVERSATION_NOT_FOUND'})
-            if claim_db.bind.dialect.name == 'sqlite':
-                from sqlalchemy.dialects.sqlite import insert
-            elif claim_db.bind.dialect.name == 'postgresql':
-                from sqlalchemy.dialects.postgresql import insert
-            else:
-                raise ValueError('Unsupported dispatch database')
-            identifier = str(uuid4())
-            values = dict(id=identifier, owner_id=owner_id, conversation_id=conversation_id,
-                command_type='DispatchAction', payload={'fingerprint': fingerprint}, revision_before=None,
-                revision_after=None, idempotency_key=key, outcome='preparing', created_at=now())
-            result = await claim_db.execute(insert(ContextOperation).values(**values).on_conflict_do_nothing(
-                index_elements=['idempotency_key']))
-            if result.rowcount == 1:
-                return 'winner', identifier, None
-            existing = await claim_db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
-            if existing is None:
-                raise HTTPException(503, detail={'code': 'ACTION_REQUEST_UNKNOWN'})
-            if existing.owner_id != owner_id or existing.payload.get('fingerprint') != fingerprint:
-                raise HTTPException(409, detail={'code': 'IDEMPOTENCY_CONFLICT'})
-            if existing.outcome == 'completed':
-                return 'replay', None, existing.payload['result']
-            if existing.outcome == 'preparing':
-                return 'in_progress', existing.id, None
-            await claim_db.delete(existing)
-            await claim_db.flush()
-            retry = await claim_db.execute(insert(ContextOperation).values(**values).on_conflict_do_nothing(
-                index_elements=['idempotency_key']))
-            if retry.rowcount == 1:
-                return 'winner', identifier, None
-            existing = await claim_db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
-            if existing is None:
-                raise HTTPException(503, detail={'code': 'ACTION_REQUEST_UNKNOWN'})
-            if existing.owner_id != owner_id or existing.payload.get('fingerprint') != fingerprint:
-                raise HTTPException(409, detail={'code': 'IDEMPOTENCY_CONFLICT'})
-            if existing.outcome == 'completed':
-                return 'replay', None, existing.payload['result']
-            if existing.outcome == 'preparing':
-                return 'in_progress', existing.id, None
-            raise HTTPException(503, detail={'code': 'ACTION_REQUEST_FAILED'})
+    async with factory() as claim_db, claim_db.begin():
+        conversation = await claim_db.get(Conversation, conversation_id)
+        if not conversation or conversation.owner_id != owner_id:
+            raise HTTPException(404, detail={'code': 'CONVERSATION_NOT_FOUND'})
+        if claim_db.bind.dialect.name == 'sqlite':
+            from sqlalchemy.dialects.sqlite import insert
+        elif claim_db.bind.dialect.name == 'postgresql':
+            from sqlalchemy.dialects.postgresql import insert
+        else:
+            raise ValueError('Unsupported dispatch database')
+        identifier = str(uuid4())
+        values = dict(id=identifier, owner_id=owner_id, conversation_id=conversation_id,
+            command_type='DispatchAction', payload={'fingerprint': fingerprint}, revision_before=None,
+            revision_after=None, idempotency_key=key, outcome='preparing', created_at=now())
+        result = await claim_db.execute(insert(ContextOperation).values(**values).on_conflict_do_nothing(
+            index_elements=['idempotency_key']))
+        if result.rowcount == 1:
+            return 'winner', identifier, None
+        existing = await claim_db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
+        if existing is None:
+            raise HTTPException(503, detail={'code': 'ACTION_REQUEST_UNKNOWN'})
+        if existing.owner_id != owner_id or existing.payload.get('fingerprint') != fingerprint:
+            raise HTTPException(409, detail={'code': 'IDEMPOTENCY_CONFLICT'})
+        if existing.outcome == 'completed':
+            return 'replay', None, existing.payload['result']
+        if existing.outcome == 'preparing':
+            return 'in_progress', existing.id, None
+        await claim_db.delete(existing)
+        await claim_db.flush()
+        retry = await claim_db.execute(insert(ContextOperation).values(**values).on_conflict_do_nothing(
+            index_elements=['idempotency_key']))
+        if retry.rowcount == 1:
+            return 'winner', identifier, None
+        existing = await claim_db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
+        if existing is None:
+            raise HTTPException(503, detail={'code': 'ACTION_REQUEST_UNKNOWN'})
+        if existing.owner_id != owner_id or existing.payload.get('fingerprint') != fingerprint:
+            raise HTTPException(409, detail={'code': 'IDEMPOTENCY_CONFLICT'})
+        if existing.outcome == 'completed':
+            return 'replay', None, existing.payload['result']
+        if existing.outcome == 'preparing':
+            return 'in_progress', existing.id, None
+        raise HTTPException(503, detail={'code': 'ACTION_REQUEST_FAILED'})
 
 
 async def _wait_for_preparation(factory, *, key, owner_id, fingerprint):
@@ -171,10 +174,9 @@ async def _wait_for_preparation(factory, *, key, owner_id, fingerprint):
 
 
 async def _delete_preparation(factory, preparation_id):
-    async with factory() as db:
-        async with db.begin():
-            await db.execute(delete(ContextOperation).where(
-                ContextOperation.id == preparation_id, ContextOperation.outcome == 'preparing'))
+    async with factory() as db, db.begin():
+        await db.execute(delete(ContextOperation).where(
+            ContextOperation.id == preparation_id, ContextOperation.outcome == 'preparing'))
 
 
 async def _dispatch_transaction(db, *, owner_id, conversation_id, request_id, expected_revision, action, catalog, handlers, prepared=None, prepared_operation_id=None):

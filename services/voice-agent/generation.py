@@ -2,8 +2,9 @@
 import asyncio
 from dataclasses import dataclass
 from typing import Literal
-from livekit.agents import llm, APIConnectOptions, APIStatusError, APIConnectionError, APITimeoutError
+
 from app.domain.contracts import ModelRequest
+from livekit.agents import APIConnectionError, APIConnectOptions, APIStatusError, APITimeoutError, llm
 from livekit.agents.llm.utils import build_legacy_openai_schema
 
 

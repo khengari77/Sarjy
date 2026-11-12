@@ -5,12 +5,12 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-from hypothesis import given, strategies as st
-
 from app.config import Settings
 from app.main import create_app
 from app.services.voices import ElevenLabsVoices, public_catalog
+from fastapi.testclient import TestClient
+from hypothesis import given
+from hypothesis import strategies as st
 
 
 @given(st.lists(st.tuples(st.text(min_size=1), st.text()), max_size=20))

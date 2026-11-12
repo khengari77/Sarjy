@@ -4,12 +4,11 @@ import os
 from uuid import uuid4
 
 import pytest
+from app.infrastructure.database import Conversation, Identity, Memory
+from app.services.memory import MemoryService
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-
-from app.infrastructure.database import Identity, Conversation, Memory
-from app.services.memory import MemoryService
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_memory import FakeEmbedder
 
 

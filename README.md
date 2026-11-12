@@ -24,7 +24,7 @@ For real speech, configure `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET
 
 ```sh
 uv run -m livekit.agents download-files
-uv run services/voice-agent/main.py dev
+PYTHONPATH=apps/api uv run services/voice-agent/main.py dev
 ```
 
 The temporary default is Nova-3 English → OpenAI GPT-6 Luna → ElevenLabs Flash v2.5. DeepSeek Flash direct remains available for an explicit switch after funding. No fallback is silently selected. Arabic voice quality and live provider entitlement still require manual validation.

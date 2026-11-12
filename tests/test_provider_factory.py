@@ -1,8 +1,7 @@
 from types import SimpleNamespace
 
-import pytest
-
 import provider_factory
+import pytest
 
 CREDENTIALS = {
     'OPENAI_API_KEY': 'openai-test',

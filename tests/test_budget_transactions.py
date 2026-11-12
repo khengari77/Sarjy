@@ -1,9 +1,10 @@
 import asyncio
+
 import pytest
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from app.infrastructure.database import Base, Identity, DevelopmentBudget
+from app.infrastructure.database import Base, DevelopmentBudget, Identity
 from app.services.budget import guarded_openai_request, reserve_in_transaction
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 def test_guard_never_commits_or_rolls_back_business_changes(tmp_path):
