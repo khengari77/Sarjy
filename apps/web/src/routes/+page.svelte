@@ -12,6 +12,9 @@
   import { LiveKitVoiceRuntime } from '../lib/audio/voice-runtime';
   import VoiceOrb from '../lib/orb/VoiceOrb.svelte';
   import { createEnvelopeMeter, type EnvelopeMeter } from '../lib/orb/audioEnvelope';
+  import LiveCaptionPreview from '../lib/chat/LiveCaptionPreview.svelte';
+  import TranscriptDrawer from '../lib/chat/TranscriptDrawer.svelte';
+  import ToolTraceChip from '../lib/chat/ToolTraceChip.svelte';
   import { deriveOrbPresentation, INITIAL_STATE, type VoicePhase } from '../lib/orb/orbState';
   import AppShell from '../lib/ui/AppShell.svelte';
 
@@ -37,6 +40,8 @@
   let audioBlocked = $state(false);
   let live = $state<SessionConfig | null>(null);
   let micLevel = $state(0);
+  let captionsVisible = $state(true);
+  let transcriptOpen = $state(false);
   let micMeter: EnvelopeMeter | null = null;
   let meterTimer: ReturnType<typeof setInterval> | null = null;
   let runtime: LiveKitVoiceRuntime;
@@ -236,6 +241,7 @@
   onMount(() => {
     arabic = localStorage.getItem('sarjy-language') === 'ar';
     voiceId = localStorage.getItem('sarjy-voice-id') || '';
+    captionsVisible = localStorage.getItem('sarjy-captions') !== 'off';
     runtime = new LiveKitVoiceRuntime();
     const unsubscribe = runtime.subscribe((event) => {
       if (event.type === 'status') {
@@ -268,6 +274,11 @@
       if (live) void request('voice/sessions/' + live.id + '/end', {}).catch(() => {});
     };
   });
+
+  function toggleCaptions() {
+    captionsVisible = !captionsVisible;
+    localStorage.setItem('sarjy-captions', captionsVisible ? 'on' : 'off');
+  }
 
   function toggleLanguage() {
     arabic = !arabic;
@@ -330,14 +341,20 @@
       {/if}
 
       {#if turns.length}
-        <div class="turns">
-          {#each turns as turn}
-            <article class="turn" class:assistant={turn.role === 'assistant'} dir="auto">
-              <small>{turn.role} · {turn.status}</small>
-              <p>{turn.text}</p>
-            </article>
-          {/each}
-        </div>
+        <LiveCaptionPreview
+          {turns}
+          {arabic}
+          {captionsVisible}
+          expanded={transcriptOpen}
+          onexpand={() => (transcriptOpen = true)}
+        />
+        {#if toolCalls.length}
+          <div class="trace-row">
+            {#each toolCalls as tool}
+              <ToolTraceChip name={tool.name} {arabic} />
+            {/each}
+          </div>
+        {/if}
       {:else}
         <div class="idle-block">
           <VoiceOrb
@@ -358,12 +375,6 @@
         </div>
       {/if}
 
-      {#each toolCalls as tool}
-        <details class="tool-trace">
-          <summary>{tool.name} · Open-Meteo</summary>
-          <pre dir="ltr">{JSON.stringify(tool.result, null, 2)}</pre>
-        </details>
-      {/each}
     </section>
 
     <div class="controls">
@@ -454,13 +465,25 @@
 
       <section class="panel-block">
         <h2>{arabic ? 'التجربة' : 'Experience'}</h2>
+        <label class="toggle-row">
+          <input type="checkbox" checked={captionsVisible} onchange={toggleCaptions} />
+          <span>{arabic ? 'إظهار الترجمة' : 'Show captions'}</span>
+        </label>
         <p class="muted-text">
-          {arabic ? 'سيُضاف التحكم بالترجمة وسرعة الكلام هنا.' : 'Captions and speaking-speed controls will live here.'}
+          {arabic ? 'سيُضاف التحكم بسرعة الكلام هنا.' : 'Speaking-speed controls will live here.'}
         </p>
       </section>
     </div>
   {/snippet}
 </AppShell>
+
+<TranscriptDrawer
+  open={transcriptOpen}
+  {turns}
+  tools={toolCalls}
+  {arabic}
+  onclose={() => (transcriptOpen = false)}
+/>
 
 <style>
   .ghost-button,
@@ -618,51 +641,26 @@
     max-width: 46ch;
   }
 
-  .turns {
-    width: 100%;
+  .trace-row {
     display: flex;
-    flex-direction: column;
-    gap: 12px;
-    overflow-y: auto;
-    padding: 8px 2px;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
   }
 
-  .turn {
-    text-align: start;
-    background: var(--surface-elevated);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-panel);
-    padding: 14px 16px;
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    font-size: 14px;
+    color: var(--text-primary);
   }
 
-  .turn.assistant {
-    background: color-mix(in srgb, var(--surface-elevated) 70%, var(--bg-app));
-  }
-
-  .turn small {
-    color: var(--text-muted);
-    font-size: 11px;
-    letter-spacing: 0.04em;
-  }
-
-  .turn p {
-    margin: 6px 0 0;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-
-  .tool-trace {
-    width: 100%;
-    text-align: start;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-control);
-    padding: 10px 12px;
-    color: var(--text-muted);
-  }
-
-  .tool-trace pre {
-    overflow-x: auto;
-    font-size: 12px;
+  .toggle-row input {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--orb-idle);
   }
 
   .controls {

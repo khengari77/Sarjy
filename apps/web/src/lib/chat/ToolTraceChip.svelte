@@ -1,0 +1,34 @@
+<script lang="ts">
+  interface Props {
+    name: string;
+    arabic: boolean;
+  }
+
+  let { name, arabic }: Props = $props();
+
+  const FRIENDLY: Record<string, { en: string; ar: string }> = {
+    get_weather: { en: 'Checked weather', ar: 'تحقّق من الطقس' },
+    weather: { en: 'Checked weather', ar: 'تحقّق من الطقس' },
+    search_memory: { en: 'Searched memory', ar: 'بحث في الذاكرة' },
+    propose_context_exclusion: { en: 'Prepared a context change', ar: 'جهّز تغييرًا في السياق' }
+  };
+
+  const label = $derived(FRIENDLY[name]?.[arabic ? 'ar' : 'en'] ?? (arabic ? 'أداة' : `Used ${name}`));
+</script>
+
+<span class="chip">{label}</span>
+
+<style>
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle);
+    background: var(--surface-elevated);
+    color: var(--text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+</style>
