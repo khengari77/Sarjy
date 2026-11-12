@@ -24,6 +24,14 @@ from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogErro
 from app.services.budget import reserve as reserve_development_budget
 from app.services.session_cleanup import cleanup_room
 from app.services.weather import get_current_weather, WeatherError
+from app.services.context_operations import (
+    ContextOperationError,
+    confirm_proposal,
+    context_state,
+    create_proposal,
+    list_operations,
+    undo_operation,
+)
 
 COOKIE = 'sarjy_demo'
 
@@ -52,6 +60,25 @@ class WeatherInput(BaseModel):
     request_id: str = Field(min_length=1, max_length=100)
     city: str = Field(min_length=1, max_length=120)
     country: str | None = Field(default=None, max_length=120)
+
+class ContextProposalInput(BaseModel):
+    query: str = Field(min_length=1, max_length=200)
+    keep: tuple[str, ...] = ()
+    limit: int = Field(default=20, ge=1, le=20)
+
+class ContextConfirmInput(BaseModel):
+    proposal: str = Field(min_length=1, max_length=20000)
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=100)
+
+class ContextUndoInput(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=36)
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=100)
+
+
+def _context_error(exc: ContextOperationError) -> HTTPException:
+    return HTTPException(exc.status, detail={'code': exc.code})
 
 
 def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None):
@@ -348,6 +375,67 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         await owned(conversation_id, user, db)
         rows = (await db.scalars(select(ToolCall).join(Turn).where(Turn.conversation_id == conversation_id))).all()
         return [{'id':row.id, 'turn_id':row.turn_id, 'name':row.name, 'result':row.result} for row in rows]
+
+    def proposal_secret() -> str:
+        return config.context_proposal_secret or config.agent_service_secret
+
+    @app.get('/v1/conversations/{conversation_id}/context')
+    async def get_context(conversation_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
+        try:
+            return await context_state(db, owner_id=user.id, conversation_id=conversation_id)
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+    @app.get('/v1/conversations/{conversation_id}/context/operations')
+    async def get_context_operations(conversation_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
+        try:
+            return await list_operations(db, owner_id=user.id, conversation_id=conversation_id)
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+    @app.post('/v1/conversations/{conversation_id}/context/proposals')
+    async def propose_context(conversation_id: str, body: ContextProposalInput, user=Depends(identity), db: AsyncSession = Depends(database)):
+        try:
+            return await create_proposal(
+                db,
+                owner_id=user.id,
+                conversation_id=conversation_id,
+                query=body.query,
+                keep=body.keep,
+                limit=body.limit,
+                secret=proposal_secret(),
+            )
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+    @app.post('/v1/conversations/{conversation_id}/context/confirm')
+    async def confirm_context(conversation_id: str, body: ContextConfirmInput, user=Depends(identity), db: AsyncSession = Depends(database)):
+        try:
+            return await confirm_proposal(
+                db,
+                owner_id=user.id,
+                conversation_id=conversation_id,
+                proposal=body.proposal,
+                expected_revision=body.expected_revision,
+                idempotency_key=body.idempotency_key,
+                secret=proposal_secret(),
+            )
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+    @app.post('/v1/conversations/{conversation_id}/context/undo')
+    async def undo_context(conversation_id: str, body: ContextUndoInput, user=Depends(identity), db: AsyncSession = Depends(database)):
+        try:
+            return await undo_operation(
+                db,
+                owner_id=user.id,
+                conversation_id=conversation_id,
+                operation_id=body.operation_id,
+                expected_revision=body.expected_revision,
+                idempotency_key=body.idempotency_key,
+            )
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
 
 
     return app
