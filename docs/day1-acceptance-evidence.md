@@ -44,14 +44,27 @@ still consumes a reservation.
 
 Commands used (read-only; no counter resets, identity rotation or limit changes):
 
+Prepare a libpq-compatible URL in Bash without changing the application configuration:
+
 ```sh
-psql "$DATABASE_URL" -c \
+case "$DATABASE_URL" in
+  postgresql+asyncpg://*) export PSQL_DATABASE_URL="postgresql://${DATABASE_URL#postgresql+asyncpg://}" ;;
+  postgresql://*|postgres://*) export PSQL_DATABASE_URL="$DATABASE_URL" ;;
+  *) echo 'Expected a PostgreSQL connection URL' >&2; exit 1 ;;
+esac
+```
+
+This changes only the driver prefix and preserves encoded credentials and connection parameters.
+Do not print the derived value. Keep `DATABASE_URL` and `.env` unchanged.
+
+```sh
+psql "$PSQL_DATABASE_URL" -c \
   "SELECT owner_id, count(*) FROM voice_sessions WHERE owner_id = '<owner-id>' GROUP BY owner_id;"
-psql "$DATABASE_URL" -c \
+psql "$PSQL_DATABASE_URL" -c \
   "SELECT count(*) FROM voice_sessions
      WHERE expires_at::timestamptz >=
        (date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC');"
-psql "$DATABASE_URL" -c \
+psql "$PSQL_DATABASE_URL" -c \
   "SELECT count(*) FROM voice_sessions WHERE status IN ('starting', 'active');"
 ```
 
@@ -89,7 +102,7 @@ following read-only query for each exact session ID. Read only the `id` field in
 Network response; it also contains a token, which must never be copied:
 
 ```sh
-psql "$DATABASE_URL" -c \
+psql "$PSQL_DATABASE_URL" -c \
   "SELECT id, status, expires_at, room_cleanup_completed_at
      FROM voice_sessions WHERE id = '<session-id>';"
 ```
@@ -127,7 +140,7 @@ Read-only before and after the pass. Values are reserved units, not vendor invoi
 Command used (hosted `DATABASE_URL` injected; no writes):
 
 ```sh
-psql "$DATABASE_URL" -c \
+psql "$PSQL_DATABASE_URL" -c \
   "SELECT day, provider, reserved_units FROM development_budgets ORDER BY day, provider;"
 ```
 

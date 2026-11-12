@@ -42,14 +42,27 @@ already have consumed part of the identity allowance, so check before running.
 
 Read-only capacity checks (owner id is the coordinator's identity; do not write to these tables):
 
+Prepare a libpq-compatible URL in Bash without changing the application configuration:
+
 ```sh
-psql "$DATABASE_URL" -c \
+case "$DATABASE_URL" in
+  postgresql+asyncpg://*) export PSQL_DATABASE_URL="postgresql://${DATABASE_URL#postgresql+asyncpg://}" ;;
+  postgresql://*|postgres://*) export PSQL_DATABASE_URL="$DATABASE_URL" ;;
+  *) echo 'Expected a PostgreSQL connection URL' >&2; exit 1 ;;
+esac
+```
+
+This changes only the driver prefix and preserves encoded credentials and connection parameters.
+Do not print the derived value. Keep `DATABASE_URL` and `.env` unchanged.
+
+```sh
+psql "$PSQL_DATABASE_URL" -c \
   "SELECT owner_id, count(*) FROM voice_sessions WHERE owner_id = '<owner-id>' GROUP BY owner_id;"
-psql "$DATABASE_URL" -c \
+psql "$PSQL_DATABASE_URL" -c \
   "SELECT count(*) FROM voice_sessions
      WHERE expires_at::timestamptz >=
        (date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC');"
-psql "$DATABASE_URL" -c \
+psql "$PSQL_DATABASE_URL" -c \
   "SELECT count(*) FROM voice_sessions WHERE status IN ('starting', 'active');"
 ```
 
@@ -99,7 +112,7 @@ Rules that keep this honest:
 - Capture the ledger read-only before and after the whole pass:
 
   ```sh
-  psql "$DATABASE_URL" -c \
+  psql "$PSQL_DATABASE_URL" -c \
     "SELECT day, provider, reserved_units FROM development_budgets ORDER BY day, provider;"
   ```
 
@@ -110,7 +123,7 @@ Rules that keep this honest:
   Query that exact ID, not just the latest sessions:
 
   ```sh
-  psql "$DATABASE_URL" -c \
+  psql "$PSQL_DATABASE_URL" -c \
     "SELECT id, status, expires_at, room_cleanup_completed_at
        FROM voice_sessions WHERE id = '<session-id>';"
   ```
