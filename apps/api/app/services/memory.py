@@ -135,6 +135,27 @@ def _claim_value(row):
     }
 
 
+def _validate_write(content, key, previous_id, expected_version) -> None:
+    if (
+        not isinstance(content, str)
+        or not content.strip()
+        or len(content) > 4000
+        or not isinstance(key, str)
+        or not 1 <= len(key) <= 100
+    ):
+        raise HTTPException(422, detail={"code": "INVALID_MEMORY_REQUEST"})
+    if previous_id is not None and (not isinstance(expected_version, int) or expected_version < 1):
+        raise HTTPException(422, detail={"code": "INVALID_MEMORY_VERSION"})
+
+
+async def _require_source_turn(db: AsyncSession, source_turn_id, conversation_id) -> None:
+    if source_turn_id is None:
+        return
+    turn = await db.scalar(select(Turn).where(Turn.id == source_turn_id, Turn.conversation_id == conversation_id))
+    if turn is None:
+        raise HTTPException(404, detail={"code": "SOURCE_TURN_NOT_FOUND"})
+
+
 class MemoryService:
     def __init__(self, db: AsyncSession, embedder: Embedder):
         self.db, self.embedder = db, embedder
@@ -316,23 +337,9 @@ class MemoryService:
             return result
 
     async def _write(self, owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version):
-        if (
-            not isinstance(content, str)
-            or not content.strip()
-            or len(content) > 4000
-            or not isinstance(key, str)
-            or not 1 <= len(key) <= 100
-        ):
-            raise HTTPException(422, detail={"code": "INVALID_MEMORY_REQUEST"})
-        if previous_id is not None and (not isinstance(expected_version, int) or expected_version < 1):
-            raise HTTPException(422, detail={"code": "INVALID_MEMORY_VERSION"})
+        _validate_write(content, key, previous_id, expected_version)
         await owned_conversation(self.db, owner_id, conversation_id)
-        if source_turn_id is not None:
-            turn = await self.db.scalar(
-                select(Turn).where(Turn.id == source_turn_id, Turn.conversation_id == conversation_id)
-            )
-            if turn is None:
-                raise HTTPException(404, detail={"code": "SOURCE_TURN_NOT_FOUND"})
+        await _require_source_turn(self.db, source_turn_id, conversation_id)
         fingerprint = _fingerprint(conversation_id, source_turn_id, content, previous_id, expected_version)
         claim, winner = await self._claim(
             owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version, fingerprint
@@ -342,34 +349,7 @@ class MemoryService:
             if result is not None:
                 return result
         else:
-            try:
-                async with asyncio.timeout(EMBEDDING_TIMEOUT_SECONDS):
-                    if hasattr(self.embedder, "embed_reserved"):
-                        vector = validate_embedding(await self.embedder.embed_reserved(content))
-                    else:
-                        # Backwards-compatible deterministic test/embedder adapters must not reserve again.
-                        vector = validate_embedding(await self.embedder.embed(self.db, content))
-                async with self.sessions() as db, db.begin():
-                    await db.execute(
-                        update(MemoryWriteRequest)
-                        .where(
-                            MemoryWriteRequest.id == claim["id"],
-                            MemoryWriteRequest.state == "reserved",
-                        )
-                        .values(state="embedded", embedding=list(vector), updated_at=now())
-                    )
-            except asyncio.CancelledError:
-                await asyncio.shield(self._mark_error(claim["id"], "MEMORY_REQUEST_UNKNOWN", uncertain=True))
-                raise
-            except EmbeddingFailure as exc:
-                await self._mark_error(claim["id"], exc.detail["code"], uncertain=exc.uncertain)
-                raise
-            except (httpx.HTTPError, TimeoutError) as exc:
-                await self._mark_error(claim["id"], "MEMORY_REQUEST_UNKNOWN", uncertain=True)
-                raise HTTPException(503, detail={"code": "MEMORY_REQUEST_UNKNOWN"}) from exc
-            except (ValueError, TypeError, KeyError, IndexError, OverflowError) as exc:
-                await self._mark_error(claim["id"], "EMBEDDING_RESPONSE_INVALID")
-                raise HTTPException(503, detail={"code": "EMBEDDING_RESPONSE_INVALID"}) from exc
+            await self._embed_claim(claim, content)
         try:
             return await self._finalize(
                 claim["id"],
@@ -386,6 +366,33 @@ class MemoryService:
             if exc.status_code == 409:
                 await self._mark_error(claim["id"], exc.detail["code"], 409)
             raise
+
+    async def _embed_claim(self, claim, content):
+        try:
+            async with asyncio.timeout(EMBEDDING_TIMEOUT_SECONDS):
+                if hasattr(self.embedder, "embed_reserved"):
+                    vector = validate_embedding(await self.embedder.embed_reserved(content))
+                else:
+                    # Backwards-compatible deterministic test/embedder adapters must not reserve again.
+                    vector = validate_embedding(await self.embedder.embed(self.db, content))
+            async with self.sessions() as db, db.begin():
+                await db.execute(
+                    update(MemoryWriteRequest)
+                    .where(MemoryWriteRequest.id == claim["id"], MemoryWriteRequest.state == "reserved")
+                    .values(state="embedded", embedding=list(vector), updated_at=now())
+                )
+        except asyncio.CancelledError:
+            await asyncio.shield(self._mark_error(claim["id"], "MEMORY_REQUEST_UNKNOWN", uncertain=True))
+            raise
+        except EmbeddingFailure as exc:
+            await self._mark_error(claim["id"], exc.detail["code"], uncertain=exc.uncertain)
+            raise
+        except (httpx.HTTPError, TimeoutError) as exc:
+            await self._mark_error(claim["id"], "MEMORY_REQUEST_UNKNOWN", uncertain=True)
+            raise HTTPException(503, detail={"code": "MEMORY_REQUEST_UNKNOWN"}) from exc
+        except (ValueError, TypeError, KeyError, IndexError, OverflowError) as exc:
+            await self._mark_error(claim["id"], "EMBEDDING_RESPONSE_INVALID")
+            raise HTTPException(503, detail={"code": "EMBEDDING_RESPONSE_INVALID"}) from exc
 
     async def search_memories(self, owner_id, conversation_id, query, limit=5):
         if not isinstance(query, str) or not query.strip() or len(query) > 4000 or not 1 <= limit <= 20:

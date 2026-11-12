@@ -51,7 +51,7 @@ class WeatherInput(BaseModel):
     country: str | None = Field(default=None, max_length=120)
 
 
-def register_worker_routes(app, *, config: Settings, database):
+def _session_guard(config: Settings):
     async def worker_session(request: Request, db: AsyncSession, allow_ended: bool = False):
         secret = request.headers.get("x-agent-secret", "")
         if not config.agent_service_secret or not hmac.compare_digest(secret, config.agent_service_secret):
@@ -68,6 +68,18 @@ def register_worker_routes(app, *, config: Settings, database):
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
         return voice
 
+    return worker_session
+
+
+def register_worker_routes(app, *, config: Settings, database):
+    guard = _session_guard(config)
+    _register_budget_routes(app, config=config, database=database)
+    _register_session_routes(app, database=database, guard=guard)
+    _register_turn_routes(app, database=database, guard=guard)
+    _register_tool_routes(app, database=database, guard=guard)
+
+
+def _register_budget_routes(app, *, config: Settings, database):
     @app.post("/internal/development/reserve")
     async def development_reservation(body: BudgetReservation, request: Request, db: AsyncSession = Depends(database)):
         if not config.agent_service_secret or not hmac.compare_digest(
@@ -79,9 +91,11 @@ def register_worker_routes(app, *, config: Settings, database):
         except ValueError as exc:
             raise HTTPException(429, detail={"code": str(exc)}) from exc
 
+
+def _register_session_routes(app, *, database, guard):
     @app.post("/internal/agent/bootstrap")
     async def bootstrap(request: Request, db: AsyncSession = Depends(database)):
-        voice = await worker_session(request, db)
+        voice = await guard(request, db)
         changed = await db.execute(
             update(VoiceSession)
             .where(
@@ -97,9 +111,11 @@ def register_worker_routes(app, *, config: Settings, database):
         pipeline = normalize_pipeline(voice.pipeline)
         return {"pipeline": pipeline, "instructions": pipeline_instructions(pipeline), "expires_at": voice.expires_at}
 
+
+def _register_turn_routes(app, *, database, guard):
     @app.post("/internal/agent/turn/start")
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
-        voice = await worker_session(request, db)
+        voice = await guard(request, db)
         # Serializes worker retries and preserves the conversation's authoritative order.
         conversation = await db.scalar(
             select(Conversation).where(Conversation.id == voice.conversation_id).with_for_update()
@@ -199,7 +215,7 @@ def register_worker_routes(app, *, config: Settings, database):
 
     @app.post("/internal/agent/turn/finalize")
     async def finalize(body: AgentOutput, request: Request, db: AsyncSession = Depends(database)):
-        voice = await worker_session(request, db, allow_ended=True)
+        voice = await guard(request, db, allow_ended=True)
         user_turn = await db.get(Turn, body.turn_id)
         if not user_turn or user_turn.conversation_id != voice.conversation_id:
             raise HTTPException(404)
@@ -234,9 +250,11 @@ def register_worker_routes(app, *, config: Settings, database):
             return {"id": existing.id}
         return {"id": turn.id}
 
+
+def _register_tool_routes(app, *, database, guard):
     @app.post("/internal/agent/tool/weather")
     async def agent_weather(body: WeatherInput, request: Request, db: AsyncSession = Depends(database)):
-        voice = await worker_session(request, db)
+        voice = await guard(request, db)
         turn = await db.get(Turn, body.turn_id)
         if not turn or turn.conversation_id != voice.conversation_id:
             raise HTTPException(404)

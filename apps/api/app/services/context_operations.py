@@ -279,44 +279,16 @@ async def confirm_proposal(
         raise ContextOperationError("CONTEXT_PROPOSALS_NOT_CONFIGURED", 503)
     await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
     conversation = await owned_conversation(db, owner_id, conversation_id, lock=True)
-    try:
-        payload = verify_proposal(proposal, secret)
-    except ValueError as exc:
-        raise ContextOperationError("PROPOSAL_INVALID", 400) from exc
-    if payload.get("owner_id") != owner_id or payload.get("conversation_id") != conversation_id:
-        raise ContextOperationError("PROPOSAL_INVALID", 404)
-
-    excluded_ids = frozenset(str(value) for value in payload.get("excluded_ids", ()))
-    kept_ids = frozenset(str(value) for value in payload.get("kept_ids", ()))
+    payload = _verified_payload(proposal, secret, owner_id, conversation_id)
+    excluded_ids, kept_ids = _exclusion_ids(payload)
     request_hash = _digest(EXCLUDE, proposal, str(expected_revision))
     key = _operation_key(owner_id, conversation_id, EXCLUDE, idempotency_key)
     replayed = await _replay(db, key, owner_id, conversation_id, request_hash)
     if replayed is not None:
         return replayed
 
-    proposal_revision = payload.get("revision")
-    if proposal_revision != expected_revision or conversation.revision != expected_revision:
-        raise ContextOperationError("REVISION_CONFLICT")
-    if not excluded_ids:
-        raise ContextOperationError("NO_CONTEXT_CHANGE")
-    if excluded_ids & kept_ids:
-        # Defence in depth: a keep-exception can never be smuggled away.
-        raise ContextOperationError("PROPOSAL_INVALID", 400)
-
-    rows = (
-        await db.scalars(
-            select(Memory).where(
-                Memory.id.in_(list(excluded_ids) or ["-"]),
-                Memory.owner_id == owner_id,
-                Memory.status == "active",
-            )
-        )
-    ).all()
-    authorized = {row.id for row in rows}
-    if authorized != excluded_ids:
-        raise ContextOperationError("PROPOSAL_INVALID")
-    if any(classify(row.content) == "budget" or row.id in kept_ids for row in rows):
-        raise ContextOperationError("PROPOSAL_INVALID", 400)
+    _validate_exclusion(payload, expected_revision, conversation, excluded_ids, kept_ids)
+    await _authorize_exclusion_rows(db, owner_id, excluded_ids, kept_ids)
 
     before = conversation.revision
     after = before + 1
@@ -374,6 +346,62 @@ async def confirm_proposal(
                 created_at=now(),
             )
         )
+    return await _finish(
+        db,
+        commit=commit,
+        key=key,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        request_hash=request_hash,
+        response=response,
+    )
+
+
+def _verified_payload(proposal: str, secret: str, owner_id: str, conversation_id: str) -> dict:
+    try:
+        payload = verify_proposal(proposal, secret)
+    except ValueError as exc:
+        raise ContextOperationError("PROPOSAL_INVALID", 400) from exc
+    if payload.get("owner_id") != owner_id or payload.get("conversation_id") != conversation_id:
+        raise ContextOperationError("PROPOSAL_INVALID", 404)
+    return payload
+
+
+def _exclusion_ids(payload: dict) -> tuple[frozenset[str], frozenset[str]]:
+    excluded = frozenset(str(value) for value in payload.get("excluded_ids", ()))
+    kept = frozenset(str(value) for value in payload.get("kept_ids", ()))
+    return excluded, kept
+
+
+def _validate_exclusion(payload, expected_revision, conversation, excluded_ids, kept_ids) -> None:
+    if payload.get("revision") != expected_revision or conversation.revision != expected_revision:
+        raise ContextOperationError("REVISION_CONFLICT")
+    if not excluded_ids:
+        raise ContextOperationError("NO_CONTEXT_CHANGE")
+    if excluded_ids & kept_ids:
+        # Defence in depth: a keep-exception can never be smuggled away.
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
+
+
+async def _authorize_exclusion_rows(db: AsyncSession, owner_id: str, excluded_ids, kept_ids) -> None:
+    rows = (
+        await db.scalars(
+            select(Memory).where(
+                Memory.id.in_(list(excluded_ids) or ["-"]),
+                Memory.owner_id == owner_id,
+                Memory.status == "active",
+            )
+        )
+    ).all()
+    if {row.id for row in rows} != excluded_ids:
+        raise ContextOperationError("PROPOSAL_INVALID")
+    if any(classify(row.content) == "budget" or row.id in kept_ids for row in rows):
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
+
+
+async def _finish(
+    db: AsyncSession, *, commit: bool, key: str, owner_id: str, conversation_id: str, request_hash: str, response: dict
+) -> dict:
     try:
         await db.flush()
         if commit:

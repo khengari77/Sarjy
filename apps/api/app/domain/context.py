@@ -131,83 +131,32 @@ def compile_turn_context(
         raise ValueError("REVISION_INVALID")
     if not instructions:
         raise ValueError("INSTRUCTIONS_REQUIRED")
-    excluded = frozenset(excluded_ids)
-    config = freeze_json(pipeline or {})
-    blocked = set(excluded)
     candidates = (*history, *memories, *tool_results)
-    while True:
-        derived = {item.id for item in candidates if item.dependencies & blocked}
-        if derived <= blocked:
-            break
-        blocked.update(derived)
-    excluded = frozenset(blocked)
-
-    def eligible(candidate: ContextCandidate) -> bool:
-        if candidate.id in excluded or not candidate.text:
-            return False
-        if candidate.origin not in allowed_origins:
-            return False
-        if candidate.origin == "memory" and candidate.status != "active":
-            return False
-        return candidate.origin != "tool" or candidate.source in permitted_tools
-
-    selected: list[tuple[str, CandidateRole, str]] = [("system", "system", instructions)]
-    selected.extend(
-        (candidate.id, "memory", f"Memory: {candidate.text}")
-        for candidate in sorted(memories, key=lambda item: item.id)
-        if eligible(candidate)
+    excluded = _expand_exclusions(candidates, excluded_ids)
+    config = freeze_json(pipeline or {})
+    selected = _select_messages(
+        instructions=instructions,
+        history=history,
+        memories=memories,
+        tool_results=tool_results,
+        current_turn=current_turn,
+        excluded=excluded,
+        allowed_origins=allowed_origins,
+        permitted_tools=permitted_tools,
     )
-    selected.extend((candidate.id, candidate.role, candidate.text) for candidate in history if eligible(candidate))
-    selected.extend(
-        (candidate.id, "tool", f"Tool result ({candidate.source}): {candidate.text}")
-        for candidate in sorted(tool_results, key=lambda item: item.id)
-        if eligible(candidate)
-    )
-    if current_turn is not None and current_turn.id not in excluded:
-        selected.append((current_turn.id, current_turn.role, current_turn.text))
-
-    deduped: list[tuple[str, CandidateRole, str]] = []
-    seen: set[str] = set()
-    for record_id, role, text in selected:
-        if record_id in seen:
-            continue
-        seen.add(record_id)
-        deduped.append((record_id, role, text))
-
-    protected = [item for item in deduped if item[1] == "system"]
-    remaining = max(0, max_chars - sum(len(item[2]) for item in protected))
-    retained: list[tuple[str, CandidateRole, str]] = []
-    for item in reversed(deduped):
-        if item[1] == "system":
-            retained.append(item)
-        elif len(item[2]) <= remaining:
-            retained.append(item)
-            remaining -= len(item[2])
-    kept = list(reversed(retained))
-
-    messages: list[dict[str, str]] = []
-    included_ids: list[str] = []
-    selection_entries: list[ContextEntry] = []
-    for record_id, role, text in kept:
-        provider_role = role if role in PROVIDER_ROLES else "system"
-        messages.append({"role": provider_role, "content": text})
-        included_ids.append(record_id)
-        selection_entries.append(ContextEntry(id=record_id, role=role, text=text[:16000]))
+    kept = _truncate(_dedupe(selected), max_chars)
+    messages, included_ids, selection_entries = _render(kept)
 
     prompt = canonical_messages(messages)
     digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-    manifest = MappingProxyType(
-        {
-            "turn_id": current_turn.id if current_turn is not None else "",
-            "context_revision": revision,
-            "pipeline_id": _pipeline_id(config),
-            "pipeline_config_sha256": hashlib.sha256(canonical_json(json_containers(config)).encode()).hexdigest(),
-            "included_record_ids": tuple(included_ids),
-            "excluded_record_ids": tuple(sorted(excluded)),
-            "canonical_prompt_sha256": digest,
-            "token_estimate": max(1, len(prompt) // 4),
-            "provider_request_capture": PROVIDER_CAPTURE,
-        }
+    manifest = _manifest(
+        revision=revision,
+        current_turn=current_turn,
+        config=config,
+        included_ids=included_ids,
+        excluded=excluded,
+        prompt=prompt,
+        digest=digest,
     )
     selection = ContextSelection(
         revision=revision,
@@ -224,6 +173,121 @@ def compile_turn_context(
         selection=selection,
         canonical_prompt=prompt,
         canonical_prompt_sha256=digest,
+    )
+
+
+def _expand_exclusions(candidates: Sequence[ContextCandidate], excluded_ids: Iterable[str]) -> frozenset[str]:
+    blocked = set(excluded_ids)
+    while True:
+        derived = {item.id for item in candidates if item.dependencies & blocked}
+        if derived <= blocked:
+            return frozenset(blocked)
+        blocked.update(derived)
+
+
+def _eligible(
+    candidate: ContextCandidate,
+    *,
+    excluded: frozenset[str],
+    allowed_origins: frozenset[str],
+    permitted_tools: frozenset[str],
+) -> bool:
+    if candidate.id in excluded or not candidate.text:
+        return False
+    if candidate.origin not in allowed_origins:
+        return False
+    if candidate.origin == "memory" and candidate.status != "active":
+        return False
+    return candidate.origin != "tool" or candidate.source in permitted_tools
+
+
+def _select_messages(
+    *,
+    instructions: str,
+    history: Sequence[ContextCandidate],
+    memories: Sequence[ContextCandidate],
+    tool_results: Sequence[ContextCandidate],
+    current_turn: ContextCandidate | None,
+    excluded: frozenset[str],
+    allowed_origins: frozenset[str],
+    permitted_tools: frozenset[str],
+) -> list[tuple[str, CandidateRole, str]]:
+    def eligible(candidate: ContextCandidate) -> bool:
+        return _eligible(
+            candidate,
+            excluded=excluded,
+            allowed_origins=allowed_origins,
+            permitted_tools=permitted_tools,
+        )
+
+    selected: list[tuple[str, CandidateRole, str]] = [("system", "system", instructions)]
+    selected.extend(
+        (candidate.id, "memory", f"Memory: {candidate.text}")
+        for candidate in sorted(memories, key=lambda item: item.id)
+        if eligible(candidate)
+    )
+    selected.extend((candidate.id, candidate.role, candidate.text) for candidate in history if eligible(candidate))
+    selected.extend(
+        (candidate.id, "tool", f"Tool result ({candidate.source}): {candidate.text}")
+        for candidate in sorted(tool_results, key=lambda item: item.id)
+        if eligible(candidate)
+    )
+    if current_turn is not None and current_turn.id not in excluded:
+        selected.append((current_turn.id, current_turn.role, current_turn.text))
+    return selected
+
+
+def _dedupe(selected: Sequence[tuple[str, CandidateRole, str]]) -> list[tuple[str, CandidateRole, str]]:
+    deduped: list[tuple[str, CandidateRole, str]] = []
+    seen: set[str] = set()
+    for item in selected:
+        if item[0] in seen:
+            continue
+        seen.add(item[0])
+        deduped.append(item)
+    return deduped
+
+
+def _truncate(
+    selected: Sequence[tuple[str, CandidateRole, str]], max_chars: int
+) -> list[tuple[str, CandidateRole, str]]:
+    protected = [item for item in selected if item[1] == "system"]
+    remaining = max(0, max_chars - sum(len(item[2]) for item in protected))
+    retained: list[tuple[str, CandidateRole, str]] = []
+    for item in reversed(selected):
+        if item[1] == "system":
+            retained.append(item)
+        elif len(item[2]) <= remaining:
+            retained.append(item)
+            remaining -= len(item[2])
+    return list(reversed(retained))
+
+
+def _render(kept: Sequence[tuple[str, CandidateRole, str]]):
+    messages: list[dict[str, str]] = []
+    included_ids: list[str] = []
+    selection_entries: list[ContextEntry] = []
+    for record_id, role, text in kept:
+        provider_role = role if role in PROVIDER_ROLES else "system"
+        messages.append({"role": provider_role, "content": text})
+        included_ids.append(record_id)
+        selection_entries.append(ContextEntry(id=record_id, role=role, text=text[:16000]))
+    return messages, included_ids, selection_entries
+
+
+def _manifest(*, revision, current_turn, config, included_ids, excluded, prompt, digest):
+    return MappingProxyType(
+        {
+            "turn_id": current_turn.id if current_turn is not None else "",
+            "context_revision": revision,
+            "pipeline_id": _pipeline_id(config),
+            "pipeline_config_sha256": hashlib.sha256(canonical_json(json_containers(config)).encode()).hexdigest(),
+            "included_record_ids": tuple(included_ids),
+            "excluded_record_ids": tuple(sorted(excluded)),
+            "canonical_prompt_sha256": digest,
+            "token_estimate": max(1, len(prompt) // 4),
+            "provider_request_capture": PROVIDER_CAPTURE,
+        }
     )
 
 

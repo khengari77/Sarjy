@@ -46,6 +46,64 @@ def openai_request_within_bounds(serialized: bytes, tools: list, max_output_toke
     )
 
 
+def _user_message(chat_ctx):
+    return next(
+        (item for item in reversed(chat_ctx.items) if isinstance(item, llm.ChatMessage) and item.role == "user"),
+        None,
+    )
+
+
+def _validate_snapshot(snapshot, current_turn) -> ModelRequest:
+    request = ModelRequest.model_validate(snapshot["model_request"])
+    if (
+        request.turn_id != current_turn
+        or request.selection.revision != snapshot["revision"]
+        or [item.model_dump() for item in request.messages] != snapshot["messages"]
+    ):
+        raise ValueError("MODEL_SNAPSHOT_MISMATCH")
+    return request
+
+
+def _tool_history(chat_ctx, user):
+    continuation = []
+    for item in chat_ctx.items[chat_ctx.items.index(user) + 1 :]:
+        if isinstance(item, llm.FunctionCall):
+            continuation.append(
+                ModelToolItem(kind="call", call_id=item.call_id, name=item.name, content=item.arguments)
+            )
+        elif isinstance(item, llm.FunctionCallOutput):
+            continuation.append(
+                ModelToolItem(
+                    kind="result", call_id=item.call_id, name=item.name, content=item.output, is_error=item.is_error
+                )
+            )
+    return continuation
+
+
+def _with_continuation(request: ModelRequest, continuation, schemas) -> ModelRequest:
+    return ModelRequest.model_validate(
+        {
+            **request.model_dump(mode="json"),
+            "attempt_id": str(uuid4()),
+            "tool_history": continuation,
+            "tools": [
+                ToolSpec(
+                    name=schema["name"], description=schema.get("description", ""), parameters=schema["parameters"]
+                )
+                for schema in schemas
+            ],
+        }
+    )
+
+
+async def _playout_result(handle) -> tuple[str, str]:
+    await handle.wait_for_playout()
+    messages = [item for item in handle.chat_items if isinstance(item, llm.ChatMessage) and item.role == "assistant"]
+    text = "\n".join(item.text_content or "" for item in messages)
+    status = "failed" if handle.exception() else ("interrupted" if handle.interrupted else "completed")
+    return text, status
+
+
 class SarjyAgent(Agent):
     def __init__(self, backend: httpx.AsyncClient, pipeline: Mapping[str, Any], instructions: str, notify=None):
         super().__init__(instructions=instructions)
@@ -105,92 +163,59 @@ class SarjyAgent(Agent):
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         # Also covers typed input and repeated inference after tool calls.
-        user = next(
-            (item for item in reversed(chat_ctx.items) if isinstance(item, llm.ChatMessage) and item.role == "user"),
-            None,
-        )
+        user = _user_message(chat_ctx)
         if user is None:
             return
         snapshot = await self.compile(user)
         handle = self.session.current_speech
         if handle and handle.id not in self.speeches:
             self.speeches.add(handle.id)
-            turn_id = self.prepared[user.id]["turn_id"]
-
-            async def persist_playout():
-                await handle.wait_for_playout()
-                messages = [
-                    item for item in handle.chat_items if isinstance(item, llm.ChatMessage) and item.role == "assistant"
-                ]
-                text = "\n".join(item.text_content or "" for item in messages)
-                status = "failed" if handle.exception() else ("interrupted" if handle.interrupted else "completed")
-                for attempt in range(3):
-                    try:
-                        response = await self.backend.post(
-                            "/internal/agent/turn/finalize", json={"turn_id": turn_id, "text": text, "status": status}
-                        )
-                        response.raise_for_status()
-                        return
-                    except httpx.HTTPError:
-                        if attempt == 2:
-                            logging.error("Turn persistence failed after three attempts")
-                            return
-                        await asyncio.sleep(0.25 * (attempt + 1))
-
-            task = asyncio.create_task(persist_playout())
-            self.pending.add(task)
-            task.add_done_callback(self.pending.discard)
-        request = ModelRequest.model_validate(snapshot["model_request"])
-        if (
-            request.turn_id != self.current_turn
-            or request.selection.revision != snapshot["revision"]
-            or [item.model_dump() for item in request.messages] != snapshot["messages"]
-        ):
-            raise ValueError("MODEL_SNAPSHOT_MISMATCH")
+            self._schedule_persistence(user, handle)
+        request = _validate_snapshot(snapshot, self.current_turn)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
-        continuation = []
-        index = chat_ctx.items.index(user)
-        for item in chat_ctx.items[index + 1 :]:
-            if isinstance(item, llm.FunctionCall):
-                continuation.append(
-                    ModelToolItem(kind="call", call_id=item.call_id, name=item.name, content=item.arguments)
-                )
-            elif isinstance(item, llm.FunctionCallOutput):
-                continuation.append(
-                    ModelToolItem(
-                        kind="result", call_id=item.call_id, name=item.name, content=item.output, is_error=item.is_error
-                    )
-                )
-        request = ModelRequest.model_validate(
-            {
-                **request.model_dump(mode="json"),
-                "attempt_id": str(uuid4()),
-                "tool_history": continuation,
-                "tools": [
-                    ToolSpec(
-                        name=schema["name"], description=schema.get("description", ""), parameters=schema["parameters"]
-                    )
-                    for schema in schemas
-                ],
-            }
-        )
+        request = _with_continuation(request, _tool_history(chat_ctx, user), schemas)
         if self.pipeline["llm"]["provider"] == "openai_direct":
-            serialized = json.dumps(
-                {
-                    key: value
-                    for key, value in request.model_dump(mode="json").items()
-                    if key in {"messages", "tool_history", "tools"}
-                },
-                ensure_ascii=False,
-            ).encode()
-            if not openai_request_within_bounds(serialized, tools, request.response_policy.max_output_tokens):
-                raise ValueError("OPENAI_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS")
-            await self.reserve("openai")
+            await self._guard_openai_bounds(request, tools)
         adapter = adapter_for(self.session.llm, self.pipeline["llm"]["provider"])
         async for event in adapter.stream(request, tools, model_settings.tool_choice if model_settings else None):
             chunk = livekit_chunk(event)
             if chunk is not None:
                 yield chunk
+
+    def _schedule_persistence(self, user, handle):
+        turn_id = self.prepared[user.id]["turn_id"]
+
+        async def persist_playout():
+            text, status = await _playout_result(handle)
+            for attempt in range(3):
+                try:
+                    response = await self.backend.post(
+                        "/internal/agent/turn/finalize", json={"turn_id": turn_id, "text": text, "status": status}
+                    )
+                    response.raise_for_status()
+                    return
+                except httpx.HTTPError:
+                    if attempt == 2:
+                        logging.error("Turn persistence failed after three attempts")
+                        return
+                    await asyncio.sleep(0.25 * (attempt + 1))
+
+        task = asyncio.create_task(persist_playout())
+        self.pending.add(task)
+        task.add_done_callback(self.pending.discard)
+
+    async def _guard_openai_bounds(self, request, tools):
+        serialized = json.dumps(
+            {
+                key: value
+                for key, value in request.model_dump(mode="json").items()
+                if key in {"messages", "tool_history", "tools"}
+            },
+            ensure_ascii=False,
+        ).encode()
+        if not openai_request_within_bounds(serialized, tools, request.response_policy.max_output_tokens):
+            raise ValueError("OPENAI_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS")
+        await self.reserve("openai")
 
     @function_tool()
     async def get_current_weather(self, city: str, country: str | None = None):

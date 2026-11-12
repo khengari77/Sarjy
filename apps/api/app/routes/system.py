@@ -19,6 +19,12 @@ from app.services.weather import WeatherError, get_current_weather
 
 
 def register_system_routes(app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, owned):
+    _register_identity_routes(app, config=config, database=database)
+    _register_conversation_routes(app, database=database, identity=identity, owned=owned)
+    _register_catalog_routes(app, config=config, catalog=catalog, identity=identity)
+
+
+def _register_identity_routes(app, *, config: Settings, database):
     @app.get("/healthz")
     def health():
         return {"status": "ok"}
@@ -50,6 +56,8 @@ def register_system_routes(app, *, config: Settings, catalog: ElevenLabsVoices, 
         )
         return {"id": user.id}
 
+
+def _register_conversation_routes(app, *, database, identity, owned):
     @app.get("/v1/conversations")
     async def conversations(user=Depends(identity), db: AsyncSession = Depends(database)):
         rows = (
@@ -82,6 +90,8 @@ def register_system_routes(app, *, config: Settings, catalog: ElevenLabsVoices, 
         rows = (await db.scalars(select(ToolCall).join(Turn).where(Turn.conversation_id == conversation_id))).all()
         return [{"id": row.id, "turn_id": row.turn_id, "name": row.name, "result": row.result} for row in rows]
 
+
+def _register_catalog_routes(app, *, config: Settings, catalog: ElevenLabsVoices, identity):
     @app.get("/v1/pipelines/providers")
     def providers():
         choices = PRESET | {"llm": default_llm(config)}

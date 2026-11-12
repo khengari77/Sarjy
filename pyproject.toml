@@ -33,7 +33,10 @@ target-version = "py312"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E9", "F", "I", "UP", "SIM", "B"]
+select = ["E9", "F", "I", "UP", "SIM", "B", "C90"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
 "apps/api/app/**" = ["B008"]

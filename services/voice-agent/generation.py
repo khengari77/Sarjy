@@ -43,24 +43,8 @@ class ProviderAdapter:
         self.provider = provider
 
     async def stream(self, request: ModelRequest, tools=(), tool_choice=None):
-        if not request.messages:
-            raise ValueError("MODEL_MESSAGES_REQUIRED")
-        actual = [build_legacy_openai_schema(tool)["function"] for tool in tools]
-        expected = [tool.model_dump(mode="json") for tool in request.tools]
-        if actual != expected:
-            raise ValueError("MODEL_TOOL_SCHEMA_MISMATCH")
-        context = llm.ChatContext()
-        for message in request.messages:
-            context.add_message(role=message.role, content=message.content)
-        for item in request.tool_history:
-            if item.kind == "call":
-                context.items.append(llm.FunctionCall(call_id=item.call_id, name=item.name, arguments=item.content))
-            else:
-                context.items.append(
-                    llm.FunctionCallOutput(
-                        call_id=item.call_id, name=item.name, output=item.content, is_error=item.is_error
-                    )
-                )
+        _validate_request(request, tools)
+        context = _build_context(request)
         identity = dict(turn_id=request.turn_id, attempt_id=request.attempt_id)
         partial = False
         received = False
@@ -75,41 +59,76 @@ class ProviderAdapter:
             ) as stream:
                 async for chunk in stream:
                     received = True
-                    if chunk.delta:
-                        if chunk.delta.content:
-                            partial = True
-                            yield GenerationEvent("text", **identity, text=chunk.delta.content)
-                        for call in chunk.delta.tool_calls:
-                            partial = True
-                            yield GenerationEvent(
-                                "tool", **identity, call_id=call.call_id, name=call.name, arguments=call.arguments
-                            )
-                    if chunk.usage:
-                        yield GenerationEvent("usage", **identity, usage=tuple(chunk.usage.model_dump().items()))
+                    partial = partial or _has_delta(chunk)
+                    for event in _chunk_events(chunk, identity):
+                        yield event
             if not received:
                 raise ValueError("EMPTY_GENERATION_STREAM")
             yield GenerationEvent("completed", **identity)
         except asyncio.CancelledError as exc:
             raise GenerationCancelled(GenerationEvent("cancelled", **identity, partial=partial)) from exc
         except Exception as exc:
-            status = exc.status_code if isinstance(exc, APIStatusError) else None
-            if isinstance(exc, APITimeoutError):
-                code = "timeout"
-            elif isinstance(exc, APIStatusError):
-                code = {
-                    400: "invalid_request",
-                    401: "authentication",
-                    402: "insufficient_balance",
-                    403: "authentication",
-                    429: "rate_limit",
-                }.get(status, "provider_error")
-            elif isinstance(exc, APIConnectionError):
-                code = "connection_error"
-            else:
-                code = "invalid_response"
+            code, status = _error_code(exc)
             raise GenerationFailure(
                 GenerationEvent("error", **identity, partial=partial, error_code=code, status_code=status)
             ) from exc
+
+
+def _validate_request(request: ModelRequest, tools) -> None:
+    if not request.messages:
+        raise ValueError("MODEL_MESSAGES_REQUIRED")
+    actual = [build_legacy_openai_schema(tool)["function"] for tool in tools]
+    expected = [tool.model_dump(mode="json") for tool in request.tools]
+    if actual != expected:
+        raise ValueError("MODEL_TOOL_SCHEMA_MISMATCH")
+
+
+def _build_context(request: ModelRequest) -> llm.ChatContext:
+    context = llm.ChatContext()
+    for message in request.messages:
+        context.add_message(role=message.role, content=message.content)
+    for item in request.tool_history:
+        if item.kind == "call":
+            context.items.append(llm.FunctionCall(call_id=item.call_id, name=item.name, arguments=item.content))
+        else:
+            context.items.append(
+                llm.FunctionCallOutput(
+                    call_id=item.call_id, name=item.name, output=item.content, is_error=item.is_error
+                )
+            )
+    return context
+
+
+def _has_delta(chunk) -> bool:
+    return bool(chunk.delta and (chunk.delta.content or chunk.delta.tool_calls))
+
+
+def _chunk_events(chunk, identity):
+    if chunk.delta:
+        if chunk.delta.content:
+            yield GenerationEvent("text", **identity, text=chunk.delta.content)
+        for call in chunk.delta.tool_calls:
+            yield GenerationEvent("tool", **identity, call_id=call.call_id, name=call.name, arguments=call.arguments)
+    if chunk.usage:
+        yield GenerationEvent("usage", **identity, usage=tuple(chunk.usage.model_dump().items()))
+
+
+def _error_code(exc) -> tuple[str, int | None]:
+    status = exc.status_code if isinstance(exc, APIStatusError) else None
+    if isinstance(exc, APITimeoutError):
+        return "timeout", status
+    if isinstance(exc, APIStatusError):
+        code = {
+            400: "invalid_request",
+            401: "authentication",
+            402: "insufficient_balance",
+            403: "authentication",
+            429: "rate_limit",
+        }.get(status, "provider_error")
+        return code, status
+    if isinstance(exc, APIConnectionError):
+        return "connection_error", status
+    return "invalid_response", status
 
 
 def livekit_chunk(event):
