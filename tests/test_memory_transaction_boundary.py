@@ -1,6 +1,7 @@
 """Memory writes must never commit or roll back the caller's business session."""
 import pytest
 from sqlalchemy import select
+from app.infrastructure.database import MemoryWriteRequest
 
 from app.infrastructure.database import Conversation, MemoryWriteRequest
 from app.services.memory import MemoryService
@@ -45,6 +46,57 @@ def test_clean_caller_session_writes_without_touching_its_transaction(tmp_path):
                 await caller.rollback()
             async with sessions() as db:
                 assert (await db.scalar(select(MemoryWriteRequest))).state == 'completed'
+        finally:
+            await engine.dispose()
+    __import__('asyncio').run(run())
+
+
+def test_sqlite_busy_uses_error_code_not_message(tmp_path, monkeypatch):
+    import sqlite3
+    from sqlalchemy.exc import OperationalError
+    from app.services.memory import _sqlite_busy
+
+    class FakeOrig(Exception):
+        sqlite_errorcode = 5
+
+    assert _sqlite_busy(OperationalError('stmt', {}, FakeOrig()))
+    assert _sqlite_busy(OperationalError('stmt', {}, sqlite3.OperationalError('database is locked')))
+    assert not _sqlite_busy(OperationalError('stmt', {}, sqlite3.OperationalError('no such table')))
+
+
+def test_postgres_preserves_uncommitted_caller_title(tmp_path):
+    import os
+    from uuid import uuid4
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from app.infrastructure.database import Base, Identity
+
+    url = os.environ.get('TEST_MEMORY_POSTGRES_URL')
+    if not url:
+        pytest.skip('TEST_MEMORY_POSTGRES_URL requires disposable PostgreSQL')
+
+    async def run():
+        engine = create_async_engine(url)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        owner, conversation = str(uuid4()), str(uuid4())
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            async with factory() as caller:
+                caller.add(Identity(id=owner, token_hash=owner, expires_at='2030'))
+                await caller.flush()
+                caller.add(Conversation(id=conversation, owner_id=owner, title='Original', revision=0))
+                await caller.commit()
+                chat = await caller.get(Conversation, conversation)
+                chat.title = 'Edited title'
+                result = await MemoryService(caller, FakeEmbedder()).create_memory(
+                    owner, conversation, None, 'Tripoli', 'pg-boundary')
+                assert result.content == 'Tripoli'
+                assert chat.title == 'Edited title'
+                await caller.commit()
+            async with factory() as db:
+                assert (await db.get(Conversation, conversation)).title == 'Edited title'
+                claim = await db.scalar(select(MemoryWriteRequest))
+                assert claim.state == 'completed'
         finally:
             await engine.dispose()
     __import__('asyncio').run(run())

@@ -21,6 +21,15 @@ from app.services.memory_eligibility import blocked_memory_ids
 
 EMBEDDING_TIMEOUT_SECONDS = 20
 CLAIM_TIMEOUT_SECONDS = 30
+SQLITE_BUSY = 5
+SQLITE_LOCKED = 6
+
+
+def _sqlite_busy(exc: OperationalError) -> bool:
+    code = getattr(getattr(exc, 'orig', None), 'sqlite_errorcode', None)
+    if code is not None:
+        return code in {SQLITE_BUSY, SQLITE_LOCKED}
+    return 'database is locked' in str(exc).lower()
 
 
 def validate_embedding(values) -> tuple[float, ...]:
@@ -276,7 +285,7 @@ class MemoryService:
             # SQLite cannot open an independent writer while the caller holds a
             # flushed write transaction. Reject with a typed error; nothing was
             # durably changed.
-            if 'locked' in str(exc).lower():
+            if _sqlite_busy(exc):
                 raise HTTPException(409, detail={'code': 'MEMORY_CALLER_TRANSACTION_ACTIVE'}) from exc
             raise
         if not winner:
