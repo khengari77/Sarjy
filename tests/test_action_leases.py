@@ -181,3 +181,64 @@ def test_takeover_during_effect_fails_completion_and_rolls_back(tmp_path):
         await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_completed_claim_replays_before_lease_validation(tmp_path):
+    engine = create_async_engine(f'sqlite+aiosqlite:///{tmp_path}/completed.db')
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    calls = []
+
+    async def handler(**kwargs):
+        calls.append('effect')
+        return {'unexpected': True}
+
+    async def run():
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        async with factory() as db:
+            db.add(Identity(id='owner', token_hash='h', expires_at='2030'))
+            await db.flush()
+            db.add(Conversation(id='chat', owner_id='owner', title='t', revision=0))
+            await db.commit()
+            action = parse_action({'kind': 'ProposeContextExclusion', 'query': 'trip'})
+            db.add(ContextOperation(id='prep', owner_id='owner', conversation_id='chat',
+                command_type='DispatchAction',
+                payload={'fingerprint': fingerprint('chat', 0, action), 'result': {'stored': True}},
+                idempotency_key=identity('owner', 'r1'), outcome='completed', lease_id='old',
+                lease_expires_at='2030', created_at='2026-11-12T00:00:00+00:00'))
+            await db.commit()
+            async with db.begin():
+                result = await _dispatch_transaction(db, owner_id='owner', conversation_id='chat', request_id='r1',
+                    expected_revision=0, action=action, catalog=None, handlers={'ProposeContextExclusion': handler},
+                    prepared={'ok': True}, prepared_operation_id='prep', preparation_lease='stale')
+            assert result == {'stored': True}
+            assert calls == []
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('prepared', [object(), 'x' * 70_000])
+def test_unusable_prepared_payload_fails_before_effects(tmp_path, prepared):
+    app, path = setup(tmp_path)
+    calls = []
+
+    async def prepare(**_):
+        calls.append('prepare')
+        return prepared
+
+    async def effect(**_):
+        calls.append('effect')
+        return {'ok': True}
+
+    effect.prepare = prepare
+    app.state.action_handlers['ProposeContextExclusion'] = effect
+    with TestClient(app) as client:
+        conversation = chat(client)
+        response = submit(client, conversation, source='ui',
+            action={'kind': 'ProposeContextExclusion', 'query': 'trip'})
+        assert response.status_code == 409
+        assert response.json()['detail']['code'] == 'ACTION_PREPARATION_INVALID'
+        assert calls == ['prepare']
+    with sqlite3.connect(path) as db:
+        assert db.execute('SELECT COUNT(*) FROM context_operations').fetchone()[0] == 0

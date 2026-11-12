@@ -18,6 +18,7 @@ from app.infrastructure.database import ContextOperation, Conversation, SessionG
 
 SETTING_ACTIONS = (AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed)
 PREPARATION_LEASE_SECONDS = 120
+PREPARED_MAX_BYTES = 64 * 1024
 
 
 def _lease_expiry() -> str:
@@ -79,6 +80,13 @@ class EffectSession:
 
     def begin(self):
         raise HTTPException(503, detail={'code': 'ACTION_TRANSACTION_OWNED'})
+
+
+def _replay_result(existing):
+    result = (existing.payload or {}).get('result')
+    if result is None:
+        raise HTTPException(503, detail={'code': 'ACTION_REQUEST_UNKNOWN'})
+    return result
 
 
 async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected_revision, action, catalog, handlers):
@@ -156,7 +164,7 @@ async def _claim_preparation(factory, *, owner_id, conversation_id, key, fingerp
             if existing.owner_id != owner_id or (existing.payload or {}).get('fingerprint') != fingerprint:
                 raise HTTPException(409, detail={'code': 'IDEMPOTENCY_CONFLICT'})
             if existing.outcome == 'completed':
-                return 'replay', None, None, (existing.payload or {})['result']
+                return 'replay', None, None, _replay_result(existing)
             if existing.outcome == 'preparing' and not _lease_expired(existing.lease_expires_at):
                 return 'in_progress', existing.id, existing.lease_id, None
             if existing.outcome == 'preparing':
@@ -192,19 +200,25 @@ async def _claim_preparation(factory, *, owner_id, conversation_id, key, fingerp
             if existing.owner_id != owner_id or (existing.payload or {}).get('fingerprint') != fingerprint:
                 raise HTTPException(409, detail={'code': 'IDEMPOTENCY_CONFLICT'})
             if existing.outcome == 'completed':
-                return 'replay', None, None, (existing.payload or {})['result']
+                return 'replay', None, None, _replay_result(existing)
             if existing.outcome == 'preparing':
                 return 'in_progress', existing.id, existing.lease_id, None
             raise HTTPException(503, detail={'code': 'ACTION_REQUEST_FAILED'})
 
 
 async def _store_prepared(factory, preparation_id, lease_id, prepared):
+    try:
+        serialized = json.dumps(prepared, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(409, detail={'code': 'ACTION_PREPARATION_INVALID'}) from exc
+    if len(serialized.encode()) > PREPARED_MAX_BYTES:
+        raise HTTPException(409, detail={'code': 'ACTION_PREPARATION_INVALID'})
     async with factory() as db:
         async with db.begin():
             row = await db.get(ContextOperation, preparation_id)
             if row is None or row.outcome != 'preparing' or row.lease_id != lease_id:
                 raise HTTPException(409, detail={'code': 'ACTION_LEASE_LOST'})
-            payload = {**(row.payload or {}), 'prepared': prepared}
+            payload = {**(row.payload or {}), 'prepared': json.loads(serialized)}
             changed = await db.execute(update(ContextOperation).where(
                 ContextOperation.id == preparation_id,
                 ContextOperation.outcome == 'preparing',
@@ -225,7 +239,7 @@ async def _wait_for_preparation(factory, *, key, owner_id, fingerprint):
             if existing.owner_id != owner_id or (existing.payload or {}).get('fingerprint') != fingerprint:
                 raise HTTPException(409, detail={'code': 'IDEMPOTENCY_CONFLICT'})
             if existing.outcome == 'completed':
-                return (existing.payload or {})['result']
+                return _replay_result(existing)
             if existing.outcome in {'failed', 'unknown'}:
                 raise HTTPException(503, detail={'code': 'ACTION_REQUEST_FAILED'})
     raise HTTPException(409, detail={'code': 'ACTION_IN_PROGRESS'})
@@ -247,14 +261,6 @@ async def _dispatch_transaction(db, *, owner_id, conversation_id, request_id, ex
     conversation = await db.get(Conversation, conversation_id)
     if not conversation or conversation.owner_id != owner_id:
         raise HTTPException(404, detail={'code':'CONVERSATION_NOT_FOUND'})
-    if prepared_operation_id is not None:
-        claim = await db.get(ContextOperation, prepared_operation_id)
-        if claim is None or claim.outcome != 'preparing' or claim.lease_id != preparation_lease:
-            raise HTTPException(409, detail={'code': 'ACTION_LEASE_LOST'})
-        if prepared is None:
-            prepared = (claim.payload or {}).get('prepared')
-            if prepared is None:
-                raise HTTPException(409, detail={'code': 'ACTION_LEASE_LOST'})
     key = hashlib.sha256(('dispatch:' + owner_id + ':' + request_id).encode()).hexdigest()
     fingerprint = hashlib.sha256(json.dumps({'conversation_id':conversation_id,
         'expected_revision':expected_revision, 'action':action.model_dump(mode='json')},sort_keys=True).encode()).hexdigest()
@@ -263,7 +269,18 @@ async def _dispatch_transaction(db, *, owner_id, conversation_id, request_id, ex
         if existing.owner_id != owner_id or (existing.payload or {}).get('fingerprint') != fingerprint:
             raise HTTPException(409, detail={'code':'IDEMPOTENCY_CONFLICT'})
         if existing.outcome == 'completed':
-            return existing.payload['result']
+            result = (existing.payload or {}).get('result')
+            if result is None:
+                raise HTTPException(503, detail={'code': 'ACTION_REQUEST_UNKNOWN'})
+            return result
+    if prepared_operation_id is not None:
+        claim = await db.get(ContextOperation, prepared_operation_id)
+        if claim is None or claim.outcome != 'preparing' or claim.lease_id != preparation_lease:
+            raise HTTPException(409, detail={'code': 'ACTION_LEASE_LOST'})
+        if prepared is None:
+            prepared = (claim.payload or {}).get('prepared')
+            if prepared is None:
+                raise HTTPException(409, detail={'code': 'ACTION_LEASE_LOST'})
     if isinstance(action, SETTING_ACTIONS):
         row = await db.get(UserSetting, owner_id)
         before = settings_value(row)
