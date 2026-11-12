@@ -24,6 +24,7 @@ def providers(monkeypatch):
     monkeypatch.setattr(provider_factory.openai, 'responses', SimpleNamespace(LLM=Captured))
     monkeypatch.setattr(provider_factory.openai, 'LLM', Captured)
     monkeypatch.setattr(provider_factory, 'OwnedDeepSeekLLM', Captured)
+    monkeypatch.setattr(provider_factory, 'OwnedOpenAIResponsesLLM', Captured)
     monkeypatch.setattr(provider_factory.openai_sdk, 'AsyncOpenAI', lambda **kwargs: ('client', kwargs))
     monkeypatch.setattr(provider_factory.deepgram, 'STT', lambda **kwargs: ('stt', kwargs))
     monkeypatch.setattr(provider_factory.elevenlabs, 'TTS', lambda **kwargs: ('tts', kwargs))

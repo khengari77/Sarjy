@@ -291,10 +291,11 @@ def test_terminal_state_is_isolated_between_concurrent_attempts():
     asyncio.run(run())
 
 
-def test_factory_owned_deepseek_client_is_closed():
+@pytest.mark.parametrize('kind', ['openai_direct', 'deepseek_direct'])
+def test_factory_owned_provider_client_is_closed(kind):
     async def run():
-        provider = build_llm({'llm': {'provider': 'deepseek_direct', 'model': 'deepseek-flash'}},
-            {'DEEPSEEK_API_KEY': 'test'})
+        provider = build_llm({'llm': {'provider': kind, 'model': 'deepseek-flash' if kind == 'deepseek_direct' else 'gpt-6-luna'}},
+            {'DEEPSEEK_API_KEY': 'test', 'OPENAI_API_KEY': 'test'})
         client = provider.application_client
         await provider.aclose()
         assert client.is_closed()

@@ -5,7 +5,7 @@ from stream_completion import ObservedTransport
 from livekit.plugins import deepgram, elevenlabs, openai
 
 
-class OwnedDeepSeekLLM(openai.LLM):
+class OwnedClientMixin:
     """Close the SDK client when the application factory created it."""
     def __init__(self, *, client, owns_client=False, **kwargs):
         super().__init__(client=client, **kwargs)
@@ -19,10 +19,19 @@ class OwnedDeepSeekLLM(openai.LLM):
                 await self.application_client.close()
 
 
+class OwnedDeepSeekLLM(OwnedClientMixin, openai.LLM):
+    pass
+
+
+class OwnedOpenAIResponsesLLM(OwnedClientMixin, openai.responses.LLM):
+    pass
+
+
 def build_llm(config: dict, credentials: dict[str, str], *, client=None):
     choice = config['llm']
     if choice['provider'] == 'openai_direct' and choice['model'] == 'gpt-6-luna':
-        llm = openai.responses.LLM(
+        llm = OwnedOpenAIResponsesLLM(
+            owns_client=client is None,
             model='gpt-6-luna',
             client=client or openai_sdk.AsyncOpenAI(api_key=credentials['OPENAI_API_KEY'], max_retries=0),
             use_websocket=False, reasoning={'effort':'none'}, service_tier='default',
