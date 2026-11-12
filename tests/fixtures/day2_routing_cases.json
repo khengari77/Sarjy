@@ -1,0 +1,351 @@
+{
+  "version": 1,
+  "frozen_at": "2026-11-12",
+  "description": "Day 2 routing benchmark. Eight tuning cases were authored first; the sixteen holdout cases and their digest were frozen before any live or scripted model output existed.",
+  "approved_voices": [
+    "aurora",
+    "orion"
+  ],
+  "allowed_operation_ids": [
+    "operation-last-exclusion"
+  ],
+  "holdout_sha256": "493c55bbed2a9e00d266fe2afb9782a2cf7b78fb008fb3e4a78a8849bdd94adb",
+  "cases": [
+    {
+      "id": "tune-01",
+      "split": "tuning",
+      "text": "Can you explain what you can help me with?",
+      "expected": {
+        "intent": "conversation",
+        "tier": 2,
+        "complexity": "simple",
+        "action_kind": null,
+        "clarification": false
+      },
+      "tags": ["conversation"],
+      "rationale": "A normal conversational question, not an application control."
+    },
+    {
+      "id": "tune-02",
+      "split": "tuning",
+      "text": "Speak slower.",
+      "expected": {
+        "intent": "voice_setting",
+        "tier": 1,
+        "complexity": "simple",
+        "action_kind": "AdjustSpeakingSpeed",
+        "clarification": false
+      },
+      "tags": ["voice_setting", "exact"],
+      "rationale": "The existing exact fast path applies a single relative speed step."
+    },
+    {
+      "id": "tune-03",
+      "split": "tuning",
+      "text": "Hide captions.",
+      "expected": {
+        "intent": "ui_control",
+        "tier": 1,
+        "complexity": "simple",
+        "action_kind": "SetCaptionsVisible",
+        "clarification": false
+      },
+      "tags": ["ui_control", "exact"],
+      "rationale": "The existing exact fast path toggles captions off."
+    },
+    {
+      "id": "tune-04",
+      "split": "tuning",
+      "text": "What do you remember about my trip to Rome?",
+      "expected": {
+        "intent": "memory_search",
+        "tier": 2,
+        "complexity": "simple",
+        "action_kind": "SearchMemory",
+        "clarification": false
+      },
+      "tags": ["memory_search"],
+      "rationale": "Recall is a search over saved memory; it does not modify memory."
+    },
+    {
+      "id": "tune-05",
+      "split": "tuning",
+      "text": "Forget the hotel booking I mentioned.",
+      "expected": {
+        "intent": "memory_modification",
+        "tier": 3,
+        "complexity": "simple",
+        "action_kind": "ProposeContextExclusion",
+        "clarification": false
+      },
+      "tags": ["memory_modification"],
+      "rationale": "Forgetting produces a server-owned exclusion proposal, never automatic confirmation."
+    },
+    {
+      "id": "tune-06",
+      "split": "tuning",
+      "text": "Show my previous conversations.",
+      "expected": {
+        "intent": "conversation_navigation",
+        "tier": 1,
+        "complexity": "simple",
+        "action_kind": "ShowConversationHistory",
+        "clarification": false
+      },
+      "tags": ["conversation_navigation", "exact"],
+      "rationale": "The exact fast path returns a navigation result."
+    },
+    {
+      "id": "tune-07",
+      "split": "tuning",
+      "text": "What is the weather in Tripoli right now?",
+      "expected": {
+        "intent": "tool_request",
+        "tier": 3,
+        "complexity": "simple",
+        "action_kind": null,
+        "clarification": false
+      },
+      "tags": ["tool_request"],
+      "rationale": "A bounded external tool request; it is not one of the typed app actions."
+    },
+    {
+      "id": "tune-08",
+      "split": "tuning",
+      "text": "Do the thing we talked about earlier.",
+      "expected": {
+        "intent": "ambiguous",
+        "tier": 2,
+        "complexity": "simple",
+        "action_kind": null,
+        "clarification": true
+      },
+      "tags": ["ambiguity"],
+      "rationale": "No concrete referent exists, so clarification is the intended behavior."
+    },
+    {
+      "id": "holdout-01",
+      "split": "holdout",
+      "text": "What should I pack for a short trip?",
+      "expected": {
+        "intent": "conversation",
+        "tier": 2,
+        "complexity": "simple",
+        "action_kind": null,
+        "clarification": false
+      },
+      "tags": ["conversation"],
+      "rationale": "A direct conversational answer with no app control."
+    },
+    {
+      "id": "holdout-02",
+      "split": "holdout",
+      "text": "Give me a detailed explanation of how memory exclusions affect future replies.",
+      "expected": {
+        "intent": "conversation",
+        "tier": 4,
+        "complexity": "simple",
+        "action_kind": null,
+        "clarification": false
+      },
+      "tags": ["conversation"],
+      "rationale": "The user asks for a detailed explanation, not a memory change."
+    },
+    {
+      "id": "holdout-03",
+      "split": "holdout",
+      "text": "Compare the tradeoffs of several travel itineraries for a two-week trip before I choose one.",
+      "expected": {
+        "intent": "conversation",
+        "tier": 5,
+        "complexity": "complex",
+        "action_kind": null,
+        "clarification": false
+      },
+      "tags": ["conversation"],
+      "rationale": "Complex synthesis with an explicitly detailed answer, but still conversation."
+    },
+    {
+      "id": "holdout-04",
+      "split": "holdout",
+      "text": "Set my speaking speed to 1.2.",
+      "expected": {
+        "intent": "voice_setting",
+        "tier": 1,
+        "complexity": "simple",
+        "action_kind": "SetSpeakingSpeed",
+        "clarification": false
+      },
+      "tags": ["voice_setting"],
+      "rationale": "A free-form speed setting that is not one of the exact whole-utterance commands."
+    },
+    {
+      "id": "holdout-05",
+      "split": "holdout",
+      "text": "Use the voice called 'Aurora'.",
+      "expected": {
+        "intent": "voice_setting",
+        "tier": 1,
+        "complexity": "simple",
+        "action_kind": null,
+        "clarification": true
+      },
+      "tags": ["voice_setting", "quotation"],
+      "rationale": "Quoted commands must not become executable; approved voice references need deterministic validation."
+    },
+    {
+      "id": "holdout-06",
+      "split": "holdout",
+      "text": "Don't open the memory explorer.",
+      "expected": {
+        "intent": "ui_control",
+        "tier": 1,
+        "complexity": "simple",
+        "action_kind": null,
+        "clarification": true
+      },
+      "tags": ["ui_control", "negation"],
+      "rationale": "A negated command must not open the memory explorer."
+    },
+    {
+      "id": "holdout-07",
+      "split": "holdout",
+      "text": "Open the memory explorer and show captions.",
+      "expected": {
+        "intent": "ui_control",
+        "tier": 2,
+        "complexity": "simple",
+        "action_kind": null,
+        "clarification": true
+      },
+      "tags": ["ui_control", "compound"],
+      "rationale": "Two controls in one utterance are a compound request; clarify instead of executing one."
+    },
+    {
+      "id": "holdout-08",
+      "split": "holdout",
+      "text": "Search my memories for the hotel in Rome.",
+      "expected": {
+        "intent": "memory_search",
+        "tier": 2,
+        "complexity": "simple",
+        "action_kind": "SearchMemory",
+        "clarification": false
+      },
+      "tags": ["memory_search"],
+      "rationale": "A read-only search over saved memories."
+    },
+    {
+      "id": "holdout-09",
+      "split": "holdout",
+      "text": "Compare what I told you about my Rome trip with what I said about my Paris trip.",
+      "expected": {
+        "intent": "memory_search",
+        "tier": 3,
+        "complexity": "complex",
+        "action_kind": "SearchMemory",
+        "clarification": false
+      },
+      "tags": ["memory_search"],
+      "rationale": "A multi-memory comparison is still a read-only search."
+    },
+    {
+      "id": "holdout-10",
+      "split": "holdout",
+      "text": "Propose removing the hotel memory from this conversation.",
+      "expected": {
+        "intent": "memory_modification",
+        "tier": 3,
+        "complexity": "simple",
+        "action_kind": "ProposeContextExclusion",
+        "clarification": false
+      },
+      "tags": ["memory_modification"],
+      "rationale": "The user explicitly asks for a proposal, which remains server-owned and unconfirmed."
+    },
+    {
+      "id": "holdout-11",
+      "split": "holdout",
+      "text": "Exclude my medical notes from context but keep the budget facts.",
+      "expected": {
+        "intent": "memory_modification",
+        "tier": 4,
+        "complexity": "complex",
+        "action_kind": null,
+        "clarification": true
+      },
+      "tags": ["memory_modification", "compound"],
+      "rationale": "A compound exclusion with a keep-exception is clarified rather than interpreted by a single extraction."
+    },
+    {
+      "id": "holdout-12",
+      "split": "holdout",
+      "text": "Go back to the conversation about my trip.",
+      "expected": {
+        "intent": "conversation_navigation",
+        "tier": 1,
+        "complexity": "simple",
+        "action_kind": "ShowConversationHistory",
+        "clarification": false
+      },
+      "tags": ["conversation_navigation"],
+      "rationale": "A navigation request without an exact phrase; the typed navigation action applies."
+    },
+    {
+      "id": "holdout-13",
+      "split": "holdout",
+      "text": "Take me back to the long conversation from last week where we compared several travel plans.",
+      "expected": {
+        "intent": "conversation_navigation",
+        "tier": 5,
+        "complexity": "complex",
+        "action_kind": "ShowConversationHistory",
+        "clarification": false
+      },
+      "tags": ["conversation_navigation"],
+      "rationale": "Detailed navigation description still resolves to the conversation list action."
+    },
+    {
+      "id": "holdout-14",
+      "split": "holdout",
+      "text": "Check the current weather in Tripoli before I decide what to wear.",
+      "expected": {
+        "intent": "tool_request",
+        "tier": 4,
+        "complexity": "complex",
+        "action_kind": null,
+        "clarification": false
+      },
+      "tags": ["tool_request"],
+      "rationale": "A tool request that informs a later decision, not a typed app action."
+    },
+    {
+      "id": "holdout-15",
+      "split": "holdout",
+      "text": "Can you handle the earlier request?",
+      "expected": {
+        "intent": "ambiguous",
+        "tier": 3,
+        "complexity": "simple",
+        "action_kind": null,
+        "clarification": true
+      },
+      "tags": ["ambiguity"],
+      "rationale": "The earlier request is unspecified, so clarification is required."
+    },
+    {
+      "id": "holdout-16",
+      "split": "holdout",
+      "text": "Explain in detail how the memory system decides which facts are relevant to a new conversation.",
+      "expected": {
+        "intent": "conversation",
+        "tier": 5,
+        "complexity": "complex",
+        "action_kind": null,
+        "clarification": false
+      },
+      "tags": ["conversation"],
+      "rationale": "An explicitly detailed explanation with multi-step reasoning, not a control."
+    }
+  ]
+}
