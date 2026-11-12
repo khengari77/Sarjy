@@ -869,6 +869,673 @@
           "city"
         ],
         "title": "WeatherInput"
+      },
+      "ResponsePreference": {
+        "enum": [
+          "automatic",
+          "brief",
+          "balanced",
+          "detailed"
+        ],
+        "title": "ResponsePreference",
+        "type": "string"
+      },
+      "ResponsePolicy": {
+        "additionalProperties": false,
+        "description": "One validated tier. The cap is a ceiling, never a target length.",
+        "properties": {
+          "tier": {
+            "maximum": 5,
+            "minimum": 1,
+            "title": "Tier",
+            "type": "integer"
+          },
+          "max_output_tokens": {
+            "maximum": 1024,
+            "minimum": 64,
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "preference": {
+            "$ref": "#/components/schemas/ResponsePreference",
+            "default": "automatic"
+          }
+        },
+        "required": [
+          "tier",
+          "max_output_tokens"
+        ],
+        "title": "ResponsePolicy",
+        "type": "object"
+      },
+      "Complexity": {
+        "enum": [
+          "simple",
+          "complex"
+        ],
+        "title": "Complexity",
+        "type": "string"
+      },
+      "DecisionSource": {
+        "enum": [
+          "local_exact",
+          "jev",
+          "bypass"
+        ],
+        "title": "DecisionSource",
+        "type": "string"
+      },
+      "Intent": {
+        "enum": [
+          "conversation",
+          "ui_control",
+          "voice_setting",
+          "memory_search",
+          "memory_modification",
+          "conversation_navigation",
+          "tool_request",
+          "ambiguous"
+        ],
+        "title": "Intent",
+        "type": "string"
+      },
+      "Decision": {
+        "additionalProperties": false,
+        "description": "Validated routing output. Vendor confidence is informational, not evidence.",
+        "properties": {
+          "turn_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/Intent"
+          },
+          "probabilities": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Intent"
+            },
+            "title": "Probabilities",
+            "type": "object"
+          },
+          "confidence": {
+            "description": "Vendor distribution confidence, not the selected probability.",
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "tier": {
+            "maximum": 5,
+            "minimum": 1,
+            "title": "Tier",
+            "type": "integer"
+          },
+          "complexity": {
+            "$ref": "#/components/schemas/Complexity"
+          },
+          "source": {
+            "$ref": "#/components/schemas/DecisionSource"
+          },
+          "model": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "policy_version": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Policy Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "intent",
+          "probabilities",
+          "confidence",
+          "tier",
+          "complexity",
+          "source",
+          "model",
+          "policy_version"
+        ],
+        "title": "Decision",
+        "type": "object"
+      },
+      "UserSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "speaking_speed": {
+            "default": 1.0,
+            "maximum": 1.2,
+            "minimum": 0.8,
+            "title": "Speaking Speed",
+            "type": "number"
+          },
+          "captions_visible": {
+            "default": true,
+            "title": "Captions Visible",
+            "type": "boolean"
+          },
+          "approved_voice_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_-]{1,100}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Approved Voice Id"
+          },
+          "response_preference": {
+            "$ref": "#/components/schemas/ResponsePreference",
+            "default": "automatic"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "title": "UserSettings",
+        "type": "object"
+      },
+      "MemorySource": {
+        "additionalProperties": false,
+        "properties": {
+          "turn_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "conversation_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "conversation_id",
+          "created_at"
+        ],
+        "title": "MemorySource",
+        "type": "object"
+      },
+      "MemoryRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "owner_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "content": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/MemorySource"
+          },
+          "version": {
+            "minimum": 1,
+            "title": "Version",
+            "type": "integer"
+          },
+          "status": {
+            "default": "active",
+            "enum": [
+              "active",
+              "superseded",
+              "excluded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "embedding_model": {
+            "default": "text-embedding-3-small",
+            "title": "Embedding Model",
+            "type": "string"
+          },
+          "embedding": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Embedding"
+          }
+        },
+        "required": [
+          "id",
+          "owner_id",
+          "content",
+          "source",
+          "version"
+        ],
+        "title": "MemoryRecord",
+        "type": "object"
+      },
+      "ContextEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "memory",
+              "tool"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 16000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "text"
+        ],
+        "title": "ContextEntry",
+        "type": "object"
+      },
+      "ContextSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "included": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ContextEntry"
+            },
+            "title": "Included",
+            "type": "array"
+          },
+          "excluded_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded Ids",
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "ContextSelection",
+        "type": "object"
+      },
+      "ToolSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Description",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ToolSpec",
+        "type": "object"
+      },
+      "ModelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "turn_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "attempt_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "instructions": {
+            "maxLength": 16000,
+            "minLength": 1,
+            "title": "Instructions",
+            "type": "string"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/ContextSelection"
+          },
+          "response_policy": {
+            "$ref": "#/components/schemas/ResponsePolicy"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/UserSettings"
+          },
+          "memories": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MemoryRecord"
+            },
+            "title": "Memories",
+            "type": "array"
+          },
+          "tools": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ToolSpec"
+            },
+            "title": "Tools",
+            "type": "array"
+          },
+          "settings_revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Settings Revision",
+            "type": "integer"
+          },
+          "language": {
+            "default": "en",
+            "enum": [
+              "ar",
+              "en"
+            ],
+            "title": "Language",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "attempt_id",
+          "instructions",
+          "selection",
+          "response_policy",
+          "settings"
+        ],
+        "title": "ModelRequest",
+        "type": "object"
+      },
+      "AdjustSpeakingSpeed": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "AdjustSpeakingSpeed",
+            "default": "AdjustSpeakingSpeed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "delta": {
+            "title": "Delta",
+            "type": "number"
+          }
+        },
+        "required": [
+          "delta"
+        ],
+        "title": "AdjustSpeakingSpeed",
+        "type": "object"
+      },
+      "SetSpeakingSpeed": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "SetSpeakingSpeed",
+            "default": "SetSpeakingSpeed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "speed": {
+            "maximum": 1.2,
+            "minimum": 0.8,
+            "title": "Speed",
+            "type": "number"
+          }
+        },
+        "required": [
+          "speed"
+        ],
+        "title": "SetSpeakingSpeed",
+        "type": "object"
+      },
+      "SelectApprovedVoice": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "SelectApprovedVoice",
+            "default": "SelectApprovedVoice",
+            "title": "Kind",
+            "type": "string"
+          },
+          "voice_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,100}$",
+            "title": "Voice Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "voice_id"
+        ],
+        "title": "SelectApprovedVoice",
+        "type": "object"
+      },
+      "ShowConversationHistory": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "ShowConversationHistory",
+            "default": "ShowConversationHistory",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "ShowConversationHistory",
+        "type": "object"
+      },
+      "OpenMemoryExplorer": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "OpenMemoryExplorer",
+            "default": "OpenMemoryExplorer",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "OpenMemoryExplorer",
+        "type": "object"
+      },
+      "SetCaptionsVisible": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "SetCaptionsVisible",
+            "default": "SetCaptionsVisible",
+            "title": "Kind",
+            "type": "string"
+          },
+          "visible": {
+            "title": "Visible",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "visible"
+        ],
+        "title": "SetCaptionsVisible",
+        "type": "object"
+      },
+      "SearchMemory": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "SearchMemory",
+            "default": "SearchMemory",
+            "title": "Kind",
+            "type": "string"
+          },
+          "query": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 20,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "SearchMemory",
+        "type": "object"
+      },
+      "ProposeContextExclusion": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "ProposeContextExclusion",
+            "default": "ProposeContextExclusion",
+            "title": "Kind",
+            "type": "string"
+          },
+          "query": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "keep": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Keep",
+            "type": "array"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "ProposeContextExclusion",
+        "type": "object"
+      },
+      "RestoreContextOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "RestoreContextOperation",
+            "default": "RestoreContextOperation",
+            "title": "Kind",
+            "type": "string"
+          },
+          "operation_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Operation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id"
+        ],
+        "title": "RestoreContextOperation",
+        "type": "object"
+      },
+      "Action": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AdjustSpeakingSpeed"
+          },
+          {
+            "$ref": "#/components/schemas/SetSpeakingSpeed"
+          },
+          {
+            "$ref": "#/components/schemas/SelectApprovedVoice"
+          },
+          {
+            "$ref": "#/components/schemas/ShowConversationHistory"
+          },
+          {
+            "$ref": "#/components/schemas/OpenMemoryExplorer"
+          },
+          {
+            "$ref": "#/components/schemas/SetCaptionsVisible"
+          },
+          {
+            "$ref": "#/components/schemas/SearchMemory"
+          },
+          {
+            "$ref": "#/components/schemas/ProposeContextExclusion"
+          },
+          {
+            "$ref": "#/components/schemas/RestoreContextOperation"
+          }
+        ]
       }
     }
   }

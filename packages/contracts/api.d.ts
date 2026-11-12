@@ -360,7 +360,7 @@ export interface components {
             conversation_id: string;
             /**
              * Language
-             * @default ar
+             * @default en
              * @enum {string}
              */
             language: "ar" | "en";
@@ -410,6 +410,306 @@ export interface components {
             /** Country */
             country?: string | null;
         };
+        /**
+         * ResponsePreference
+         * @enum {string}
+         */
+        ResponsePreference: "automatic" | "brief" | "balanced" | "detailed";
+        /**
+         * ResponsePolicy
+         * @description One validated tier. The cap is a ceiling, never a target length.
+         */
+        ResponsePolicy: {
+            /** Tier */
+            tier: number;
+            /** Max Output Tokens */
+            max_output_tokens: number;
+            /** @default automatic */
+            preference: components["schemas"]["ResponsePreference"];
+        };
+        /**
+         * Complexity
+         * @enum {string}
+         */
+        Complexity: "simple" | "complex";
+        /**
+         * DecisionSource
+         * @enum {string}
+         */
+        DecisionSource: "local_exact" | "jev" | "bypass";
+        /**
+         * Intent
+         * @enum {string}
+         */
+        Intent: "conversation" | "ui_control" | "voice_setting" | "memory_search" | "memory_modification" | "conversation_navigation" | "tool_request" | "ambiguous";
+        /**
+         * Decision
+         * @description Validated routing output. Vendor confidence is informational, not evidence.
+         */
+        Decision: {
+            /** Turn Id */
+            turn_id: string;
+            intent: components["schemas"]["Intent"];
+            /** Probabilities */
+            probabilities: {
+                [key: string]: number;
+            };
+            /**
+             * Confidence
+             * @description Vendor distribution confidence, not the selected probability.
+             */
+            confidence: number;
+            /** Tier */
+            tier: number;
+            complexity: components["schemas"]["Complexity"];
+            source: components["schemas"]["DecisionSource"];
+            /** Model */
+            model: string;
+            /** Policy Version */
+            policy_version: string;
+        };
+        /** UserSettings */
+        UserSettings: {
+            /**
+             * Speaking Speed
+             * @default 1
+             */
+            speaking_speed: number;
+            /**
+             * Captions Visible
+             * @default true
+             */
+            captions_visible: boolean;
+            /**
+             * Approved Voice Id
+             * @default null
+             */
+            approved_voice_id: string | null;
+            /** @default automatic */
+            response_preference: components["schemas"]["ResponsePreference"];
+            /**
+             * Revision
+             * @default 0
+             */
+            revision: number;
+        };
+        /** MemorySource */
+        MemorySource: {
+            /** Turn Id */
+            turn_id: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** MemoryRecord */
+        MemoryRecord: {
+            /** Id */
+            id: string;
+            /** Owner Id */
+            owner_id: string;
+            /** Content */
+            content: string;
+            source: components["schemas"]["MemorySource"];
+            /** Version */
+            version: number;
+            /**
+             * Status
+             * @default active
+             * @enum {string}
+             */
+            status: "active" | "superseded" | "excluded";
+            /**
+             * Embedding Model
+             * @default text-embedding-3-small
+             */
+            embedding_model: string;
+            /**
+             * Embedding
+             * @default null
+             */
+            embedding: number[] | null;
+        };
+        /** ContextEntry */
+        ContextEntry: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "system" | "user" | "assistant" | "memory" | "tool";
+            /** Text */
+            text: string;
+        };
+        /** ContextSelection */
+        ContextSelection: {
+            /** Revision */
+            revision: number;
+            /**
+             * Included
+             * @default []
+             */
+            included: components["schemas"]["ContextEntry"][];
+            /**
+             * Excluded Ids
+             * @default []
+             */
+            excluded_ids: string[];
+        };
+        /** ToolSpec */
+        ToolSpec: {
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+        };
+        /** ModelRequest */
+        ModelRequest: {
+            /** Turn Id */
+            turn_id: string;
+            /** Attempt Id */
+            attempt_id: string;
+            /** Instructions */
+            instructions: string;
+            selection: components["schemas"]["ContextSelection"];
+            response_policy: components["schemas"]["ResponsePolicy"];
+            settings: components["schemas"]["UserSettings"];
+            /**
+             * Memories
+             * @default []
+             */
+            memories: components["schemas"]["MemoryRecord"][];
+            /**
+             * Tools
+             * @default []
+             */
+            tools: components["schemas"]["ToolSpec"][];
+            /**
+             * Settings Revision
+             * @default 0
+             */
+            settings_revision: number;
+            /**
+             * Language
+             * @default en
+             * @enum {string}
+             */
+            language: "ar" | "en";
+        };
+        /** AdjustSpeakingSpeed */
+        AdjustSpeakingSpeed: {
+            /**
+             * Kind
+             * @default AdjustSpeakingSpeed
+             * @constant
+             */
+            kind: "AdjustSpeakingSpeed";
+            /** Delta */
+            delta: number;
+        };
+        /** SetSpeakingSpeed */
+        SetSpeakingSpeed: {
+            /**
+             * Kind
+             * @default SetSpeakingSpeed
+             * @constant
+             */
+            kind: "SetSpeakingSpeed";
+            /** Speed */
+            speed: number;
+        };
+        /** SelectApprovedVoice */
+        SelectApprovedVoice: {
+            /**
+             * Kind
+             * @default SelectApprovedVoice
+             * @constant
+             */
+            kind: "SelectApprovedVoice";
+            /** Voice Id */
+            voice_id: string;
+        };
+        /** ShowConversationHistory */
+        ShowConversationHistory: {
+            /**
+             * Kind
+             * @default ShowConversationHistory
+             * @constant
+             */
+            kind: "ShowConversationHistory";
+        };
+        /** OpenMemoryExplorer */
+        OpenMemoryExplorer: {
+            /**
+             * Kind
+             * @default OpenMemoryExplorer
+             * @constant
+             */
+            kind: "OpenMemoryExplorer";
+        };
+        /** SetCaptionsVisible */
+        SetCaptionsVisible: {
+            /**
+             * Kind
+             * @default SetCaptionsVisible
+             * @constant
+             */
+            kind: "SetCaptionsVisible";
+            /** Visible */
+            visible: boolean;
+        };
+        /** SearchMemory */
+        SearchMemory: {
+            /**
+             * Kind
+             * @default SearchMemory
+             * @constant
+             */
+            kind: "SearchMemory";
+            /** Query */
+            query: string;
+            /**
+             * Limit
+             * @default 20
+             */
+            limit: number;
+        };
+        /** ProposeContextExclusion */
+        ProposeContextExclusion: {
+            /**
+             * Kind
+             * @default ProposeContextExclusion
+             * @constant
+             */
+            kind: "ProposeContextExclusion";
+            /** Query */
+            query: string;
+            /**
+             * Keep
+             * @default []
+             */
+            keep: string[];
+        };
+        /** RestoreContextOperation */
+        RestoreContextOperation: {
+            /**
+             * Kind
+             * @default RestoreContextOperation
+             * @constant
+             */
+            kind: "RestoreContextOperation";
+            /** Operation Id */
+            operation_id: string;
+        };
+        Action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
     };
     responses: never;
     parameters: never;
