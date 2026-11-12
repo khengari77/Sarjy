@@ -4,11 +4,13 @@ Pure policy: an excluded location memory must not authorize a weather request
 unless the user explicitly supplied that city in the current turn. The
 imperative shell performs the actual boundary call only after this decision.
 """
-import re
-from dataclasses import dataclass
-from typing import Literal, Sequence
 
-LOCATION_EXCLUDED = 'LOCATION_EXCLUDED'
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Literal
+
+LOCATION_EXCLUDED = "LOCATION_EXCLUDED"
 
 
 @dataclass(frozen=True)
@@ -22,7 +24,7 @@ class WeatherDecision:
     allowed: bool
     city: str
     country: str | None
-    source: Literal['explicit', 'memory']
+    source: Literal["explicit", "memory"]
     memory_id: str | None = None
     reason: str | None = None
 
@@ -30,10 +32,10 @@ class WeatherDecision:
 def mentions(text: str, name: str) -> bool:
     """Case-insensitive whole-word match; safe for accented/Arabic names."""
     # Treat a qualified tool argument as the same city as its unqualified name.
-    needle = name.split(',', 1)[0].strip()
+    needle = name.split(",", 1)[0].strip()
     if not needle:
         return False
-    return re.search(rf'(?<!\w){re.escape(needle)}(?!\w)', text or '', re.IGNORECASE) is not None
+    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", text or "", re.IGNORECASE) is not None
 
 
 def _match(city: str, evidence: Sequence[LocationEvidence]) -> str | None:
@@ -65,12 +67,12 @@ def decide_weather_request(
     included_memory = _match(city, included)
     excluded_memory = _match(city, excluded)
     if explicit:
-        return WeatherDecision(True, city, country, 'explicit', included_memory)
+        return WeatherDecision(True, city, country, "explicit", included_memory)
     if excluded_memory is not None and included_memory is None:
-        return WeatherDecision(False, city, country, 'memory', excluded_memory, LOCATION_EXCLUDED)
+        return WeatherDecision(False, city, country, "memory", excluded_memory, LOCATION_EXCLUDED)
     if included_memory is not None:
-        return WeatherDecision(True, city, country, 'memory', included_memory)
-    return WeatherDecision(False, city, country, 'memory', reason='LOCATION_CONTEXT_REQUIRED')
+        return WeatherDecision(True, city, country, "memory", included_memory)
+    return WeatherDecision(False, city, country, "memory", reason="LOCATION_CONTEXT_REQUIRED")
 
 
-__all__ = ['LOCATION_EXCLUDED', 'LocationEvidence', 'WeatherDecision', 'decide_weather_request', 'mentions']
+__all__ = ["LOCATION_EXCLUDED", "LocationEvidence", "WeatherDecision", "decide_weather_request", "mentions"]

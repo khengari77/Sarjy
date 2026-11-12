@@ -11,15 +11,12 @@ Wire format and authorization
   SHA-256 digest, so owner/conversation scopes cannot collide).  A repeat
   returns the stored outcome without adding exclusions or advancing revisions.
 """
+
 import hashlib
 import re
 from collections.abc import Sequence
 from typing import Protocol
 from uuid import uuid4
-
-from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.context_operations import (
     MemoryCandidate,
@@ -31,24 +28,72 @@ from app.domain.context_operations import (
     verify_proposal,
 )
 from app.infrastructure.database import (
-    Conversation,
     ContextExclusion,
     ContextOperation,
     ContextRevision,
+    Conversation,
     Memory,
     SessionGate,
     now,
 )
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
-SCOPE = 'conversation'
-EXCLUDE = 'exclude'
-RESTORE = 'restore'
+SCOPE = "conversation"
+EXCLUDE = "exclude"
+RESTORE = "restore"
 STOPWORDS = frozenset(
-    'a an and about all anything are as at be but by chat conversation do does '
-    'everything for from get has have i in is it its me my of on or please '
-    'remember that the this to was what when where which with you your'.split()
+    [
+        "a",
+        "an",
+        "and",
+        "about",
+        "all",
+        "anything",
+        "are",
+        "as",
+        "at",
+        "be",
+        "but",
+        "by",
+        "chat",
+        "conversation",
+        "do",
+        "does",
+        "everything",
+        "for",
+        "from",
+        "get",
+        "has",
+        "have",
+        "i",
+        "in",
+        "is",
+        "it",
+        "its",
+        "me",
+        "my",
+        "of",
+        "on",
+        "or",
+        "please",
+        "remember",
+        "that",
+        "the",
+        "this",
+        "to",
+        "was",
+        "what",
+        "when",
+        "where",
+        "which",
+        "with",
+        "you",
+        "your",
+    ]
 )
-TOKEN = re.compile(r'[0-9A-Za-z\u0600-\u06ff]+')
+TOKEN = re.compile(r"[0-9A-Za-z\u0600-\u06ff]+")
 
 
 class ContextOperationError(Exception):
@@ -96,7 +141,7 @@ async def keyword_search(
     rows = (
         await db.scalars(
             select(Memory)
-            .where(Memory.owner_id == owner_id, Memory.status == 'active')
+            .where(Memory.owner_id == owner_id, Memory.status == "active")
             .order_by(Memory.created_at.desc())
         )
     ).all()
@@ -117,27 +162,35 @@ async def keyword_search(
                 )
             )
     scored.sort(key=lambda candidate: (-candidate.score, candidate.id))
-    excluded = set(await db.scalars(select(ContextExclusion.memory_id).where(
-        ContextExclusion.owner_id == owner_id, ContextExclusion.conversation_id == conversation_id,
-        ContextExclusion.active.is_(True))))
+    excluded = set(
+        await db.scalars(
+            select(ContextExclusion.memory_id).where(
+                ContextExclusion.owner_id == owner_id,
+                ContextExclusion.conversation_id == conversation_id,
+                ContextExclusion.active.is_(True),
+            )
+        )
+    )
     return tuple(item for item in scored if item.id not in excluded)[:limit]
 
 
 def _digest(*parts: str) -> str:
-    return hashlib.sha256('\x1f'.join(parts).encode()).hexdigest()
+    return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 
 def _operation_key(owner_id: str, conversation_id: str, kind: str, idempotency_key: str) -> str:
-    return _digest('context-operation', owner_id, conversation_id, kind, idempotency_key)
+    return _digest("context-operation", owner_id, conversation_id, kind, idempotency_key)
 
 
-async def _owned_conversation(db: AsyncSession, owner_id: str, conversation_id: str, *, lock: bool = False) -> Conversation:
+async def _owned_conversation(
+    db: AsyncSession, owner_id: str, conversation_id: str, *, lock: bool = False
+) -> Conversation:
     statement = select(Conversation).where(Conversation.id == conversation_id, Conversation.owner_id == owner_id)
     if lock:
         statement = statement.with_for_update()
     conversation = await db.scalar(statement)
     if conversation is None:
-        raise ContextOperationError('CONVERSATION_NOT_FOUND', 404)
+        raise ContextOperationError("CONVERSATION_NOT_FOUND", 404)
     return conversation
 
 
@@ -147,12 +200,12 @@ async def _replay(db: AsyncSession, key: str, owner_id: str, conversation_id: st
         return None
     if existing.owner_id != owner_id or existing.conversation_id != conversation_id:
         # Namespaced keys make this unreachable, but never leak another scope.
-        raise ContextOperationError('OPERATION_NOT_FOUND', 404)
+        raise ContextOperationError("OPERATION_NOT_FOUND", 404)
     payload = existing.payload or {}
-    if payload.get('request_hash') != request_hash:
-        raise ContextOperationError('IDEMPOTENCY_KEY_REUSED')
-    response = dict(payload.get('response') or {})
-    response['idempotent'] = True
+    if payload.get("request_hash") != request_hash:
+        raise ContextOperationError("IDEMPOTENCY_KEY_REUSED")
+    response = dict(payload.get("response") or {})
+    response["idempotent"] = True
     return response
 
 
@@ -169,7 +222,7 @@ async def create_proposal(
 ) -> dict:
     """Build a preview without writing anything. Read-only by construction."""
     if not secret:
-        raise ContextOperationError('CONTEXT_PROPOSALS_NOT_CONFIGURED', 503)
+        raise ContextOperationError("CONTEXT_PROPOSALS_NOT_CONFIGURED", 503)
     conversation = await _owned_conversation(db, owner_id, conversation_id)
     candidates = tuple(await search(db, owner_id=owner_id, conversation_id=conversation_id, query=query, limit=limit))
     # The owner filter is re-applied defensively for adapters that might return
@@ -177,9 +230,9 @@ async def create_proposal(
     rows = (
         await db.scalars(
             select(Memory).where(
-                Memory.id.in_([candidate.id for candidate in candidates] or ['-']),
+                Memory.id.in_([candidate.id for candidate in candidates] or ["-"]),
                 Memory.owner_id == owner_id,
-                Memory.status == 'active',
+                Memory.status == "active",
             )
         )
     ).all()
@@ -189,37 +242,36 @@ async def create_proposal(
     revision = conversation.revision
     token = sign_proposal(
         {
-            'v': 1,
-            'owner_id': owner_id,
-            'conversation_id': conversation_id,
-            'revision': revision,
-            'query': query,
-            'keep': list(keep),
-            'excluded_ids': sorted(selection.excluded_ids),
-            'kept_ids': sorted(selection.kept_ids),
+            "v": 1,
+            "owner_id": owner_id,
+            "conversation_id": conversation_id,
+            "revision": revision,
+            "query": query,
+            "keep": list(keep),
+            "excluded_ids": sorted(selection.excluded_ids),
+            "kept_ids": sorted(selection.kept_ids),
         },
         secret,
     )
     return {
-        'conversation_id': conversation_id,
-        'query': query,
-        'revision': revision,
-        'proposal': token,
-        'matches': [
+        "conversation_id": conversation_id,
+        "query": query,
+        "revision": revision,
+        "proposal": token,
+        "matches": [
             {
-                'id': candidate.id,
-                'content': candidate.content,
-                'source_turn_id': candidate.source_turn_id,
-                'score': candidate.score,
-                'kind': 'budget' if candidate.is_budget else candidate.kind,
+                "id": candidate.id,
+                "content": candidate.content,
+                "source_turn_id": candidate.source_turn_id,
+                "score": candidate.score,
+                "kind": "budget" if candidate.is_budget else candidate.kind,
             }
             for candidate in selection.matches
         ],
-        'preserved': [
-            {'id': record.id, 'content': record.content, 'reason': record.reason}
-            for record in selection.preserved
+        "preserved": [
+            {"id": record.id, "content": record.content, "reason": record.reason} for record in selection.preserved
         ],
-        'diff': selection.diff(revision, revision),
+        "diff": selection.diff(revision, revision),
     }
 
 
@@ -235,47 +287,47 @@ async def confirm_proposal(
     commit: bool = True,
 ) -> dict:
     if not secret:
-        raise ContextOperationError('CONTEXT_PROPOSALS_NOT_CONFIGURED', 503)
+        raise ContextOperationError("CONTEXT_PROPOSALS_NOT_CONFIGURED", 503)
     await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
     conversation = await _owned_conversation(db, owner_id, conversation_id, lock=True)
     try:
         payload = verify_proposal(proposal, secret)
     except ValueError as exc:
-        raise ContextOperationError('PROPOSAL_INVALID', 400) from exc
-    if payload.get('owner_id') != owner_id or payload.get('conversation_id') != conversation_id:
-        raise ContextOperationError('PROPOSAL_INVALID', 404)
+        raise ContextOperationError("PROPOSAL_INVALID", 400) from exc
+    if payload.get("owner_id") != owner_id or payload.get("conversation_id") != conversation_id:
+        raise ContextOperationError("PROPOSAL_INVALID", 404)
 
-    excluded_ids = frozenset(str(value) for value in payload.get('excluded_ids', ()))
-    kept_ids = frozenset(str(value) for value in payload.get('kept_ids', ()))
+    excluded_ids = frozenset(str(value) for value in payload.get("excluded_ids", ()))
+    kept_ids = frozenset(str(value) for value in payload.get("kept_ids", ()))
     request_hash = _digest(EXCLUDE, proposal, str(expected_revision))
     key = _operation_key(owner_id, conversation_id, EXCLUDE, idempotency_key)
     replayed = await _replay(db, key, owner_id, conversation_id, request_hash)
     if replayed is not None:
         return replayed
 
-    proposal_revision = payload.get('revision')
+    proposal_revision = payload.get("revision")
     if proposal_revision != expected_revision or conversation.revision != expected_revision:
-        raise ContextOperationError('REVISION_CONFLICT')
+        raise ContextOperationError("REVISION_CONFLICT")
     if not excluded_ids:
-        raise ContextOperationError('NO_CONTEXT_CHANGE')
+        raise ContextOperationError("NO_CONTEXT_CHANGE")
     if excluded_ids & kept_ids:
         # Defence in depth: a keep-exception can never be smuggled away.
-        raise ContextOperationError('PROPOSAL_INVALID', 400)
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
 
     rows = (
         await db.scalars(
             select(Memory).where(
-                Memory.id.in_(list(excluded_ids) or ['-']),
+                Memory.id.in_(list(excluded_ids) or ["-"]),
                 Memory.owner_id == owner_id,
-                Memory.status == 'active',
+                Memory.status == "active",
             )
         )
     ).all()
     authorized = {row.id for row in rows}
     if authorized != excluded_ids:
-        raise ContextOperationError('PROPOSAL_INVALID')
-    if any(classify(row.content) == 'budget' or row.id in kept_ids for row in rows):
-        raise ContextOperationError('PROPOSAL_INVALID', 400)
+        raise ContextOperationError("PROPOSAL_INVALID")
+    if any(classify(row.content) == "budget" or row.id in kept_ids for row in rows):
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
 
     before = conversation.revision
     after = before + 1
@@ -283,14 +335,14 @@ async def confirm_proposal(
     operation_id = str(uuid4())
     diff = exclusion_diff(excluded_ids, kept_ids, before, after)
     response = {
-        'operation_id': operation_id,
-        'status': 'applied',
-        'idempotent': False,
-        'excluded_ids': sorted(excluded_ids),
-        'kept_ids': sorted(kept_ids),
-        'revision_before': before,
-        'revision_after': after,
-        'diff': diff,
+        "operation_id": operation_id,
+        "status": "applied",
+        "idempotent": False,
+        "excluded_ids": sorted(excluded_ids),
+        "kept_ids": sorted(kept_ids),
+        "revision_before": before,
+        "revision_after": after,
+        "diff": diff,
     }
     db.add(
         ContextOperation(
@@ -299,23 +351,27 @@ async def confirm_proposal(
             conversation_id=conversation_id,
             command_type=EXCLUDE,
             payload={
-                'query': payload.get('query', ''),
-                'excluded_ids': sorted(excluded_ids),
-                'kept_ids': sorted(kept_ids),
-                'diff': diff,
-                'request_hash': request_hash,
-                'response': response,
+                "query": payload.get("query", ""),
+                "excluded_ids": sorted(excluded_ids),
+                "kept_ids": sorted(kept_ids),
+                "diff": diff,
+                "request_hash": request_hash,
+                "response": response,
             },
             revision_before=before,
             revision_after=after,
             idempotency_key=key,
-            outcome='applied',
+            outcome="applied",
             created_at=now(),
         )
     )
     # Flush the operation first so PostgreSQL satisfies the exclusion FK order.
     await db.flush()
-    db.add(ContextRevision(id=str(uuid4()), conversation_id=conversation_id, revision=after, created_by=owner_id, created_at=now()))
+    db.add(
+        ContextRevision(
+            id=str(uuid4()), conversation_id=conversation_id, revision=after, created_by=owner_id, created_at=now()
+        )
+    )
     for memory_id in sorted(excluded_ids):
         db.add(
             ContextExclusion(
@@ -364,7 +420,7 @@ async def _undo_operation(
         )
     )
     if original is None:
-        raise ContextOperationError('OPERATION_NOT_FOUND', 404)
+        raise ContextOperationError("OPERATION_NOT_FOUND", 404)
     request_hash = _digest(RESTORE, operation_id, str(expected_revision))
     key = _operation_key(owner_id, conversation_id, RESTORE, idempotency_key)
     replayed = await _replay(db, key, owner_id, conversation_id, request_hash)
@@ -372,9 +428,9 @@ async def _undo_operation(
         return replayed
 
     if original.command_type != EXCLUDE:
-        raise ContextOperationError('OPERATION_NOT_RESTORABLE')
+        raise ContextOperationError("OPERATION_NOT_RESTORABLE")
     if conversation.revision != expected_revision or original.revision_after is None:
-        raise ContextOperationError('REVISION_CONFLICT')
+        raise ContextOperationError("REVISION_CONFLICT")
 
     exclusions = (
         await db.scalars(
@@ -387,7 +443,7 @@ async def _undo_operation(
     ).all()
     active = [row for row in exclusions if row.active]
     if not active:
-        raise ContextOperationError('OPERATION_ALREADY_RESTORED')
+        raise ContextOperationError("OPERATION_ALREADY_RESTORED")
 
     for row in active:
         row.active = False
@@ -410,14 +466,14 @@ async def _undo_operation(
     diff = restore_diff(restored_ids, still_excluded, before, after)
     restore_id = str(uuid4())
     response = {
-        'operation_id': restore_id,
-        'restored_operation_id': original.id,
-        'status': 'restored',
-        'idempotent': False,
-        'restored_ids': sorted(restored_ids - still_excluded),
-        'revision_before': before,
-        'revision_after': after,
-        'diff': diff,
+        "operation_id": restore_id,
+        "restored_operation_id": original.id,
+        "status": "restored",
+        "idempotent": False,
+        "restored_ids": sorted(restored_ids - still_excluded),
+        "revision_before": before,
+        "revision_after": after,
+        "diff": diff,
     }
     db.add(
         ContextOperation(
@@ -426,22 +482,26 @@ async def _undo_operation(
             conversation_id=conversation_id,
             command_type=RESTORE,
             payload={
-                'restored_operation_id': original.id,
-                'restored_ids': sorted(restored_ids - still_excluded),
-                'diff': diff,
-                'request_hash': request_hash,
-                'response': response,
+                "restored_operation_id": original.id,
+                "restored_ids": sorted(restored_ids - still_excluded),
+                "diff": diff,
+                "request_hash": request_hash,
+                "response": response,
             },
             revision_before=before,
             revision_after=after,
             idempotency_key=key,
-            outcome='applied',
+            outcome="applied",
             created_at=now(),
         )
     )
     # Flush the operation first so PostgreSQL satisfies the exclusion FK order.
     await db.flush()
-    db.add(ContextRevision(id=str(uuid4()), conversation_id=conversation_id, revision=after, created_by=owner_id, created_at=now()))
+    db.add(
+        ContextRevision(
+            id=str(uuid4()), conversation_id=conversation_id, revision=after, created_by=owner_id, created_at=now()
+        )
+    )
     try:
         await db.flush()
         if commit:
@@ -467,18 +527,18 @@ async def list_operations(db: AsyncSession, *, owner_id: str, conversation_id: s
         )
     ).all()
     return {
-        'conversation_id': conversation_id,
-        'revision': conversation.revision,
-        'operations': [
+        "conversation_id": conversation_id,
+        "revision": conversation.revision,
+        "operations": [
             {
-                'id': row.id,
-                'command_type': row.command_type,
-                'outcome': row.outcome,
-                'revision_before': row.revision_before,
-                'revision_after': row.revision_after,
-                'idempotency_key': row.idempotency_key,
-                'created_at': row.created_at,
-                'diff': (row.payload or {}).get('diff'),
+                "id": row.id,
+                "command_type": row.command_type,
+                "outcome": row.outcome,
+                "revision_before": row.revision_before,
+                "revision_after": row.revision_after,
+                "idempotency_key": row.idempotency_key,
+                "created_at": row.created_at,
+                "diff": (row.payload or {}).get("diff"),
             }
             for row in rows
         ],
@@ -497,19 +557,34 @@ async def context_state(db: AsyncSession, *, owner_id: str, conversation_id: str
         )
     ).all()
     return {
-        'conversation_id': conversation_id,
-        'revision': conversation.revision,
-        'excluded_ids': sorted(set(excluded_ids)),
+        "conversation_id": conversation_id,
+        "revision": conversation.revision,
+        "excluded_ids": sorted(set(excluded_ids)),
     }
 
 
 async def undo_operation(db, *, owner_id, conversation_id, operation_id, expected_revision, idempotency_key):
     """Public transaction-owning entrypoint."""
-    return await _undo_operation(db, owner_id=owner_id, conversation_id=conversation_id,
-        operation_id=operation_id, expected_revision=expected_revision, idempotency_key=idempotency_key)
+    return await _undo_operation(
+        db,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        operation_id=operation_id,
+        expected_revision=expected_revision,
+        idempotency_key=idempotency_key,
+    )
 
 
-async def undo_operation_in_transaction(db, *, owner_id, conversation_id, operation_id, expected_revision, idempotency_key):
+async def undo_operation_in_transaction(
+    db, *, owner_id, conversation_id, operation_id, expected_revision, idempotency_key
+):
     """Restricted dispatcher core: the caller alone owns commit/rollback."""
-    return await _undo_operation(db, owner_id=owner_id, conversation_id=conversation_id,
-        operation_id=operation_id, expected_revision=expected_revision, idempotency_key=idempotency_key, commit=False)
+    return await _undo_operation(
+        db,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        operation_id=operation_id,
+        expected_revision=expected_revision,
+        idempotency_key=idempotency_key,
+        commit=False,
+    )
