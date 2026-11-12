@@ -15,7 +15,7 @@ from app.services.context_operations import (
     MemorySearcher,
     create_proposal,
     keyword_search,
-    undo_operation,
+    undo_operation_in_transaction,
 )
 
 
@@ -35,14 +35,13 @@ def build_context_action_handlers(*, secret: str, search: MemorySearcher = keywo
 
     async def restore_operation(*, db, owner_id, conversation_id, request_id, expected_revision, action):
         # Undo is revision-guarded; request_id supplies durable idempotency.
-        return await undo_operation(
+        return await undo_operation_in_transaction(
             db,
             owner_id=owner_id,
             conversation_id=conversation_id,
             operation_id=action.operation_id,
             expected_revision=expected_revision,
             idempotency_key=request_id,
-            commit=False,
         )
 
     return {

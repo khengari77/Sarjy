@@ -129,7 +129,7 @@ def exclusion_diff(excluded_ids: frozenset[str], kept_ids: frozenset[str], revis
 
 def restore_diff(restored_ids: frozenset[str], still_excluded: frozenset[str], revision_before: int, revision_after: int) -> dict:
     return {
-        'added': sorted(restored_ids),
+        'added': sorted(restored_ids - still_excluded),
         'removed': [],
         'kept': sorted(still_excluded),
         'revision_before': revision_before,
@@ -144,6 +144,8 @@ def sign_proposal(payload: dict, secret: str) -> str:
     this token.  Confirmation only trusts the signed payload, never ids sent by
     the client.
     """
+    if not secret:
+        raise ValueError('CONTEXT_PROPOSALS_NOT_CONFIGURED')
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip('=')
     signature = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
@@ -151,6 +153,8 @@ def sign_proposal(payload: dict, secret: str) -> str:
 
 
 def verify_proposal(token: str, secret: str) -> dict:
+    if not secret:
+        raise ValueError('CONTEXT_PROPOSALS_NOT_CONFIGURED')
     try:
         body, signature = token.rsplit('.', 1)
     except (AttributeError, ValueError) as exc:

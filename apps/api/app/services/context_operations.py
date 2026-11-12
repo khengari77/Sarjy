@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +36,7 @@ from app.infrastructure.database import (
     ContextOperation,
     ContextRevision,
     Memory,
+    SessionGate,
     now,
 )
 
@@ -116,7 +117,10 @@ async def keyword_search(
                 )
             )
     scored.sort(key=lambda candidate: (-candidate.score, candidate.id))
-    return tuple(scored[:limit])
+    excluded = set(await db.scalars(select(ContextExclusion.memory_id).where(
+        ContextExclusion.owner_id == owner_id, ContextExclusion.conversation_id == conversation_id,
+        ContextExclusion.active.is_(True))))
+    return tuple(item for item in scored if item.id not in excluded)[:limit]
 
 
 def _digest(*parts: str) -> str:
@@ -164,6 +168,8 @@ async def create_proposal(
     search: MemorySearcher = keyword_search,
 ) -> dict:
     """Build a preview without writing anything. Read-only by construction."""
+    if not secret:
+        raise ContextOperationError('CONTEXT_PROPOSALS_NOT_CONFIGURED', 503)
     conversation = await _owned_conversation(db, owner_id, conversation_id)
     candidates = tuple(await search(db, owner_id=owner_id, conversation_id=conversation_id, query=query, limit=limit))
     # The owner filter is re-applied defensively for adapters that might return
@@ -228,7 +234,10 @@ async def confirm_proposal(
     secret: str,
     commit: bool = True,
 ) -> dict:
-    conversation = await _owned_conversation(db, owner_id, conversation_id)
+    if not secret:
+        raise ContextOperationError('CONTEXT_PROPOSALS_NOT_CONFIGURED', 503)
+    await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
+    conversation = await _owned_conversation(db, owner_id, conversation_id, lock=True)
     try:
         payload = verify_proposal(proposal, secret)
     except ValueError as exc:
@@ -247,6 +256,8 @@ async def confirm_proposal(
     proposal_revision = payload.get('revision')
     if proposal_revision != expected_revision or conversation.revision != expected_revision:
         raise ContextOperationError('REVISION_CONFLICT')
+    if not excluded_ids:
+        raise ContextOperationError('NO_CONTEXT_CHANGE')
     if excluded_ids & kept_ids:
         # Defence in depth: a keep-exception can never be smuggled away.
         raise ContextOperationError('PROPOSAL_INVALID', 400)
@@ -323,6 +334,8 @@ async def confirm_proposal(
         if commit:
             await db.commit()
     except IntegrityError:
+        if not commit:
+            raise
         await db.rollback()
         replayed = await _replay(db, key, owner_id, conversation_id, request_hash)
         if replayed is None:
@@ -331,7 +344,7 @@ async def confirm_proposal(
     return response
 
 
-async def undo_operation(
+async def _undo_operation(
     db: AsyncSession,
     *,
     owner_id: str,
@@ -341,6 +354,7 @@ async def undo_operation(
     idempotency_key: str,
     commit: bool = True,
 ) -> dict:
+    await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
     conversation = await _owned_conversation(db, owner_id, conversation_id, lock=True)
     original = await db.scalar(
         select(ContextOperation).where(
@@ -400,7 +414,7 @@ async def undo_operation(
         'restored_operation_id': original.id,
         'status': 'restored',
         'idempotent': False,
-        'restored_ids': sorted(restored_ids),
+        'restored_ids': sorted(restored_ids - still_excluded),
         'revision_before': before,
         'revision_after': after,
         'diff': diff,
@@ -413,7 +427,7 @@ async def undo_operation(
             command_type=RESTORE,
             payload={
                 'restored_operation_id': original.id,
-                'restored_ids': sorted(restored_ids),
+                'restored_ids': sorted(restored_ids - still_excluded),
                 'diff': diff,
                 'request_hash': request_hash,
                 'response': response,
@@ -433,6 +447,8 @@ async def undo_operation(
         if commit:
             await db.commit()
     except IntegrityError:
+        if not commit:
+            raise
         await db.rollback()
         replayed = await _replay(db, key, owner_id, conversation_id, request_hash)
         if replayed is None:
@@ -485,3 +501,15 @@ async def context_state(db: AsyncSession, *, owner_id: str, conversation_id: str
         'revision': conversation.revision,
         'excluded_ids': sorted(set(excluded_ids)),
     }
+
+
+async def undo_operation(db, *, owner_id, conversation_id, operation_id, expected_revision, idempotency_key):
+    """Public transaction-owning entrypoint."""
+    return await _undo_operation(db, owner_id=owner_id, conversation_id=conversation_id,
+        operation_id=operation_id, expected_revision=expected_revision, idempotency_key=idempotency_key)
+
+
+async def undo_operation_in_transaction(db, *, owner_id, conversation_id, operation_id, expected_revision, idempotency_key):
+    """Restricted dispatcher core: the caller alone owns commit/rollback."""
+    return await _undo_operation(db, owner_id=owner_id, conversation_id=conversation_id,
+        operation_id=operation_id, expected_revision=expected_revision, idempotency_key=idempotency_key, commit=False)
