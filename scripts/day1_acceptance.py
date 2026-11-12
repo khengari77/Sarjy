@@ -63,7 +63,7 @@ def ledger_delta(before: list[dict], after: list[dict]) -> list[dict]:
     ]
 
 
-def summarize_turns(turns: list[dict]) -> dict:
+def summarize_turns(turns: list[dict], *, allow_interrupted: bool = False) -> dict:
     """Retain hashes and metadata rather than conversation text."""
     return {
         "entries": [
@@ -76,7 +76,13 @@ def summarize_turns(turns: list[dict]) -> dict:
             for t in turns
         ],
         "complete_unique": "passed"
-        if turns and len({t["id"] for t in turns}) == len(turns) and all(t["status"] == "completed" for t in turns)
+        if turns
+        and len({t["id"] for t in turns}) == len(turns)
+        and all(
+            t["status"] == "completed"
+            or (allow_interrupted and t["role"] == "assistant" and t["status"] == "interrupted")
+            for t in turns
+        )
         else "failed",
     }
 
@@ -339,7 +345,9 @@ async def scenario(reader, report: dict, label: str, path: Path) -> None:
         item["spoken_temperature"] = value
         save(path, report)
     if "before_reload" not in item:
-        item["before_reload"] = summarize_turns(await reader.turns(item["conversation"]))
+        item["before_reload"] = summarize_turns(
+            await reader.turns(item["conversation"]), allow_interrupted=label != "S1"
+        )
         save(path, report)
     if "cleanup" not in item and "action_requested_at" in item:
         # A crash during end/refresh leaves timing uncertain. Do not replay it on resume.
@@ -373,7 +381,7 @@ async def scenario(reader, report: dict, label: str, path: Path) -> None:
         )
         save(path, report)
     turns = await reader.turns(item["conversation"])
-    after = summarize_turns(turns)
+    after = summarize_turns(turns, allow_interrupted=label != "S1")
     item["after_reload"] = after
     item["persistence"] = aggregate(
         after["complete_unique"], "passed" if after["entries"] == item["before_reload"]["entries"] else "failed"

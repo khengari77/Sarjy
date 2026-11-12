@@ -323,3 +323,13 @@ def test_resume_after_start_never_instructs_another_admission(tmp_path, monkeypa
         asyncio.run(runner.scenario(Reader(), report, "S1", tmp_path / "report.json"))
     assert report["scenarios"]["S1"]["session"] == "original-session"
     assert "Do not start another call" in capsys.readouterr().out
+
+
+def test_lifecycle_history_accepts_intentional_assistant_interruption_only():
+    interrupted = [turn("1", "assistant", "Count one, two", "interrupted")]
+    assert runner.summarize_turns(interrupted)["complete_unique"] == "failed"
+    assert runner.summarize_turns(interrupted, allow_interrupted=True)["complete_unique"] == "passed"
+    interrupted[0]["role"] = "user"
+    assert runner.summarize_turns(interrupted, allow_interrupted=True)["complete_unique"] == "failed"
+    interrupted[0]["status"] = "failed"
+    assert runner.summarize_turns(interrupted, allow_interrupted=True)["complete_unique"] == "failed"
