@@ -1050,8 +1050,11 @@ export interface components {
         };
         /** MemorySource */
         MemorySource: {
-            /** Turn Id */
-            turn_id: string;
+            /**
+             * Turn Id
+             * @default null
+             */
+            turn_id: string | null;
             /** Conversation Id */
             conversation_id: string;
             /** Created At */
@@ -1126,6 +1129,35 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** ModelMessage */
+        ModelMessage: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "system" | "user" | "assistant";
+            /** Content */
+            content: string;
+        };
+        /** ModelToolItem */
+        ModelToolItem: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "call" | "result";
+            /** Call Id */
+            call_id: string;
+            /** Name */
+            name: string;
+            /** Content */
+            content: string;
+            /**
+             * Is Error
+             * @default false
+             */
+            is_error: boolean;
+        };
         /** ModelRequest */
         ModelRequest: {
             /** Turn Id */
@@ -1137,6 +1169,16 @@ export interface components {
             selection: components["schemas"]["ContextSelection"];
             response_policy: components["schemas"]["ResponsePolicy"];
             settings: components["schemas"]["UserSettings"];
+            /**
+             * Messages
+             * @default []
+             */
+            messages: components["schemas"]["ModelMessage"][];
+            /**
+             * Tool History
+             * @default []
+             */
+            tool_history: components["schemas"]["ModelToolItem"][];
             /**
              * Memories
              * @default []

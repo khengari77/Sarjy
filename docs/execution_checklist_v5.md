@@ -515,7 +515,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 ### D2.10 — Introduce provider-independent streaming request/response adapters
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -526,11 +526,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Feed the same immutable request into fake provider transports and compare semantic payloads and normalized event sequences.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** [Provider verification](day2-provider-verification.md), 12 November 2026: shared typed streaming boundary; both SDKs tested through fake HTTP streams; funded DeepSeek streaming check returned OK (12 input / 1 output / 0 reasoning tokens); DeepSeek default persisted in new sessions and bootstrap. No hosted deployment or speech check. Final PR CI records backend, PostgreSQL, frontend and browser results.
 
 ### D2.11 — Explicitly disable DeepSeek thinking; activate primary only after user confirms funding
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -543,7 +543,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Inspect fake transport payload then, only after funding confirmation, perform one bounded access check and verify configured primary.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** [Provider verification](day2-provider-verification.md), 12 November 2026: shared typed streaming boundary; both SDKs tested through fake HTTP streams; funded DeepSeek streaming check returned OK (12 input / 1 output / 0 reasoning tokens); DeepSeek default persisted in new sessions and bootstrap. No hosted deployment or speech check. Final PR CI records backend, PostgreSQL, frontend and browser results.
 
 ### D2.12 — Implement eligible pre-output OpenAI fallback, deadlines, budget denial and partial-output handling
 

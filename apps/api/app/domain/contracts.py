@@ -209,7 +209,7 @@ class UserSettings(Contract):
 
 
 class MemorySource(Contract):
-    turn_id: str = Field(min_length=1, max_length=100)
+    turn_id: str | None = Field(default=None, min_length=1, max_length=100)
     conversation_id: str = Field(min_length=1, max_length=100)
     created_at: str = Field(min_length=1, max_length=40)
 
@@ -264,6 +264,19 @@ class ToolSpec(Contract):
         return _thaw_json(value)
 
 
+class ModelMessage(Contract):
+    role: Literal['system', 'user', 'assistant']
+    content: str
+
+
+class ModelToolItem(Contract):
+    kind: Literal['call', 'result']
+    call_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    content: str
+    is_error: bool = False
+
+
 class ModelRequest(Contract):
     turn_id: str = Field(min_length=1, max_length=100)
     attempt_id: str = Field(min_length=1, max_length=100)
@@ -271,6 +284,8 @@ class ModelRequest(Contract):
     selection: ContextSelection
     response_policy: ResponsePolicy
     settings: UserSettings
+    messages: tuple[ModelMessage, ...] = ()
+    tool_history: tuple[ModelToolItem, ...] = ()
     memories: tuple[MemoryRecord, ...] = ()
     tools: tuple[ToolSpec, ...] = ()
     settings_revision: int = Field(default=0, ge=0)
@@ -281,6 +296,24 @@ class ModelRequest(Contract):
         excluded = self.selection.excluded_ids
         if any(memory.id in excluded for memory in self.memories):
             raise ValueError('EXCLUDED_MEMORY_IN_REQUEST')
+        if self.settings_revision != self.settings.revision:
+            raise ValueError('SETTINGS_REVISION_MISMATCH')
+        if self.messages and (self.messages[0].role != 'system' or self.messages[0].content != self.instructions):
+            raise ValueError('MODEL_INSTRUCTIONS_MISMATCH')
+        allowed = {tool.name for tool in self.tools}
+        calls = {}
+        completed = set()
+        for item in self.tool_history:
+            if item.name not in allowed:
+                raise ValueError('UNSUPPORTED_TOOL_CONTINUATION')
+            if item.kind == 'call':
+                if item.call_id in calls:
+                    raise ValueError('DUPLICATE_TOOL_CALL')
+                calls[item.call_id] = item.name
+            else:
+                if calls.get(item.call_id) != item.name or item.call_id in completed:
+                    raise ValueError('INVALID_TOOL_RESULT')
+                completed.add(item.call_id)
         return self
 
 

@@ -52,7 +52,8 @@ def build(tmp_path, monkeypatch, **overrides):
     monkeypatch.setattr(livekit_api, 'LiveKitAPI', FakeLiveKitAPI)
     settings = Settings(
         database_url=f'sqlite+aiosqlite:///{tmp_path}/lifecycle.db',
-        openai_api_key='test-openai', deepseek_api_key='', deepgram_api_key='test-deepgram', eleven_api_key='test-eleven',
+        openai_api_key='test-openai', deepseek_api_key=overrides.pop('deepseek_api_key', ''),
+        default_llm_provider=overrides.pop('default_llm_provider', 'openai_direct'), deepgram_api_key='test-deepgram', eleven_api_key='test-eleven',
         livekit_url='https://fake.livekit', livekit_api_key='key' * 8, livekit_api_secret='secret' * 8,
         agent_service_secret=AGENT_SECRET, demo_calls_per_identity=10, _env_file=None, **overrides,
     )
@@ -381,3 +382,30 @@ def test_hung_provider_is_cancelled_by_total_cleanup_deadline(tmp_path, monkeypa
         assert response.status_code == 503
         assert cancelled
         assert session_row(db_path,identifier)['room_cleanup_completed_at'] is None
+
+
+def test_funded_default_is_persisted_in_new_session_and_bootstrap(tmp_path, monkeypatch):
+    assert Settings(_env_file=None).default_llm_provider == 'deepseek_direct'
+    app, client, state, db_path = build(tmp_path, monkeypatch,
+        default_llm_provider='deepseek_direct', deepseek_api_key='test-deepseek')
+    with client:
+        chat = conversation(client)
+        created = start(client, chat)
+        assert created.status_code == 201, created.text
+        row = session_row(db_path, created.json()['id'])
+        pipeline = __import__('json').loads(row['pipeline'])
+        assert pipeline['llm']['provider'] == 'deepseek_direct'
+        assert pipeline['llm']['model'] == 'deepseek-flash'
+        response = client.post('/internal/agent/bootstrap', headers={
+            'x-agent-secret': AGENT_SECRET, 'x-session-id': row['id'], 'x-room-name': row['room_name']})
+        assert response.status_code == 200, response.text
+        assert response.json()['pipeline']['llm'] == pipeline['llm']
+
+
+def test_missing_deepseek_key_does_not_silently_select_openai(tmp_path, monkeypatch):
+    app, client, state, db_path = build(tmp_path, monkeypatch, default_llm_provider='deepseek_direct')
+    with client:
+        chat = conversation(client)
+        response = start(client, chat)
+        assert response.status_code == 503
+        assert state['dispatched'] == []

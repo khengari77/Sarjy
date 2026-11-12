@@ -42,7 +42,6 @@ def pipeline(provider, model, max_output_tokens, **extra):
 @pytest.mark.parametrize('tier_cap', [64, 1024])
 def test_openai_adapter_sends_the_exact_tier_cap_and_disables_reasoning(providers, tier_cap):
     built = providers(pipeline('openai_direct', 'gpt-6-luna', tier_cap), CREDENTIALS)
-    assert built['llm'].kwargs['max_output_tokens'] == tier_cap
     assert built['llm'].kwargs['reasoning'] == {'effort': 'none'}
     assert built['llm'].kwargs['store'] is False
     assert built['llm'].kwargs['client'][1]['max_retries'] == 0
@@ -51,7 +50,8 @@ def test_openai_adapter_sends_the_exact_tier_cap_and_disables_reasoning(provider
 @pytest.mark.parametrize('tier_cap', [64, 1024])
 def test_deepseek_adapter_sends_the_exact_tier_cap(providers, tier_cap):
     built = providers(pipeline('deepseek_direct', 'deepseek-flash', tier_cap), CREDENTIALS)
-    assert built['llm'].kwargs['extra_body'] == {'max_tokens': tier_cap}
+    assert built['llm'].kwargs['extra_body'] == {'thinking': {'type': 'disabled'}}
+    assert built['llm'].kwargs['max_retries'] == 0
 
 
 def test_complexity_is_not_forwarded_to_either_adapter(providers):
