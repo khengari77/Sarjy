@@ -156,7 +156,8 @@ async def read_context_inputs(
     history = tuple(ContextCandidate(id=turn.id, role=turn.role, text=turn.text, origin='history')
                     for turn in turns[-history_limit:] if turn.id not in blocked)
     tool_rows = (await db.execute(select(ToolCall, Turn).join(Turn, ToolCall.turn_id == Turn.id).where(
-        Turn.conversation_id == conversation_id, Turn.status == 'completed'
+        Turn.conversation_id == conversation_id, Turn.status == 'completed',
+        ToolCall.state == 'completed',
     ).order_by(Turn.created_at.desc(), ToolCall.id).limit(TOOL_RESULT_LIMIT))).all()
     tool_results = []
     for call, turn in tool_rows:
