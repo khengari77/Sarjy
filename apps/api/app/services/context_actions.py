@@ -10,7 +10,7 @@ The dispatcher module is not present on this branch, so registration is wired
 defensively in ``main.py`` and this integration remains unverified until #7
 merges.
 """
-from app.domain.context_operations import MemoryCandidate
+
 from app.services.context_operations import (
     MemorySearcher,
     create_proposal,
@@ -27,18 +27,19 @@ def build_context_action_handlers(*, secret: str, search: MemorySearcher = keywo
             owner_id=owner_id,
             conversation_id=conversation_id,
             query=action.query,
-            keep=tuple(getattr(action, 'keep', ())),
-            limit=getattr(action, 'limit', 20),
+            keep=tuple(getattr(action, "keep", ())),
+            limit=getattr(action, "limit", 20),
             secret=secret,
             search=search,
         )
 
     async def search_memory(*, db, owner_id, conversation_id, request_id, expected_revision, action, prepared):
-        from fastapi import HTTPException
         from app.infrastructure.database import Conversation
+        from fastapi import HTTPException
+
         conversation = await db.get(Conversation, conversation_id)
-        if conversation.revision != prepared['revision'] or conversation.revision != expected_revision:
-            raise HTTPException(409, detail={'code': 'REVISION_CONFLICT'})
+        if conversation.revision != prepared["revision"] or conversation.revision != expected_revision:
+            raise HTTPException(409, detail={"code": "REVISION_CONFLICT"})
         return prepared
 
     search_memory.prepare = prepare_search
@@ -55,7 +56,7 @@ def build_context_action_handlers(*, secret: str, search: MemorySearcher = keywo
         )
 
     return {
-        'SearchMemory': search_memory,
-        'ProposeContextExclusion': search_memory,
-        'RestoreContextOperation': restore_operation,
+        "SearchMemory": search_memory,
+        "ProposeContextExclusion": search_memory,
+        "RestoreContextOperation": restore_operation,
     }

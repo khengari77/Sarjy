@@ -1,78 +1,83 @@
 """Memory writes must never commit or roll back the caller's business session."""
-import pytest
-from sqlalchemy import select
-from app.infrastructure.database import MemoryWriteRequest
 
+import pytest
 from app.infrastructure.database import Conversation, MemoryWriteRequest
 from app.services.memory import MemoryService
+from sqlalchemy import select
 from test_memory import FakeEmbedder, setup
 
 
-@pytest.mark.parametrize('flush', [False, True])
+@pytest.mark.parametrize("flush", [False, True])
 def test_pending_caller_write_is_rejected_without_mutation(tmp_path, flush):
     async def run():
-        engine, sessions = await setup(tmp_path / 'boundary.db')
+        engine, sessions = await setup(tmp_path / "boundary.db")
         try:
             async with sessions() as caller:
-                conversation = await caller.get(Conversation, 'a1')
-                conversation.title = 'Edited title'
+                conversation = await caller.get(Conversation, "a1")
+                conversation.title = "Edited title"
                 if flush:
                     await caller.flush()
                 with pytest.raises(Exception) as error:
                     await MemoryService(caller, FakeEmbedder()).create_memory(
-                        'alice', 'a1', None, 'Tripoli', 'boundary')
-                assert getattr(error.value, 'detail', {}).get('code') == 'MEMORY_CALLER_TRANSACTION_ACTIVE'
-                assert conversation.title == 'Edited title'
+                        "alice", "a1", None, "Tripoli", "boundary"
+                    )
+                assert getattr(error.value, "detail", {}).get("code") == "MEMORY_CALLER_TRANSACTION_ACTIVE"
+                assert conversation.title == "Edited title"
                 await caller.rollback()
             async with sessions() as db:
-                assert (await db.get(Conversation, 'a1')).title == 'New conversation'
+                assert (await db.get(Conversation, "a1")).title == "New conversation"
                 assert await db.scalar(select(MemoryWriteRequest)) is None
         finally:
             await engine.dispose()
-    __import__('asyncio').run(run())
+
+    __import__("asyncio").run(run())
 
 
 def test_clean_caller_session_writes_without_touching_its_transaction(tmp_path):
     async def run():
-        engine, sessions = await setup(tmp_path / 'read-txn.db')
+        engine, sessions = await setup(tmp_path / "read-txn.db")
         try:
             async with sessions() as caller:
-                await caller.scalar(select(Conversation).where(Conversation.id == 'a1'))
+                await caller.scalar(select(Conversation).where(Conversation.id == "a1"))
                 assert caller.in_transaction()
                 result = await MemoryService(caller, FakeEmbedder()).create_memory(
-                    'alice', 'a1', None, 'Tripoli', 'clean-caller')
-                assert result.content == 'Tripoli'
+                    "alice", "a1", None, "Tripoli", "clean-caller"
+                )
+                assert result.content == "Tripoli"
                 assert caller.in_transaction()
                 await caller.rollback()
             async with sessions() as db:
-                assert (await db.scalar(select(MemoryWriteRequest))).state == 'completed'
+                assert (await db.scalar(select(MemoryWriteRequest))).state == "completed"
         finally:
             await engine.dispose()
-    __import__('asyncio').run(run())
+
+    __import__("asyncio").run(run())
 
 
 def test_sqlite_busy_uses_error_code_not_message(tmp_path, monkeypatch):
     import sqlite3
-    from sqlalchemy.exc import OperationalError
+
     from app.services.memory import _sqlite_busy
+    from sqlalchemy.exc import OperationalError
 
     class FakeOrig(Exception):
         sqlite_errorcode = 5
 
-    assert _sqlite_busy(OperationalError('stmt', {}, FakeOrig()))
-    assert _sqlite_busy(OperationalError('stmt', {}, sqlite3.OperationalError('database is locked')))
-    assert not _sqlite_busy(OperationalError('stmt', {}, sqlite3.OperationalError('no such table')))
+    assert _sqlite_busy(OperationalError("stmt", {}, FakeOrig()))
+    assert _sqlite_busy(OperationalError("stmt", {}, sqlite3.OperationalError("database is locked")))
+    assert not _sqlite_busy(OperationalError("stmt", {}, sqlite3.OperationalError("no such table")))
 
 
 def test_postgres_preserves_uncommitted_caller_title(tmp_path):
     import os
     from uuid import uuid4
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from app.infrastructure.database import Base, Identity
 
-    url = os.environ.get('TEST_MEMORY_POSTGRES_URL')
+    from app.infrastructure.database import Base, Identity
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    url = os.environ.get("TEST_MEMORY_POSTGRES_URL")
     if not url:
-        pytest.skip('TEST_MEMORY_POSTGRES_URL requires disposable PostgreSQL')
+        pytest.skip("TEST_MEMORY_POSTGRES_URL requires disposable PostgreSQL")
 
     async def run():
         engine = create_async_engine(url)
@@ -82,21 +87,23 @@ def test_postgres_preserves_uncommitted_caller_title(tmp_path):
             async with engine.begin() as connection:
                 await connection.run_sync(Base.metadata.create_all)
             async with factory() as caller:
-                caller.add(Identity(id=owner, token_hash=owner, expires_at='2030'))
+                caller.add(Identity(id=owner, token_hash=owner, expires_at="2030"))
                 await caller.flush()
-                caller.add(Conversation(id=conversation, owner_id=owner, title='Original', revision=0))
+                caller.add(Conversation(id=conversation, owner_id=owner, title="Original", revision=0))
                 await caller.commit()
                 chat = await caller.get(Conversation, conversation)
-                chat.title = 'Edited title'
+                chat.title = "Edited title"
                 result = await MemoryService(caller, FakeEmbedder()).create_memory(
-                    owner, conversation, None, 'Tripoli', 'pg-boundary')
-                assert result.content == 'Tripoli'
-                assert chat.title == 'Edited title'
+                    owner, conversation, None, "Tripoli", "pg-boundary"
+                )
+                assert result.content == "Tripoli"
+                assert chat.title == "Edited title"
                 await caller.commit()
             async with factory() as db:
-                assert (await db.get(Conversation, conversation)).title == 'Edited title'
+                assert (await db.get(Conversation, conversation)).title == "Edited title"
                 claim = await db.scalar(select(MemoryWriteRequest))
-                assert claim.state == 'completed'
+                assert claim.state == "completed"
         finally:
             await engine.dispose()
-    __import__('asyncio').run(run())
+
+    __import__("asyncio").run(run())
