@@ -557,7 +557,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ContextState"
+                }
               }
             }
           },
@@ -594,7 +596,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ContextOperationList"
+                }
               }
             }
           },
@@ -641,7 +645,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ContextProposal"
+                }
               }
             }
           },
@@ -688,7 +694,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ContextConfirmation"
+                }
               }
             }
           },
@@ -735,7 +743,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ContextUndoResult"
+                }
               }
             }
           },
@@ -850,6 +860,7 @@
             "title": "Idempotency Key"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "proposal",
@@ -857,6 +868,292 @@
           "idempotency_key"
         ],
         "title": "ContextConfirmInput"
+      },
+      "ContextConfirmation": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "idempotent": {
+            "type": "boolean",
+            "title": "Idempotent"
+          },
+          "excluded_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Excluded Ids"
+          },
+          "kept_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Kept Ids"
+          },
+          "revision_before": {
+            "type": "integer",
+            "title": "Revision Before"
+          },
+          "revision_after": {
+            "type": "integer",
+            "title": "Revision After"
+          },
+          "diff": {
+            "$ref": "#/components/schemas/ContextDiff"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id",
+          "status",
+          "idempotent",
+          "excluded_ids",
+          "kept_ids",
+          "revision_before",
+          "revision_after",
+          "diff"
+        ],
+        "title": "ContextConfirmation"
+      },
+      "ContextDiff": {
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Added"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Removed"
+          },
+          "kept": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Kept"
+          },
+          "revision_before": {
+            "type": "integer",
+            "title": "Revision Before"
+          },
+          "revision_after": {
+            "type": "integer",
+            "title": "Revision After"
+          }
+        },
+        "type": "object",
+        "required": [
+          "added",
+          "removed",
+          "kept",
+          "revision_before",
+          "revision_after"
+        ],
+        "title": "ContextDiff"
+      },
+      "ContextMatch": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "source_turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Turn Id"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "source_turn_id",
+          "score",
+          "kind"
+        ],
+        "title": "ContextMatch"
+      },
+      "ContextOperationItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "command_type": {
+            "type": "string",
+            "title": "Command Type"
+          },
+          "outcome": {
+            "type": "string",
+            "title": "Outcome"
+          },
+          "revision_before": {
+            "type": "integer",
+            "title": "Revision Before"
+          },
+          "revision_after": {
+            "type": "integer",
+            "title": "Revision After"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "title": "Idempotency Key"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "diff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextDiff"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "command_type",
+          "outcome",
+          "revision_before",
+          "revision_after",
+          "idempotency_key",
+          "created_at",
+          "diff"
+        ],
+        "title": "ContextOperationItem"
+      },
+      "ContextOperationList": {
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/ContextOperationItem"
+            },
+            "type": "array",
+            "title": "Operations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conversation_id",
+          "revision",
+          "operations"
+        ],
+        "title": "ContextOperationList"
+      },
+      "ContextPreserved": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "reason"
+        ],
+        "title": "ContextPreserved"
+      },
+      "ContextProposal": {
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "proposal": {
+            "type": "string",
+            "title": "Proposal"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/ContextMatch"
+            },
+            "type": "array",
+            "title": "Matches"
+          },
+          "preserved": {
+            "items": {
+              "$ref": "#/components/schemas/ContextPreserved"
+            },
+            "type": "array",
+            "title": "Preserved"
+          },
+          "diff": {
+            "$ref": "#/components/schemas/ContextDiff"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conversation_id",
+          "query",
+          "revision",
+          "proposal",
+          "matches",
+          "preserved",
+          "diff"
+        ],
+        "title": "ContextProposal"
       },
       "ContextProposalInput": {
         "properties": {
@@ -882,11 +1179,38 @@
             "default": 20
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "query"
         ],
         "title": "ContextProposalInput"
+      },
+      "ContextState": {
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "excluded_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Excluded Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conversation_id",
+          "revision",
+          "excluded_ids"
+        ],
+        "title": "ContextState"
       },
       "ContextUndoInput": {
         "properties": {
@@ -908,6 +1232,7 @@
             "title": "Idempotency Key"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "operation_id",
@@ -915,6 +1240,56 @@
           "idempotency_key"
         ],
         "title": "ContextUndoInput"
+      },
+      "ContextUndoResult": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "restored_operation_id": {
+            "type": "string",
+            "title": "Restored Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "idempotent": {
+            "type": "boolean",
+            "title": "Idempotent"
+          },
+          "restored_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Restored Ids"
+          },
+          "revision_before": {
+            "type": "integer",
+            "title": "Revision Before"
+          },
+          "revision_after": {
+            "type": "integer",
+            "title": "Revision After"
+          },
+          "diff": {
+            "$ref": "#/components/schemas/ContextDiff"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id",
+          "restored_operation_id",
+          "status",
+          "idempotent",
+          "restored_ids",
+          "revision_before",
+          "revision_after",
+          "diff"
+        ],
+        "title": "ContextUndoResult"
       },
       "HTTPValidationError": {
         "properties": {

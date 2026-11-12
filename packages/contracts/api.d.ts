@@ -407,6 +407,102 @@ export interface components {
             /** Idempotency Key */
             idempotency_key: string;
         };
+        /** ContextConfirmation */
+        ContextConfirmation: {
+            /** Operation Id */
+            operation_id: string;
+            /** Status */
+            status: string;
+            /** Idempotent */
+            idempotent: boolean;
+            /** Excluded Ids */
+            excluded_ids: string[];
+            /** Kept Ids */
+            kept_ids: string[];
+            /** Revision Before */
+            revision_before: number;
+            /** Revision After */
+            revision_after: number;
+            diff: components["schemas"]["ContextDiff"];
+        };
+        /** ContextDiff */
+        ContextDiff: {
+            /** Added */
+            added: string[];
+            /** Removed */
+            removed: string[];
+            /** Kept */
+            kept: string[];
+            /** Revision Before */
+            revision_before: number;
+            /** Revision After */
+            revision_after: number;
+        };
+        /** ContextMatch */
+        ContextMatch: {
+            /** Id */
+            id: string;
+            /** Content */
+            content: string;
+            /** Source Turn Id */
+            source_turn_id: string | null;
+            /** Score */
+            score: number;
+            /** Kind */
+            kind: string;
+        };
+        /** ContextOperationItem */
+        ContextOperationItem: {
+            /** Id */
+            id: string;
+            /** Command Type */
+            command_type: string;
+            /** Outcome */
+            outcome: string;
+            /** Revision Before */
+            revision_before: number;
+            /** Revision After */
+            revision_after: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Created At */
+            created_at: string;
+            diff: components["schemas"]["ContextDiff"] | null;
+        };
+        /** ContextOperationList */
+        ContextOperationList: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Revision */
+            revision: number;
+            /** Operations */
+            operations: components["schemas"]["ContextOperationItem"][];
+        };
+        /** ContextPreserved */
+        ContextPreserved: {
+            /** Id */
+            id: string;
+            /** Content */
+            content: string;
+            /** Reason */
+            reason: string;
+        };
+        /** ContextProposal */
+        ContextProposal: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Query */
+            query: string;
+            /** Revision */
+            revision: number;
+            /** Proposal */
+            proposal: string;
+            /** Matches */
+            matches: components["schemas"]["ContextMatch"][];
+            /** Preserved */
+            preserved: components["schemas"]["ContextPreserved"][];
+            diff: components["schemas"]["ContextDiff"];
+        };
         /** ContextProposalInput */
         ContextProposalInput: {
             /** Query */
@@ -422,6 +518,15 @@ export interface components {
              */
             limit: number;
         };
+        /** ContextState */
+        ContextState: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Revision */
+            revision: number;
+            /** Excluded Ids */
+            excluded_ids: string[];
+        };
         /** ContextUndoInput */
         ContextUndoInput: {
             /** Operation Id */
@@ -430,6 +535,24 @@ export interface components {
             expected_revision: number;
             /** Idempotency Key */
             idempotency_key: string;
+        };
+        /** ContextUndoResult */
+        ContextUndoResult: {
+            /** Operation Id */
+            operation_id: string;
+            /** Restored Operation Id */
+            restored_operation_id: string;
+            /** Status */
+            status: string;
+            /** Idempotent */
+            idempotent: boolean;
+            /** Restored Ids */
+            restored_ids: string[];
+            /** Revision Before */
+            revision_before: number;
+            /** Revision After */
+            revision_after: number;
+            diff: components["schemas"]["ContextDiff"];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1340,7 +1463,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContextState"];
                 };
             };
             /** @description Validation Error */
@@ -1371,7 +1494,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContextOperationList"];
                 };
             };
             /** @description Validation Error */
@@ -1406,7 +1529,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContextProposal"];
                 };
             };
             /** @description Validation Error */
@@ -1441,7 +1564,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContextConfirmation"];
                 };
             };
             /** @description Validation Error */
@@ -1476,7 +1599,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContextUndoResult"];
                 };
             };
             /** @description Validation Error */

@@ -8,7 +8,7 @@ from uuid import uuid4
 from typing import Literal
 
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, update, event, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
@@ -62,19 +62,90 @@ class WeatherInput(BaseModel):
     country: str | None = Field(default=None, max_length=120)
 
 class ContextProposalInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     query: str = Field(min_length=1, max_length=200)
     keep: tuple[str, ...] = ()
     limit: int = Field(default=20, ge=1, le=20)
 
 class ContextConfirmInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     proposal: str = Field(min_length=1, max_length=20000)
     expected_revision: int = Field(ge=0)
     idempotency_key: str = Field(min_length=1, max_length=100)
 
 class ContextUndoInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     operation_id: str = Field(min_length=1, max_length=36)
     expected_revision: int = Field(ge=0)
     idempotency_key: str = Field(min_length=1, max_length=100)
+
+class ContextDiff(BaseModel):
+    added: list[str]
+    removed: list[str]
+    kept: list[str]
+    revision_before: int
+    revision_after: int
+
+class ContextMatch(BaseModel):
+    id: str
+    content: str
+    source_turn_id: str | None
+    score: float
+    kind: str
+
+class ContextPreserved(BaseModel):
+    id: str
+    content: str
+    reason: str
+
+class ContextProposal(BaseModel):
+    conversation_id: str
+    query: str
+    revision: int
+    proposal: str
+    matches: list[ContextMatch]
+    preserved: list[ContextPreserved]
+    diff: ContextDiff
+
+class ContextConfirmation(BaseModel):
+    operation_id: str
+    status: str
+    idempotent: bool
+    excluded_ids: list[str]
+    kept_ids: list[str]
+    revision_before: int
+    revision_after: int
+    diff: ContextDiff
+
+class ContextUndoResult(BaseModel):
+    operation_id: str
+    restored_operation_id: str
+    status: str
+    idempotent: bool
+    restored_ids: list[str]
+    revision_before: int
+    revision_after: int
+    diff: ContextDiff
+
+class ContextOperationItem(BaseModel):
+    id: str
+    command_type: str
+    outcome: str
+    revision_before: int
+    revision_after: int
+    idempotency_key: str
+    created_at: str
+    diff: ContextDiff | None
+
+class ContextOperationList(BaseModel):
+    conversation_id: str
+    revision: int
+    operations: list[ContextOperationItem]
+
+class ContextState(BaseModel):
+    conversation_id: str
+    revision: int
+    excluded_ids: list[str]
 
 
 def _context_error(exc: ContextOperationError) -> HTTPException:
@@ -379,21 +450,21 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
     def proposal_secret() -> str:
         return config.context_proposal_secret or config.agent_service_secret
 
-    @app.get('/v1/conversations/{conversation_id}/context')
+    @app.get('/v1/conversations/{conversation_id}/context', response_model=ContextState)
     async def get_context(conversation_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
         try:
             return await context_state(db, owner_id=user.id, conversation_id=conversation_id)
         except ContextOperationError as exc:
             raise _context_error(exc) from exc
 
-    @app.get('/v1/conversations/{conversation_id}/context/operations')
+    @app.get('/v1/conversations/{conversation_id}/context/operations', response_model=ContextOperationList)
     async def get_context_operations(conversation_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
         try:
             return await list_operations(db, owner_id=user.id, conversation_id=conversation_id)
         except ContextOperationError as exc:
             raise _context_error(exc) from exc
 
-    @app.post('/v1/conversations/{conversation_id}/context/proposals')
+    @app.post('/v1/conversations/{conversation_id}/context/proposals', response_model=ContextProposal)
     async def propose_context(conversation_id: str, body: ContextProposalInput, user=Depends(identity), db: AsyncSession = Depends(database)):
         try:
             return await create_proposal(
@@ -408,7 +479,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         except ContextOperationError as exc:
             raise _context_error(exc) from exc
 
-    @app.post('/v1/conversations/{conversation_id}/context/confirm')
+    @app.post('/v1/conversations/{conversation_id}/context/confirm', response_model=ContextConfirmation)
     async def confirm_context(conversation_id: str, body: ContextConfirmInput, user=Depends(identity), db: AsyncSession = Depends(database)):
         try:
             return await confirm_proposal(
@@ -423,7 +494,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         except ContextOperationError as exc:
             raise _context_error(exc) from exc
 
-    @app.post('/v1/conversations/{conversation_id}/context/undo')
+    @app.post('/v1/conversations/{conversation_id}/context/undo', response_model=ContextUndoResult)
     async def undo_context(conversation_id: str, body: ContextUndoInput, user=Depends(identity), db: AsyncSession = Depends(database)):
         try:
             return await undo_operation(

@@ -58,3 +58,17 @@ def test_redundant_preview_has_no_targets_and_effective_undo_diff_is_honest(tmp_
         assert client.post(base+'/confirm',json={'proposal':again['proposal'],'expected_revision':1,'idempotency_key':'two'}).status_code==409
         assert client.get(base).json()['revision']==1
     assert restore_diff(frozenset({'trip'}),frozenset({'trip'}),2,3)['added']==[]
+
+
+def test_context_mutations_forbid_extra_fields_and_export_typed_responses(tmp_path):
+    file,settings=configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post('/v1/demo-session');chat=client.post('/v1/conversations').json()['id'];seed(file,chat,[('trip','Trip to Paris')]);base=f'/v1/conversations/{chat}/context'
+        assert client.post(base+'/proposals',json={'query':'trip','unexpected':'x'}).status_code==422
+        assert client.post(base+'/confirm',json={'proposal':'x','expected_revision':0,'idempotency_key':'k','unexpected':1}).status_code==422
+        assert client.post(base+'/undo',json={'operation_id':'x','expected_revision':0,'idempotency_key':'k','unexpected':1}).status_code==422
+        spec=client.app.openapi()
+        for suffix,method in (('', 'get'),('/operations','get'),('/proposals','post'),('/confirm','post'),('/undo','post')):
+            path='/v1/conversations/{conversation_id}/context'+suffix
+            schema=spec['paths'][path][method]['responses']['200']['content']['application/json']['schema']
+            assert '$ref' in schema,(path,schema)
