@@ -1,6 +1,7 @@
 """Immutable request boundary around native provider streaming plugins."""
 import asyncio
 from dataclasses import dataclass
+from stream_completion import CompletionState, completion_state
 from typing import Literal
 from livekit.agents import llm, APIConnectOptions, APIStatusError, APIConnectionError, APITimeoutError
 from app.domain.contracts import ModelRequest
@@ -51,7 +52,9 @@ class ProviderAdapter:
         for message in request.messages:
             context.add_message(role=message.role, content=message.content)
         for item in request.tool_history:
-            if item.kind == 'call':
+            if item.kind == 'assistant':
+                context.add_message(role='assistant', content=item.content, interrupted=item.interrupted)
+            elif item.kind == 'call':
                 context.items.append(llm.FunctionCall(call_id=item.call_id, name=item.name, arguments=item.content))
             else:
                 context.items.append(llm.FunctionCallOutput(call_id=item.call_id, name=item.name,
@@ -60,6 +63,9 @@ class ProviderAdapter:
         partial = False
         received = False
         kwargs = {} if tool_choice is None else {'tool_choice': tool_choice}
+        state = CompletionState()
+        token = completion_state.set(state) if self.cap_field == 'max_tokens' else None
+        buffered_tools = []
         try:
             async with self.provider.chat(chat_ctx=context, tools=list(tools),
                     conn_options=APIConnectOptions(max_retry=0),
@@ -71,14 +77,20 @@ class ProviderAdapter:
                             partial = True
                             yield GenerationEvent('text', **identity, text=chunk.delta.content)
                         for call in chunk.delta.tool_calls:
-                            partial = True
-                            yield GenerationEvent('tool', **identity, call_id=call.call_id,
-                                name=call.name, arguments=call.arguments)
+                            buffered_tools.append(GenerationEvent('tool', **identity, call_id=call.call_id,
+                                name=call.name, arguments=call.arguments))
                     if chunk.usage:
                         yield GenerationEvent('usage', **identity, usage=tuple(chunk.usage.model_dump().items()))
+            if token is not None and (not state.done or state.reason not in {'stop', 'tool_calls'}):
+                raise GenerationFailure(GenerationEvent('error', **identity, partial=partial, error_code='incomplete_response'))
+            for event in buffered_tools:
+                partial = True
+                yield event
             if not received:
                 raise ValueError('EMPTY_GENERATION_STREAM')
             yield GenerationEvent('completed', **identity)
+        except GenerationFailure:
+            raise
         except asyncio.CancelledError as exc:
             raise GenerationCancelled(GenerationEvent('cancelled', **identity, partial=partial)) from exc
         except Exception as exc:
@@ -94,6 +106,10 @@ class ProviderAdapter:
                 code = 'invalid_response'
             raise GenerationFailure(GenerationEvent('error', **identity, partial=partial,
                 error_code=code, status_code=status)) from exc
+
+        finally:
+            if token is not None:
+                completion_state.reset(token)
 
 
 def livekit_chunk(event):
