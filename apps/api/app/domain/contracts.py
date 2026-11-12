@@ -277,18 +277,24 @@ class ModelToolItem(Contract):
     is_error: bool = False
 
 
+class AssistantContinuation(Contract):
+    kind: Literal['assistant'] = 'assistant'
+    content: str
+    interrupted: bool = False
+
+
 class ModelRequest(Contract):
     turn_id: str = Field(min_length=1, max_length=100)
     attempt_id: str = Field(min_length=1, max_length=100)
     instructions: str = Field(min_length=1, max_length=16000)
     selection: ContextSelection
     response_policy: ResponsePolicy
-    settings: UserSettings
+    settings: UserSettings | None
     messages: tuple[ModelMessage, ...] = ()
-    tool_history: tuple[ModelToolItem, ...] = ()
+    tool_history: tuple[ModelToolItem | AssistantContinuation, ...] = ()
     memories: tuple[MemoryRecord, ...] = ()
     tools: tuple[ToolSpec, ...] = ()
-    settings_revision: int = Field(default=0, ge=0)
+    settings_revision: int | None = Field(default=0, ge=0)
     language: Literal['ar', 'en'] = 'en'
 
     @model_validator(mode='after')
@@ -296,7 +302,7 @@ class ModelRequest(Contract):
         excluded = self.selection.excluded_ids
         if any(memory.id in excluded for memory in self.memories):
             raise ValueError('EXCLUDED_MEMORY_IN_REQUEST')
-        if self.settings_revision != self.settings.revision:
+        if self.settings_revision != (self.settings.revision if self.settings is not None else None):
             raise ValueError('SETTINGS_REVISION_MISMATCH')
         if self.messages and (self.messages[0].role != 'system' or self.messages[0].content != self.instructions):
             raise ValueError('MODEL_INSTRUCTIONS_MISMATCH')
@@ -304,6 +310,8 @@ class ModelRequest(Contract):
         calls = {}
         completed = set()
         for item in self.tool_history:
+            if item.kind == 'assistant':
+                continue
             if item.name not in allowed:
                 raise ValueError('UNSUPPORTED_TOOL_CONTINUATION')
             if item.kind == 'call':
