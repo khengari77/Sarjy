@@ -34,6 +34,24 @@
     return [((parsed >> 16) & 255) / 255, ((parsed >> 8) & 255) / 255, (parsed & 255) / 255];
   }
 
+  /** Fibonacci sphere with a little radial jitter so the shell reads as organic. */
+  function buildParticles(count: number): { positions: Float32Array; seeds: Float32Array } {
+    const positions = new Float32Array(count * 3);
+    const seeds = new Float32Array(count);
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let index = 0; index < count; index += 1) {
+      const y = 1 - (2 * (index + 0.5)) / count;
+      const radius = Math.sqrt(Math.max(0, 1 - y * y));
+      const theta = golden * index;
+      const shell = 0.9 + Math.random() * 0.16;
+      positions[index * 3] = Math.cos(theta) * radius * shell;
+      positions[index * 3 + 1] = y * shell;
+      positions[index * 3 + 2] = Math.sin(theta) * radius * shell;
+      seeds[index] = Math.random();
+    }
+    return { positions, seeds };
+  }
+
   onMount(() => {
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
     const probe = document.createElement('canvas');
@@ -44,7 +62,7 @@
     let frame = 0;
     let start = performance.now();
     let last = start;
-    let current: [number, number, number] = hexToRgb(presentation.primaryColor);
+    let current: [number, number, number] = hexToRgb(renderState.color);
 
     const onMotionChange = () => {
       tier = selectRendererTier({ reducedMotion: reduced.matches, webglAvailable });
@@ -91,69 +109,73 @@
 
     function setupWebgl(gl: WebGL2RenderingContext): (() => void) | null {
       const vertex = `#version 300 es
-        in vec2 aPos;
-        void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }`;
-
-      const fragment = `#version 300 es
-        precision highp float;
-        out vec4 outColor;
-        uniform vec2 uRes;
+        in vec3 aPos;
+        in float aSeed;
         uniform float uTime;
-        uniform vec3 uColor;
-        uniform vec3 uAccent;
-        uniform float uHasAccent;
         uniform float uPulse;
         uniform float uTurb;
         uniform float uFlow;
         uniform float uGlow;
-        uniform float uOpacity;
+        uniform float uPointSize;
+        uniform vec3 uColor;
+        uniform vec3 uAccent;
+        uniform float uHasAccent;
+        out vec3 vColor;
+        out float vAlpha;
 
-        float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-        float noise(vec2 p){
-          vec2 i = floor(p); vec2 f = fract(p);
-          vec2 u = f * f * (3.0 - 2.0 * f);
-          return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
-                     mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
-        }
-        float fbm(vec2 p){
-          float v = 0.0; float a = 0.5;
-          for (int i = 0; i < 4; i++){ v += a * noise(p); p *= 2.02; a *= 0.5; }
-          return v;
-        }
+        mat2 rot(float a){ float c = cos(a); float s = sin(a); return mat2(c, -s, s, c); }
 
         void main(){
-          vec2 uv = (gl_FragCoord.xy * 2.0 - uRes) / min(uRes.x, uRes.y);
-          float r = length(uv);
-          float ang = atan(uv.y, uv.x) / 6.28318;
-          float t = uTime * uFlow;
+          float n = sin(aSeed * 41.0 + uTime * 1.35) * 0.5 + sin(aSeed * 97.0 - uTime * 0.85) * 0.5;
+          float breathe = 1.0 + n * (0.018 + uTurb * 0.05) + uPulse * 0.055 * (0.5 + 0.5 * n);
 
-          float warp = fbm(vec2(ang * 3.0 + t * 0.22, r * 2.4 - t * 0.18));
-          float n1 = fbm(vec2(ang * 15.0 - t * 0.55, r * 5.0 + t * 0.35));
-          float n2 = fbm(vec2(ang * 39.0 + t * 1.15, r * 9.5 - t * 0.5));
-          float n3 = fbm(vec2(ang * 78.0 - t * 1.6, r * 15.0 + t * 0.7));
+          vec3 p = aPos * breathe * 0.74;
 
-          float ring = 0.585;
-          ring += (warp - 0.5) * (0.05 + uTurb * 0.07);
-          ring += (n1 - 0.5) * 0.022 * uTurb;
-          ring += uPulse * 0.055 * (0.55 + warp);
+          float yaw = uTime * (0.06 + uFlow * 0.16) + uPulse * 0.08;
+          float pitch = sin(uTime * 0.13) * (0.05 + uTurb * 0.12);
 
-          float d = abs(r - ring);
-          float band = smoothstep(0.052 + 0.018 * uTurb, 0.0, d);
-          float grain = smoothstep(0.36, 0.86, n2);
-          float fine = smoothstep(0.55, 0.95, n3);
-          float filaments = band * (0.3 + 0.55 * grain + 0.35 * fine);
-          float sparks = smoothstep(0.87, 1.0, n3) * smoothstep(0.085, 0.0, d) * 1.6;
+          p.xz = rot(yaw) * p.xz;
+          p.yz = rot(pitch) * p.yz;
 
-          float inner = smoothstep(0.24, 0.47, r) * (1.0 - smoothstep(0.78, 0.98, r));
-          float glow = exp(-d * 10.0) * (0.3 + 0.35 * grain) * uGlow;
+          float focal = 2.6;
+          float persp = focal / (focal - p.z * 0.55);
+          float front = smoothstep(-1.0, 1.0, p.z);
 
-          float alpha = (band * 0.12 + filaments * 0.42 + sparks + glow) * inner;
+          gl_Position = vec4(p.x * persp, p.y * persp, 0.0, 1.0);
 
-          vec3 col = uColor;
-          col = mix(col, uAccent, uHasAccent * smoothstep(0.5, 0.95, n2) * 0.45);
-          col *= 0.78 + 0.55 * grain + 0.35 * uPulse + 0.25 * uGlow;
+          // Rim weighting is what makes the shell read as hollow: particles
+          // whose normal faces the camera fade, silhouette particles glow.
+          float rim = 1.0 - abs(p.z / max(0.001, length(p)));
+          float rimGlow = pow(clamp(rim, 0.0, 1.0), 1.8);
 
-          outColor = vec4(col, clamp(alpha, 0.0, 1.0) * uOpacity);
+          // Coarse angular clumping gives the wispy, uneven rim instead of a
+          // uniform dot circle.
+          float clump = 0.5 + 0.5 * sin(aSeed * 21.0 + uTime * 0.55) * sin(aSeed * 7.3 - uTime * 0.23);
+          float wisp = smoothstep(0.15, 0.9, clump);
+
+          float size = uPointSize * persp * (0.45 + 0.95 * rimGlow) * (0.8 + n * 0.35);
+          gl_PointSize = clamp(size, 1.0, 7.0);
+
+          vAlpha = (0.012 + 0.95 * rimGlow) * (0.55 + 0.45 * front) * (0.45 + 0.85 * wisp);
+          vColor = uColor;
+          if (uHasAccent > 0.5) {
+            vColor = mix(uColor, uAccent, step(0.72, aSeed));
+          }
+        }`;
+
+      const fragment = `#version 300 es
+        precision highp float;
+        in vec3 vColor;
+        in float vAlpha;
+        uniform float uOpacity;
+        out vec4 outColor;
+
+        void main(){
+          vec2 c = gl_PointCoord - 0.5;
+          float d = length(c);
+          if (d > 0.5) discard;
+          float falloff = smoothstep(0.5, 0.08, d);
+          outColor = vec4(vColor, falloff * vAlpha * uOpacity);
         }`;
 
       function compile(type: number, source: string) {
@@ -184,28 +206,39 @@
       }
       gl.useProgram(program);
 
-      const buffer = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-      const location = gl.getAttribLocation(program, 'aPos');
-      gl.enableVertexAttribArray(location);
-      gl.vertexAttribPointer(location, 2, gl.FLOAT, false, 0, 0);
+      const count = window.matchMedia('(max-width: 767px)').matches ? 2200 : 3400;
+      const { positions, seeds } = buildParticles(count);
+
+      const positionBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+      const positionLocation = gl.getAttribLocation(program, 'aPos');
+      gl.enableVertexAttribArray(positionLocation);
+      gl.vertexAttribPointer(positionLocation, 3, gl.FLOAT, false, 0, 0);
+
+      const seedBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, seedBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, seeds, gl.STATIC_DRAW);
+      const seedLocation = gl.getAttribLocation(program, 'aSeed');
+      gl.enableVertexAttribArray(seedLocation);
+      gl.vertexAttribPointer(seedLocation, 1, gl.FLOAT, false, 0, 0);
 
       const uniforms = {
-        res: gl.getUniformLocation(program, 'uRes'),
         time: gl.getUniformLocation(program, 'uTime'),
-        color: gl.getUniformLocation(program, 'uColor'),
-        accent: gl.getUniformLocation(program, 'uAccent'),
-        hasAccent: gl.getUniformLocation(program, 'uHasAccent'),
         pulse: gl.getUniformLocation(program, 'uPulse'),
         turb: gl.getUniformLocation(program, 'uTurb'),
         flow: gl.getUniformLocation(program, 'uFlow'),
         glow: gl.getUniformLocation(program, 'uGlow'),
+        pointSize: gl.getUniformLocation(program, 'uPointSize'),
+        color: gl.getUniformLocation(program, 'uColor'),
+        accent: gl.getUniformLocation(program, 'uAccent'),
+        hasAccent: gl.getUniformLocation(program, 'uHasAccent'),
         opacity: gl.getUniformLocation(program, 'uOpacity')
       };
 
       gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.disable(gl.DEPTH_TEST);
 
       const onLost = (event: Event) => {
         event.preventDefault();
@@ -237,18 +270,19 @@
         ];
         const accent = renderState.accent ? hexToRgb(renderState.accent) : [0, 0, 0];
         const motion = renderState.motion;
+        const pointScale = (canvas.height / 340) * (1.7 + motion.particleActivity * 1.2);
 
-        gl.uniform2f(uniforms.res, canvas.width, canvas.height);
         gl.uniform1f(uniforms.time, time);
-        gl.uniform3f(uniforms.color, current[0], current[1], current[2]);
-        gl.uniform3f(uniforms.accent, accent[0], accent[1], accent[2]);
-        gl.uniform1f(uniforms.hasAccent, renderState.accent ? 1 : 0);
         gl.uniform1f(uniforms.pulse, pulse);
         gl.uniform1f(uniforms.turb, motion.turbulence);
         gl.uniform1f(uniforms.flow, Math.max(0.05, motion.flowRate));
         gl.uniform1f(uniforms.glow, motion.edgeGlow);
+        gl.uniform1f(uniforms.pointSize, Math.min(9, pointScale));
+        gl.uniform3f(uniforms.color, current[0], current[1], current[2]);
+        gl.uniform3f(uniforms.accent, accent[0], accent[1], accent[2]);
+        gl.uniform1f(uniforms.hasAccent, renderState.accent ? 1 : 0);
         gl.uniform1f(uniforms.opacity, motion.opacity);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.drawArrays(gl.POINTS, 0, count);
       }
 
       frame = requestAnimationFrame(draw);
@@ -260,13 +294,9 @@
     }
 
     function setupCanvas(ctx: CanvasRenderingContext2D): () => void {
-      const count = 220;
-      const seeds = Array.from({ length: count }, (_, index) => ({
-        angle: (index / count) * Math.PI * 2,
-        phase: Math.random() * Math.PI * 2,
-        speed: 0.25 + Math.random() * 0.55,
-        radius: 0.62 + (Math.random() - 0.5) * 0.05
-      }));
+      const count = 420;
+      const { positions, seeds } = buildParticles(count);
+      let angle = 0;
 
       function draw(now: number) {
         if (disposed || !canvas) return;
@@ -275,10 +305,14 @@
         const delta = Math.min(64, now - last);
         last = now;
         const time = (now - start) / 1000;
+        const motion = renderState.motion;
+        angle += (delta / 1000) * (0.12 + motion.flowRate * 0.35 + pulse * 0.2);
+
         resize();
         const width = canvas.width;
         const height = canvas.height;
         ctx.clearRect(0, 0, width, height);
+        ctx.globalCompositeOperation = 'lighter';
 
         const target = hexToRgb(renderState.color);
         const ratio = Math.min(1, delta / 320);
@@ -287,56 +321,54 @@
           current[1] + (target[1] - current[1]) * ratio,
           current[2] + (target[2] - current[2]) * ratio
         ];
-        const color = `rgba(${current.map((c) => Math.round(c * 255)).join(',')},`;
-        const accent = renderState.accent;
-        const motion = renderState.motion;
-        const center = { x: width / 2, y: height / 2 };
-        const base = Math.min(width, height) * 0.36;
+        const base = `rgba(${current.map((c) => Math.round(c * 255)).join(',')},`;
+        const accentRgb = renderState.accent ? hexToRgb(renderState.accent) : null;
+        const accent = accentRgb ? `rgba(${accentRgb.map((c) => Math.round(c * 255)).join(',')},` : null;
 
-        ctx.save();
-        ctx.globalCompositeOperation = 'lighter';
+        const cx = width / 2;
+        const cy = height / 2;
+        const radius = Math.min(width, height) * 0.31;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const pitch = Math.sin(time * 0.13) * 0.12;
+        const cosP = Math.cos(pitch);
+        const sinP = Math.sin(pitch);
 
-        ctx.beginPath();
         for (let index = 0; index < count; index += 1) {
-          const seed = seeds[index];
-          const wobble =
-            Math.sin(time * seed.speed * 1.6 + seed.phase) * 0.02 * (0.3 + motion.turbulence) +
-            Math.sin(time * 0.7 + seed.angle * 5) * 0.008;
-          const radius = base * (seed.radius + wobble + pulse * 0.06 * (0.4 + Math.sin(seed.phase + time)));
-          const x = center.x + Math.cos(seed.angle + Math.sin(time * 0.15 + seed.phase) * 0.02) * radius;
-          const y = center.y + Math.sin(seed.angle + Math.sin(time * 0.15 + seed.phase) * 0.02) * radius;
-          if (index === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-        ctx.closePath();
-        ctx.strokeStyle = color + (0.18 + motion.edgeGlow * 0.28).toFixed(3) + ')';
-        ctx.lineWidth = Math.max(1, base * 0.035);
-        ctx.stroke();
+          let x = positions[index * 3];
+          let y = positions[index * 3 + 1];
+          let z = positions[index * 3 + 2];
 
-        for (const seed of seeds) {
           const wobble =
-            Math.sin(time * seed.speed * 1.9 + seed.phase) * 0.02 * (0.3 + motion.turbulence) +
-            Math.sin(time * 0.6 + seed.angle * 7) * 0.01;
-          const radius = base * (seed.radius + wobble + pulse * 0.09);
-          const x = center.x + Math.cos(seed.angle + time * seed.speed * 0.05) * radius;
-          const y = center.y + Math.sin(seed.angle + time * seed.speed * 0.05) * radius;
-          const size = (0.6 + (seed.phase % 1) * 1.6) * (1 + pulse);
+            Math.sin(seeds[index] * 41 + time * 1.35) * 0.02 * (0.4 + motion.turbulence) +
+            pulse * 0.03;
+          x *= 1 + wobble;
+          y *= 1 + wobble;
+          z *= 1 + wobble;
+
+          const rx = x * cos + z * sin;
+          const rz = -x * sin + z * cos;
+          const ry = y * cosP - rz * sinP;
+          const rz2 = y * sinP + rz * cosP;
+
+          const persp = 2.6 / (2.6 - rz2 * 0.55);
+          const px = cx + rx * radius * persp;
+          const py = cy + ry * radius * persp;
+          const front = (rz2 + 1) / 2;
+          const rim = 1 - Math.abs(rz2);
+          const rimGlow = Math.pow(Math.max(0, rim), 1.5);
+          const clump = 0.5 + 0.5 * Math.sin(seeds[index] * 21 + time * 0.55) * Math.sin(seeds[index] * 7.3 - time * 0.23);
+          const wisp = Math.min(1, Math.max(0, (clump - 0.15) / 0.75));
+          const size = (0.4 + 1.4 * rimGlow) * (radius / 170);
+          const alpha = (0.03 + 0.8 * rimGlow) * (0.55 + 0.45 * front) * (0.45 + 0.85 * wisp);
+
           ctx.beginPath();
-          ctx.arc(x, y, size, 0, Math.PI * 2);
-          ctx.fillStyle = (accent && seed.phase > 4.2 ? accent : null) ?? color + '0.55)';
-          ctx.globalAlpha = 0.35 + motion.edgeGlow * 0.5;
+          ctx.arc(px, py, Math.max(0.4, size), 0, Math.PI * 2);
+          ctx.fillStyle = accent && seeds[index] > 0.72 ? accent + alpha.toFixed(3) + ')' : base + alpha.toFixed(3) + ')';
           ctx.fill();
-          ctx.globalAlpha = 1;
         }
 
-        const glow = ctx.createRadialGradient(center.x, center.y, base * 0.55, center.x, center.y, base * 1.35);
-        glow.addColorStop(0, color + '0)');
-        glow.addColorStop(0.6, color + (0.05 + motion.edgeGlow * 0.08).toFixed(3) + ')');
-        glow.addColorStop(1, color + '0)');
-        ctx.fillStyle = glow;
-        ctx.fillRect(0, 0, width, height);
-
-        ctx.restore();
+        ctx.globalCompositeOperation = 'source-over';
       }
 
       frame = requestAnimationFrame(draw);
@@ -369,7 +401,6 @@
       canvas.dataset.phase = presentation.effectivePhase;
       canvas.dataset.color = presentation.primaryColor;
       canvas.dataset.accent = presentation.accent ?? '';
-      canvas.dataset.motion = JSON.stringify(presentation.motionPreset);
     }
   });
 </script>

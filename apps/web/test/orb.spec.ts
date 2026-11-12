@@ -48,3 +48,30 @@ test('orb uses the enhanced renderer on capable browsers', async ({ page }) => {
   await expect(orb).toBeVisible();
   await expect(orb).not.toHaveAttribute('data-renderer', 'static');
 });
+
+test('particle field rotates over time while idle', async ({ page }) => {
+  await page.goto('/');
+  const orb = page.getByRole('button', { name: 'Start voice conversation' });
+  await expect(orb).not.toHaveAttribute('data-renderer', 'static');
+  await page.waitForTimeout(900);
+
+  const first = await orb.screenshot();
+  await page.waitForTimeout(1200);
+  const second = await orb.screenshot();
+
+  expect(first.equals(second)).toBe(false);
+});
+
+test('reduced-motion orb is visually stable across frames', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  const orb = page.getByRole('button', { name: 'Start voice conversation' });
+  await expect(orb).toHaveAttribute('data-renderer', 'static');
+  await page.waitForTimeout(400);
+
+  const first = await orb.screenshot();
+  await page.waitForTimeout(900);
+  const second = await orb.screenshot();
+
+  expect(first.equals(second)).toBe(true);
+});
