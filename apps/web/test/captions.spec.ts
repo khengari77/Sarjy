@@ -57,6 +57,10 @@ async function installFakeRuntime(page: Page) {
   });
 }
 
+async function waitForReady(page: Page) {
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
+}
+
 async function startCall(page: Page) {
   await page.route('**/api/v1/voice/sessions', (route) =>
     route.fulfill({
@@ -64,6 +68,7 @@ async function startCall(page: Page) {
     })
   );
   await page.route('**/api/v1/voice/sessions/*/end', (route) => route.fulfill({ json: {} }));
+  await waitForReady(page);
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 }

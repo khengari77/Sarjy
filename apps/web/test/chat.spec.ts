@@ -26,6 +26,7 @@ test('demo session, bilingual controls, history and explicit missing-service err
  await expect.poll(async()=> (await (await page.request.get('/api/v1/conversations')).json()).length).toBe(chats.length+1);
  await page.reload();
  await expect(page.locator('.shell')).toHaveAttribute('dir','ltr');
+ await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer','static');
  await page.getByRole('button',{name:'Start call',exact:true}).click();
  await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
 });

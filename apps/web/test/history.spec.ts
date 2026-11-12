@@ -154,6 +154,7 @@ test('switching chats mid-call requires an explicit end and switch', async ({ pa
   const ends = await mockSessions(page);
 
   await page.goto('/');
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 

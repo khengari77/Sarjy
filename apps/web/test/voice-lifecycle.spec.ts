@@ -99,6 +99,10 @@ async function mockSessions(page: Page) {
   return { sessions, ends };
 }
 
+async function waitForReady(page: Page) {
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
 });
@@ -114,6 +118,7 @@ test('denied microphone shows retry copy, creates no session and leaves text usa
   });
 
   await page.goto('/');
+  await waitForReady(page);
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
 
   const alert = page.locator('[data-code="MICROPHONE_PERMISSION_DENIED"]');
@@ -129,6 +134,7 @@ test('starting and ending a session releases the exact session id', async ({ pag
   await installFakeRuntime(page);
 
   await page.goto('/');
+  await waitForReady(page);
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'listening');
@@ -145,6 +151,7 @@ test('cancelling a pending connection ends the session it already created', asyn
   await installFakeRuntime(page, 1500);
 
   await page.goto('/');
+  await waitForReady(page);
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   const cancel = page.getByRole('button', { name: 'Cancel connecting', exact: true });
   await expect(cancel).toBeVisible();
@@ -161,6 +168,7 @@ test('transport loss offers an explicit reconnect and never loops', async ({ pag
   await installFakeRuntime(page);
 
   await page.goto('/');
+  await waitForReady(page);
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
@@ -180,6 +188,7 @@ test('orb interrupts only while the agent is speaking or thinking', async ({ pag
   await installFakeRuntime(page);
 
   await page.goto('/');
+  await waitForReady(page);
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
@@ -197,6 +206,7 @@ test('events from a replaced session epoch are ignored', async ({ page }) => {
   await installFakeRuntime(page);
 
   await page.goto('/');
+  await waitForReady(page);
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
