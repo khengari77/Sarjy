@@ -6,6 +6,10 @@ import json
 import time
 from uuid import uuid4
 
+from fastapi import HTTPException
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker
+
 from app.domain.contracts import (
     AdjustSpeakingSpeed,
     OpenMemoryExplorer,
@@ -17,9 +21,6 @@ from app.domain.contracts import (
     apply_settings_action,
 )
 from app.infrastructure.database import ContextOperation, Conversation, SessionGate, SettingRevision, UserSetting, now
-from fastapi import HTTPException
-from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker
 
 SETTING_ACTIONS = (AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed)
 

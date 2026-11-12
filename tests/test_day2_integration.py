@@ -14,7 +14,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import app.main as main_module
+import app.routes.worker as worker_module
 import pytest
 from app.config import Settings
 from app.domain.contracts import (
@@ -224,7 +224,7 @@ def test_weather_cannot_use_an_excluded_location_memory(tmp_path, monkeypatch):
         calls.append(city)
         return {"city": city}
 
-    monkeypatch.setattr(main_module, "get_current_weather", fake_weather)
+    monkeypatch.setattr(worker_module, "get_current_weather", fake_weather)
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]

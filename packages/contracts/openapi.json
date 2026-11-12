@@ -315,6 +315,43 @@
         }
       }
     },
+    "/v1/conversations/{conversation_id}/tool-calls": {
+      "get": {
+        "summary": "Tool Calls",
+        "operationId": "tool_calls_v1_conversations__conversation_id__tool_calls_get",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/pipelines/providers": {
       "get": {
         "summary": "Providers",
@@ -689,43 +726,6 @@
           },
           "required": true
         },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/conversations/{conversation_id}/tool-calls": {
-      "get": {
-        "summary": "Tool Calls",
-        "operationId": "tool_calls_v1_conversations__conversation_id__tool_calls_get",
-        "parameters": [
-          {
-            "name": "conversation_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Conversation Id"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",

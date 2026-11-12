@@ -34,8 +34,9 @@ def build_context_action_handlers(*, secret: str, search: MemorySearcher = keywo
         )
 
     async def search_memory(*, db, owner_id, conversation_id, request_id, expected_revision, action, prepared):
-        from app.infrastructure.database import Conversation
         from fastapi import HTTPException
+
+        from app.infrastructure.database import Conversation
 
         conversation = await db.get(Conversation, conversation_id)
         if conversation.revision != prepared["revision"] or conversation.revision != expected_revision:

@@ -18,6 +18,10 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import uuid4
 
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.domain.context_operations import (
     MemoryCandidate,
     classify,
@@ -36,9 +40,6 @@ from app.infrastructure.database import (
     SessionGate,
     now,
 )
-from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 SCOPE = "conversation"
 EXCLUDE = "exclude"

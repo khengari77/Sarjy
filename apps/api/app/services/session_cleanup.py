@@ -6,10 +6,11 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from aiohttp import ClientTimeout
-from app.config import Settings
-from app.infrastructure.database import VoiceSession
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import Settings
+from app.infrastructure.database import VoiceSession
 
 CLEANUP_TIMEOUT_SECONDS = 10
 

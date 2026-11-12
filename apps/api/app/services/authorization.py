@@ -1,9 +1,10 @@
 """Owner-scoped reads for backend-owned Day 2 resources."""
 
-from app.infrastructure.database import ContextOperation, ContextSnapshot, Conversation, Memory, Turn
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.infrastructure.database import ContextOperation, ContextSnapshot, Conversation, Memory, Turn
 
 
 async def owned_conversation(db: AsyncSession, owner_id: str, conversation_id: str):

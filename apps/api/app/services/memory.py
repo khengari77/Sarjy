@@ -10,13 +10,14 @@ from typing import Protocol
 from uuid import uuid4
 
 import httpx
+from fastapi import HTTPException
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 from app.infrastructure.database import Conversation, Memory, MemoryWriteRequest, Turn, now
 from app.services.budget import guarded_openai_request, reserve_in_transaction
 from app.services.memory_eligibility import blocked_memory_ids
-from fastapi import HTTPException
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 EMBEDDING_TIMEOUT_SECONDS = 20
 CLAIM_TIMEOUT_SECONDS = 30

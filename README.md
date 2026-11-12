@@ -9,7 +9,7 @@ Install uv, Node 22, and pnpm 10.32.1. From the repository root:
 ```sh
 uv sync --locked
 pnpm --dir apps/web install --frozen-lockfile
-uv run uvicorn app.main:app --app-dir apps/api --reload
+uv run uvicorn app.main:create_app --factory --app-dir apps/api --reload
 ```
 
 Fill the existing root `.env` with the names in `.env.example` (do not overwrite existing secrets). SQLite defaults to `sarjy.db` and bootstraps locally. In another terminal:

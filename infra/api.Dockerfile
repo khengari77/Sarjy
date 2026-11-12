@@ -8,4 +8,4 @@ COPY migrations ./migrations
 COPY alembic.ini ./
 ENV PATH=/app/.venv/bin:$PATH
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--app-dir", "apps/api", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:create_app", "--factory", "--app-dir", "apps/api", "--host", "0.0.0.0", "--port", "8000"]

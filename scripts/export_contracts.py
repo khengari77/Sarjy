@@ -6,8 +6,11 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / "apps/api"))
+from app.config import Settings
 from app.domain.contracts import contract_components
-from app.main import app
+from app.main import create_app
+
+app = create_app(Settings(_env_file=None))
 
 target = root / "packages/contracts/openapi.json"
 target.parent.mkdir(parents=True, exist_ok=True)

@@ -2,7 +2,7 @@ import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
-import app.main as main_module
+import app.routes.worker as worker_module
 import pytest
 from app.config import Settings
 from app.domain.context import (
@@ -189,7 +189,7 @@ def test_weather_boundary_is_denied_for_excluded_and_allowed_for_explicit_or_inc
         calls.append((city, country))
         return {"city": city, "temperature": 31}
 
-    monkeypatch.setattr(main_module, "get_current_weather", fake_weather)
+    monkeypatch.setattr(worker_module, "get_current_weather", fake_weather)
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
@@ -228,7 +228,7 @@ def test_explicit_current_turn_city_overrides_an_excluded_memory(tmp_path, monke
         calls.append(city)
         return {"city": city}
 
-    monkeypatch.setattr(main_module, "get_current_weather", fake_weather)
+    monkeypatch.setattr(worker_module, "get_current_weather", fake_weather)
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
@@ -259,7 +259,7 @@ def test_city_in_both_included_and_excluded_allowed_by_inclusion(tmp_path, monke
         calls.append((city, country))
         return {"city": city, "temperature": 31}
 
-    monkeypatch.setattr(main_module, "get_current_weather", fake_weather)
+    monkeypatch.setattr(worker_module, "get_current_weather", fake_weather)
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]

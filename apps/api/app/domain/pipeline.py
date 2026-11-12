@@ -1,7 +1,8 @@
 from typing import Literal
 
-from app.domain.contracts import TIER_CAPS, ResponsePreference
 from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from app.domain.contracts import TIER_CAPS, ResponsePreference
 
 
 class ModelChoice(BaseModel):
