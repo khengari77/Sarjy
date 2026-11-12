@@ -11,11 +11,13 @@ def run(connection):
     with context.begin_transaction():
         context.run_migrations()
 
+
 async def migrate():
     engine = create_async_engine(Settings().database_url)
     async with engine.connect() as connection:
         await connection.run_sync(run)
     await engine.dispose()
+
 
 if context.is_offline_mode():
     context.configure(url=Settings().database_url, target_metadata=Base.metadata, literal_binds=True)

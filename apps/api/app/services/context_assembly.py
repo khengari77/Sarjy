@@ -6,6 +6,7 @@ this narrow seam: the default implementation uses the shared ORM, while tests
 and the not-yet-merged #5 memory service can supply the same shapes through
 ``read_context_inputs``/``MemoryCandidates``.
 """
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -19,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 HISTORY_LIMIT = 20
 TOOL_RESULT_LIMIT = 50
-DENIED_STATUSES = frozenset({'superseded', 'inactive', 'excluded'})
+DENIED_STATUSES = frozenset({"superseded", "inactive", "excluded"})
 
 
 @dataclass(frozen=True)
@@ -70,14 +71,14 @@ class ContextInputs:
     def weather_policy(self) -> dict:
         """Location evidence frozen into the turn snapshot at this revision."""
         return {
-            'included_memory_ids': [candidate.id for candidate in self.memories.included],
-            'excluded_memory_ids': [candidate.id for candidate in self.memories.denied],
-            'included_locations': [
-                {'memory_id': evidence.memory_id, 'content': evidence.content}
+            "included_memory_ids": [candidate.id for candidate in self.memories.included],
+            "excluded_memory_ids": [candidate.id for candidate in self.memories.denied],
+            "included_locations": [
+                {"memory_id": evidence.memory_id, "content": evidence.content}
                 for evidence in self.memories.included_locations
             ],
-            'excluded_locations': [
-                {'memory_id': evidence.memory_id, 'content': evidence.content}
+            "excluded_locations": [
+                {"memory_id": evidence.memory_id, "content": evidence.content}
                 for evidence in self.memories.denied_locations
             ],
         }
@@ -99,13 +100,13 @@ async def orm_memory_candidates(
     for row in rows:
         candidate = ContextCandidate(
             id=row.id,
-            role='memory',
+            role="memory",
             text=row.content,
-            origin='memory',
+            origin="memory",
             source=row.source_turn_id,
-            status='active' if row.status == 'active' and row.id not in excluded_ids else 'superseded',
+            status="active" if row.status == "active" and row.id not in excluded_ids else "superseded",
         )
-        if candidate.status == 'active':
+        if candidate.status == "active":
             included.append(candidate)
         elif row.id in excluded_ids:
             denied.append(candidate)
@@ -125,20 +126,24 @@ async def read_context_inputs(
     """Read everything the compiler may consider for the next turn."""
     reader = memory_reader or _OrmMemoryReader()
     memories = await reader.candidates(db, owner_id=owner_id, conversation_id=conversation_id)
-    turns = (await db.scalars(select(Turn).where(
-        Turn.conversation_id == conversation_id, Turn.status == 'completed'
-    ).order_by(Turn.created_at, Turn.id))).all()
+    turns = (
+        await db.scalars(
+            select(Turn)
+            .where(Turn.conversation_id == conversation_id, Turn.status == "completed")
+            .order_by(Turn.created_at, Turn.id)
+        )
+    ).all()
     by_id = {turn.id: turn for turn in turns}
     blocked = set(memories.excluded_ids | memories.blocked_sources)
 
     def dependencies(turn):
         snapshot = turn.snapshot or {}
-        derivation = snapshot.get('derivation')
+        derivation = snapshot.get("derivation")
         if isinstance(derivation, dict):
-            values = derivation.get('record_ids')
+            values = derivation.get("record_ids")
         else:
-            parent = by_id.get(turn.request_id.removeprefix('reply:')) if turn.request_id.startswith('reply:') else None
-            values = ((parent.snapshot or {}).get('included_record_ids') if parent else None)
+            parent = by_id.get(turn.request_id.removeprefix("reply:")) if turn.request_id.startswith("reply:") else None
+            values = (parent.snapshot or {}).get("included_record_ids") if parent else None
         if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
             return None
         return frozenset(values)
@@ -146,29 +151,53 @@ async def read_context_inputs(
     # Only generated assistant content inherits model-input dependencies. Independent
     # user history is retained unless it is the explicitly tracked source of a memory.
     while True:
-        more = {turn.id for turn in turns if turn.role == 'assistant' and (
-            (dependencies(turn) is not None and dependencies(turn) & blocked)
-            or (memories.excluded_ids and dependencies(turn) is None)
-        )}
+        more = {
+            turn.id
+            for turn in turns
+            if turn.role == "assistant"
+            and (
+                (dependencies(turn) is not None and dependencies(turn) & blocked)
+                or (memories.excluded_ids and dependencies(turn) is None)
+            )
+        }
         if more <= blocked:
             break
         blocked.update(more)
-    history = tuple(ContextCandidate(id=turn.id, role=turn.role, text=turn.text, origin='history')
-                    for turn in turns[-history_limit:] if turn.id not in blocked)
-    tool_rows = (await db.execute(select(ToolCall, Turn).join(Turn, ToolCall.turn_id == Turn.id).where(
-        Turn.conversation_id == conversation_id, Turn.status == 'completed'
-    ).order_by(Turn.created_at.desc(), ToolCall.id).limit(TOOL_RESULT_LIMIT))).all()
+    history = tuple(
+        ContextCandidate(id=turn.id, role=turn.role, text=turn.text, origin="history")
+        for turn in turns[-history_limit:]
+        if turn.id not in blocked
+    )
+    tool_rows = (
+        await db.execute(
+            select(ToolCall, Turn)
+            .join(Turn, ToolCall.turn_id == Turn.id)
+            .where(Turn.conversation_id == conversation_id, Turn.status == "completed")
+            .order_by(Turn.created_at.desc(), ToolCall.id)
+            .limit(TOOL_RESULT_LIMIT)
+        )
+    ).all()
     tool_results = []
     for call, turn in tool_rows:
-        values = (turn.snapshot or {}).get('included_record_ids')
+        values = (turn.snapshot or {}).get("included_record_ids")
         known = isinstance(values, list) and all(isinstance(value, str) for value in values)
         deps = frozenset(values) if known else frozenset()
         if turn.id in blocked or deps & blocked or (memories.excluded_ids and not known):
             blocked.add(call.id)
             continue
-        tool_results.append(ContextCandidate(id=call.id, role='tool', text=canonical_json(call.result),
-            origin='tool', source=call.name, dependencies=deps))
-    return ContextInputs(history=history, memories=memories, tool_results=tuple(tool_results), blocked_ids=frozenset(blocked))
+        tool_results.append(
+            ContextCandidate(
+                id=call.id,
+                role="tool",
+                text=canonical_json(call.result),
+                origin="tool",
+                source=call.name,
+                dependencies=deps,
+            )
+        )
+    return ContextInputs(
+        history=history, memories=memories, tool_results=tuple(tool_results), blocked_ids=frozenset(blocked)
+    )
 
 
 class _OrmMemoryReader:
@@ -179,13 +208,19 @@ class _OrmMemoryReader:
 def location_evidence(entries: Sequence[dict]) -> tuple[LocationEvidence, ...]:
     """Rebuild weather evidence from a stored turn snapshot, never from live DB."""
     return tuple(
-        LocationEvidence(memory_id=str(entry.get('memory_id', '')), content=str(entry.get('content', '')))
+        LocationEvidence(memory_id=str(entry.get("memory_id", "")), content=str(entry.get("content", "")))
         for entry in entries
-        if entry.get('memory_id') and entry.get('content')
+        if entry.get("memory_id") and entry.get("content")
     )
 
 
 __all__ = [
-    'ContextInputs', 'HISTORY_LIMIT', 'MemoryCandidates', 'MemoryReader',
-    'TOOL_RESULT_LIMIT', 'location_evidence', 'orm_memory_candidates', 'read_context_inputs',
+    "ContextInputs",
+    "HISTORY_LIMIT",
+    "MemoryCandidates",
+    "MemoryReader",
+    "TOOL_RESULT_LIMIT",
+    "location_evidence",
+    "orm_memory_candidates",
+    "read_context_inputs",
 ]

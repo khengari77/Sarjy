@@ -20,6 +20,7 @@ jobs:
           version: 10.32.1
       - run: pnpm --dir apps/web install --frozen-lockfile
       - run: uv run ruff check .
+      - run: uv run ruff format --check .
       - run: pnpm --dir apps/web check
       - run: pnpm --dir apps/web build
       - run: uv run pytest -q
