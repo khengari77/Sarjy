@@ -160,3 +160,14 @@ def test_policy_properties_hold_for_every_tier_language_and_preference(tier, lan
     assert message == compose_system_message(language, policy)
     assert length_guidance(policy.tier, language) in message
     assert not any(str(cap) in message for cap in TIER_CAPS)
+
+
+@given(tier=st.integers(1,5), preference=st.sampled_from(list(ResponsePreference)))
+def test_normalized_configuration_is_idempotent_and_does_not_mutate(tier, preference):
+    from app.domain.policy import normalize_pipeline
+    source = {'response_tier': tier, 'response_preference': preference.value}
+    before = dict(source)
+    resolved = normalize_pipeline(source)
+    assert source == before
+    assert normalize_pipeline(resolved) == resolved
+    assert resolved['max_output_tokens'] == TIER_CAPS[tier-1]

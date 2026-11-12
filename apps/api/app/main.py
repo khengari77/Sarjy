@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from app.config import Settings
 from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy
 from app.domain.pipeline import PipelineConfig, validate_pipeline, PRESET, KEYS
-from app.domain.policy import pipeline_instructions, pipeline_policy
+from app.domain.policy import pipeline_instructions, normalize_pipeline
 from app.domain.sessions import admission_error
 from app.domain.context import ContextRecord, compile_context
 from app.infrastructure.database import Base, Identity, Conversation, Turn, VoiceSession, SessionGate, ToolCall
@@ -272,8 +272,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         await db.commit()
         if not changed.rowcount:
             raise HTTPException(403, detail={'code':'SESSION_NOT_ACTIVE'})
-        policy = pipeline_policy(voice.pipeline)
-        pipeline = dict(voice.pipeline, response_tier=policy.tier, max_output_tokens=policy.max_output_tokens, response_preference=policy.preference.value)
+        pipeline = normalize_pipeline(voice.pipeline)
         return {'pipeline':pipeline, 'instructions':pipeline_instructions(pipeline), 'expires_at':voice.expires_at}
 
     @app.post('/internal/agent/turn/start')
@@ -286,9 +285,10 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
             return {'turn_id':existing.id, 'context':existing.snapshot}
         history = (await db.scalars(select(Turn).where(Turn.conversation_id == voice.conversation_id, Turn.status == 'completed').order_by(Turn.created_at.desc()).limit(20))).all()
         turn = Turn(id=str(uuid4()), conversation_id=voice.conversation_id, request_id=body.request_id, role='user', text=body.text, status='completed')
-        records = (ContextRecord('system','system',pipeline_instructions(voice.pipeline)),) + tuple(ContextRecord(t.id,t.role,t.text) for t in reversed(history)) + (ContextRecord(turn.id,'user',turn.text),)
+        pipeline = normalize_pipeline(voice.pipeline)
+        records = (ContextRecord('system','system',pipeline_instructions(pipeline)),) + tuple(ContextRecord(t.id,t.role,t.text) for t in reversed(history)) + (ContextRecord(turn.id,'user',turn.text),)
         turn.snapshot = compile_context(records, conversation.revision)
-        turn.snapshot['pipeline_config'] = voice.pipeline
+        turn.snapshot['pipeline_config'] = pipeline
         conversation_id = voice.conversation_id
         db.add(turn)
         if conversation.title == 'New conversation':

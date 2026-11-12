@@ -145,3 +145,29 @@ def test_provider_errors_are_typed_and_do_not_leak_response(tmp_path):
         response = client.get('/v1/voices')
         assert response.status_code == 503
         assert response.json() == {'detail':{'code':'VOICE_CATALOG_ACCESS_DENIED'}}
+
+
+def test_legacy_bootstrap_and_snapshot_share_effective_configuration(tmp_path, livekit_control_plane):
+    service = ElevenLabsVoices('tts-test',transport=httpx.MockTransport(catalog_transport))
+    with TestClient(create_app(configured(tmp_path),voice_catalog=service)) as client:
+        client.post('/v1/demo-session')
+        chat = client.post('/v1/conversations').json()['id']
+        session = client.post('/v1/voice/sessions',json={'conversation_id':chat,'voice_id':'arabic-voice','response_tier':5,'response_preference':'brief'}).json()
+        with sqlite3.connect(tmp_path/'voice.db') as db:
+            room, raw = db.execute('SELECT room_name,pipeline FROM voice_sessions WHERE id=?',(session['id'],)).fetchone()
+        headers = {'x-agent-secret':'worker-secret','x-session-id':session['id'],'x-room-name':room}
+        for legacy in [False, True]:
+            if legacy:
+                source = json.loads(raw)
+                source.pop('response_tier');source.pop('response_preference')
+                source['max_output_tokens'] = 96;source['revision'] = 1
+                with sqlite3.connect(tmp_path/'voice.db') as db:
+                    db.execute('UPDATE voice_sessions SET pipeline=? WHERE id=?',(json.dumps(source),session['id']))
+            bootstrap = client.post('/internal/agent/bootstrap',headers=headers).json()
+            body = {'request_id':str(legacy),'text':'Hello'}
+            first = client.post('/internal/agent/turn/start',headers=headers,json=body).json()
+            repeat = client.post('/internal/agent/turn/start',headers=headers,json=body).json()
+            assert first == repeat
+            assert first['context']['pipeline_config'] == bootstrap['pipeline']
+            assert bootstrap['pipeline']['max_output_tokens'] == (128 if legacy else 1024)
+            assert first['context']['messages'][0]['content'] == bootstrap['instructions']

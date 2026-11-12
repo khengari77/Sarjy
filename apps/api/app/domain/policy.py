@@ -126,3 +126,11 @@ __all__ = [
     'LENGTH_GUIDANCE', 'VOICE_RULES', 'compose_system_message', 'length_guidance',
     'normalize_language', 'pipeline_instructions', 'pipeline_policy',
 ]
+
+
+def normalize_pipeline(pipeline: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the effective configuration without modifying stored source data."""
+    policy = pipeline_policy(pipeline)
+    return dict(pipeline, response_tier=policy.tier,
+                max_output_tokens=policy.max_output_tokens,
+                response_preference=policy.preference.value)
