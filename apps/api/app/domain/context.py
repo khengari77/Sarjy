@@ -263,7 +263,9 @@ def _truncate(
     return list(reversed(retained))
 
 
-def _render(kept: Sequence[tuple[str, CandidateRole, str]]):
+def _render(
+    kept: Sequence[tuple[str, CandidateRole, str]],
+) -> tuple[list[dict[str, str]], list[str], list[ContextEntry]]:
     messages: list[dict[str, str]] = []
     included_ids: list[str] = []
     selection_entries: list[ContextEntry] = []
@@ -275,7 +277,16 @@ def _render(kept: Sequence[tuple[str, CandidateRole, str]]):
     return messages, included_ids, selection_entries
 
 
-def _manifest(*, revision, current_turn, config, included_ids, excluded, prompt, digest):
+def _manifest(
+    *,
+    revision: int,
+    current_turn: ContextCandidate | None,
+    config: Mapping[str, Any],
+    included_ids: list[str],
+    excluded: frozenset[str],
+    prompt: str,
+    digest: str,
+) -> Mapping[str, Any]:
     return MappingProxyType(
         {
             "turn_id": current_turn.id if current_turn is not None else "",

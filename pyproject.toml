@@ -19,6 +19,7 @@ dependencies = [
 dev = [
     "hypothesis>=6.170.15",
     "import-linter>=2.1",
+    "mypy>=1.13",
     "pytest>=8",
     "ruff>=0.9",
     "vulture>=2.14",
@@ -69,3 +70,14 @@ forbidden_modules = ["app.routes"]
 name = "Layers"
 type = "layers"
 layers = ["app.routes", "app.services", "app.domain"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "apps/api:services/voice-agent"
+files = ["apps/api/app/domain", "services/voice-agent/generation.py"]
+strict = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["app.domain.pipeline"]
+disable_error_code = ["prop-decorator"]

@@ -11,6 +11,7 @@ import hmac
 import json
 import re
 from dataclasses import dataclass
+from typing import Any
 
 # Budget-like records are never removed by a bulk "forget" proposal.  The
 # architecture's signature interaction is "forget the trip but keep the
@@ -59,7 +60,7 @@ class Selection:
     excluded_ids: frozenset[str]
     kept_ids: frozenset[str]
 
-    def diff(self, revision_before: int, revision_after: int | None = None) -> dict:
+    def diff(self, revision_before: int, revision_after: int | None = None) -> dict[str, Any]:
         return {
             "added": [],
             "removed": sorted(self.excluded_ids),
@@ -120,7 +121,7 @@ def select_candidates(
 
 def exclusion_diff(
     excluded_ids: frozenset[str], kept_ids: frozenset[str], revision_before: int, revision_after: int
-) -> dict:
+) -> dict[str, Any]:
     return {
         "added": [],
         "removed": sorted(excluded_ids),
@@ -132,7 +133,7 @@ def exclusion_diff(
 
 def restore_diff(
     restored_ids: frozenset[str], still_excluded: frozenset[str], revision_before: int, revision_after: int
-) -> dict:
+) -> dict[str, Any]:
     return {
         "added": sorted(restored_ids - still_excluded),
         "removed": [],
@@ -142,7 +143,7 @@ def restore_diff(
     }
 
 
-def sign_proposal(payload: dict, secret: str) -> str:
+def sign_proposal(payload: dict[str, Any], secret: str) -> str:
     """Encode the server-owned preview as an opaque HMAC-signed token.
 
     The database stays untouched during preview, so the exact id set lives in
@@ -157,7 +158,7 @@ def sign_proposal(payload: dict, secret: str) -> str:
     return f"{body}.{signature}"
 
 
-def verify_proposal(token: str, secret: str) -> dict:
+def verify_proposal(token: str, secret: str) -> dict[str, Any]:
     if not secret:
         raise ValueError("CONTEXT_PROPOSALS_NOT_CONFIGURED")
     try:

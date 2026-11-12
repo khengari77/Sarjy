@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
@@ -46,7 +46,7 @@ LLM_CHOICES = {
 KEYS = {"stt": "DEEPGRAM_API_KEY", "llm": "OPENAI_API_KEY", "tts": "ELEVEN_API_KEY"}
 
 
-def validate_pipeline(config: PipelineConfig, configured: set[str]) -> list[dict]:
+def validate_pipeline(config: PipelineConfig, configured: set[str]) -> list[dict[str, Any]]:
     errors = []
     for role in PRESET:
         choice = getattr(config, role)

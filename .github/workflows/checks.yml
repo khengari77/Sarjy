@@ -22,6 +22,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run vulture apps/api/app/domain --min-confidence 90
+      - run: uv run mypy
       - run: uv run lint-imports
         env:
           PYTHONPATH: apps/api
