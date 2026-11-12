@@ -57,6 +57,7 @@ psql "$DATABASE_URL" -c \
 
 The month count uses expiry at or after the current UTC month boundary, matching the API's lower-bound
 check. `expires_at` is text and must be cast; the UTC boundary does not depend on the session timezone.
+Treat no row from the identity query as zero sessions used.
 
 ## Gate results
 
@@ -84,7 +85,8 @@ check. `expires_at` is text and must be cast; the UTC boundary does not depend o
 ### Required lifecycle read-back
 
 History persistence and browser `idle` alone cannot prove session termination or room cleanup. Run the
-following read-only query for each exact session ID captured from its start response; never copy tokens:
+following read-only query for each exact session ID. Read only the `id` field in the session-start
+Network response; it also contains a token, which must never be copied:
 
 ```sh
 psql "$DATABASE_URL" -c \
@@ -99,9 +101,13 @@ psql "$DATABASE_URL" -c \
 | S3 / refresh, if reached | `<id or not run>` | `<state>` | `<status>` | `<timestamp or null>` | `<time / seconds>` | `<artifact>` |
 
 Pass requires browser `idle`, persisted `ended` and a non-null cleanup timestamp for each tested path.
-Record failure if confirmation is absent after 30 seconds for explicit end or 90 seconds for refresh;
-missing read-back access leaves the check pending. Record failures before any coordinator repair; repair
-does not satisfy the original scenario. Scenarios not reached remain pending.
+For explicit end, record failure if confirmation is absent after 30 seconds. At source `4a80697`, worker
+departure does not persist session cleanup, so refresh has no automatic 90-second cleanup path. An
+observed missing row, active session or null cleanup timestamp fails refresh lifecycle; missing read-back
+access leaves the check pending. A later fix requires its exact deployed revision and observed timing.
+Record failures before coordinator repair; repair does not satisfy the original scenario. A missed end
+request may occupy active capacity until expiry processing or explicit end. Scenarios not reached remain
+pending.
 
 For repeated-end idempotency, the [11 November hosted lifecycle evidence](day1-hosted-verification.md#migration-and-recovery)
 tested source `4a80697a97b25e4f55275d27b31193fa58c93fa8`. Record the prior evidence reference and

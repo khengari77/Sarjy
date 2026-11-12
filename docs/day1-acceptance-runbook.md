@@ -53,7 +53,8 @@ psql "$DATABASE_URL" -c \
   "SELECT count(*) FROM voice_sessions WHERE status IN ('starting', 'active');"
 ```
 
-`remaining = 3 - identity_used`; also require `month_used < 80` and `active_now = 0` before starting.
+Treat no row from the identity query as `identity_used = 0`. `remaining = 3 - identity_used`; also
+require `month_used < 80` and `active_now = 0` before starting.
 The month figure counts sessions whose expiry is at or after the current UTC month boundary, matching
 the API's lower-bound check without adding an upper bound. `expires_at` is stored as text, so the explicit
 cast is required in PostgreSQL. A session started just before a month boundary can have an expiry in the
@@ -104,8 +105,9 @@ Rules that keep this honest:
 
   Run this in a process that has the hosted `DATABASE_URL` injected; do not write to the ledger and do not
   create a reservation merely to test that it did not decrease. Reservations are guards, not invoices.
-- Required session/cleanup read-back (read-only) for D1.6. Capture each reservation's session ID from the
-  start response without copying its token. Query that exact ID, not just the latest sessions:
+- Required session/cleanup read-back (read-only) for D1.6. Read only the `id` field from the session-start
+  response in the browser Network panel; that response also contains a token, which must not be copied.
+  Query that exact ID, not just the latest sessions:
 
   ```sh
   psql "$DATABASE_URL" -c \
@@ -114,8 +116,9 @@ Rules that keep this honest:
   ```
 
   Record the session ID, observed status, cleanup timestamp and observation time in the acceptance
-  record, with a sanitized artifact reference. Missing access, no matching row, `active`/`starting`
-  status or a null cleanup timestamp leaves cleanup pending or failed, never passed. Do not manually
+  record, with a sanitized artifact reference. Unavailable read-back access leaves the check pending.
+  An observed missing row, `active`/`starting` status or null cleanup timestamp fails the lifecycle check.
+  Do not manually
   end or reconcile an orphaned session before recording the failure; a repaired row does not prove
   that the tested end or refresh path worked.
 
@@ -209,9 +212,13 @@ Record the observed browser status line, transcript/audio behaviour, and exact s
 4. If the session is live again, reload the page mid-call. Confirm no orphaned or duplicate turns appear,
    the conversation history is still readable, and the browser returns to `idle`. Use the required
    read-back for S3's exact session ID to confirm `status = 'ended'` and a non-null
-   `room_cleanup_completed_at`. Allow up to 90 seconds for the documented 60-second worker departure
-   grace period and cleanup. Record the elapsed time; if confirmation is missing, record the failure
-   and leave refresh/cleanup unpassed. History reload alone is insufficient.
+   `room_cleanup_completed_at`. At source `4a80697`, worker departure after 60 seconds does not persist
+   session termination or cleanup. There is no automatic 90-second cleanup path to wait for. If read-back
+   shows an active session or null cleanup timestamp, record refresh lifecycle as failed. Unavailable
+   read-back access leaves it pending. History reload alone is insufficient. A later lifecycle fix must
+   be identified by its deployed revision and verified behavior before applying any new waiting window.
+   A missed end request may occupy the identity's active slot until expiry processing or explicit end;
+   record this before coordinator recovery and do not attempt extra starts to hide it.
 5. Do not start another call to test connectivity unless the read-only check at the end of S3 shows a
    remaining reservation; otherwise record "new call after recovery: pending".
 
