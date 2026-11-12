@@ -21,11 +21,14 @@ export interface VoiceRuntime {
   subscribe(handler: (event: VoiceEvent) => void): () => void;
   resumeAudio?(): Promise<void>;
   microphoneStream?(): MediaStream | null;
+  remoteAudioLevel?(): number;
 }
 
 export class LiveKitVoiceRuntime implements VoiceRuntime {
   private room: Room | null = null;
   private audio = new Set<HTMLMediaElement>();
+  private audioContext: AudioContext | null = null;
+  private analysers = new Map<HTMLMediaElement, { source: MediaElementAudioSourceNode; analyser: AnalyserNode; data: Float32Array }>();
   private handlers = new Set<(event: VoiceEvent) => void>();
   private sessionEpoch = 0;
   private sawTranscriptionSegments = false;
@@ -63,10 +66,12 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
       const element = track.attach();
       this.audio.add(element);
       document.body.appendChild(element);
+      this.attachAnalyser(element);
     });
     room.on(RoomEvent.TrackUnsubscribed, (track) => {
       if (!this.active(room, epoch)) return;
       for (const element of track.detach()) {
+        this.detachAnalyser(element);
         element.remove();
         this.audio.delete(element);
       }
@@ -154,6 +159,47 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     await this.room?.startAudio();
   }
 
+  /** Smoothed agent-output level for the orb; 0 when audio analysis is unavailable. */
+  remoteAudioLevel(): number {
+    if (!this.analysers.size) return 0;
+    let total = 0;
+    for (const { analyser, data } of this.analysers.values()) {
+      analyser.getFloatTimeDomainData(data as Float32Array<ArrayBuffer>);
+      let sum = 0;
+      for (const sample of data) sum += sample * sample;
+      total += Math.sqrt(sum / data.length);
+    }
+    return Math.min(1, (total / this.analysers.size) * 4);
+  }
+
+  private attachAnalyser(element: HTMLMediaElement) {
+    try {
+      const AudioCtor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtor) return;
+      this.audioContext ??= new AudioCtor();
+      const source = this.audioContext.createMediaElementSource(element);
+      const analyser = this.audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      analyser.connect(this.audioContext.destination);
+      this.analysers.set(element, { source, analyser, data: new Float32Array(analyser.fftSize) });
+    } catch {
+      // Analysis is cosmetic: never let it stop remote audio playback.
+    }
+  }
+
+  private detachAnalyser(element: HTMLMediaElement) {
+    const entry = this.analysers.get(element);
+    if (!entry) return;
+    try {
+      entry.source.disconnect();
+      entry.analyser.disconnect();
+    } catch {
+      /* already disconnected */
+    }
+    this.analysers.delete(element);
+  }
+
   microphoneStream(): MediaStream | null {
     const track = this.room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
     return track ? new MediaStream([track]) : null;
@@ -198,10 +244,15 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
       room.removeAllListeners();
     }
     for (const element of this.audio) {
+      this.detachAnalyser(element);
       element.pause();
       element.srcObject = null;
       element.remove();
     }
     this.audio.clear();
+    if (this.audioContext) {
+      void this.audioContext.close().catch(() => {});
+      this.audioContext = null;
+    }
   }
 }

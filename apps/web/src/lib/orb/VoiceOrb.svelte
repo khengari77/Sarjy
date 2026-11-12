@@ -1,17 +1,21 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { selectRendererTier, type OrbPresentation, type RendererTier } from './orbState';
+  import { nextRendererTier, selectRendererTier, type OrbPresentation, type RendererTier } from './orbState';
 
   interface Props {
     presentation: OrbPresentation;
     micLevel?: number;
     outputLevel?: number;
     label: string;
+    statusLabel?: string;
     disabled?: boolean;
     onactivate?: () => void;
   }
 
-  let { presentation, micLevel = 0, outputLevel = 0, label, disabled = false, onactivate }: Props = $props();
+  let { presentation, micLevel = 0, outputLevel = 0, label, statusLabel = '', disabled = false, onactivate }: Props = $props();
+
+  /** Single tunable size for the particle shell; everything else derives from it. */
+  const CLOUD_RADIUS = 0.74;
 
   let canvas: HTMLCanvasElement | undefined = $state();
   let tier: RendererTier = $state('static');
@@ -63,6 +67,31 @@
     let start = performance.now();
     let last = start;
     let current: [number, number, number] = hexToRgb(renderState.color);
+    const currentMotion = { ...renderState.motion };
+    let fpsSamples = 0;
+    let fpsElapsed = 0;
+
+    function monitorFps(delta: number) {
+      if (tier === 'static' || disposed || document.hidden) return;
+      fpsSamples += 1;
+      fpsElapsed += delta;
+      if (fpsElapsed < 3000) return;
+      const fps = (fpsSamples * 1000) / fpsElapsed;
+      fpsSamples = 0;
+      fpsElapsed = 0;
+      const next = nextRendererTier(tier, fps);
+      if (next === tier) return;
+      tier = next;
+      if (next === 'static') failed = true;
+      void tick().then(() => setup());
+    }
+
+    function smoothMotion(delta: number) {
+      const ratio = Math.min(1, delta / 320);
+      for (const key of ['turbulence', 'flowRate', 'edgeGlow', 'particleActivity', 'opacity'] as const) {
+        currentMotion[key] += (renderState.motion[key] - currentMotion[key]) * ratio;
+      }
+    }
 
     const onMotionChange = () => {
       tier = selectRendererTier({ reducedMotion: reduced.matches, webglAvailable });
@@ -129,7 +158,7 @@
           float n = sin(aSeed * 41.0 + uTime * 1.35) * 0.5 + sin(aSeed * 97.0 - uTime * 0.85) * 0.5;
           float breathe = 1.0 + n * (0.018 + uTurb * 0.05) + uPulse * 0.055 * (0.5 + 0.5 * n);
 
-          vec3 p = aPos * breathe * 0.74;
+          vec3 p = aPos * breathe * ${CLOUD_RADIUS};
 
           float yaw = uTime * (0.06 + uFlow * 0.16) + uPulse * 0.08;
           float pitch = sin(uTime * 0.13) * (0.05 + uTurb * 0.12);
@@ -269,7 +298,9 @@
           current[2] + (target[2] - current[2]) * ratio
         ];
         const accent = renderState.accent ? hexToRgb(renderState.accent) : [0, 0, 0];
-        const motion = renderState.motion;
+        smoothMotion(delta);
+        monitorFps(delta);
+        const motion = currentMotion;
         const pointScale = (canvas.height / 340) * (1.7 + motion.particleActivity * 1.2);
 
         gl.uniform1f(uniforms.time, time);
@@ -305,7 +336,9 @@
         const delta = Math.min(64, now - last);
         last = now;
         const time = (now - start) / 1000;
-        const motion = renderState.motion;
+        smoothMotion(delta);
+        monitorFps(delta);
+        const motion = currentMotion;
         angle += (delta / 1000) * (0.12 + motion.flowRate * 0.35 + pulse * 0.2);
 
         resize();
@@ -327,7 +360,7 @@
 
         const cx = width / 2;
         const cy = height / 2;
-        const radius = Math.min(width, height) * 0.31;
+        const radius = Math.min(width, height) * 0.42 * CLOUD_RADIUS;
         const cos = Math.cos(angle);
         const sin = Math.sin(angle);
         const pitch = Math.sin(time * 0.13) * 0.12;
@@ -403,6 +436,25 @@
       canvas.dataset.accent = presentation.accent ?? '';
     }
   });
+
+  function staticGlyph(phase: string): string {
+    switch (phase) {
+      case 'connecting':
+        return '◌';
+      case 'listening':
+        return '◉';
+      case 'thinking':
+        return '✦';
+      case 'speaking':
+        return '◍';
+      case 'disconnected':
+        return '⊘';
+      case 'error':
+        return '!';
+      default:
+        return '●';
+    }
+  }
 </script>
 
 <button
@@ -421,6 +473,10 @@
       style:--orb-accent={presentation.accent ?? presentation.primaryColor}
       aria-hidden="true"
     ></span>
+    <span class="orb-static-state" aria-hidden="true">
+      <span class="orb-glyph">{staticGlyph(presentation.effectivePhase)}</span>
+      {#if statusLabel}<span class="orb-state-text">{statusLabel}</span>{/if}
+    </span>
   {:else}
     <canvas
       bind:this={canvas}
@@ -481,6 +537,34 @@
       radial-gradient(circle at 50% 50%, transparent 64%, color-mix(in srgb, var(--orb-accent) 12%, transparent) 74%, transparent 82%);
     border: 2px solid color-mix(in srgb, var(--orb-color) 40%, transparent);
     box-shadow: 0 0 48px color-mix(in srgb, var(--orb-color) 22%, transparent);
+  }
+
+  .orb-static-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: color-mix(in srgb, var(--orb-color) 75%, white);
+    pointer-events: none;
+    text-align: center;
+    padding: 18%;
+  }
+
+  .orb-glyph {
+    font-size: clamp(22px, 5vw, 30px);
+    line-height: 1;
+    opacity: 0.9;
+  }
+
+  .orb-state-text {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    line-height: 1.3;
   }
 
   .mic-slash {

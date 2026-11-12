@@ -248,3 +248,15 @@ export function selectRendererTier(environment: RendererEnvironment): RendererTi
   if (typeof environment.fps === 'number' && environment.fps > 0 && environment.fps < MIN_FPS_TARGET) return 'light';
   return 'enhanced';
 }
+
+/**
+ * Downward-only renderer fallback. A recovered frame rate never promotes the
+ * tier again, which avoids oscillating between canvas and WebGL mid-session.
+ */
+export function nextRendererTier(tier: RendererTier, fps: number): RendererTier {
+  if (tier === 'static') return 'static';
+  if (!Number.isFinite(fps) || fps <= 0) return tier;
+  if (fps < 12) return 'static';
+  if (fps < MIN_FPS_TARGET) return 'light';
+  return tier;
+}

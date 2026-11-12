@@ -51,6 +51,7 @@
   let switchCancel: HTMLButtonElement | undefined = $state();
   let transcriptButton: HTMLButtonElement | undefined = $state();
   let announcement = $state('');
+  let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none');
   let lastAnnounced = '';
   let voiceErrorCode = $state('');
   let busy = $state(false);
@@ -60,6 +61,7 @@
   let audioBlocked = $state(false);
   let live = $state<SessionConfig | null>(null);
   let micLevel = $state(0);
+  let outputLevel = $state(0);
   let captionsVisible = $state(true);
   let transcriptOpen = $state(false);
   let provisional = $state<{ id: string; text: string; speaker: 'user' | 'assistant' } | null>(null);
@@ -109,7 +111,7 @@
     deriveOrbPresentation({
       ...INITIAL_STATE,
       phase,
-      overlay: fatalError ? 'error' : live && muted ? 'muted' : 'none',
+      overlay: devOverlay !== 'none' ? devOverlay : fatalError ? 'error' : live && muted ? 'muted' : 'none',
       micActive: live !== null && !muted,
       sessionId: live?.id ?? null,
       connectionReady: live !== null && !connectionLost
@@ -268,10 +270,6 @@
   }
 
   async function connect(microphone: boolean) {
-    if (!current) {
-      voiceErrorCode = 'CONVERSATION_REQUIRED';
-      return;
-    }
     if (live) {
       if (microphone && muted) await toggleMute();
       return;
@@ -285,6 +283,14 @@
     connectionLost = false;
 
     try {
+      // Starting voice is an explicit gesture: create a conversation lazily
+      // when the history is empty instead of creating one on page load.
+      if (!current) {
+        const chat = await request<Conversation>('conversations', {});
+        conversations = [chat, ...conversations];
+        current = chat.id;
+      }
+
       // Ask for the microphone before creating a paid session so a denial
       // cannot consume capacity or leave a half-open room.
       if (microphone) {
@@ -404,6 +410,7 @@
     if (meterTimer) clearInterval(meterTimer);
     meterTimer = null;
     micLevel = 0;
+    outputLevel = 0;
   }
 
   function setupMeters() {
@@ -414,10 +421,20 @@
     micMeter = createEnvelopeMeter(stream);
     meterTimer = setInterval(() => {
       micLevel = micMeter?.level() ?? 0;
+      outputLevel = runtime.remoteAudioLevel?.() ?? 0;
     }, 80);
   }
 
   onMount(() => {
+    // DEV-only visual fixture hook; production always uses live state.
+    if (import.meta.env.DEV) {
+      const params = new URLSearchParams(location.search);
+      const fixture = params.get('phase');
+      const overlay = params.get('overlay');
+      if (fixture === 'idle' || fixture === 'disconnected' || fixture === 'connecting') transportStatus = fixture;
+      else if (fixture === 'listening' || fixture === 'thinking' || fixture === 'speaking') agentState = fixture;
+      if (overlay === 'memory_work' || overlay === 'confirming' || overlay === 'muted' || overlay === 'error') devOverlay = overlay;
+    }
     arabic = localStorage.getItem('sarjy-language') === 'ar';
     voiceId = localStorage.getItem('sarjy-voice-id') || '';
     captionsVisible = localStorage.getItem('sarjy-captions') !== 'off';
@@ -609,7 +626,9 @@
         <VoiceOrb
           {presentation}
           {micLevel}
+          {outputLevel}
           label={arabic ? presentation.ariaLabel.ar : presentation.ariaLabel.en}
+          statusLabel={arabic ? presentation.statusLabel.ar : presentation.statusLabel.en}
           disabled={busy}
           onactivate={() => {
             if (live) {
@@ -662,14 +681,14 @@
       {:else if connecting}
         <button class="ghost-button" onclick={cancelConnect}>{arabic ? 'إلغاء' : 'Cancel'}</button>
       {:else}
-        <button class="primary-button" disabled={busy || !current} onclick={() => void connect(true)}>
+        <button class="primary-button" disabled={busy} onclick={() => void connect(true)}>
           {words.call}
         </button>
       {/if}
     </div>
 
     <div class="composer">
-      <textarea bind:value={draft} aria-label={words.placeholder} placeholder={words.placeholder} disabled={busy || !current} rows="1"></textarea>
+      <textarea bind:value={draft} aria-label={words.placeholder} placeholder={words.placeholder} disabled={busy} rows="1"></textarea>
       <button class="primary-button" disabled={busy || !draft.trim()} onclick={send}>{words.send} ↗</button>
     </div>
     <small class="attribution"><a href="https://open-meteo.com/">Weather data: Open-Meteo</a></small>

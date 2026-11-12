@@ -4,6 +4,7 @@ import {
   deriveOrbPresentation,
   isCurrentTag,
   nextEpoch,
+  nextRendererTier,
   resolveEffectivePhase,
   selectRendererTier,
   type VoiceUiState
@@ -96,5 +97,16 @@ describe('renderer tier', () => {
     expect(selectRendererTier({ reducedMotion: false, webglAvailable: false })).toBe('light');
     expect(selectRendererTier({ reducedMotion: false, webglAvailable: true, fps: 12 })).toBe('light');
     expect(selectRendererTier({ reducedMotion: false, webglAvailable: true, fps: 60 })).toBe('enhanced');
+  });
+});
+
+describe('renderer fallback', () => {
+  it('steps down but never back up', () => {
+    expect(nextRendererTier('enhanced', 18)).toBe('light');
+    expect(nextRendererTier('light', 18)).toBe('light');
+    expect(nextRendererTier('enhanced', 8)).toBe('static');
+    expect(nextRendererTier('static', 60)).toBe('static');
+    expect(nextRendererTier('enhanced', 60)).toBe('enhanced');
+    expect(nextRendererTier('enhanced', Number.NaN)).toBe('enhanced');
   });
 });
