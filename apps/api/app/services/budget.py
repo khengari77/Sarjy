@@ -33,7 +33,7 @@ async def reserve(db: AsyncSession, provider: str, characters: int = 0, *, now: 
         result = await reserve_in_transaction(db, provider, characters, now=now)
         await db.commit()
         return result
-    except BaseException:
+    except Exception:
         await db.rollback()
         raise
 

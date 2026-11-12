@@ -1129,3 +1129,8 @@ Retain the shared OpenAI $1/day ceiling for all application/development requests
 Keep CranL web/API, LiveKit eu-central and Supabase London. If CranL blocks progress, use a supported SvelteKit host (Vercel subject to eligibility) and Cloud Run backend container, retaining contracts/database/ledger. Development stays password-protected; reviewer access uses HTTPS and simple credentials without opening anonymous inference. Inspect ignored files and secret scans before releases, preserve root Dockerfile branch overlays, and deploy only CI-tested revisions. Optional local “Hello, Sarjy” wake detection must never stream idle audio to paid models; defer wake words and browser-local inference if mandatory work is at risk.
 
 Presentation: start orb voice chat; teach atomic city/trip/budget facts; recall city in another conversation and fetch weather; speak a speed change and show slider synchronization; inspect provenance; exclude trip except budget; confirm, show revision/diff and actual outgoing input; restore; show controlled failover evidence, property tests and budgets. Label backup recordings explicitly.
+
+
+## Day 2 execution update — 12 November 2026
+
+User authorized local Day 2 work while issue #3 human acceptance remains pending. PRs #23 and #24 are merged; D2.1, D2.2 and D2.9 have local implementation/verification evidence. No hosted Day 2 migration or deployment has occurred. Issues #5 and #7 consume the merged foundation; #8 consumes their interfaces; #6 completes context/weather integration afterward. Issue #4 closes after cross-cutting isolation, budget and property verification across those paths. Noon Africa/Tripoli is the target, not permission to omit acceptance criteria. See docs/day2-coordination.md and issue #20.
