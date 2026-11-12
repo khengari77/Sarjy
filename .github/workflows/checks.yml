@@ -1,6 +1,21 @@
 name: checks
 on: [push, pull_request]
 jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+  types:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - run: bash scripts/check_types.sh
   checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -25,3 +40,53 @@ jobs:
         env:
           CI: "true"
       - run: pnpm --dir apps/web test:browser
+
+  postgres:
+    # This PR is the top of the Day 2 stack: the pgvector gates exercise
+    # modules and fixtures delivered by #31-#35. Run them once those are
+    # merged into the branch; before that there is nothing real to verify.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - name: Create isolated verification databases
+        run: |
+          uv run python - <<'PYCODE'
+          import asyncio, asyncpg
+          async def main():
+              db = await asyncpg.connect('postgresql://postgres:test-only@localhost/postgres')
+              for name in ('migration_tests', 'memory_tests', 'integration_tests'):
+                  await db.execute('CREATE DATABASE ' + name)
+              await db.close()
+          asyncio.run(main())
+          PYCODE
+      - name: Migration preservation
+        run: uv run pytest -q tests/test_migrations.py
+        env:
+          TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/migration_tests
+      - name: Prepare service databases
+        run: |
+          DATABASE_URL=postgresql+asyncpg://postgres:test-only@localhost/memory_tests uv run python -m alembic upgrade head
+          DATABASE_URL=postgresql+asyncpg://postgres:test-only@localhost/integration_tests uv run python -m alembic upgrade head
+      - name: Real vector and integration checks
+        run: |
+          uv run python -c "import sys; sys.path.insert(0, 'apps/api'); import app.services.memory, app.services.context_operations, app.domain.weather_permissions"
+          uv run pytest -q tests/test_memory_postgres.py tests/test_day2_integration.py tests/test_tool_operations_postgres.py
+        env:
+          REQUIRE_DAY2_INTEGRATION: '1'
+          TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
+          TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
