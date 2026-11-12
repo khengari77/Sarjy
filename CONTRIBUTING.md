@@ -58,3 +58,9 @@ PR descriptions must include linked issue/checklist IDs, problem and resulting b
 ### Final-commit bug review
 
 Every merge requires a written bug review tied to the exact final commit SHA, separate from test execution. Review changed code, callers, compatibility and failure paths; record findings and reproduction evidence in the PR. Resolve all blocking findings and require passing CI for that SHA. Changes after review invalidate approval and require review of the new head. Green tests alone never authorize merging.
+
+## Style contract
+
+Read [STYLE.md](STYLE.md) before editing. CI enforces the configured formatting, lint and scoped typing rules.
+
+Install both local hooks with `bash scripts/install_hooks.sh` after updating to the standards baseline. Do not bypass them. Every PR must include the hook confirmation and final-SHA quality/type results from the PR template.

@@ -52,9 +52,13 @@ def uses_setattr(source: str) -> bool:
 def constructs_factory(source: str) -> bool:
     tree = ast.parse(source)
     for node in tree.body:
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
-            if isinstance(node.value.func, ast.Name) and node.value.func.id == "create_app":
-                return True
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "create_app"
+        ):
+            return True
     return False
 
 
