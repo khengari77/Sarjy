@@ -10,6 +10,7 @@
     type VoiceCatalog
   } from '../lib/api';
   import { LiveKitVoiceRuntime } from '../lib/audio/voice-runtime';
+  import { phaseFromAgentState, phaseFromTransportStatus } from '../lib/audio/livekitAdapter';
   import VoiceOrb from '../lib/orb/VoiceOrb.svelte';
   import { createEnvelopeMeter, type EnvelopeMeter } from '../lib/orb/audioEnvelope';
   import LiveCaptionPreview from '../lib/chat/LiveCaptionPreview.svelte';
@@ -36,6 +37,7 @@
   let status = $state('idle');
   let error = $state('');
   let busy = $state(false);
+  let connecting = $state(false);
   let muted = $state(true);
   let audioBlocked = $state(false);
   let live = $state<SessionConfig | null>(null);
@@ -72,22 +74,14 @@
         }
   );
 
-  const PHASE_BY_STATUS: Record<string, VoicePhase> = {
-    idle: 'idle',
-    connecting: 'connecting',
-    starting: 'connecting',
-    reconnecting: 'connecting',
-    connected: 'listening',
-    listening: 'listening',
-    thinking: 'thinking',
-    speaking: 'speaking',
-    disconnected: 'disconnected'
-  };
+  const phase = $derived<VoicePhase>(
+    phaseFromTransportStatus(status) ?? phaseFromAgentState(status) ?? 'idle'
+  );
 
   const presentation = $derived(
     deriveOrbPresentation({
       ...INITIAL_STATE,
-      phase: PHASE_BY_STATUS[status] ?? 'idle',
+      phase,
       overlay: muted && status !== 'idle' ? 'muted' : 'none',
       micActive: !muted,
       sessionId: live?.id ?? null,
@@ -174,24 +168,32 @@
   async function connect(microphone: boolean) {
     if (!current) throw new Error('CONVERSATION_REQUIRED');
     if (!live) {
-      const requestedVoiceId = voiceId;
-      const requestedVoiceName = voices.find((voice) => voice.id === requestedVoiceId)?.name || requestedVoiceId;
-      const config = await request<SessionConfig>('voice/sessions', {
-        conversation_id: current,
-        language: arabic ? 'ar' : 'en',
-        voice_id: requestedVoiceId || null,
-        response_preference: 'automatic'
-      } satisfies StartVoice);
+      // One session per gesture: repeated activations while the first request
+      // or connection is in flight must not create a second room.
+      if (connecting) return;
+      connecting = true;
       try {
-        status = 'connecting';
-        await runtime.connect(config);
-        live = config;
-        activeVoiceName = requestedVoiceName;
-      } catch (e) {
-        await runtime.disconnect();
-        await request('voice/sessions/' + config.id + '/end', {});
-        status = 'disconnected';
-        throw e;
+        const requestedVoiceId = voiceId;
+        const requestedVoiceName = voices.find((voice) => voice.id === requestedVoiceId)?.name || requestedVoiceId;
+        const config = await request<SessionConfig>('voice/sessions', {
+          conversation_id: current,
+          language: arabic ? 'ar' : 'en',
+          voice_id: requestedVoiceId || null,
+          response_preference: 'automatic'
+        } satisfies StartVoice);
+        try {
+          status = 'connecting';
+          await runtime.connect(config);
+          live = config;
+          activeVoiceName = requestedVoiceName;
+        } catch (e) {
+          await runtime.disconnect();
+          await request('voice/sessions/' + config.id + '/end', {}).catch(() => {});
+          status = 'disconnected';
+          throw e;
+        }
+      } finally {
+        connecting = false;
       }
     }
     if (microphone) {
@@ -262,12 +264,27 @@
         current = chat.id;
       }
     });
+    const endOnPageHide = () => {
+      if (!live) return;
+      try {
+        void fetch('/api/v1/voice/sessions/' + live.id + '/end', {
+          method: 'POST',
+          keepalive: true,
+          headers: { 'content-type': 'application/json' },
+          body: '{}'
+        });
+      } catch {
+        /* best effort: worker departure remains the fallback */
+      }
+    };
+    window.addEventListener('pagehide', endOnPageHide);
     const poll = setInterval(() => {
       if (live && Date.parse(live.expires_at) <= Date.now()) void run(end);
       else if (live) void refresh().catch(() => {});
     }, 2500);
     return () => {
       teardownMeters();
+      window.removeEventListener('pagehide', endOnPageHide);
       clearInterval(poll);
       unsubscribe();
       void runtime.disconnect();

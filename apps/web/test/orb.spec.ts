@@ -75,3 +75,29 @@ test('reduced-motion orb is visually stable across frames', async ({ page }) => 
 
   expect(first.equals(second)).toBe(true);
 });
+
+test('two activations in the same tick create only one session', async ({ page }) => {
+  let sessionPosts = 0;
+  await page.route('**/api/v1/voice/sessions', async (route) => {
+    sessionPosts += 1;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await route.fulfill({ status: 503, json: { detail: { code: 'PIPELINE_NOT_CONFIGURED' } } });
+  });
+
+  await page.goto('/');
+  const orb = page.getByRole('button', { name: 'Start voice conversation' });
+  await expect(orb).not.toHaveAttribute('data-renderer', 'static');
+  await expect(async () => {
+    await orb.focus();
+    await expect(orb).toBeFocused({ timeout: 500 });
+  }).toPass({ timeout: 10000 });
+
+  await page.evaluate(() => {
+    const button = document.querySelector<HTMLButtonElement>('.orb-button');
+    button?.click();
+    button?.click();
+  });
+
+  await expect(page.getByRole('alert')).toBeVisible();
+  expect(sessionPosts).toBe(1);
+});
