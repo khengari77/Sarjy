@@ -180,7 +180,18 @@ def compile_turn_context(
     protected = [item for item in deduped if item[1] == 'system']
     remaining = max(0, max_chars - sum(len(item[2]) for item in protected))
     retained: list[tuple[str, CandidateRole, str]] = []
+    current_id = current_turn.id if current_turn is not None else None
+    if current_id is not None:
+        current_item = next((item for item in deduped if item[0] == current_id), None)
+        if current_item is not None:
+            # The latest user turn is never silently replaced by older context.
+            if len(current_item[2]) > remaining:
+                raise ValueError('CONTEXT_BUDGET_EXCEEDED')
+            retained.append(current_item)
+            remaining -= len(current_item[2])
     for item in reversed(deduped):
+        if item[0] == current_id:
+            continue
         if item[1] == 'system':
             retained.append(item)
         elif len(item[2]) <= remaining:

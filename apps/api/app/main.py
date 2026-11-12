@@ -408,16 +408,21 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         turn = Turn(id=str(uuid4()), conversation_id=voice.conversation_id, request_id=body.request_id, role='user', text=body.text, status='completed')
         pipeline = normalize_pipeline(voice.pipeline)
         inputs = await read_context_inputs(db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id)
-        compiled = compile_turn_context(
-            revision=conversation.revision,
-            instructions=pipeline_instructions(pipeline),
-            history=inputs.history,
-            memories=inputs.memories.included,
-            tool_results=inputs.tool_results,
-            current_turn=ContextCandidate(id=turn.id, role='user', text=turn.text, origin='history'),
-            excluded_ids=inputs.excluded_ids,
-            pipeline=pipeline,
-        )
+        try:
+            compiled = compile_turn_context(
+                revision=conversation.revision,
+                instructions=pipeline_instructions(pipeline),
+                history=inputs.history,
+                memories=inputs.memories.included,
+                tool_results=inputs.tool_results,
+                current_turn=ContextCandidate(id=turn.id, role='user', text=turn.text, origin='history'),
+                excluded_ids=inputs.excluded_ids,
+                pipeline=pipeline,
+            )
+        except ValueError as exc:
+            if str(exc) == 'CONTEXT_BUDGET_EXCEEDED':
+                raise HTTPException(413, detail={'code': 'CONTEXT_BUDGET_EXCEEDED'}) from exc
+            raise
         # The weather decision is frozen with the snapshot: the tool call later
         # authorizes against this revision, never against live or stale state.
         turn.snapshot = {**compiled.to_snapshot(), 'weather_policy': inputs.weather_policy()}
