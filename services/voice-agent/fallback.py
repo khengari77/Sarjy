@@ -14,6 +14,7 @@ from generation import GenerationEvent
 
 TRANSIENT_ERROR_CODES: Final = frozenset({
     'connection_error',
+    'incomplete_response',
     'timeout',
     'rate_limit',
     'provider_error',
