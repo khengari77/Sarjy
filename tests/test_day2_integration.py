@@ -123,14 +123,14 @@ def test_migration_chain_has_one_head_and_expected_parent():
 
 
 @given(st.lists(st.text(min_size=1, max_size=40), min_size=1, max_size=20))
-def test_legacy_context_hash_is_input_order_deterministic(contents):
-    from app.domain.context import ContextRecord, compile_context
+def test_context_hash_is_input_order_deterministic(contents):
+    from app.domain.context import ContextCandidate, compile_turn_context
 
-    records = tuple(ContextRecord(str(index), "user", text) for index, text in enumerate(contents))
-    first = compile_context(records, 4)
-    second = compile_context(tuple(records), 4)
+    history = tuple(ContextCandidate(str(index), "user", text, "history") for index, text in enumerate(contents))
+    first = compile_turn_context(revision=4, instructions="Rules", history=history)
+    second = compile_turn_context(revision=4, instructions="Rules", history=history)
     assert first == second
-    assert first["revision"] == 4
+    assert first.revision == 4
 
 
 def configured(tmp_path):

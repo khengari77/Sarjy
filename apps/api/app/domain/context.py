@@ -1,14 +1,10 @@
 """Deterministic context compilation.
 
-Two entry points live here:
+``compile_turn_context`` is the authoritative compiler. It turns
+permission-filtered history, memories and tool results into one revision's
+canonical pre-provider message list plus a manifest.
 
-* ``compile_turn_context`` is the authoritative Day 2 compiler. It turns
-  permission-filtered history, memories and tool results into one revision's
-  canonical pre-provider message list plus a manifest.
-* ``compile_context`` is the pre-Day-2 helper kept for the worker's existing
-  call sites and regression tests. It is a thin, deterministic subset.
-
-Both are pure: no I/O, no provider code and no mutation of their inputs. The
+It is pure: no I/O, no provider code and no mutation of its inputs. The
 manifest, the canonical messages and the snapshot record all carry the same
 ``revision``; ``validate_assembly`` rejects any mixture.
 """
@@ -30,13 +26,6 @@ PROVIDER_ROLES = frozenset({"system", "user", "assistant"})
 
 Origin = Literal["system", "history", "memory", "tool"]
 CandidateRole = Literal["system", "user", "assistant", "memory", "tool"]
-
-
-@dataclass(frozen=True)
-class ContextRecord:
-    id: str
-    role: str
-    content: str
 
 
 @dataclass(frozen=True)
@@ -267,46 +256,15 @@ def validate_assembly(revision: int, manifest: Mapping[str, Any], snapshot: Mapp
         raise ValueError("CONFIG_MISMATCH_SNAPSHOT")
 
 
-def compile_context(
-    records: tuple[ContextRecord, ...],
-    revision: int,
-    excluded_ids: frozenset[str] = frozenset(),
-    max_chars: int = 16000,
-):
-    """Legacy deterministic compiler retained for existing worker paths."""
-    selected = [r for r in records if r.id not in excluded_ids or r.role == "system"]
-    protected = sum(len(r.content) for r in selected if r.role == "system")
-    remaining = max(0, max_chars - protected)
-    retained = []
-    for record in reversed(selected):
-        if record.role == "system":
-            retained.append(record)
-        elif len(record.content) <= remaining:
-            retained.append(record)
-            remaining -= len(record.content)
-    selected = list(reversed(retained))
-    messages = [{"role": r.role, "content": r.content} for r in selected]
-    canonical = canonical_json(messages)
-    return {
-        "messages": messages,
-        "revision": revision,
-        "included_record_ids": [r.id for r in selected],
-        "canonical_prompt_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
-        "provider_request_capture": PROVIDER_CAPTURE,
-    }
-
-
 __all__ = [
     "CompiledContext",
     "ContextCandidate",
-    "ContextRecord",
     "DEFAULT_ALLOWED_ORIGINS",
     "DEFAULT_MAX_CHARS",
     "DEFAULT_PERMITTED_TOOLS",
     "PROVIDER_CAPTURE",
     "canonical_json",
     "canonical_messages",
-    "compile_context",
     "compile_turn_context",
     "prompt_sha256",
     "validate_assembly",

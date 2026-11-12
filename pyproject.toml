@@ -20,6 +20,7 @@ dev = [
     "hypothesis>=6.170.15",
     "pytest>=8",
     "ruff>=0.9",
+    "vulture>=2.14",
 ]
 [tool.pytest.ini_options]
 pythonpath = ["apps/api", "services/voice-agent"]
