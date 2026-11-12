@@ -46,7 +46,7 @@
   let agentState = $state<string | null>(null);
   let listError = $state('');
   let loadingConversations = $state(true);
-  let pendingSwitch = $state<string | null>(null);
+  let pendingIntent = $state<{ type: 'switch'; id: string } | { type: 'create' } | null>(null);
   let selectionEpoch = 0;
   let switchCancel: HTMLButtonElement | undefined = $state();
   let transcriptButton: HTMLButtonElement | undefined = $state();
@@ -170,7 +170,7 @@
   }
 
   $effect(() => {
-    if (pendingSwitch) switchCancel?.focus();
+    if (pendingIntent) switchCancel?.focus();
   });
 
   $effect(() => {
@@ -196,20 +196,24 @@
   function requestSelect(id: string) {
     if (id === current) return;
     if (live) {
-      pendingSwitch = id;
+      pendingIntent = { type: 'switch', id };
       return;
     }
     void run(() => select(id));
   }
 
   async function confirmSwitch() {
-    const id = pendingSwitch;
-    pendingSwitch = null;
-    if (!id) return;
+    const intent = pendingIntent;
+    pendingIntent = null;
+    if (!intent) return;
     await run(async () => {
       await end();
-      current = id;
-      await refresh();
+      if (intent.type === 'create') {
+        await createConversation();
+      } else {
+        current = intent.id;
+        await refresh();
+      }
     });
   }
 
@@ -261,12 +265,20 @@
     await refresh();
   }
 
+  async function createConversation() {
+    const chat = await request<Conversation>('conversations', {});
+    conversations = [chat, ...conversations];
+    await select(chat.id);
+  }
+
   async function create() {
-    await run(async () => {
-      const chat = await request<Conversation>('conversations', {});
-      conversations = [chat, ...conversations];
-      await select(chat.id);
-    });
+    // Starting a new conversation ends any live call, so it takes the same
+    // explicit confirmation as switching chats.
+    if (live) {
+      pendingIntent = { type: 'create' };
+      return;
+    }
+    await run(createConversation);
   }
 
   async function connect(microphone: boolean) {
@@ -546,7 +558,7 @@
 
   {#snippet stage()}
     <section class="voice-stage" dir={arabic ? 'rtl' : 'ltr'}>
-      {#if pendingSwitch}
+      {#if pendingIntent}
         <div class="confirm-scrim" role="presentation">
           <div
             class="confirm-dialog"
@@ -555,21 +567,31 @@
             tabindex="-1"
             aria-labelledby="switch-title"
             onkeydown={(event) => {
-              if (event.key === 'Escape') pendingSwitch = null;
+              if (event.key === 'Escape') pendingIntent = null;
             }}
           >
             <h2 id="switch-title">{arabic ? 'إنهاء المكالمة الحالية؟' : 'End the current voice session?'}</h2>
             <p>
-              {arabic
-                ? 'تبديل المحادثة ينهي المكالمة الجارية. يبقى السجل محفوظًا.'
-                : 'Switching conversations ends the live call. The transcript stays saved.'}
+              {pendingIntent.type === 'create'
+                ? arabic
+                  ? 'بدء محادثة جديدة ينهي المكالمة الجارية. يبقى السجل محفوظًا.'
+                  : 'Starting a new conversation ends the live call. The transcript stays saved.'
+                : arabic
+                  ? 'تبديل المحادثة ينهي المكالمة الجارية. يبقى السجل محفوظًا.'
+                  : 'Switching conversations ends the live call. The transcript stays saved.'}
             </p>
             <div class="confirm-actions">
-              <button class="ghost-button" bind:this={switchCancel} onclick={() => (pendingSwitch = null)}>
+              <button class="ghost-button" bind:this={switchCancel} onclick={() => (pendingIntent = null)}>
                 {arabic ? 'إلغاء' : 'Cancel'}
               </button>
               <button class="primary-button" onclick={confirmSwitch}>
-                {arabic ? 'إنهاء وتبديل' : 'End & switch'}
+                {pendingIntent.type === 'create'
+                  ? arabic
+                    ? 'إنهاء وبدء'
+                    : 'End & start'
+                  : arabic
+                    ? 'إنهاء وتبديل'
+                    : 'End & switch'}
               </button>
             </div>
           </div>

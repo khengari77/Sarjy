@@ -8,12 +8,14 @@ const CHATS = [
 
 async function mockHistory(page: Page, chats = CHATS) {
   let listCalls = 0;
+  let created = 0;
   const turns: string[] = [];
   await page.route('**/api/v1/conversations', async (route) => {
     if (route.request().method() === 'GET') {
       listCalls += 1;
       await route.fulfill({ json: chats });
     } else {
+      created += 1;
       await route.fulfill({ json: { id: 'c-new', title: 'New conversation', revision: 0 } });
     }
   });
@@ -27,7 +29,7 @@ async function mockHistory(page: Page, chats = CHATS) {
   await page.route('**/api/v1/demo-session', async (route) => {
     await route.fulfill({ json: { id: 'owner' } });
   });
-  return { listCalls: () => listCalls, turns };
+  return { listCalls: () => listCalls, created: () => created, turns };
 }
 
 async function allowMicrophone(page: Page) {
@@ -168,6 +170,30 @@ test('switching chats mid-call requires an explicit end and switch', async ({ pa
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
   await page.getByRole('button', { name: 'End & switch' }).click();
   await expect.poll(() => ends.some((url) => url.endsWith('/sess-1/end'))).toBe(true);
+  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+});
+
+test('starting a new conversation mid-call requires the same confirmation', async ({ page }) => {
+  const mocked = await mockHistory(page);
+  await allowMicrophone(page);
+  await installFakeRuntime(page);
+  await mockSessions(page);
+
+  await page.goto('/');
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
+  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'New conversation +' }).click();
+  const dialog = page.getByRole('dialog', { name: 'End the current voice session?' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  expect(mocked.created()).toBe(0);
+  await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'New conversation +' }).click();
+  await page.getByRole('button', { name: 'End & start' }).click();
+  await expect.poll(() => mocked.created()).toBe(1);
   await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
 });
 
