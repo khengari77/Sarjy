@@ -10,6 +10,8 @@
     type VoiceCatalog
   } from '../lib/api';
   import { LiveKitVoiceRuntime } from '../lib/audio/voice-runtime';
+  import VoiceOrb from '../lib/orb/VoiceOrb.svelte';
+  import { createEnvelopeMeter, type EnvelopeMeter } from '../lib/orb/audioEnvelope';
   import { deriveOrbPresentation, INITIAL_STATE, type VoicePhase } from '../lib/orb/orbState';
   import AppShell from '../lib/ui/AppShell.svelte';
 
@@ -34,6 +36,9 @@
   let muted = $state(true);
   let audioBlocked = $state(false);
   let live = $state<SessionConfig | null>(null);
+  let micLevel = $state(0);
+  let micMeter: EnvelopeMeter | null = null;
+  let meterTimer: ReturnType<typeof setInterval> | null = null;
   let runtime: LiveKitVoiceRuntime;
 
   const words = $derived(
@@ -138,6 +143,7 @@
 
   async function end() {
     const session = live;
+    teardownMeters();
     live = null;
     muted = true;
     await runtime?.disconnect();
@@ -186,6 +192,7 @@
     if (microphone) {
       await runtime.startMicrophone();
       muted = false;
+      setupMeters();
     }
   }
 
@@ -203,7 +210,27 @@
       if (muted) await runtime.startMicrophone();
       else await runtime.stopMicrophone();
       muted = !muted;
+      setupMeters();
     });
+  }
+
+  function teardownMeters() {
+    micMeter?.dispose();
+    micMeter = null;
+    if (meterTimer) clearInterval(meterTimer);
+    meterTimer = null;
+    micLevel = 0;
+  }
+
+  function setupMeters() {
+    teardownMeters();
+    if (!live || muted) return;
+    const stream = runtime?.microphoneStream();
+    if (!stream) return;
+    micMeter = createEnvelopeMeter(stream);
+    meterTimer = setInterval(() => {
+      micLevel = micMeter?.level() ?? 0;
+    }, 80);
   }
 
   onMount(() => {
@@ -234,6 +261,7 @@
       else if (live) void refresh().catch(() => {});
     }, 2500);
     return () => {
+      teardownMeters();
       clearInterval(poll);
       unsubscribe();
       void runtime.disconnect();
@@ -312,7 +340,19 @@
         </div>
       {:else}
         <div class="idle-block">
-          <div class="orb" aria-hidden="true">س</div>
+          <VoiceOrb
+            {presentation}
+            {micLevel}
+            label={arabic ? presentation.ariaLabel.ar : presentation.ariaLabel.en}
+            disabled={busy}
+            onactivate={() => {
+              if (live) {
+                if (!muted) void runtime.interrupt();
+                return;
+              }
+              void run(() => connect(true));
+            }}
+          />
           <h1>{words.title}</h1>
           <p class="intro">{words.intro}</p>
         </div>
@@ -561,21 +601,6 @@
     flex-direction: column;
     align-items: center;
     gap: 18px;
-  }
-
-  .orb {
-    width: clamp(150px, 26vw, 300px);
-    aspect-ratio: 1;
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-    font-size: clamp(40px, 9vw, 84px);
-    color: color-mix(in srgb, var(--orb-idle) 70%, #ffffff);
-    background:
-      radial-gradient(circle at 50% 50%, transparent 52%, color-mix(in srgb, var(--orb-idle) 22%, transparent) 58%, transparent 66%),
-      radial-gradient(circle at 50% 50%, transparent 62%, color-mix(in srgb, var(--orb-idle) 10%, transparent) 72%, transparent 80%);
-    border: 1px solid color-mix(in srgb, var(--orb-idle) 26%, transparent);
-    box-shadow: 0 0 60px color-mix(in srgb, var(--orb-idle) 16%, transparent);
   }
 
   h1 {

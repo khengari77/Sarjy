@@ -47,6 +47,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   throw new Error('AGENT_START_TIMEOUT');
  }
  async resumeAudio(){await this.room?.startAudio()}
+ microphoneStream():MediaStream|null{const track=this.room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;return track?new MediaStream([track]):null}
  async startMicrophone(){await this.room?.localParticipant.setMicrophoneEnabled(true)}
  async stopMicrophone(){await this.room?.localParticipant.setMicrophoneEnabled(false)}
  async sendText(text:string){if(!this.room)throw new Error('CALL_REQUIRED');await this.room.localParticipant.sendText(text,{topic:'lk.chat'})}
