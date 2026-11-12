@@ -27,10 +27,19 @@ in a namespaced ContextOperation. Settings and operation history commit together
 Memory/context actions are delegated only to explicitly registered `app.state.action_handlers[kind]`.
 An absent handler returns `ACTION_HANDLER_UNAVAILABLE`, not a fabricated success. A handler receives
 keyword arguments `db`, `owner_id`, `conversation_id`, `request_id`, `expected_revision`, `action`.
-It must validate its resource ownership/revision, return JSON-compatible results and must not commit;
+It receives a restricted effect-session capability and must validate its resource ownership/revision and return JSON-compatible results. Commit, rollback and begin are forbidden;
 the dispatcher commits one transaction after recording its replay result. Proposal confirmation cannot
 be invented by a classifier: the existing action union has no confirm operation.
 
 This PR adds no migration, paid inference, speech synthesis or hosted acceptance claim. It does not
 rewrite existing worker generation routing. The transcript adapter is directly testable through the same
 API as the UI adapter, ready for later finalized voice ingress integration.
+
+
+The dispatcher uses a dedicated transaction, so replay and failures release its locks without touching
+the authentication session. Voice catalog validation runs before the global mutation gate. A handler
+may expose an async `prepare` method/attribute with the same named inputs; it runs with a clean read
+session before locking and returns data passed to the handler as `prepared`. Use this phase for semantic
+retrieval with separately guarded embeddings. Preparation cannot mutate business state. The effect
+handler must revalidate revision/scope before consuming prepared results. No prepare hook means the
+existing handler call signature is unchanged.

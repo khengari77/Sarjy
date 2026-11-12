@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker
 
 from app.domain.contracts import (
     AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed,
@@ -22,7 +23,80 @@ def settings_value(row):
         approved_voice_id=row.approved_voice_id, response_preference=row.response_preference, revision=row.revision)
 
 
+class EffectSession:
+    """Narrow mutation capability; the dispatcher owns transaction lifecycle."""
+    __slots__ = ('__session',)
+
+    def __init__(self, session):
+        self.__session = session
+
+    async def execute(self, *args, **kwargs):
+        return await self.__session.execute(*args, **kwargs)
+
+    async def scalar(self, *args, **kwargs):
+        return await self.__session.scalar(*args, **kwargs)
+
+    async def scalars(self, *args, **kwargs):
+        return await self.__session.scalars(*args, **kwargs)
+
+    async def get(self, *args, **kwargs):
+        return await self.__session.get(*args, **kwargs)
+
+    def add(self, value):
+        self.__session.add(value)
+
+    def add_all(self, values):
+        self.__session.add_all(values)
+
+    async def flush(self):
+        await self.__session.flush()
+
+    async def delete(self, value):
+        await self.__session.delete(value)
+
+    async def commit(self):
+        raise HTTPException(503, detail={'code': 'ACTION_TRANSACTION_OWNED'})
+
+    async def rollback(self):
+        raise HTTPException(503, detail={'code': 'ACTION_TRANSACTION_OWNED'})
+
+    def begin(self):
+        raise HTTPException(503, detail={'code': 'ACTION_TRANSACTION_OWNED'})
+
+
 async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected_revision, action, catalog, handlers):
+    """Own a fresh short transaction, independent of authentication reads."""
+    bind = db.bind
+    factory = async_sessionmaker(bind.engine if isinstance(bind, AsyncConnection) else bind, expire_on_commit=False)
+    key = hashlib.sha256(('dispatch:' + owner_id + ':' + request_id).encode()).hexdigest()
+    fingerprint = hashlib.sha256(json.dumps({'conversation_id': conversation_id,
+        'expected_revision': expected_revision, 'action': action.model_dump(mode='json')}, sort_keys=True).encode()).hexdigest()
+    async with factory() as preflight:
+        conversation = await preflight.get(Conversation, conversation_id)
+        if not conversation or conversation.owner_id != owner_id:
+            raise HTTPException(404, detail={'code': 'CONVERSATION_NOT_FOUND'})
+        existing = await preflight.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
+        if existing:
+            if existing.owner_id != owner_id or existing.payload.get('fingerprint') != fingerprint:
+                raise HTTPException(409, detail={'code': 'IDEMPOTENCY_CONFLICT'})
+            return existing.payload['result']
+    if isinstance(action, SelectApprovedVoice):
+        await catalog.require(action.voice_id)
+    handler = handlers.get(action.kind)
+    prepare = getattr(handler, 'prepare', None)
+    prepared = None
+    if prepare is not None:
+        # Semantic retrieval and its separately committed reservation must precede locks.
+        async with factory() as read_db:
+            prepared = await prepare(db=read_db, owner_id=owner_id, conversation_id=conversation_id,
+                request_id=request_id, expected_revision=expected_revision, action=action)
+    async with factory() as effects:
+        async with effects.begin():
+            return await _dispatch_transaction(effects, owner_id=owner_id, conversation_id=conversation_id,
+                request_id=request_id, expected_revision=expected_revision, action=action, catalog=catalog, handlers=handlers, prepared=prepared)
+
+
+async def _dispatch_transaction(db, *, owner_id, conversation_id, request_id, expected_revision, action, catalog, handlers, prepared=None):
     # Existing gate serializes read-modify-write transactions on SQLite and PostgreSQL.
     await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
     conversation = await db.get(Conversation, conversation_id)
@@ -41,9 +115,6 @@ async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected
         before = settings_value(row)
         if before.revision != expected_revision:
             raise HTTPException(409, detail={'code':'SETTINGS_REVISION_CONFLICT'})
-        if isinstance(action, SelectApprovedVoice):
-            # Catalog validation is metadata-only; no synthesis or inference occurs.
-            await catalog.require(action.voice_id)
         after = apply_settings_action(before, action)
         if after.revision != before.revision:
             if row is None:
@@ -62,10 +133,10 @@ async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected
         if handler is None:
             raise HTTPException(503, detail={'code':'ACTION_HANDLER_UNAVAILABLE'})
         # Durable context/memory handlers must retain this transaction; the dispatcher commits once.
-        result = await handler(db=db, owner_id=owner_id, conversation_id=conversation_id,
-            request_id=request_id, expected_revision=expected_revision, action=action)
+        prepare_args = {'prepared': prepared} if getattr(handler, 'prepare', None) is not None else {}
+        result = await handler(db=EffectSession(db), owner_id=owner_id, conversation_id=conversation_id,
+            request_id=request_id, expected_revision=expected_revision, action=action, **prepare_args)
     db.add(ContextOperation(id=str(uuid4()),owner_id=owner_id,conversation_id=conversation_id,
         command_type='DispatchAction',idempotency_key=key,outcome='completed',
         payload={'fingerprint':fingerprint,'result':result}))
-    await db.commit()
     return result
