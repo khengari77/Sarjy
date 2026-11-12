@@ -9,8 +9,15 @@
     type VoiceOption,
     type VoiceCatalog
   } from '../lib/api';
-  import { LiveKitVoiceRuntime } from '../lib/audio/voice-runtime';
-  import { phaseFromAgentState, phaseFromTransportStatus } from '../lib/audio/livekitAdapter';
+  import type { VoiceRuntime } from '../lib/audio/voice-runtime';
+  import { createVoiceRuntime } from '../lib/audio/runtime-factory';
+  import {
+    friendlyVoiceError,
+    isFatalVoiceError,
+    phaseFromAgentState,
+    phaseFromTransportStatus
+  } from '../lib/audio/livekitAdapter';
+  import { ensureMicrophoneAccess, microphoneErrorCode } from '../lib/audio/microphone';
   import VoiceOrb from '../lib/orb/VoiceOrb.svelte';
   import { createEnvelopeMeter, type EnvelopeMeter } from '../lib/orb/audioEnvelope';
   import LiveCaptionPreview from '../lib/chat/LiveCaptionPreview.svelte';
@@ -34,19 +41,25 @@
   let current = $state<string | null>(null);
   let turns = $state<Turn[]>([]);
   let draft = $state('');
-  let status = $state('idle');
-  let error = $state('');
+  let transportStatus = $state('idle');
+  let agentState = $state<string | null>(null);
+  let listError = $state('');
+  let voiceErrorCode = $state('');
   let busy = $state(false);
   let connecting = $state(false);
+  let connectionLost = $state(false);
   let muted = $state(true);
   let audioBlocked = $state(false);
   let live = $state<SessionConfig | null>(null);
   let micLevel = $state(0);
   let captionsVisible = $state(true);
   let transcriptOpen = $state(false);
+  let provisional = $state<{ id: string; text: string; speaker: 'user' | 'assistant' } | null>(null);
   let micMeter: EnvelopeMeter | null = null;
   let meterTimer: ReturnType<typeof setInterval> | null = null;
-  let runtime: LiveKitVoiceRuntime;
+  let runtime: VoiceRuntime;
+  let connectAttempt = 0;
+  let ending = false;
 
   const words = $derived(
     arabic
@@ -75,17 +88,23 @@
   );
 
   const phase = $derived<VoicePhase>(
-    phaseFromTransportStatus(status) ?? phaseFromAgentState(status) ?? 'idle'
+    (agentState ? phaseFromAgentState(agentState) : null) ??
+      phaseFromTransportStatus(transportStatus) ??
+      'idle'
   );
+
+  const canInterrupt = $derived(phase === 'thinking' || phase === 'speaking');
+  const fatalError = $derived(voiceErrorCode !== '' && isFatalVoiceError(voiceErrorCode));
+  const voiceErrorText = $derived(voiceErrorCode ? friendlyVoiceError(voiceErrorCode, arabic) : '');
 
   const presentation = $derived(
     deriveOrbPresentation({
       ...INITIAL_STATE,
       phase,
-      overlay: muted && status !== 'idle' ? 'muted' : 'none',
-      micActive: !muted,
+      overlay: fatalError ? 'error' : live && muted ? 'muted' : 'none',
+      micActive: live !== null && !muted,
       sessionId: live?.id ?? null,
-      connectionReady: live !== null
+      connectionReady: live !== null && !connectionLost
     })
   );
 
@@ -128,27 +147,46 @@
     }
   }
 
-  async function run(work: () => Promise<void>) {
+  function errorCode(error: unknown): string {
+    if (error instanceof Error) {
+      if (/^[A-Z0-9_]+$/.test(error.message)) return error.message;
+      if (error.name === 'NotAllowedError' || error.name === 'SecurityError') return 'MICROPHONE_PERMISSION_DENIED';
+      if (error.name === 'NotFoundError' || error.name === 'OverconstrainedError') return 'MICROPHONE_NOT_FOUND';
+    }
+    return 'API_UNAVAILABLE';
+  }
+
+  async function run(work: () => Promise<void>, onError?: (error: unknown) => void) {
     busy = true;
-    error = '';
     try {
       await work();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'UNAVAILABLE';
+      if (onError) onError(e);
+      else listError = errorCode(e);
     } finally {
       busy = false;
     }
   }
 
   async function end() {
+    if (ending) return;
+    ending = true;
+    connectAttempt += 1;
     const session = live;
     teardownMeters();
     live = null;
     muted = true;
-    await runtime?.disconnect();
-    if (session) await request('voice/sessions/' + session.id + '/end', {});
-    status = 'idle';
-    await refresh();
+    connectionLost = false;
+    provisional = null;
+    transportStatus = 'idle';
+    agentState = null;
+    try {
+      await runtime?.disconnect();
+      if (session) await request('voice/sessions/' + session.id + '/end', {}).catch(() => {});
+      await refresh().catch(() => {});
+    } finally {
+      ending = false;
+    }
   }
 
   async function select(id: string) {
@@ -166,59 +204,134 @@
   }
 
   async function connect(microphone: boolean) {
-    if (!current) throw new Error('CONVERSATION_REQUIRED');
-    if (!live) {
-      // One session per gesture: repeated activations while the first request
-      // or connection is in flight must not create a second room.
-      if (connecting) return;
-      connecting = true;
-      try {
-        const requestedVoiceId = voiceId;
-        const requestedVoiceName = voices.find((voice) => voice.id === requestedVoiceId)?.name || requestedVoiceId;
-        const config = await request<SessionConfig>('voice/sessions', {
-          conversation_id: current,
-          language: arabic ? 'ar' : 'en',
-          voice_id: requestedVoiceId || null,
-          response_preference: 'automatic'
-        } satisfies StartVoice);
+    if (!current) {
+      voiceErrorCode = 'CONVERSATION_REQUIRED';
+      return;
+    }
+    if (live) {
+      if (microphone && muted) await toggleMute();
+      return;
+    }
+    if (connecting) return;
+
+    const attempt = ++connectAttempt;
+    connecting = true;
+    voiceErrorCode = '';
+    listError = '';
+    connectionLost = false;
+
+    try {
+      // Ask for the microphone before creating a paid session so a denial
+      // cannot consume capacity or leave a half-open room.
+      if (microphone) {
         try {
-          status = 'connecting';
-          await runtime.connect(config);
-          live = config;
-          activeVoiceName = requestedVoiceName;
-        } catch (e) {
+          await ensureMicrophoneAccess();
+        } catch (error) {
+          voiceErrorCode = errorCode(error);
+          return;
+        }
+      }
+
+      const requestedVoiceId = voiceId;
+      const requestedVoiceName = voices.find((voice) => voice.id === requestedVoiceId)?.name || requestedVoiceId;
+      const config = await request<SessionConfig>('voice/sessions', {
+        conversation_id: current,
+        language: arabic ? 'ar' : 'en',
+        voice_id: requestedVoiceId || null,
+        response_preference: 'automatic'
+      } satisfies StartVoice);
+      if (attempt !== connectAttempt) {
+        // The user cancelled while the session request was in flight.
+        await request('voice/sessions/' + config.id + '/end', {}).catch(() => {});
+        return;
+      }
+
+      try {
+        transportStatus = 'connecting';
+        agentState = null;
+        await runtime.connect(config);
+        if (attempt !== connectAttempt) {
           await runtime.disconnect();
           await request('voice/sessions/' + config.id + '/end', {}).catch(() => {});
-          status = 'disconnected';
-          throw e;
+          return;
         }
-      } finally {
-        connecting = false;
+        live = config;
+        activeVoiceName = requestedVoiceName;
+        muted = !microphone;
+        if (microphone) {
+          await runtime.startMicrophone();
+          setupMeters();
+        }
+      } catch (error) {
+        await runtime.disconnect();
+        await request('voice/sessions/' + config.id + '/end', {}).catch(() => {});
+        transportStatus = 'disconnected';
+        agentState = null;
+        voiceErrorCode = errorCode(error);
       }
+    } catch (error) {
+      voiceErrorCode = errorCode(error);
+      transportStatus = 'disconnected';
+    } finally {
+      if (attempt === connectAttempt) connecting = false;
     }
-    if (microphone) {
-      await runtime.startMicrophone();
-      muted = false;
-      setupMeters();
-    }
+  }
+
+  async function cancelConnect() {
+    connectAttempt += 1;
+    connecting = false;
+    voiceErrorCode = '';
+    transportStatus = 'idle';
+    agentState = null;
+    await runtime.cancelConnect().catch(() => {});
+  }
+
+  async function reconnect() {
+    await end();
+    await connect(true);
+  }
+
+  async function interrupt() {
+    if (!live || !canInterrupt) return;
+    await run(
+      async () => {
+        await runtime.interrupt();
+        agentState = 'listening';
+      },
+      (error) => {
+        voiceErrorCode = errorCode(error);
+      }
+    );
   }
 
   async function send() {
     if (!draft.trim()) return;
     await run(async () => {
-      await connect(false);
+      if (!live) await connect(false);
+      if (!live) return;
       await runtime.sendText(draft.trim());
       draft = '';
     });
   }
 
   async function toggleMute() {
-    await run(async () => {
-      if (muted) await runtime.startMicrophone();
-      else await runtime.stopMicrophone();
-      muted = !muted;
-      setupMeters();
-    });
+    await run(
+      async () => {
+        if (!live) return;
+        if (muted) {
+          await runtime.startMicrophone();
+          muted = false;
+          setupMeters();
+        } else {
+          await runtime.stopMicrophone();
+          muted = true;
+          teardownMeters();
+        }
+      },
+      (error) => {
+        voiceErrorCode = errorCode(error);
+      }
+    );
   }
 
   function teardownMeters() {
@@ -232,7 +345,7 @@
   function setupMeters() {
     teardownMeters();
     if (!live || muted) return;
-    const stream = runtime?.microphoneStream();
+    const stream = runtime.microphoneStream?.();
     if (!stream) return;
     micMeter = createEnvelopeMeter(stream);
     meterTimer = setInterval(() => {
@@ -244,15 +357,36 @@
     arabic = localStorage.getItem('sarjy-language') === 'ar';
     voiceId = localStorage.getItem('sarjy-voice-id') || '';
     captionsVisible = localStorage.getItem('sarjy-captions') !== 'off';
-    runtime = new LiveKitVoiceRuntime();
+    runtime = createVoiceRuntime();
     const unsubscribe = runtime.subscribe((event) => {
+      // Ignore callbacks from a room the user already replaced or cancelled.
+      if (event.epoch !== runtime.epoch) return;
       if (event.type === 'status') {
-        status = event.text;
-        if (event.text === 'disconnected' && live) void run(end);
+        if (event.source === 'agent') {
+          agentState = event.text;
+        } else {
+          agentState = null;
+          transportStatus = event.text;
+          if (event.text === 'disconnected' && live && !ending) {
+            // Transport loss is terminal for this room. Keep the session id so
+            // End can release it, but never auto-create a replacement.
+            teardownMeters();
+            muted = true;
+            connectionLost = true;
+            provisional = null;
+          }
+        }
       }
-      if (event.type === 'error') error = event.text;
+      if (event.type === 'error') voiceErrorCode = event.code;
       if (event.type === 'audio-blocked') audioBlocked = true;
-      if (event.type === 'transcript') void refresh().catch(() => {});
+      if (event.type === 'transcript') {
+        if (event.final) {
+          provisional = null;
+          void refresh().catch(() => {});
+        } else {
+          provisional = { id: event.segmentId, text: event.text, speaker: event.speaker };
+        }
+      }
     });
     void run(async () => {
       await request('demo-session', {});
@@ -302,7 +436,6 @@
     localStorage.setItem('sarjy-language', arabic ? 'ar' : 'en');
   }
 
-  const statusIsError = $derived(error !== '');
 </script>
 
 <svelte:head>
@@ -323,6 +456,12 @@
     <div class="sidebar-inner">
       <button class="primary-button" disabled={busy} onclick={create}>{words.new} +</button>
       <p class="sidebar-label">{arabic ? 'المحادثات' : 'Conversations'}</p>
+      {#if listError}
+        <p class="panel-error" role="alert" data-code={listError}>
+          {arabic ? 'تعذّر تحميل المحادثات.' : 'Could not load conversations.'}
+          <button class="ghost-button" onclick={() => run(refresh)}>{arabic ? 'إعادة المحاولة' : 'Retry'}</button>
+        </p>
+      {/if}
       <nav class="chat-list" aria-label={arabic ? 'قائمة المحادثات' : 'Conversation list'}>
         {#each conversations as chat}
           <button class="chat-item" class:chosen={current === chat.id} disabled={busy} onclick={() => run(() => select(chat.id))}>
@@ -341,15 +480,41 @@
         {arabic ? presentation.statusLabel.ar : presentation.statusLabel.en}
       </p>
 
-      {#if error}
-        <p class="alert" role="alert">{error}</p>
+      {#if voiceErrorText}
+        <div class="alert" role="alert" data-code={voiceErrorCode}>
+          <p>{voiceErrorText}</p>
+          {#if voiceErrorCode.startsWith('MICROPHONE_')}
+            <button class="ghost-button" disabled={busy} onclick={() => void connect(true)}>
+              {arabic ? 'إعادة محاولة الميكروفون' : 'Retry microphone'}
+            </button>
+          {/if}
+        </div>
       {/if}
+
+      {#if connecting}
+        <button class="ghost-button" onclick={cancelConnect}>
+          {arabic ? 'إلغاء الاتصال' : 'Cancel connecting'}
+        </button>
+      {/if}
+
+      {#if connectionLost && live}
+        <div class="alert" role="status" data-code="CONNECTION_LOST">
+          <p>{arabic ? 'انقطع الاتصال.' : 'Connection lost.'}</p>
+          <button class="ghost-button" disabled={busy} onclick={() => void reconnect()}>
+            {arabic ? 'إعادة الاتصال' : 'Reconnect'}
+          </button>
+          <button class="ghost-button" disabled={busy} onclick={() => run(end)}>
+            {arabic ? 'إنهاء' : 'End'}
+          </button>
+        </div>
+      {/if}
+
       {#if audioBlocked}
         <button
           class="primary-button"
           onclick={() =>
             run(async () => {
-              await runtime.resumeAudio();
+              await runtime.resumeAudio?.();
               audioBlocked = false;
             })}
         >
@@ -381,10 +546,11 @@
             disabled={busy}
             onactivate={() => {
               if (live) {
-                if (!muted) void runtime.interrupt();
+                if (muted) void toggleMute();
+                else if (canInterrupt) void interrupt();
                 return;
               }
-              void run(() => connect(true));
+              void connect(true);
             }}
           />
           <h1>{words.title}</h1>
@@ -397,12 +563,14 @@
     <div class="controls">
       {#if live}
         <button class="primary-button" disabled={busy} onclick={() => run(end)}>{words.end}</button>
-        <button class="ghost-button" disabled={busy} onclick={toggleMute}>{muted ? words.unmute : words.mute}</button>
-        <button class="ghost-button" disabled={busy} onclick={() => run(() => runtime.interrupt())}>
+        <button class="ghost-button" disabled={busy || connectionLost} onclick={toggleMute}>{muted ? words.unmute : words.mute}</button>
+        <button class="ghost-button" disabled={busy || !canInterrupt} onclick={() => void interrupt()}>
           {arabic ? 'إيقاف' : 'Stop'}
         </button>
+      {:else if connecting}
+        <button class="ghost-button" onclick={cancelConnect}>{arabic ? 'إلغاء' : 'Cancel'}</button>
       {:else}
-        <button class="primary-button" disabled={busy || !current} onclick={() => run(() => connect(true))}>
+        <button class="primary-button" disabled={busy || !current} onclick={() => void connect(true)}>
           {words.call}
         </button>
       {/if}

@@ -50,3 +50,14 @@ describe('error handling', () => {
     expect(friendlyVoiceError('UNKNOWN_CODE', false)).not.toMatch(/UNKNOWN_CODE/);
   });
 });
+
+describe('microphone permission copy', () => {
+  it('gives retry instructions in both languages', () => {
+    for (const code of ['MICROPHONE_PERMISSION_DENIED', 'MICROPHONE_NOT_FOUND']) {
+      const en = friendlyVoiceError(code, false);
+      const ar = friendlyVoiceError(code, true);
+      expect(en).not.toBe(ar);
+      expect(en).toMatch(/retry|Retry/);
+    }
+  });
+});

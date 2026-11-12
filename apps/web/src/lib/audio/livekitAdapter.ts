@@ -62,6 +62,14 @@ const FRIENDLY: Record<string, { en: string; ar: string }> = {
     en: 'Microphone unavailable. Allow microphone access in your browser settings, then try again.',
     ar: 'الميكروفون غير متاح. اسمح بالوصول إلى الميكروفون من إعدادات المتصفح ثم أعد المحاولة.'
   },
+  MICROPHONE_PERMISSION_DENIED: {
+    en: 'Microphone access is blocked. Allow it in your browser’s site settings, then retry. You can keep typing meanwhile.',
+    ar: 'الوصول إلى الميكروفون محظور. اسمح به من إعدادات الموقع في المتصفح ثم أعد المحاولة. يمكنك متابعة الكتابة الآن.'
+  },
+  MICROPHONE_NOT_FOUND: {
+    en: 'No microphone was found. Connect one or choose another input, then retry.',
+    ar: 'لم يُعثر على ميكروفون. وصّل ميكروفونًا أو اختر إدخالًا آخر ثم أعد المحاولة.'
+  },
   AUDIO_PLAYBACK_BLOCKED: {
     en: 'The browser blocked audio playback. Select “Enable audio” to continue.',
     ar: 'منع المتصفح تشغيل الصوت. اختر «تشغيل الصوت» للمتابعة.'

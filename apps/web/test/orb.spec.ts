@@ -2,6 +2,13 @@ import { expect, test } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
+  await page.addInitScript(() => {
+    const stream = { getTracks: () => [] } as unknown as MediaStream;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => stream }
+    });
+  });
 });
 
 test('orb is a single keyboard-operable control that starts one session', async ({ page }) => {
@@ -28,7 +35,7 @@ test('orb is a single keyboard-operable control that starts one session', async 
   }).toPass({ timeout: 10000 });
   await page.keyboard.press('Enter');
 
-  await expect(page.getByRole('alert')).toHaveText('PIPELINE_NOT_CONFIGURED');
+  await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
   expect(sessionPosts).toBe(1);
 });
 

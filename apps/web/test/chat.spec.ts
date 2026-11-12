@@ -1,6 +1,7 @@
 import {test,expect} from '@playwright/test';
 test.beforeEach(async({page},info)=>{
  await page.addInitScript(()=>{if(!localStorage.getItem('sarjy-language'))localStorage.setItem('sarjy-language','ar')});
+ await page.addInitScript(()=>{const stream={getTracks:()=>[]} as unknown as MediaStream;Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>stream}})});
  if(info.project.name!=='recorded-ui')return;
  await page.addInitScript(({title})=>{
   document.addEventListener('DOMContentLoaded',()=>{
@@ -26,7 +27,7 @@ test('demo session, bilingual controls, history and explicit missing-service err
  await page.reload();
  await expect(page.locator('.shell')).toHaveAttribute('dir','ltr');
  await page.getByRole('button',{name:'Start call',exact:true}).click();
- await expect(page.getByRole('alert')).toHaveText('PIPELINE_NOT_CONFIGURED');
+ await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
 });
 test('proxy rejects cross-origin mutation',async({request})=>{
  const result=await request.post('/api/v1/demo-session',{headers:{origin:'https://untrusted.example'}});
@@ -55,6 +56,6 @@ test('voice picker search, pagination, saved preference and call payload',async(
  await page.reload();
  await expect(page.getByLabel('Choose voice')).toHaveValue('lady-voice');
  await page.getByRole('button',{name:'Start call',exact:true}).click();
- await expect(page.getByRole('alert')).toHaveText('PIPELINE_NOT_CONFIGURED');
+ await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
  expect(sentVoice).toBe('lady-voice');
 });

@@ -1,21 +1,38 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
 
-export type VoiceEvent = { type: 'status' | 'transcript' | 'error' | 'audio-blocked'; text: string };
+type VoiceEventBody =
+  | { type: 'status'; source: 'transport' | 'agent'; text: string }
+  | { type: 'error'; code: string }
+  | { type: 'audio-blocked'; code: string }
+  | { type: 'transcript'; text: string; final: boolean; segmentId: string; speaker: 'user' | 'assistant' };
+
+export type VoiceEvent = VoiceEventBody & { epoch: number };
+
 export interface VoiceRuntime {
+  readonly epoch: number;
   connect(config: SessionConfig): Promise<void>;
   startMicrophone(): Promise<void>;
   stopMicrophone(): Promise<void>;
   interrupt(): Promise<void>;
   sendText(text: string): Promise<void>;
   disconnect(): Promise<void>;
+  cancelConnect(): Promise<void>;
   subscribe(handler: (event: VoiceEvent) => void): () => void;
+  resumeAudio?(): Promise<void>;
+  microphoneStream?(): MediaStream | null;
 }
 
 export class LiveKitVoiceRuntime implements VoiceRuntime {
   private room: Room | null = null;
   private audio = new Set<HTMLMediaElement>();
   private handlers = new Set<(event: VoiceEvent) => void>();
+  private sessionEpoch = 0;
+  private sawTranscriptionSegments = false;
+
+  get epoch() {
+    return this.sessionEpoch;
+  }
 
   subscribe(handler: (event: VoiceEvent) => void) {
     this.handlers.add(handler);
@@ -24,91 +41,112 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     };
   }
 
-  private active(room: Room) {
-    return this.room === room;
+  private active(room: Room, epoch: number) {
+    return this.room === room && this.sessionEpoch === epoch;
   }
 
-  private emit(type: VoiceEvent['type'], text: string) {
-    for (const handler of this.handlers) handler({ type, text });
+  private emit(event: VoiceEventBody) {
+    const tagged = { ...event, epoch: this.sessionEpoch } as VoiceEvent;
+    for (const handler of this.handlers) handler(tagged);
   }
 
   async connect(config: SessionConfig) {
     await this.disconnect();
+    this.sessionEpoch += 1;
+    const epoch = this.sessionEpoch;
+    this.sawTranscriptionSegments = false;
     const room = new Room();
     this.room = room;
 
     room.on(RoomEvent.TrackSubscribed, (track) => {
-      if (!this.active(room) || track.kind !== Track.Kind.Audio) return;
+      if (!this.active(room, epoch) || track.kind !== Track.Kind.Audio) return;
       const element = track.attach();
       this.audio.add(element);
       document.body.appendChild(element);
     });
     room.on(RoomEvent.TrackUnsubscribed, (track) => {
-      if (!this.active(room)) return;
+      if (!this.active(room, epoch)) return;
       for (const element of track.detach()) {
         element.remove();
         this.audio.delete(element);
       }
     });
     room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
-      if (this.active(room) && !room.canPlaybackAudio) this.emit('audio-blocked', 'AUDIO_PLAYBACK_BLOCKED');
+      if (this.active(room, epoch) && !room.canPlaybackAudio) this.emit({ type: 'audio-blocked', code: 'AUDIO_PLAYBACK_BLOCKED' });
     });
     room.on(RoomEvent.Reconnecting, () => {
-      if (this.active(room)) this.emit('status', 'reconnecting');
+      if (this.active(room, epoch)) this.emit({ type: 'status', source: 'transport', text: 'reconnecting' });
     });
     room.on(RoomEvent.Reconnected, () => {
-      if (this.active(room)) this.emit('status', 'connected');
+      if (this.active(room, epoch)) this.emit({ type: 'status', source: 'transport', text: 'connected' });
     });
     room.on(RoomEvent.Disconnected, () => {
-      if (this.active(room)) this.emit('status', 'disconnected');
+      if (this.active(room, epoch)) this.emit({ type: 'status', source: 'transport', text: 'disconnected' });
     });
     room.on(RoomEvent.ParticipantAttributesChanged, (attributes) => {
       const state = attributes['lk.agent.state'];
-      if (this.active(room) && state) this.emit('status', state);
+      if (this.active(room, epoch) && state) this.emit({ type: 'status', source: 'agent', text: state });
     });
     room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-      if (!this.active(room) || topic !== 'sarjy.error' || !participant?.isAgent) return;
+      if (!this.active(room, epoch) || topic !== 'sarjy.error' || !participant?.isAgent) return;
       try {
         const event = JSON.parse(new TextDecoder().decode(payload));
         if (['DAILY_BUDGET_EXHAUSTED', 'BUDGET_SERVICE_UNAVAILABLE'].includes(event.code)) {
-          this.emit('error', event.code);
+          this.emit({ type: 'error', code: event.code });
         }
       } catch {
         /* malformed control payload: ignore rather than crash the session */
       }
     });
     room.on(RoomEvent.MediaDevicesError, () => {
-      if (this.active(room)) this.emit('error', 'MICROPHONE_UNAVAILABLE');
+      if (this.active(room, epoch)) this.emit({ type: 'error', code: 'MICROPHONE_UNAVAILABLE' });
+    });
+    // LiveKit exposes real partial/final segments. Prefer them and keep the
+    // text-stream reader only as a fallback for publishers that send no
+    // segments; mixing both would duplicate each utterance.
+    room.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
+      if (!this.active(room, epoch)) return;
+      this.sawTranscriptionSegments = true;
+      for (const segment of segments) {
+        this.emit({
+          type: 'transcript',
+          text: segment.text,
+          final: segment.final,
+          segmentId: segment.id,
+          speaker: participant?.isAgent ? 'assistant' : 'user'
+        });
+      }
     });
     room.registerTextStreamHandler('lk.transcription', async (reader) => {
       try {
         const text = await reader.readAll();
-        if (this.active(room)) this.emit('transcript', text);
+        if (!this.active(room, epoch) || this.sawTranscriptionSegments) return;
+        this.emit({ type: 'transcript', text, final: true, segmentId: 'stream', speaker: 'assistant' });
       } catch {
-        if (this.active(room)) this.emit('error', 'TRANSCRIPT_UNAVAILABLE');
+        if (this.active(room, epoch)) this.emit({ type: 'error', code: 'TRANSCRIPT_UNAVAILABLE' });
       }
     });
 
-    this.emit('status', 'connecting');
+    this.emit({ type: 'status', source: 'transport', text: 'connecting' });
     await room.connect(config.url, config.token);
-    if (!this.active(room)) return;
+    if (!this.active(room, epoch)) return;
     await room.startAudio();
-    this.emit('status', 'starting');
-    await this.waitForAgent(room);
+    this.emit({ type: 'status', source: 'transport', text: 'starting' });
+    await this.waitForAgent(room, epoch);
   }
 
-  private async waitForAgent(room: Room) {
+  private async waitForAgent(room: Room, epoch: number) {
     const deadline = Date.now() + 45000;
-    while (this.active(room) && Date.now() < deadline) {
+    while (this.active(room, epoch) && Date.now() < deadline) {
       const agent = [...room.remoteParticipants.values()].find((participant) => participant.isAgent);
       const state = agent?.attributes['lk.agent.state'];
       if (state && ['listening', 'thinking', 'speaking'].includes(state)) {
-        this.emit('status', state);
+        this.emit({ type: 'status', source: 'agent', text: state });
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    if (!this.active(room)) return;
+    if (!this.active(room, epoch)) return;
     throw new Error('AGENT_START_TIMEOUT');
   }
 
@@ -141,7 +179,18 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     }
   }
 
+  /** Abort an in-flight connection attempt and ignore anything it still emits. */
+  async cancelConnect() {
+    this.sessionEpoch += 1;
+    await this.disconnectRoom();
+  }
+
   async disconnect() {
+    this.sessionEpoch += 1;
+    await this.disconnectRoom();
+  }
+
+  private async disconnectRoom() {
     const room = this.room;
     this.room = null;
     if (room) {
