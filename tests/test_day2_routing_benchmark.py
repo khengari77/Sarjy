@@ -296,9 +296,46 @@ def test_cache_key_includes_mode_and_provenance():
     )
 
 
+def test_extraction_generation_config_is_part_of_the_cache_identity():
+    fixture = bench.load_fixture()
+    script = script_for(fixture)
+    case = fixture.cases[0]
+    base = bench.ScriptedJevRouter(fixture, script, GENERATION)
+    changed_model = bench.ScriptedJevRouter(fixture, script, GenerationConfig(
+        model='other-extractor',
+        max_output_tokens=GENERATION.max_output_tokens,
+        input_usd_per_million=GENERATION.input_usd_per_million,
+        output_usd_per_million=GENERATION.output_usd_per_million,
+    ))
+    changed_bound = bench.ScriptedJevRouter(fixture, script, GenerationConfig(
+        model=GENERATION.model,
+        max_output_tokens=32,
+        input_usd_per_million=GENERATION.input_usd_per_million,
+        output_usd_per_million=GENERATION.output_usd_per_million,
+    ))
+    changed_prices = bench.ScriptedJevRouter(fixture, script, GenerationConfig(
+        model=GENERATION.model,
+        max_output_tokens=GENERATION.max_output_tokens,
+        input_usd_per_million=2.0,
+        output_usd_per_million=3.0,
+    ))
+    hashes = {
+        base.prompt_hash(case),
+        changed_model.prompt_hash(case),
+        changed_bound.prompt_hash(case),
+        changed_prices.prompt_hash(case),
+    }
+    assert len(hashes) == 4
+    keys = {
+        bench.ResultCache.key(case.id, router, router.prompt_hash(case), 'scripted')
+        for router in (base, changed_model, changed_bound, changed_prices)
+    }
+    assert len(keys) == 4
+
+
 def test_scripted_cache_is_rejected_for_a_live_run(tmp_path):
     path = tmp_path / 'cache.json'
-    path.write_text(json.dumps({'schema_version': 2, 'mode': 'scripted', 'entries': {}}))
+    path.write_text(json.dumps({'schema_version': 3, 'mode': 'scripted', 'entries': {}}))
     with pytest.raises(ValueError, match='provenance mismatch'):
         bench.ResultCache(path, 'live')
 

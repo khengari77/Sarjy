@@ -70,7 +70,7 @@ CASES_PATH = ROOT / 'tests/fixtures/day2_routing_cases.json'
 DEFAULT_SCRIPTED_CACHE_PATH = ROOT / 'artifacts/day2-routing-benchmark/cache-scripted.json'
 DEFAULT_LIVE_CACHE_PATH = ROOT / 'artifacts/day2-routing-benchmark/cache-live.json'
 DEFAULT_REPORT_PATH = ROOT / 'artifacts/day2-routing-benchmark/report.json'
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3
 GATE_INTENT_AGREEMENT = 0.90
 GATE_MAX_MEDIAN_OVERHEAD_MS = 250.0
 HOLDOUT_SIZE = 16
@@ -316,12 +316,13 @@ class JevAssistedRouter:
         *,
         classify: Callable[[str, str, str], Awaitable[RoutingOutcome]],
         extract: Callable[[str, str], Awaitable[ExtractionOutcome]],
-        extraction_model: str = EXTRACTION_MODEL,
+        generation: GenerationConfig,
     ):
         self.fixture = fixture
         self._classify = classify
         self._extract = extract
-        self.extraction_model = extraction_model
+        self.generation = generation
+        self.extraction_model = generation.model
 
     def prompt_hash(self, case: Case) -> str:
         state = build_classification_state(case.text)
@@ -331,7 +332,11 @@ class JevAssistedRouter:
             approved_voice_ids=self.fixture.approved_voices,
             allowed_operation_ids=self.fixture.allowed_operation_ids,
         )
-        return _prompt_hash(_canonical({'classification': request, 'extraction': extraction}))
+        return _prompt_hash(_canonical({
+            'classification': request,
+            'extraction': extraction,
+            'generation': self.generation.model_dump(mode='json'),
+        }))
 
     async def route(self, case: Case) -> RouterOutput:
         exact = parse_exact_command(case.text)
@@ -410,12 +415,11 @@ class ScriptedJevRouter(JevAssistedRouter):
         generation: GenerationConfig,
     ):
         self.script = script
-        self.generation = generation
         super().__init__(
             fixture,
             classify=self._scripted_classify,
             extract=self._scripted_extract,
-            extraction_model=generation.model,
+            generation=generation,
         )
 
     @staticmethod

@@ -114,7 +114,11 @@ failure, never a dropped case.
 ## Cache and resume
 
 Results are cached by a SHA-256 of execution mode, case ID, router ID, model,
-router provenance and prompt hash. Scripted and live runs use separate caches:
+router provenance and prompt hash. The prompt hash includes the complete
+extraction generation configuration (model, output bound and price assumptions),
+so changing the extractor cannot reuse stale action, cost or latency evidence.
+Cache schema v3 invalidates older entries. Scripted and live runs use separate
+caches:
 
 - `artifacts/day2-routing-benchmark/cache-scripted.json`
 - `artifacts/day2-routing-benchmark/cache-live.json`
