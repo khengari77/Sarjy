@@ -8,6 +8,7 @@ from typing import Any, Literal, TypedDict, cast
 from app.domain.contracts import ModelRequest
 from livekit.agents import APIConnectionError, APIConnectOptions, APIStatusError, APITimeoutError, llm
 from livekit.agents.llm.utils import build_legacy_openai_schema
+from stream_completion import CompletionState, completion_state
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,9 @@ class ProviderAdapter:
         partial = False
         received = False
         kwargs = {} if tool_choice is None else {"tool_choice": tool_choice}
+        state = CompletionState()
+        token = completion_state.set(state) if self.cap_field == "max_tokens" else None
+        buffered_tools: list[GenerationEvent] = []
         try:
             async with self.provider.chat(
                 chat_ctx=context,
@@ -67,12 +71,21 @@ class ProviderAdapter:
             ) as stream:
                 async for chunk in stream:
                     received = True
-                    partial = partial or _has_delta(chunk)
-                    for event in _chunk_events(chunk, identity):
+                    for event in _chunk_events(chunk, identity, buffered_tools):
+                        partial = partial or event.kind == "text"
                         yield event
+            if _incomplete_response(token, state):
+                raise GenerationFailure(
+                    GenerationEvent("error", **identity, partial=partial, error_code="incomplete_response")
+                )
+            for event in buffered_tools:
+                partial = True
+                yield event
             if not received:
                 raise ValueError("EMPTY_GENERATION_STREAM")
             yield GenerationEvent("completed", **identity)
+        except GenerationFailure:
+            raise
         except asyncio.CancelledError as exc:
             raise GenerationCancelled(GenerationEvent("cancelled", **identity, partial=partial)) from exc
         except Exception as exc:
@@ -80,6 +93,25 @@ class ProviderAdapter:
             raise GenerationFailure(
                 GenerationEvent("error", **identity, partial=partial, error_code=code, status_code=status)
             ) from exc
+        finally:
+            if token is not None:
+                completion_state.reset(token)
+
+
+def _chunk_events(chunk: Any, identity: _Identity, buffered_tools: list[GenerationEvent]) -> Iterator[GenerationEvent]:
+    if chunk.delta:
+        if chunk.delta.content:
+            yield GenerationEvent("text", **identity, text=chunk.delta.content)
+        for call in chunk.delta.tool_calls:
+            buffered_tools.append(
+                GenerationEvent("tool", **identity, call_id=call.call_id, name=call.name, arguments=call.arguments)
+            )
+    if chunk.usage:
+        yield GenerationEvent("usage", **identity, usage=tuple(chunk.usage.model_dump().items()))
+
+
+def _incomplete_response(token: Any, state: CompletionState) -> bool:
+    return token is not None and (not state.done or state.reason not in {"stop", "tool_calls"})
 
 
 def _validate_request(request: ModelRequest, tools: Sequence[Any]) -> None:
@@ -96,7 +128,9 @@ def _build_context(request: ModelRequest) -> llm.ChatContext:
     for message in request.messages:
         context.add_message(role=message.role, content=message.content)
     for item in request.tool_history:
-        if item.kind == "call":
+        if item.kind == "assistant":
+            context.add_message(role="assistant", content=item.content, interrupted=item.interrupted)
+        elif item.kind == "call":
             context.items.append(llm.FunctionCall(call_id=item.call_id, name=item.name, arguments=item.content))
         else:
             context.items.append(
@@ -105,20 +139,6 @@ def _build_context(request: ModelRequest) -> llm.ChatContext:
                 )
             )
     return context
-
-
-def _has_delta(chunk: Any) -> bool:
-    return bool(chunk.delta and (chunk.delta.content or chunk.delta.tool_calls))
-
-
-def _chunk_events(chunk: Any, identity: _Identity) -> Iterator[GenerationEvent]:
-    if chunk.delta:
-        if chunk.delta.content:
-            yield GenerationEvent("text", **identity, text=chunk.delta.content)
-        for call in chunk.delta.tool_calls:
-            yield GenerationEvent("tool", **identity, call_id=call.call_id, name=call.name, arguments=call.arguments)
-    if chunk.usage:
-        yield GenerationEvent("usage", **identity, usage=tuple(chunk.usage.model_dump().items()))
 
 
 def _error_code(exc: BaseException) -> tuple[str, int | None]:

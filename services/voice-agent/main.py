@@ -9,10 +9,12 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from app.domain.contracts import ModelRequest, ModelToolItem, ToolSpec
-from config import read_worker_environment, require_values
+from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolItem, ToolSpec
+from app.domain.tool_operations import operation_key
+from config import provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
-from generation import adapter_for, livekit_chunk
+from fallback import fallback_decision, next_attempt
+from generation import GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
 from livekit import rtc
 from livekit.agents import (
     Agent,
@@ -20,6 +22,7 @@ from livekit.agents import (
     AgentSession,
     APIConnectOptions,
     JobContext,
+    RunContext,
     SessionConnectOptions,
     cli,
     function_tool,
@@ -29,6 +32,7 @@ from livekit.agents import (
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from provider_factory import build_providers
+from snapshot_request import snapshot_request
 
 server = AgentServer()
 
@@ -37,6 +41,7 @@ server = AgentServer()
 MAX_TIER_OUTPUT_TOKENS = 1024
 MAX_CONTEXT_BYTES = 64000
 MAX_TOOLS = 1
+GENERATION_ATTEMPT_SECONDS = 30.0
 
 
 def openai_request_within_bounds(serialized: bytes, tools: list, max_output_tokens: int) -> bool:
@@ -53,21 +58,12 @@ def _user_message(chat_ctx):
     )
 
 
-def _validate_snapshot(snapshot, current_turn) -> ModelRequest:
-    request = ModelRequest.model_validate(snapshot["model_request"])
-    if (
-        request.turn_id != current_turn
-        or request.selection.revision != snapshot["revision"]
-        or [item.model_dump() for item in request.messages] != snapshot["messages"]
-    ):
-        raise ValueError("MODEL_SNAPSHOT_MISMATCH")
-    return request
-
-
-def _tool_history(chat_ctx, user):
+def _continuation(chat_ctx, user):
     continuation = []
     for item in chat_ctx.items[chat_ctx.items.index(user) + 1 :]:
-        if isinstance(item, llm.FunctionCall):
+        if isinstance(item, llm.ChatMessage) and item.role == "assistant":
+            continuation.append(AssistantContinuation(content=item.text_content, interrupted=item.interrupted))
+        elif isinstance(item, llm.FunctionCall):
             continuation.append(
                 ModelToolItem(kind="call", call_id=item.call_id, name=item.name, content=item.arguments)
             )
@@ -105,11 +101,14 @@ async def _playout_result(handle) -> tuple[str, str]:
 
 
 class SarjyAgent(Agent):
-    def __init__(self, backend: httpx.AsyncClient, pipeline: Mapping[str, Any], instructions: str, notify=None):
+    def __init__(
+        self, backend: httpx.AsyncClient, pipeline: Mapping[str, Any], instructions: str, notify=None, fallback_llm=None
+    ):
         super().__init__(instructions=instructions)
         self.backend = backend
         self.pipeline = pipeline
         self.notify = notify
+        self.fallback_llm = fallback_llm
         self.prepared: dict[str, dict] = {}
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
@@ -171,16 +170,16 @@ class SarjyAgent(Agent):
         if handle and handle.id not in self.speeches:
             self.speeches.add(handle.id)
             self._schedule_persistence(user, handle)
-        request = _validate_snapshot(snapshot, self.current_turn)
+        request = snapshot_request(snapshot, self.current_turn)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
-        request = _with_continuation(request, _tool_history(chat_ctx, user), schemas)
+        request = _with_continuation(request, _continuation(chat_ctx, user), schemas)
         if self.pipeline["llm"]["provider"] == "openai_direct":
-            await self._guard_openai_bounds(request, tools)
-        adapter = adapter_for(self.session.llm, self.pipeline["llm"]["provider"])
-        async for event in adapter.stream(request, tools, model_settings.tool_choice if model_settings else None):
-            chunk = livekit_chunk(event)
-            if chunk is not None:
-                yield chunk
+            self._require_openai_bounds(request, tools)
+            await self.reserve("openai")
+        async for chunk in self._stream_with_fallback(
+            request, tools, model_settings.tool_choice if model_settings else None
+        ):
+            yield chunk
 
     def _schedule_persistence(self, user, handle):
         turn_id = self.prepared[user.id]["turn_id"]
@@ -204,7 +203,7 @@ class SarjyAgent(Agent):
         self.pending.add(task)
         task.add_done_callback(self.pending.discard)
 
-    async def _guard_openai_bounds(self, request, tools):
+    def _require_openai_bounds(self, request: ModelRequest, tools) -> None:
         serialized = json.dumps(
             {
                 key: value
@@ -215,14 +214,74 @@ class SarjyAgent(Agent):
         ).encode()
         if not openai_request_within_bounds(serialized, tools, request.response_policy.max_output_tokens):
             raise ValueError("OPENAI_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS")
-        await self.reserve("openai")
+
+    async def _stream_attempt(self, provider, provider_kind, request, tools, tool_choice):
+        """Stream one attempt; buffer usage so a failed attempt cannot leak it."""
+        adapter = adapter_for(provider, provider_kind)
+        buffered_usage = None
+        emitted = False
+        try:
+            async with asyncio.timeout(GENERATION_ATTEMPT_SECONDS):
+                async for event in adapter.stream(request, tools, tool_choice):
+                    if event.kind in {"text", "tool"}:
+                        emitted = True
+                    if event.kind == "usage":
+                        buffered_usage = event
+                        continue
+                    if event.kind == "completed" and buffered_usage is not None:
+                        yield buffered_usage
+                    yield event
+        except TimeoutError as exc:
+            raise GenerationFailure(
+                GenerationEvent(
+                    "error",
+                    turn_id=request.turn_id,
+                    attempt_id=request.attempt_id,
+                    partial=emitted,
+                    error_code="timeout",
+                )
+            ) from exc
+
+    async def _stream_with_fallback(self, request, tools, tool_choice):
+        primary_kind = self.pipeline["llm"]["provider"]
+        emitted = False
+        try:
+            async for event in self._stream_attempt(self.session.llm, primary_kind, request, tools, tool_choice):
+                if event.kind in {"text", "tool"}:
+                    emitted = True
+                chunk = livekit_chunk(event)
+                if chunk is not None:
+                    yield chunk
+            return
+        except GenerationFailure as failure:
+            decision = fallback_decision(
+                failure.event,
+                emitted_output=emitted,
+                fallback_configured=self.fallback_llm is not None,
+            )
+            if not decision.allowed:
+                raise
+            fallback_request = next_attempt(request, str(uuid4()))
+            self._require_openai_bounds(fallback_request, tools)
+            # Reserve before delivery. A denial forwards nothing.
+            await self.reserve("openai")
+            async for event in self._stream_attempt(
+                self.fallback_llm, "openai_direct", fallback_request, tools, tool_choice
+            ):
+                chunk = livekit_chunk(event)
+                if chunk is not None:
+                    yield chunk
 
     @function_tool()
-    async def get_current_weather(self, city: str, country: str | None = None):
+    async def get_current_weather(self, ctx: RunContext, city: str, country: str | None = None):
         """Get current weather for an explicitly identified city. Use an ISO 3166-1 alpha-2 country code such as LY when a country is known. Ask for city if missing."""
+        if not self.current_turn:
+            raise ValueError("TOOL_TURN_REQUIRED")
+        call_id = getattr(ctx.function_call, "call_id", "")
+        key = operation_key(self.current_turn, call_id)
         result = await self.backend.post(
             "/internal/agent/tool/weather",
-            json={"city": city, "country": country, "turn_id": self.current_turn, "request_id": str(uuid4())},
+            json={"city": city, "country": country, "turn_id": self.current_turn, "request_id": key},
         )
         result.raise_for_status()
         return result.json()
@@ -249,17 +308,13 @@ async def entrypoint(ctx: JobContext):
                 json.dumps({"code": code}).encode(), reliable=True, topic="sarjy.error"
             )
 
-        agent = SarjyAgent(backend, config, instructions=bootstrap["instructions"], notify=notify)
+        providers = build_providers(config, provider_credentials(values, config["llm"]["provider"]))
+        fallback_llm = providers.pop("fallback_llm", None)
+        agent = SarjyAgent(
+            backend, config, instructions=bootstrap["instructions"], notify=notify, fallback_llm=fallback_llm
+        )
         session = AgentSession(
-            **build_providers(
-                config,
-                require_values(
-                    values,
-                    "DEEPGRAM_API_KEY",
-                    "ELEVEN_API_KEY",
-                    "OPENAI_API_KEY" if config["llm"]["provider"] == "openai_direct" else "DEEPSEEK_API_KEY",
-                ),
-            ),
+            **providers,
             vad=silero.VAD.load(),
             preemptive_generation=False,
             conn_options=SessionConnectOptions(
@@ -317,6 +372,8 @@ async def entrypoint(ctx: JobContext):
             await session.aclose()
             if agent.pending:
                 await asyncio.gather(*agent.pending, return_exceptions=True)
+            if fallback_llm is not None and hasattr(fallback_llm, "aclose"):
+                await fallback_llm.aclose()
             ctx.shutdown()
 
 

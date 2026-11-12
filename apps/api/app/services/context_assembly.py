@@ -173,7 +173,11 @@ async def read_context_inputs(
         await db.execute(
             select(ToolCall, Turn)
             .join(Turn, ToolCall.turn_id == Turn.id)
-            .where(Turn.conversation_id == conversation_id, Turn.status == "completed")
+            .where(
+                Turn.conversation_id == conversation_id,
+                Turn.status == "completed",
+                ToolCall.state == "completed",
+            )
             .order_by(Turn.created_at.desc(), ToolCall.id)
             .limit(TOOL_RESULT_LIMIT)
         )

@@ -22,6 +22,8 @@ class Captured:
 def providers(monkeypatch):
     monkeypatch.setattr(provider_factory.openai, "responses", SimpleNamespace(LLM=Captured))
     monkeypatch.setattr(provider_factory.openai, "LLM", Captured)
+    monkeypatch.setattr(provider_factory, "OwnedDeepSeekLLM", Captured)
+    monkeypatch.setattr(provider_factory, "OwnedOpenAIResponsesLLM", Captured)
     monkeypatch.setattr(provider_factory.openai_sdk, "AsyncOpenAI", lambda **kwargs: ("client", kwargs))
     monkeypatch.setattr(provider_factory.deepgram, "STT", lambda **kwargs: ("stt", kwargs))
     monkeypatch.setattr(provider_factory.elevenlabs, "TTS", lambda **kwargs: ("tts", kwargs))
@@ -51,6 +53,22 @@ def test_deepseek_adapter_sends_the_exact_tier_cap(providers, tier_cap):
     built = providers(pipeline("deepseek_direct", "deepseek-flash", tier_cap), CREDENTIALS)
     assert built["llm"].kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
     assert built["llm"].kwargs["max_retries"] == 0
+
+
+def test_deepseek_builds_an_optional_openai_fallback(providers):
+    built = providers(pipeline("deepseek_direct", "deepseek-flash", 128), CREDENTIALS)
+    assert built["fallback_llm"] is not None
+    assert built["fallback_llm"].kwargs["reasoning"] == {"effort": "none"}
+    assert built["fallback_llm"].kwargs["store"] is False
+
+    without_openai = dict(CREDENTIALS)
+    without_openai.pop("OPENAI_API_KEY")
+    assert providers(pipeline("deepseek_direct", "deepseek-flash", 128), without_openai)["fallback_llm"] is None
+
+
+def test_openai_primary_has_no_fallback(providers):
+    built = providers(pipeline("openai_direct", "gpt-6-luna", 128), CREDENTIALS)
+    assert built["fallback_llm"] is None
 
 
 def test_complexity_is_not_forwarded_to_either_adapter(providers):

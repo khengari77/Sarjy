@@ -87,7 +87,13 @@ def _register_conversation_routes(app, *, database, identity, owned):
     @app.get("/v1/conversations/{conversation_id}/tool-calls")
     async def tool_calls(conversation_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
         await owned(conversation_id, user, db)
-        rows = (await db.scalars(select(ToolCall).join(Turn).where(Turn.conversation_id == conversation_id))).all()
+        rows = (
+            await db.scalars(
+                select(ToolCall)
+                .join(Turn)
+                .where(Turn.conversation_id == conversation_id, ToolCall.state == "completed")
+            )
+        ).all()
         return [{"id": row.id, "turn_id": row.turn_id, "name": row.name, "result": row.result} for row in rows]
 
 

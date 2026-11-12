@@ -21,10 +21,18 @@ from app.domain.contracts import (
     resolve_response_policy,
 )
 from app.domain.policy import normalize_pipeline, pipeline_instructions
+from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
-from app.infrastructure.database import Conversation, Memory, ToolCall, Turn, UserSetting, VoiceSession
+from app.infrastructure.database import Conversation, Memory, Turn, UserSetting, VoiceSession
 from app.services.budget import reserve as reserve_development_budget
 from app.services.context_assembly import location_evidence, read_context_inputs
+from app.services.tool_operations import (
+    ToolOperationError,
+    claim_tool_operation,
+    complete_tool_operation,
+    fail_tool_operation,
+    unknown_tool_operation,
+)
 from app.services.weather import WeatherError, get_current_weather
 
 
@@ -251,6 +259,18 @@ def _register_turn_routes(app, *, database, guard):
         return {"id": turn.id}
 
 
+def _claim_replay(claim):
+    if claim.kind == "completed":
+        return claim.result or {}
+    if claim.kind == "pending":
+        raise HTTPException(409, detail={"code": "TOOL_OPERATION_IN_PROGRESS"})
+    if claim.kind == "failed":
+        return claim.result or {"error": claim.error_code or "TOOL_OPERATION_FAILED"}
+    if claim.kind == "unknown":
+        raise HTTPException(503, detail={"code": claim.error_code or "TOOL_OPERATION_UNKNOWN"})
+    return None
+
+
 def _register_tool_routes(app, *, database, guard):
     @app.post("/internal/agent/tool/weather")
     async def agent_weather(body: WeatherInput, request: Request, db: AsyncSession = Depends(database)):
@@ -268,23 +288,44 @@ def _register_tool_routes(app, *, database, guard):
         )
         if not decision.allowed:
             return {"error": decision.reason or "LOCATION_EXCLUDED"}
-        existing = await db.scalar(
-            select(ToolCall).where(ToolCall.request_id == body.request_id, ToolCall.turn_id == body.turn_id)
-        )
-        if existing:
-            return existing.result
+        try:
+            claim = await claim_tool_operation(
+                db,
+                turn_id=body.turn_id,
+                operation_key=body.request_id,
+                name="get_current_weather",
+                arguments={"city": body.city, "country": body.country},
+            )
+        except ToolOperationError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code}) from exc
+
+        replay = _claim_replay(claim)
+        if replay is not None:
+            return replay
+
+        # The claim is durable before any external effect.
+        await db.commit()
         try:
             result = await get_current_weather(body.city, body.country)
         except WeatherError as exc:
-            result = {"error": str(exc)}
-        db.add(
-            ToolCall(
-                id=str(uuid4()),
-                turn_id=body.turn_id,
-                request_id=body.request_id,
-                name="get_current_weather",
-                result=result,
-            )
-        )
-        await db.commit()
+            code = str(exc)
+            state = terminal_state(code)
+            if state is ToolOperationState.UNKNOWN:
+                await unknown_tool_operation(db, operation_key=body.request_id, error_code=code)
+            else:
+                await fail_tool_operation(db, operation_key=body.request_id, error_code=code)
+            await db.commit()
+            return {"error": code}
+        except Exception:
+            await unknown_tool_operation(db, operation_key=body.request_id, error_code="TOOL_DELIVERY_UNKNOWN")
+            await db.commit()
+            raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"}) from None
+
+        try:
+            await complete_tool_operation(db, operation_key=body.request_id, result=result)
+            await db.commit()
+        except ToolOperationError as exc:
+            await unknown_tool_operation(db, operation_key=body.request_id, error_code="TOOL_DELIVERY_UNKNOWN")
+            await db.commit()
+            raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"}) from exc
         return result

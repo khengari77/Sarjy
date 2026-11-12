@@ -2749,6 +2749,31 @@
         "title": "ToolSpec",
         "type": "object"
       },
+      "AssistantContinuation": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "assistant",
+            "default": "assistant",
+            "title": "Kind",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "interrupted": {
+            "default": false,
+            "title": "Interrupted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "AssistantContinuation",
+        "type": "object"
+      },
       "ModelMessage": {
         "additionalProperties": false,
         "properties": {
@@ -2841,7 +2866,14 @@
             "$ref": "#/components/schemas/ResponsePolicy"
           },
           "settings": {
-            "$ref": "#/components/schemas/UserSettings"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "messages": {
             "default": [],
@@ -2854,7 +2886,14 @@
           "tool_history": {
             "default": [],
             "items": {
-              "$ref": "#/components/schemas/ModelToolItem"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ModelToolItem"
+                },
+                {
+                  "$ref": "#/components/schemas/AssistantContinuation"
+                }
+              ]
             },
             "title": "Tool History",
             "type": "array"
@@ -2876,10 +2915,17 @@
             "type": "array"
           },
           "settings_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "default": 0,
-            "minimum": 0,
-            "title": "Settings Revision",
-            "type": "integer"
+            "title": "Settings Revision"
           },
           "language": {
             "default": "en",
