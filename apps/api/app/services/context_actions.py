@@ -11,7 +11,6 @@ defensively in ``main.py`` and this integration remains unverified until #7
 merges.
 """
 
-from app.domain.context_operations import MemoryCandidate
 from app.services.context_operations import (
     MemorySearcher,
     create_proposal,
@@ -35,8 +34,8 @@ def build_context_action_handlers(*, secret: str, search: MemorySearcher = keywo
         )
 
     async def search_memory(*, db, owner_id, conversation_id, request_id, expected_revision, action, prepared):
-        from fastapi import HTTPException
         from app.infrastructure.database import Conversation
+        from fastapi import HTTPException
 
         conversation = await db.get(Conversation, conversation_id)
         if conversation.revision != prepared["revision"] or conversation.revision != expected_revision:

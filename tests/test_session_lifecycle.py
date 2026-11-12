@@ -1,14 +1,13 @@
 import sqlite3
-import pytest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
-from livekit import api as livekit_api
-
+import pytest
 from app.config import Settings
 from app.main import create_app
 from app.services.voices import VoiceOption
+from fastapi.testclient import TestClient
+from livekit import api as livekit_api
 
 AGENT_SECRET = "test-agent-secret"
 
@@ -104,7 +103,7 @@ def expire(db_path, session_id):
     with sqlite3.connect(db_path) as connection:
         connection.execute(
             "UPDATE voice_sessions SET expires_at=? WHERE id=?",
-            ((datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(), session_id),
+            ((datetime.now(UTC) - timedelta(minutes=1)).isoformat(), session_id),
         )
 
 
@@ -212,8 +211,9 @@ def ledger(db_path):
 
 def reconcile_local(app, settings, *, apply=False, limit=20):
     import asyncio
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
     from app.services.session_cleanup import reconcile
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     async def run():
         engine = create_async_engine(settings.database_url)
@@ -395,6 +395,7 @@ def test_missing_configuration_and_reconcile_errors_remain_pending(tmp_path, mon
 
 def test_hung_provider_is_cancelled_by_total_cleanup_deadline(tmp_path, monkeypatch):
     import asyncio
+
     from app.services import session_cleanup
 
     app, alice, state, db_path = build(tmp_path, monkeypatch)

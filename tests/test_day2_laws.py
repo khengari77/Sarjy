@@ -1,6 +1,7 @@
-from hypothesis import given, strategies as st
 from app.domain.context import ContextRecord, compile_context
-from app.domain.context_operations import MemoryCandidate, select_candidates, exclusion_diff, restore_diff
+from app.domain.context_operations import MemoryCandidate, exclusion_diff, restore_diff, select_candidates
+from hypothesis import given
+from hypothesis import strategies as st
 
 
 @given(st.sets(st.uuids().map(str), max_size=20), st.integers(min_value=0, max_value=1000))

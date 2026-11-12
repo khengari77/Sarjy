@@ -15,9 +15,10 @@ manifest, the canonical messages and the snapshot record all carry the same
 
 import hashlib
 import json
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Iterable, Literal, Mapping, Sequence
+from typing import Any, Literal
 
 from app.domain.contracts import ContextEntry, ContextSelection
 
@@ -159,9 +160,7 @@ def compile_turn_context(
             return False
         if candidate.origin == "memory" and candidate.status != "active":
             return False
-        if candidate.origin == "tool" and candidate.source not in permitted_tools:
-            return False
-        return True
+        return not (candidate.origin == "tool" and candidate.source not in permitted_tools)
 
     selected: list[tuple[str, CandidateRole, str]] = [("system", "system", instructions)]
     selected.extend(
@@ -273,7 +272,7 @@ def compile_context(
     revision: int,
     excluded_ids: frozenset[str] = frozenset(),
     max_chars: int = 16000,
-):
+) -> dict[str, Any]:
     """Legacy deterministic compiler retained for existing worker paths."""
     selected = [r for r in records if r.id not in excluded_ids or r.role == "system"]
     protected = sum(len(r.content) for r in selected if r.role == "system")

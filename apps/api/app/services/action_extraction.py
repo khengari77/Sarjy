@@ -20,8 +20,6 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Literal
 
-from pydantic import Field, ValidationError, field_validator, model_validator
-
 from app.domain.commands import parse_exact_command
 from app.domain.contracts import (
     Action,
@@ -35,6 +33,7 @@ from app.domain.routing import (
     ReservationRequest,
     UsageMetadata,
 )
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 EXTRACTION_MODEL: Final = "deepseek-flash"
 MAX_INSTRUCTION_CHARS: Final = 500

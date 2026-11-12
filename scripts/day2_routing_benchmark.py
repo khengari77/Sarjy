@@ -23,7 +23,7 @@ import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -32,7 +32,6 @@ sys.path.insert(0, str(ROOT / "apps/api"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import httpx  # noqa: E402
-
 from app.domain.commands import parse_exact_command  # noqa: E402
 from app.domain.contracts import (  # noqa: E402
     ACTION_TYPES,
@@ -230,7 +229,7 @@ def validate_fixture(fixture: Fixture) -> None:
         raise ValueError("all eight intents must be covered")
     if {case.expected_tier for case in cases} != ALL_TIERS:
         raise ValueError("all five tiers must be covered")
-    if not REQUIRED_TAGS <= {tag for case in cases for tag in case.tags}:
+    if not {tag for case in cases for tag in case.tags} >= REQUIRED_TAGS:
         raise ValueError("ambiguity, negation, quotation and compound tags must be covered")
     for case in cases:
         if case.split not in {"tuning", "holdout"}:
@@ -709,10 +708,7 @@ def _effect_matches(expected: Mapping[str, Any] | None, actual: Mapping[str, Any
             return False
         if not all(str(term).casefold() in proposal_text for term in terms):
             return False
-    if "restored_operation_id" in expected:
-        if actual.get("operation_id") != expected["restored_operation_id"]:
-            return False
-    return True
+    return not ("restored_operation_id" in expected and actual.get("operation_id") != expected["restored_operation_id"])
 
 
 def evaluate_result(case: Case, result: CaseResult) -> dict[str, Any]:
@@ -991,7 +987,7 @@ def build_report(
     return {
         "schema_version": 1,
         "mode": mode,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "fixture": {
             "version": fixture.version,
             "frozen_at": fixture.frozen_at,
@@ -1020,7 +1016,7 @@ def dry_run_report(fixture: Fixture) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "mode": "dry_run",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "fixture": {
             "version": fixture.version,
             "frozen_at": fixture.frozen_at,

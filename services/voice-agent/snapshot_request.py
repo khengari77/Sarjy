@@ -1,9 +1,10 @@
 """Read-only compatibility for frozen pre-ModelRequest turn snapshots."""
 
-from uuid import uuid4
 from collections.abc import Mapping
+from uuid import uuid4
+
 from app.domain.context import validate_assembly
-from app.domain.contracts import ModelRequest, ContextSelection, ContextEntry
+from app.domain.contracts import ContextEntry, ContextSelection, ModelRequest
 from app.domain.policy import pipeline_policy
 
 
@@ -48,7 +49,7 @@ def snapshot_request(snapshot, turn_id):
                 revision=snapshot["revision"],
                 included=tuple(
                     ContextEntry(id=identifier, role=message["role"], text=message["content"])
-                    for identifier, message in zip(identifiers, messages)
+                    for identifier, message in zip(identifiers, messages, strict=False)
                 ),
                 excluded_ids=frozenset(snapshot["excluded_record_ids"]),
             ),

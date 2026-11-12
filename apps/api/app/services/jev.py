@@ -13,10 +13,10 @@ import json
 import math
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import suppress
 from typing import Final
 
 import httpx
-
 from app.domain.routing import (
     JEV_MODEL,
     ROUTING_POLICY_VERSION,
@@ -228,10 +228,8 @@ class JevClient:
         if status == 200:
             return None
         text = ""
-        try:
+        with suppress(Exception):
             text = response.text.casefold()
-        except Exception:
-            pass
         if status == 402 or any(
             marker in text
             for marker in ("insufficient credit", "credit balance", "credit exhausted", "insufficient_quota", "billing")

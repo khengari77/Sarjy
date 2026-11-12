@@ -1,8 +1,9 @@
 import asyncio
+
 from alembic import context
-from sqlalchemy.ext.asyncio import create_async_engine
 from app.config import Settings
 from app.infrastructure.database import Base
+from sqlalchemy.ext.asyncio import create_async_engine
 
 
 def run(connection):

@@ -1,12 +1,14 @@
 """Immutable request boundary around native provider streaming plugins."""
 
 import asyncio
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from stream_completion import CompletionState, completion_state
-from typing import Literal
-from livekit.agents import llm, APIConnectOptions, APIStatusError, APIConnectionError, APITimeoutError
+from typing import Any, Literal, TypedDict, cast
+
 from app.domain.contracts import ModelRequest
+from livekit.agents import APIConnectionError, APIConnectOptions, APIStatusError, APITimeoutError, llm
 from livekit.agents.llm.utils import build_legacy_openai_schema
+from stream_completion import CompletionState, completion_state
 
 
 @dataclass(frozen=True)
@@ -24,14 +26,19 @@ class GenerationEvent:
     status_code: int | None = None
 
 
+class _Identity(TypedDict):
+    turn_id: str
+    attempt_id: str
+
+
 class GenerationFailure(Exception):
-    def __init__(self, event):
+    def __init__(self, event: GenerationEvent) -> None:
         super().__init__("GENERATION_FAILED")
         self.event = event
 
 
 class GenerationCancelled(asyncio.CancelledError):
-    def __init__(self, event):
+    def __init__(self, event: GenerationEvent) -> None:
         super().__init__("GENERATION_CANCELLED")
         self.event = event
 
@@ -39,10 +46,12 @@ class GenerationCancelled(asyncio.CancelledError):
 class ProviderAdapter:
     cap_field = "max_output_tokens"
 
-    def __init__(self, provider):
+    def __init__(self, provider: Any) -> None:
         self.provider = provider
 
-    async def stream(self, request: ModelRequest, tools=(), tool_choice=None):
+    async def stream(
+        self, request: ModelRequest, tools: Sequence[Any] = (), tool_choice: Any = None
+    ) -> AsyncIterator[GenerationEvent]:
         if not request.messages:
             raise ValueError("MODEL_MESSAGES_REQUIRED")
         actual = [build_legacy_openai_schema(tool)["function"] for tool in tools]
@@ -63,7 +72,7 @@ class ProviderAdapter:
                         call_id=item.call_id, name=item.name, output=item.content, is_error=item.is_error
                     )
                 )
-        identity = dict(turn_id=request.turn_id, attempt_id=request.attempt_id)
+        identity: _Identity = dict(turn_id=request.turn_id, attempt_id=request.attempt_id)
         partial = False
         received = False
         kwargs = {} if tool_choice is None else {"tool_choice": tool_choice}
@@ -117,7 +126,7 @@ class ProviderAdapter:
                     402: "insufficient_balance",
                     403: "authentication",
                     429: "rate_limit",
-                }.get(status, "provider_error")
+                }.get(status if status is not None else -1, "provider_error")
             elif isinstance(exc, APIConnectionError):
                 code = "connection_error"
             else:
@@ -131,7 +140,7 @@ class ProviderAdapter:
                 completion_state.reset(token)
 
 
-def livekit_chunk(event):
+def livekit_chunk(event: GenerationEvent) -> llm.ChatChunk | None:
     if event.kind == "text":
         return llm.ChatChunk(id=event.attempt_id, delta=llm.ChoiceDelta(role="assistant", content=event.text))
     if event.kind == "tool":
@@ -143,7 +152,7 @@ def livekit_chunk(event):
             ),
         )
     if event.kind == "usage":
-        return llm.ChatChunk(id=event.attempt_id, usage=llm.CompletionUsage(**dict(event.usage)))
+        return llm.ChatChunk(id=event.attempt_id, usage=llm.CompletionUsage(**cast(dict[str, Any], dict(event.usage))))
     return None
 
 
@@ -155,7 +164,7 @@ class DeepSeekAdapter(ProviderAdapter):
     cap_field = "max_tokens"
 
 
-def adapter_for(provider, kind):
+def adapter_for(provider: Any, kind: str) -> ProviderAdapter:
     if kind == "openai_direct":
         return OpenAIResponsesAdapter(provider)
     if kind == "deepseek_direct":

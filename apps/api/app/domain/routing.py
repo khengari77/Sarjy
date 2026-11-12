@@ -16,13 +16,9 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any, Final, Literal
-
-from pydantic import Field, ValidationError, model_validator
+from typing import Any, Final, Literal, cast
 
 from app.domain.contracts import (
-    CONFIDENCE_LEAD,
-    CONFIDENCE_THRESHOLD,
     PROBABILITY_MAX_TOLERANCE,
     PROBABILITY_TOLERANCE,
     AdjustSpeakingSpeed,
@@ -43,6 +39,7 @@ from app.domain.contracts import (
     ShowConversationHistory,
     resolve_response_policy,
 )
+from pydantic import Field, ValidationError, model_validator
 
 JEV_MODEL: Final = "jev-1.14.0"
 ROUTING_POLICY_VERSION: Final = "day2-jev-v1"
@@ -189,7 +186,7 @@ class InstructionTooLong(ValueError):
 
 def classification_questions() -> dict[str, dict[str, Any]]:
     """Return a fresh copy so callers cannot mutate module-level wording."""
-    return json.loads(json.dumps(CLASSIFICATION_QUESTIONS, ensure_ascii=False))
+    return cast(dict[str, dict[str, Any]], json.loads(json.dumps(CLASSIFICATION_QUESTIONS, ensure_ascii=False)))
 
 
 def _canonical_json(value: Any) -> str:
@@ -299,7 +296,7 @@ class RoutingOutcome(Contract):
     elapsed_ms: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
-    def kind_is_consistent(self):
+    def kind_is_consistent(self) -> RoutingOutcome:
         if self.elapsed_ms is not None and not math.isfinite(self.elapsed_ms):
             raise ValueError("ELAPSED_NOT_FINITE")
         if self.kind in {"decision", "clarification"} and self.decision is None:
@@ -457,6 +454,7 @@ def validate_classification_payload(
     except (KeyError, ValueError, ValidationError) as exc:
         raise ClassificationError("INVALID_DECISION") from exc
 
+    kind: Literal["decision", "clarification", "bypass"]
     if decision.intent is Intent.AMBIGUOUS:
         kind = "clarification"
         reason = "AMBIGUOUS_INTENT"

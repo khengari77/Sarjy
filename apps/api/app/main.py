@@ -1,57 +1,47 @@
 import hashlib
-import secrets
 import hmac
 import json
+import secrets
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta
 from typing import Literal
+from uuid import uuid4
 
-from fastapi import FastAPI, Depends, HTTPException, Request, Response, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, update, event, func
+from sqlalchemy import event, func, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import Settings
+from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
 from app.domain.contracts import (
     TIER_CAPS,
-    ResponsePreference,
-    resolve_response_policy,
-    ModelRequest,
-    UserSettings,
     MemoryRecord,
     MemorySource,
+    ModelRequest,
+    ResponsePreference,
+    UserSettings,
+    resolve_response_policy,
 )
-from app.domain.pipeline import PipelineConfig, validate_pipeline, PRESET, KEYS
-from app.domain.policy import pipeline_instructions, normalize_pipeline
+from app.domain.pipeline import KEYS, PRESET, PipelineConfig, validate_pipeline
+from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.sessions import admission_error
-from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
+from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
-from app.services.context_assembly import location_evidence, read_context_inputs
 from app.infrastructure.database import (
     Base,
-    Identity,
     Conversation,
-    Turn,
-    VoiceSession,
+    Identity,
+    Memory,
     SessionGate,
     ToolCall,
-    Memory,
+    Turn,
     UserSetting,
+    VoiceSession,
 )
-from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogError
 from app.services.budget import reserve as reserve_development_budget
-from app.services.session_cleanup import cleanup_room
-from app.services.weather import get_current_weather, WeatherError
-from app.domain.tool_operations import ToolOperationState, terminal_state
-from app.services.tool_operations import (
-    ToolOperationError,
-    claim_tool_operation,
-    complete_tool_operation,
-    fail_tool_operation,
-    unknown_tool_operation,
-)
+from app.services.context_assembly import location_evidence, read_context_inputs
 from app.services.context_operations import (
     ContextOperationError,
     confirm_proposal,
@@ -60,6 +50,16 @@ from app.services.context_operations import (
     list_operations,
     undo_operation,
 )
+from app.services.session_cleanup import cleanup_room
+from app.services.tool_operations import (
+    ToolOperationError,
+    claim_tool_operation,
+    complete_tool_operation,
+    fail_tool_operation,
+    unknown_tool_operation,
+)
+from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogError
+from app.services.weather import WeatherError, get_current_weather
 
 COOKIE = "sarjy_demo"
 
@@ -258,7 +258,7 @@ def create_app(
         user = await db.scalar(
             select(Identity).where(Identity.token_hash == hashlib.sha256(token.encode()).hexdigest())
         )
-        if not user or user.expires_at <= datetime.now(timezone.utc).isoformat():
+        if not user or user.expires_at <= datetime.now(UTC).isoformat():
             raise HTTPException(401, detail={"code": "DEMO_SESSION_REQUIRED"})
         return user
 
@@ -272,10 +272,10 @@ def create_app(
 
     register_action_routes(app, database, identity, owned, catalog)
 
-    from app.routes.memory import memory_router
-    from app.services.memory import OpenAIEmbedder, MemoryService
     from app.domain.context_operations import MemoryCandidate, classify
+    from app.routes.memory import memory_router
     from app.services.context_actions import build_context_action_handlers
+    from app.services.memory import MemoryService, OpenAIEmbedder
 
     embedder = embedding_adapter or OpenAIEmbedder(config.openai_api_key)
 
@@ -314,13 +314,13 @@ def create_app(
         existing = await db.scalar(
             select(Identity).where(Identity.token_hash == hashlib.sha256(token.encode()).hexdigest())
         )
-        if existing and existing.expires_at > datetime.now(timezone.utc).isoformat():
+        if existing and existing.expires_at > datetime.now(UTC).isoformat():
             return {"id": existing.id}
         token = secrets.token_urlsafe(32)
         user = Identity(
             id=str(uuid4()),
             token_hash=hashlib.sha256(token.encode()).hexdigest(),
-            expires_at=(datetime.now(timezone.utc) + timedelta(hours=config.demo_ttl_hours)).isoformat(),
+            expires_at=(datetime.now(UTC) + timedelta(hours=config.demo_ttl_hours)).isoformat(),
         )
         db.add(user)
         await db.commit()
@@ -416,7 +416,7 @@ def create_app(
             raise HTTPException(401, detail={"code": "WORKER_AUTH_REQUIRED"})
         voice = await db.get(VoiceSession, request.headers.get("x-session-id", ""))
         statuses = {"starting", "active", "ended"} if allow_ended else {"starting", "active"}
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=60 if allow_ended else 0)
+        cutoff = datetime.now(UTC) - timedelta(seconds=60 if allow_ended else 0)
         if (
             not voice
             or voice.room_name != request.headers.get("x-room-name")
@@ -458,7 +458,7 @@ def create_app(
             raise HTTPException(exc.status, detail={"code": exc.code}) from exc
         # Serialize reservations across API processes on both SQLite and PostgreSQL.
         await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         await db.execute(
             update(VoiceSession)
             .where(VoiceSession.expires_at <= now.isoformat(), VoiceSession.status.in_(["starting", "active"]))
@@ -526,7 +526,7 @@ def create_app(
                 await cleanup_room(db, voice, config)
             except ValueError:
                 await db.rollback()
-            raise HTTPException(503, detail={"code": "VOICE_DISPATCH_FAILED"})
+            raise HTTPException(503, detail={"code": "VOICE_DISPATCH_FAILED"}) from None
 
     @app.post("/v1/voice/sessions/{session_id}/end")
     async def end_voice(session_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
@@ -537,7 +537,7 @@ def create_app(
             await db.execute(
                 update(VoiceSession)
                 .where(VoiceSession.id == voice.id, VoiceSession.status.in_(["starting", "active"]))
-                .values(status="ended", expires_at=datetime.now(timezone.utc).isoformat())
+                .values(status="ended", expires_at=datetime.now(UTC).isoformat())
             )
             await db.commit()
             await db.refresh(voice)
@@ -566,7 +566,7 @@ def create_app(
             .where(
                 VoiceSession.id == voice.id,
                 VoiceSession.status.in_(["starting", "active"]),
-                VoiceSession.expires_at > datetime.now(timezone.utc).isoformat(),
+                VoiceSession.expires_at > datetime.now(UTC).isoformat(),
             )
             .values(status="active")
         )
@@ -765,7 +765,7 @@ def create_app(
         except Exception:
             await unknown_tool_operation(db, operation_key=body.request_id, error_code="TOOL_DELIVERY_UNKNOWN")
             await db.commit()
-            raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"})
+            raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"}) from None
 
         try:
             await complete_tool_operation(db, operation_key=body.request_id, result=result)

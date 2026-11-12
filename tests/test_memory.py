@@ -1,15 +1,13 @@
 import asyncio
 import json
-from pathlib import Path
 
 import httpx
 import pytest
+from app.infrastructure.database import Base, Conversation, DevelopmentBudget, Identity, Memory, Turn
+from app.services.memory import MemoryService, OpenAIEmbedder, validate_embedding
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-
-from app.infrastructure.database import Base, Identity, Conversation, Turn, Memory, DevelopmentBudget
-from app.services.memory import MemoryService, OpenAIEmbedder, validate_embedding
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 class FakeEmbedder:

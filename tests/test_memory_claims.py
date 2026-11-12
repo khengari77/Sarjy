@@ -1,15 +1,10 @@
 """Durable request identity protects both provenance and paid delivery."""
 
 import asyncio
-import json
-from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from fastapi import HTTPException
-from sqlalchemy import select, update
-
 from app.infrastructure.database import (
     ContextExclusion,
     ContextOperation,
@@ -20,6 +15,8 @@ from app.infrastructure.database import (
 )
 from app.services.memory import MemoryService, OpenAIEmbedder, _fingerprint
 from app.services.memory_eligibility import blocked_memory_ids, blocked_source_turn_ids
+from fastapi import HTTPException
+from sqlalchemy import select, update
 from test_memory import FakeEmbedder, setup
 
 
@@ -151,7 +148,7 @@ def test_embedded_recovery_and_abandoned_claim_do_not_reserve_again(tmp_path):
                 await db.execute(
                     update(MemoryWriteRequest)
                     .where(MemoryWriteRequest.id == abandoned["id"])
-                    .values(created_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat())
+                    .values(created_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat())
                 )
                 await db.commit()
             async with sessions() as db:

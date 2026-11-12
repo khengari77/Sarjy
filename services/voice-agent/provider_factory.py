@@ -1,9 +1,9 @@
 """Native provider construction; only called after backend capability validation."""
 
-import openai as openai_sdk
 import httpx
-from stream_completion import ObservedTransport
+import openai as openai_sdk
 from livekit.plugins import deepgram, elevenlabs, openai
+from stream_completion import ObservedTransport
 
 
 class OwnedClientMixin:

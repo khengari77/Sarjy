@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/api"))
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from app.config import Settings
 from app.services.session_cleanup import reconcile
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 async def main():

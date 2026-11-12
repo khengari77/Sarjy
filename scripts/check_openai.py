@@ -1,10 +1,11 @@
 """One tiny paid smoke request, reserved against Sarjy's real daily ledger first."""
 
 import asyncio
-from pathlib import Path
 import sys
+from pathlib import Path
+
 import httpx
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/api"))
 from app.config import Settings

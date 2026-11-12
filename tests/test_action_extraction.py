@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-
 from app.domain.contracts import (
     ACTION_TYPES,
     AdjustSpeakingSpeed,
@@ -10,9 +9,8 @@ from app.domain.contracts import (
     SelectApprovedVoice,
     SetSpeakingSpeed,
 )
-from app.domain.routing import MAX_INSTRUCTION_CHARS
+from app.domain.routing import MAX_INSTRUCTION_CHARS, UsageMetadata
 from app.services.action_extraction import (
-    ExtractionOutcome,
     GenerationConfig,
     GenerationRequest,
     GenerationResult,
@@ -20,7 +18,6 @@ from app.services.action_extraction import (
     extract_action,
     unsafe_utterance_reason,
 )
-from app.domain.routing import UsageMetadata
 
 GENERATION = GenerationConfig(
     model="deepseek-flash",

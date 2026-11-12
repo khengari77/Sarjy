@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import logging
 import sys
 from pathlib import Path
@@ -12,35 +11,36 @@ _shared_source = Path(__file__).resolve().parents[2] / "apps/api"
 if _shared_source.is_dir():
     sys.path.insert(0, str(_shared_source))
 
-from app.domain.contracts import ModelRequest, ModelToolItem, ToolSpec, AssistantContinuation
-from app.domain.tool_operations import operation_key
-from fallback import fallback_decision, next_attempt
-from generation import GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
-from snapshot_request import snapshot_request
-from livekit.agents.llm.utils import build_legacy_openai_schema
-from datetime import datetime, timezone
-from typing import Any, Mapping
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 import httpx
+from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolItem, ToolSpec
+from app.domain.tool_operations import operation_key
+from config import provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
+from fallback import fallback_decision, next_attempt
+from generation import GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
 from livekit import rtc
 from livekit.agents import (
     Agent,
-    AgentSession,
     AgentServer,
+    AgentSession,
+    APIConnectOptions,
     JobContext,
     RunContext,
-    cli,
-    llm,
-    function_tool,
-    APIConnectOptions,
     SessionConnectOptions,
+    cli,
+    function_tool,
+    llm,
     room_io,
 )
+from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from provider_factory import build_providers
-from config import provider_credentials, read_worker_environment, require_values
+from snapshot_request import snapshot_request
 
 server = AgentServer()
 
@@ -349,7 +349,7 @@ async def entrypoint(ctx: JobContext):
             agent, room=ctx.room, record=False, room_options=room_io.RoomOptions(close_on_disconnect=False)
         )
         expiry = datetime.fromisoformat(bootstrap["expires_at"])
-        remaining = max(0, (expiry - datetime.now(timezone.utc)).total_seconds())
+        remaining = max(0, (expiry - datetime.now(UTC)).total_seconds())
         try:
             monitor = asyncio.create_task(watchdog())
             try:

@@ -1,7 +1,6 @@
 import asyncio
-import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import pytest
 from app.domain.tool_operations import (
     ToolOperationState,
     ToolReplayKind,
@@ -17,6 +16,7 @@ from app.services.tool_operations import (
     fail_tool_operation,
     unknown_tool_operation,
 )
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 def test_pure_identity_and_terminal_mapping():

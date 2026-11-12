@@ -1,7 +1,8 @@
 from copy import deepcopy
+
 import pytest
-from app.domain.context import compile_turn_context, ContextCandidate
-from snapshot_request import snapshot_request, SnapshotCompatibilityError
+from app.domain.context import ContextCandidate, compile_turn_context
+from snapshot_request import SnapshotCompatibilityError, snapshot_request
 
 
 def legacy():
@@ -41,10 +42,12 @@ def test_legacy_corruption_is_typed_failure(corruption):
 
 
 def test_api_replay_adapts_legacy_snapshot_without_rewriting_history(tmp_path):
-    import json, sqlite3
+    import json
+    import sqlite3
+
     from fastapi.testclient import TestClient
-    from test_context_workflow import configured, create_app
     from test_context_assembly import start_turn
+    from test_context_workflow import configured, create_app
 
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
@@ -65,10 +68,12 @@ def test_api_replay_adapts_legacy_snapshot_without_rewriting_history(tmp_path):
         assert replay.json()["context"] == old
         adapted = snapshot_request(replay.json()["context"], replay.json()["turn_id"])
         assert [message.model_dump() for message in adapted.messages] == old["messages"]
-        import asyncio, httpx
+        import asyncio
         from contextlib import asynccontextmanager
         from types import SimpleNamespace
         from unittest.mock import patch
+
+        import httpx
         from livekit.agents import llm
         from main import SarjyAgent
 

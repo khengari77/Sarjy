@@ -11,28 +11,27 @@ import json
 import os
 import sqlite3
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-from fastapi.testclient import TestClient
-from hypothesis import given, strategies as st
-from pydantic import ValidationError
-
 import app.main as main_module
+import pytest
 from app.config import Settings
 from app.domain.contracts import (
     CONFIDENCE_LEAD,
-    CONFIDENCE_THRESHOLD,
+    Complexity,
     Decision,
     DecisionSource,
-    Complexity,
     Intent,
     ResponsePolicy,
     ResponsePreference,
     resolve_response_policy,
 )
 from app.main import create_app
+from fastapi.testclient import TestClient
+from hypothesis import given
+from hypothesis import strategies as st
+from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
 POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL", "")
@@ -154,7 +153,7 @@ def add_turn_session(client, file, chat, owner):
                 owner,
                 "room",
                 "active",
-                (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+                (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
                 json.dumps({}),
             ),
         )
@@ -395,9 +394,10 @@ def test_real_pgvector_retrieval_uses_owner_scope():
 
     async def run():
         from uuid import uuid4
-        from sqlalchemy.ext.asyncio import async_sessionmaker
-        from app.infrastructure.database import Identity, Conversation
+
+        from app.infrastructure.database import Conversation, Identity
         from app.services.memory import MemoryService
+        from sqlalchemy.ext.asyncio import async_sessionmaker
 
         engine = create_async_engine(POSTGRES_URL)
         sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -436,7 +436,7 @@ def test_real_pgvector_retrieval_uses_owner_scope():
                 hits = await service.search_memories(owner_b, chat_b, "budget", 1)
                 assert [item.id for item in hits] == [corrected.id]
                 assert hits[0].version == 2
-                from app.infrastructure.database import ContextOperation, ContextExclusion
+                from app.infrastructure.database import ContextExclusion, ContextOperation
 
                 operation_id = str(uuid4())
                 db.add(
@@ -473,7 +473,6 @@ def test_real_pgvector_retrieval_uses_owner_scope():
 
 @pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not set (disposable PostgreSQL only)")
 def test_disposable_postgres_migrations_reach_the_day2_head():
-    import asyncio
     import subprocess
 
     from alembic.config import Config

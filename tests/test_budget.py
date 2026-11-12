@@ -1,14 +1,16 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 import pytest
-from hypothesis import given, strategies as st
-from fastapi.testclient import TestClient
 from app.config import Settings
-from app.main import create_app
-from app.domain.budget import reserve_units, budget_day
-from app.services.budget import reserve
+from app.domain.budget import budget_day, reserve_units
 from app.infrastructure.database import Base
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from app.main import create_app
+from app.services.budget import reserve
+from fastapi.testclient import TestClient
+from hypothesis import given
+from hypothesis import strategies as st
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 @given(st.integers(min_value=0, max_value=1_000_000), st.integers(min_value=1, max_value=1_000_000))
@@ -21,8 +23,8 @@ def test_reservations_never_exceed_limit(used, requested):
 
 
 def test_budget_day_is_tripoli_calendar_day():
-    assert budget_day(datetime(2026, 11, 11, 21, 59, tzinfo=timezone.utc)) == "2026-11-11"
-    assert budget_day(datetime(2026, 11, 11, 22, 0, tzinfo=timezone.utc)) == "2026-11-12"
+    assert budget_day(datetime(2026, 11, 11, 21, 59, tzinfo=UTC)) == "2026-11-11"
+    assert budget_day(datetime(2026, 11, 11, 22, 0, tzinfo=UTC)) == "2026-11-12"
 
 
 def test_openai_and_elevenlabs_are_separate_and_survive_restart(tmp_path):
@@ -70,14 +72,14 @@ def test_concurrent_reservations_and_next_day_reset(tmp_path):
         async def attempt():
             async with sessions() as db:
                 try:
-                    await reserve(db, "elevenlabs", 300, now=datetime(2026, 11, 11, 12, tzinfo=timezone.utc))
+                    await reserve(db, "elevenlabs", 300, now=datetime(2026, 11, 11, 12, tzinfo=UTC))
                     return True
                 except ValueError:
                     return False
 
         assert sorted(await asyncio.gather(attempt(), attempt())) == [False, True]
         async with sessions() as db:
-            result = await reserve(db, "elevenlabs", 500, now=datetime(2026, 11, 12, 12, tzinfo=timezone.utc))
+            result = await reserve(db, "elevenlabs", 500, now=datetime(2026, 11, 12, 12, tzinfo=UTC))
             assert result["remaining_units"] == 0
         await engine.dispose()
 

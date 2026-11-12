@@ -1,14 +1,14 @@
 import asyncio
 import json
-import pytest
+
 import httpx
 import openai as sdk
-from stream_completion import ObservedTransport
-from livekit.agents import llm, function_tool
-from livekit.plugins import openai
-from app.domain.contracts import ModelRequest, ContextSelection, ResponsePolicy, UserSettings
-from generation import adapter_for, GenerationFailure
+import pytest
+from app.domain.contracts import ContextSelection, ModelRequest, ResponsePolicy, UserSettings
+from generation import GenerationFailure, adapter_for
+from livekit.agents import function_tool, llm
 from provider_factory import build_llm
+from stream_completion import ObservedTransport
 
 
 @function_tool()
@@ -367,8 +367,9 @@ def test_fragmented_crlf_terminal_frames_are_observed():
 
 def test_incomplete_stream_does_not_emit_buffered_tool_calls():
     from contextlib import asynccontextmanager
-    from stream_completion import completion_state
+
     from generation import DeepSeekAdapter
+    from stream_completion import completion_state
 
     class Provider:
         @asynccontextmanager
@@ -460,7 +461,8 @@ def test_terminal_observer_accepts_standard_sse_line_endings(newline):
 
 @pytest.mark.parametrize("encoding", ["gzip", "deflate"])
 def test_terminal_observer_handles_compressed_wire_streams(encoding):
-    import gzip, zlib
+    import gzip
+    import zlib
 
     raw = events("deepseek_direct").encode()
     compressed = gzip.compress(raw) if encoding == "gzip" else zlib.compress(raw)

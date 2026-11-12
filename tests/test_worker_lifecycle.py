@@ -1,7 +1,8 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
+
 import httpx
 import main as worker
 
@@ -57,7 +58,7 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
             json={
                 "pipeline": {"llm": {"provider": "openai_direct"}, "max_output_tokens": 128},
                 "instructions": "Test instructions.",
-                "expires_at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": datetime.now(UTC).isoformat(),
             },
         )
 

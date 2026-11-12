@@ -1,7 +1,6 @@
-from fastapi.testclient import TestClient
-
 import app.main as main_module
 from app.services.weather import WeatherError
+from fastapi.testclient import TestClient
 from test_context_assembly import start_turn
 from test_context_workflow import configured, create_app, seed
 

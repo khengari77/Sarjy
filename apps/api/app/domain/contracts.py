@@ -5,10 +5,11 @@ transform returns a new frozen model and never mutates its input.
 """
 
 import math
+from collections.abc import Mapping
 from collections.abc import Mapping as MappingABC
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Annotated, Any, Literal, Mapping, Union
+from typing import Annotated, Any, Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_serializer, field_validator, model_validator
 
@@ -105,7 +106,7 @@ class ResponsePolicy(Contract):
     preference: ResponsePreference = ResponsePreference.AUTOMATIC
 
     @model_validator(mode="after")
-    def cap_matches_tier(self):
+    def cap_matches_tier(self) -> "ResponsePolicy":
         if self.max_output_tokens != TIER_CAPS[self.tier - 1]:
             raise ValueError("TIER_CAP_MISMATCH")
         return self
@@ -160,7 +161,7 @@ class Decision(Contract):
         return value
 
     @model_validator(mode="after")
-    def probabilities_are_consistent(self):
+    def probabilities_are_consistent(self) -> "Decision":
         if set(self.probabilities) != set(Intent):
             raise ValueError("PROBABILITY_OUTCOMES_MISMATCH")
         for probability in self.probabilities.values():
@@ -228,7 +229,7 @@ class MemoryRecord(Contract):
     embedding: tuple[float, ...] | None = None
 
     @field_validator("embedding")
-    def embedding_dimensions(cls, value):
+    def embedding_dimensions(cls, value: tuple[float, ...] | None) -> tuple[float, ...] | None:
         if value is not None and len(value) != EMBEDDING_DIMENSIONS:
             raise ValueError("EMBEDDING_DIMENSIONS")
         return value
@@ -246,7 +247,7 @@ class ContextSelection(Contract):
     excluded_ids: frozenset[str] = frozenset()
 
     @model_validator(mode="after")
-    def excluded_ids_are_not_included(self):
+    def excluded_ids_are_not_included(self) -> "ContextSelection":
         if self.excluded_ids & {entry.id for entry in self.included}:
             raise ValueError("EXCLUDED_RECORD_INCLUDED")
         return self
@@ -260,11 +261,11 @@ class ToolSpec(Contract):
     @field_validator("parameters", mode="after")
     @classmethod
     def parameters_are_immutable(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        return _freeze_json(value)
+        return cast(Mapping[str, Any], _freeze_json(value))
 
     @field_serializer("parameters")
     def serialize_parameters(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        return _thaw_json(value)
+        return cast(dict[str, Any], _thaw_json(value))
 
 
 class ModelMessage(Contract):
@@ -301,7 +302,7 @@ class ModelRequest(Contract):
     language: Literal["ar", "en"] = "en"
 
     @model_validator(mode="after")
-    def memories_are_permitted(self):
+    def memories_are_permitted(self) -> "ModelRequest":
         excluded = self.selection.excluded_ids
         if any(memory.id in excluded for memory in self.memories):
             raise ValueError("EXCLUDED_MEMORY_IN_REQUEST")
@@ -333,7 +334,7 @@ class AdjustSpeakingSpeed(Contract):
     delta: float
 
     @field_validator("delta")
-    def delta_step(cls, value):
+    def delta_step(cls, value: float) -> float:
         if value == 0:
             raise ValueError("SPEAKING_SPEED_STEP")
         if abs(round(abs(value) * 10) - abs(value) * 10) > 1e-9:
@@ -383,18 +384,19 @@ class RestoreContextOperation(Contract):
     operation_id: str = Field(min_length=1, max_length=100)
 
 
-ACTION_TYPES = (
-    AdjustSpeakingSpeed,
-    SetSpeakingSpeed,
-    SelectApprovedVoice,
-    ShowConversationHistory,
-    OpenMemoryExplorer,
-    SetCaptionsVisible,
-    SearchMemory,
-    ProposeContextExclusion,
-    RestoreContextOperation,
+ActionType = (
+    AdjustSpeakingSpeed
+    | SetSpeakingSpeed
+    | SelectApprovedVoice
+    | ShowConversationHistory
+    | OpenMemoryExplorer
+    | SetCaptionsVisible
+    | SearchMemory
+    | ProposeContextExclusion
+    | RestoreContextOperation
 )
-Action = Annotated[Union[ACTION_TYPES], Field(discriminator="kind")]
+ACTION_TYPES = get_args(ActionType)
+Action = Annotated[ActionType, Field(discriminator="kind")]
 ACTION_ADAPTER: TypeAdapter[Action] = TypeAdapter(Action)
 
 
@@ -454,9 +456,9 @@ CONTRACT_MODELS = (
 )
 
 
-def contract_components() -> dict[str, dict]:
+def contract_components() -> dict[str, dict[str, Any]]:
     """JSON Schemas for the generated TypeScript contracts, kept free of provider values."""
-    components: dict[str, dict] = {}
+    components: dict[str, dict[str, Any]] = {}
     for model in CONTRACT_MODELS:
         schema = model.model_json_schema(ref_template="#/components/schemas/{model}")
         components.update(schema.pop("$defs", {}))

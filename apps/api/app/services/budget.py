@@ -1,8 +1,9 @@
-from datetime import datetime, timezone
-from sqlalchemy import update, select
-from sqlalchemy.ext.asyncio import AsyncSession, AsyncConnection, async_sessionmaker
-from app.domain.budget import budget_day, OPENAI_DAILY_MICRO_USD, OPENAI_REQUEST_MICRO_USD, ELEVENLABS_DAILY_CHARACTERS
+from datetime import UTC, datetime
+
+from app.domain.budget import ELEVENLABS_DAILY_CHARACTERS, OPENAI_DAILY_MICRO_USD, OPENAI_REQUEST_MICRO_USD, budget_day
 from app.infrastructure.database import DevelopmentBudget
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 
 async def reserve_in_transaction(
@@ -14,7 +15,7 @@ async def reserve_in_transaction(
     limit = OPENAI_DAILY_MICRO_USD if provider == "openai" else ELEVENLABS_DAILY_CHARACTERS
     if units <= 0 or units > limit:
         raise ValueError("DAILY_BUDGET_EXHAUSTED")
-    day = budget_day(now or datetime.now(timezone.utc))
+    day = budget_day(now or datetime.now(UTC))
     if db.bind.dialect.name == "sqlite":
         from sqlalchemy.dialects.sqlite import insert
     elif db.bind.dialect.name == "postgresql":
@@ -73,7 +74,6 @@ async def guarded_openai_request(db_or_factory, request):
         factory = async_sessionmaker(engine, expire_on_commit=False)
     else:
         factory = db_or_factory
-    async with factory() as budget_db:
-        async with budget_db.begin():
-            await reserve_in_transaction(budget_db, "openai")
+    async with factory() as budget_db, budget_db.begin():
+        await reserve_in_transaction(budget_db, "openai")
     return await request()

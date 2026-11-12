@@ -4,16 +4,15 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from fastapi import HTTPException
-from fastapi.testclient import TestClient
-from sqlalchemy import update
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-
 from app.domain.contracts import SetCaptionsVisible
 from app.infrastructure.database import Conversation
 from app.services.actions import dispatch_action
 from app.services.voices import VoiceOption
-from test_actions import setup, chat, submit, Catalog
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from test_actions import Catalog, chat, setup, submit
 
 
 @pytest.mark.parametrize("commit_attempt", [False, True])

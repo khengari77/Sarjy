@@ -4,20 +4,19 @@ import asyncio
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from math import isfinite, sqrt
 from typing import Protocol
 from uuid import uuid4
 
 import httpx
-from fastapi import HTTPException
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 from app.infrastructure.database import Conversation, Memory, MemoryWriteRequest, Turn, now
 from app.services.budget import guarded_openai_request, reserve_in_transaction
 from app.services.memory_eligibility import blocked_memory_ids
+from fastapi import HTTPException
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 EMBEDDING_TIMEOUT_SECONDS = 20
 CLAIM_TIMEOUT_SECONDS = 30
@@ -31,7 +30,7 @@ def validate_embedding(values) -> tuple[float, ...]:
 
 
 def cosine_distance(left, right):
-    return 1 - sum(a * b for a, b in zip(left, right)) / (
+    return 1 - sum(a * b for a, b in zip(left, right, strict=False)) / (
         sqrt(sum(a * a for a in left)) * sqrt(sum(b * b for b in right))
     )
 
@@ -171,70 +170,69 @@ class MemoryService:
             raise ValueError("MEMORY_SESSION_HAS_PENDING_WRITES")
         # Authorization/source reads are complete; never hold their transaction across HTTP.
         await self.db.rollback()
-        async with self.sessions() as db:
-            async with db.begin():
+        async with self.sessions() as db, db.begin():
+            existing = await db.scalar(
+                select(MemoryWriteRequest).where(
+                    MemoryWriteRequest.owner_id == owner_id, MemoryWriteRequest.request_key == key
+                )
+            )
+            if existing is not None:
+                return _claim_value(existing), False
+            legacy = await db.scalar(select(Memory).where(Memory.owner_id == owner_id, Memory.request_key == key))
+            if legacy is not None:
+                legacy_fingerprint = _fingerprint(
+                    legacy.source_conversation_id,
+                    legacy.source_turn_id,
+                    legacy.content,
+                    legacy.supersedes_id,
+                    legacy.version - 1 if legacy.supersedes_id else None,
+                )
+                if legacy_fingerprint != fingerprint:
+                    raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+            if db.bind.dialect.name == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert
+            else:
+                from sqlalchemy.dialects.postgresql import insert
+            identifier = str(uuid4())
+            values = dict(
+                id=identifier,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                request_key=key,
+                fingerprint=fingerprint,
+                state="completed" if legacy else "reserved",
+                result=asdict(memory_result(legacy)) if legacy else None,
+                created_at=now(),
+                updated_at=now(),
+            )
+            inserted = await db.execute(
+                insert(MemoryWriteRequest)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=["owner_id", "request_key"])
+            )
+            if inserted.rowcount != 1:
                 existing = await db.scalar(
                     select(MemoryWriteRequest).where(
                         MemoryWriteRequest.owner_id == owner_id, MemoryWriteRequest.request_key == key
                     )
                 )
-                if existing is not None:
-                    return _claim_value(existing), False
-                legacy = await db.scalar(select(Memory).where(Memory.owner_id == owner_id, Memory.request_key == key))
-                if legacy is not None:
-                    legacy_fingerprint = _fingerprint(
-                        legacy.source_conversation_id,
-                        legacy.source_turn_id,
-                        legacy.content,
-                        legacy.supersedes_id,
-                        legacy.version - 1 if legacy.supersedes_id else None,
-                    )
-                    if legacy_fingerprint != fingerprint:
-                        raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-                if db.bind.dialect.name == "sqlite":
-                    from sqlalchemy.dialects.sqlite import insert
-                else:
-                    from sqlalchemy.dialects.postgresql import insert
-                identifier = str(uuid4())
-                values = dict(
-                    id=identifier,
-                    owner_id=owner_id,
-                    conversation_id=conversation_id,
-                    request_key=key,
-                    fingerprint=fingerprint,
-                    state="completed" if legacy else "reserved",
-                    result=asdict(memory_result(legacy)) if legacy else None,
-                    created_at=now(),
-                    updated_at=now(),
-                )
-                inserted = await db.execute(
-                    insert(MemoryWriteRequest)
-                    .values(**values)
-                    .on_conflict_do_nothing(index_elements=["owner_id", "request_key"])
-                )
-                if inserted.rowcount != 1:
-                    existing = await db.scalar(
-                        select(MemoryWriteRequest).where(
-                            MemoryWriteRequest.owner_id == owner_id, MemoryWriteRequest.request_key == key
-                        )
-                    )
-                    return _claim_value(existing), False
-                if legacy is None:
-                    if hasattr(self.embedder, "require_configuration"):
-                        self.embedder.require_configuration()
-                    if previous_id is not None:
-                        previous = await db.get(Memory, previous_id)
-                        if (
-                            previous is None
-                            or previous.owner_id != owner_id
-                            or previous.status != "active"
-                            or previous.version != expected_version
-                        ):
-                            raise HTTPException(409, detail={"code": "MEMORY_VERSION_CONFLICT"})
-                    # This helper never commits: claim and allowance become durable together.
-                    await reserve_in_transaction(db, "openai")
-                row = await db.get(MemoryWriteRequest, identifier)
-                return _claim_value(row), legacy is None
+                return _claim_value(existing), False
+            if legacy is None:
+                if hasattr(self.embedder, "require_configuration"):
+                    self.embedder.require_configuration()
+                if previous_id is not None:
+                    previous = await db.get(Memory, previous_id)
+                    if (
+                        previous is None
+                        or previous.owner_id != owner_id
+                        or previous.status != "active"
+                        or previous.version != expected_version
+                    ):
+                        raise HTTPException(409, detail={"code": "MEMORY_VERSION_CONFLICT"})
+                # This helper never commits: claim and allowance become durable together.
+                await reserve_in_transaction(db, "openai")
+            row = await db.get(MemoryWriteRequest, identifier)
+            return _claim_value(row), legacy is None
 
     def _replay(self, claim, fingerprint):
         if claim["fingerprint"] != fingerprint:
@@ -246,7 +244,7 @@ class MemoryService:
                 claim["error_status"] or 503, detail={"code": claim["error_code"] or "MEMORY_REQUEST_UNKNOWN"}
             )
         if claim["state"] == "reserved":
-            age = (datetime.now(timezone.utc) - datetime.fromisoformat(claim["created_at"])).total_seconds()
+            age = (datetime.now(UTC) - datetime.fromisoformat(claim["created_at"])).total_seconds()
             if age >= CLAIM_TIMEOUT_SECONDS:
                 # No automatic lease takeover: delivery after a process crash is uncertain.
                 raise HTTPException(503, detail={"code": "MEMORY_REQUEST_UNKNOWN"})
@@ -254,21 +252,17 @@ class MemoryService:
         return None
 
     async def _mark_error(self, identifier, code, status=503, *, uncertain=False):
-        async with self.sessions() as db:
-            async with db.begin():
-                await db.execute(
-                    update(MemoryWriteRequest)
-                    .where(
-                        MemoryWriteRequest.id == identifier,
-                        MemoryWriteRequest.state.in_(["reserved", "embedded"]),
-                    )
-                    .values(
-                        state="unknown" if uncertain else "failed",
-                        error_code=code,
-                        error_status=status,
-                        updated_at=now(),
-                    )
+        async with self.sessions() as db, db.begin():
+            await db.execute(
+                update(MemoryWriteRequest)
+                .where(
+                    MemoryWriteRequest.id == identifier,
+                    MemoryWriteRequest.state.in_(["reserved", "embedded"]),
                 )
+                .values(
+                    state="unknown" if uncertain else "failed", error_code=code, error_status=status, updated_at=now()
+                )
+            )
 
     async def _finalize(
         self,
@@ -282,65 +276,64 @@ class MemoryService:
         previous_id,
         expected_version,
     ):
-        async with self.sessions() as db:
-            async with db.begin():
-                # Short row-local write lock (also effective on SQLite), never held across inference.
-                await db.execute(
-                    update(MemoryWriteRequest).where(MemoryWriteRequest.id == identifier).values(updated_at=now())
+        async with self.sessions() as db, db.begin():
+            # Short row-local write lock (also effective on SQLite), never held across inference.
+            await db.execute(
+                update(MemoryWriteRequest).where(MemoryWriteRequest.id == identifier).values(updated_at=now())
+            )
+            row = await db.get(MemoryWriteRequest, identifier)
+            claim = _claim_value(row)
+            if claim["state"] != "embedded":
+                result = self._replay(claim, fingerprint)
+                if result is not None:
+                    return result
+                raise HTTPException(503, detail={"code": "MEMORY_REQUEST_UNKNOWN"})
+            if claim["fingerprint"] != fingerprint:
+                raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+            conversation = await db.scalar(
+                select(Conversation).where(Conversation.id == conversation_id, Conversation.owner_id == owner_id)
+            )
+            if conversation is None:
+                raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
+            if source_turn_id is not None:
+                source = await db.scalar(
+                    select(Turn).where(Turn.id == source_turn_id, Turn.conversation_id == conversation_id)
                 )
-                row = await db.get(MemoryWriteRequest, identifier)
-                claim = _claim_value(row)
-                if claim["state"] != "embedded":
-                    result = self._replay(claim, fingerprint)
-                    if result is not None:
-                        return result
-                    raise HTTPException(503, detail={"code": "MEMORY_REQUEST_UNKNOWN"})
-                if claim["fingerprint"] != fingerprint:
-                    raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-                conversation = await db.scalar(
-                    select(Conversation).where(Conversation.id == conversation_id, Conversation.owner_id == owner_id)
-                )
-                if conversation is None:
-                    raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
-                if source_turn_id is not None:
-                    source = await db.scalar(
-                        select(Turn).where(Turn.id == source_turn_id, Turn.conversation_id == conversation_id)
+                if source is None:
+                    raise HTTPException(404, detail={"code": "SOURCE_TURN_NOT_FOUND"})
+            version = 1
+            if previous_id is not None:
+                changed = await db.execute(
+                    update(Memory)
+                    .where(
+                        Memory.id == previous_id,
+                        Memory.owner_id == owner_id,
+                        Memory.status == "active",
+                        Memory.version == expected_version,
                     )
-                    if source is None:
-                        raise HTTPException(404, detail={"code": "SOURCE_TURN_NOT_FOUND"})
-                version = 1
-                if previous_id is not None:
-                    changed = await db.execute(
-                        update(Memory)
-                        .where(
-                            Memory.id == previous_id,
-                            Memory.owner_id == owner_id,
-                            Memory.status == "active",
-                            Memory.version == expected_version,
-                        )
-                        .values(status="superseded")
-                    )
-                    if changed.rowcount != 1:
-                        raise HTTPException(409, detail={"code": "MEMORY_VERSION_CONFLICT"})
-                    version = expected_version + 1
-                memory = Memory(
-                    id=str(uuid4()),
-                    owner_id=owner_id,
-                    content=content,
-                    embedding=list(validate_embedding(claim["embedding"])),
-                    embedding_model=EMBEDDING_MODEL,
-                    source_turn_id=source_turn_id,
-                    source_conversation_id=conversation_id,
-                    version=version,
-                    status="active",
-                    supersedes_id=previous_id,
-                    request_key=key,
+                    .values(status="superseded")
                 )
-                db.add(memory)
-                await db.flush()
-                result = memory_result(memory)
-                row.state, row.result, row.updated_at = "completed", asdict(result), now()
-                return result
+                if changed.rowcount != 1:
+                    raise HTTPException(409, detail={"code": "MEMORY_VERSION_CONFLICT"})
+                version = expected_version + 1
+            memory = Memory(
+                id=str(uuid4()),
+                owner_id=owner_id,
+                content=content,
+                embedding=list(validate_embedding(claim["embedding"])),
+                embedding_model=EMBEDDING_MODEL,
+                source_turn_id=source_turn_id,
+                source_conversation_id=conversation_id,
+                version=version,
+                status="active",
+                supersedes_id=previous_id,
+                request_key=key,
+            )
+            db.add(memory)
+            await db.flush()
+            result = memory_result(memory)
+            row.state, row.result, row.updated_at = "completed", asdict(result), now()
+            return result
 
     async def _write(self, owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version):
         if (
@@ -376,16 +369,15 @@ class MemoryService:
                     else:
                         # Backwards-compatible deterministic test/embedder adapters must not reserve again.
                         vector = validate_embedding(await self.embedder.embed(self.db, content))
-                async with self.sessions() as db:
-                    async with db.begin():
-                        await db.execute(
-                            update(MemoryWriteRequest)
-                            .where(
-                                MemoryWriteRequest.id == claim["id"],
-                                MemoryWriteRequest.state == "reserved",
-                            )
-                            .values(state="embedded", embedding=list(vector), updated_at=now())
+                async with self.sessions() as db, db.begin():
+                    await db.execute(
+                        update(MemoryWriteRequest)
+                        .where(
+                            MemoryWriteRequest.id == claim["id"],
+                            MemoryWriteRequest.state == "reserved",
                         )
+                        .values(state="embedded", embedding=list(vector), updated_at=now())
+                    )
             except asyncio.CancelledError:
                 await asyncio.shield(self._mark_error(claim["id"], "MEMORY_REQUEST_UNKNOWN", uncertain=True))
                 raise

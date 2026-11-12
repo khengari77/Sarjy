@@ -1,7 +1,7 @@
 """Prepare an isolated, source-only LiveKit build context."""
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "artifacts/deployment/worker"

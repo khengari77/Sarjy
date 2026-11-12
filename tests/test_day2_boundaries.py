@@ -1,21 +1,22 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 import pytest
-from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from app.domain.budget import OPENAI_DAILY_MICRO_USD, budget_day
 from app.infrastructure.database import (
     Base,
-    Identity,
-    Conversation,
-    Memory,
-    DevelopmentBudget,
     ContextOperation,
     ContextSnapshot,
+    Conversation,
+    DevelopmentBudget,
+    Identity,
+    Memory,
     Turn,
 )
 from app.services.authorization import owned_conversation, owned_memory, owned_operation, owned_snapshot
 from app.services.budget import guarded_openai_request
-from app.domain.budget import budget_day, OPENAI_DAILY_MICRO_USD
+from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 def test_owner_scoped_reads_and_budget_denial_precede_external_effects(tmp_path):
@@ -57,9 +58,7 @@ def test_owner_scoped_reads_and_budget_denial_precede_external_effects(tmp_path)
                         await lookup(db, "alice", "missing")
                 db.add(
                     DevelopmentBudget(
-                        day=budget_day(datetime.now(timezone.utc)),
-                        provider="openai",
-                        reserved_units=OPENAI_DAILY_MICRO_USD,
+                        day=budget_day(datetime.now(UTC)), provider="openai", reserved_units=OPENAI_DAILY_MICRO_USD
                     )
                 )
                 await db.commit()
@@ -78,8 +77,8 @@ def test_owner_scoped_reads_and_budget_denial_precede_external_effects(tmp_path)
 
 
 def test_guard_reserves_before_delivery_and_retains_uncertain_spending(tmp_path):
-    from sqlalchemy import select
     from app.domain.budget import OPENAI_REQUEST_MICRO_USD
+    from sqlalchemy import select
 
     async def run():
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/delivery.db")

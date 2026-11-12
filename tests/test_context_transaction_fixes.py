@@ -2,15 +2,13 @@ import base64
 import hashlib
 import hmac
 import json
-import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from fastapi.testclient import TestClient
 from app.config import Settings
-from test_context_workflow import create_app
 from app.domain.context_operations import restore_diff, sign_proposal
-from test_context_workflow import configured, seed
+from fastapi.testclient import TestClient
+from test_context_workflow import configured, create_app, seed
 
 
 def test_no_signing_key_fails_closed_without_mutating(tmp_path):

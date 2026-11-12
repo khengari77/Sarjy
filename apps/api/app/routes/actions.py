@@ -1,6 +1,7 @@
 """UI and finalized-transcript adapters for the same deterministic dispatcher."""
 
 from typing import Annotated, Literal
+
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
@@ -8,8 +9,8 @@ from app.domain.commands import parse_exact_command
 from app.domain.contracts import Action, UserSettings, parse_action
 from app.infrastructure.database import UserSetting
 from app.services.actions import dispatch_action, settings_value
-from app.services.voices import VoiceCatalogError
 from app.services.context_operations import ContextOperationError
+from app.services.voices import VoiceCatalogError
 
 
 class ActionSubmission(BaseModel):

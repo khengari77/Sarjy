@@ -11,7 +11,7 @@ from app.domain.contracts import (
 
 def parse_exact_command(text: str) -> Action | None:
     normalized = " ".join(text.strip().lower().split()).removesuffix(".")
-    commands = {
+    commands: dict[str, Action] = {
         "speak slower": AdjustSpeakingSpeed(delta=-0.1),
         "speak faster": AdjustSpeakingSpeed(delta=0.1),
         "hide captions": SetCaptionsVisible(visible=False),

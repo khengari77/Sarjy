@@ -1,7 +1,7 @@
 import asyncio
 
-from generation import GenerationEvent, GenerationFailure
 from fallback import fallback_decision, fallback_eligible, next_attempt
+from generation import GenerationEvent, GenerationFailure
 
 
 def failure(code="timeout", *, status=None, partial=False):

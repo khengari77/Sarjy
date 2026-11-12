@@ -19,6 +19,33 @@ dependencies = [
 dev = [
     "hypothesis>=6.170.15",
     "pytest>=8",
+    "ruff==0.17.5",
+    "mypy>=1.13",
 ]
 [tool.pytest.ini_options]
 pythonpath = ["apps/api", "services/voice-agent"]
+
+testpaths = ["tests"]
+norecursedirs = [".*", ".hypothesis", "artifacts", "node_modules", "build", "dist", "venv"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = ["artifacts", "*.md"]
+
+[tool.ruff.lint]
+select = ["E9", "F", "I", "UP", "SIM", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"apps/api/app/**" = ["B008"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "apps/api:services/voice-agent"
+files = ["apps/api/app/domain", "services/voice-agent/generation.py"]
+strict = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["app.domain.pipeline"]
+disable_error_code = ["prop-decorator"]

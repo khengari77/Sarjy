@@ -3,12 +3,9 @@ import math
 from pathlib import Path
 
 import pytest
-from hypothesis import given, strategies as st
-from pydantic import ValidationError
-
 from app.domain.contracts import (
     ACTION_TYPES,
-    Action,
+    TIER_CAPS,
     AdjustSpeakingSpeed,
     Complexity,
     ContextEntry,
@@ -26,7 +23,6 @@ from app.domain.contracts import (
     SetCaptionsVisible,
     SetSpeakingSpeed,
     ShowConversationHistory,
-    TIER_CAPS,
     ToolSpec,
     UserSettings,
     apply_settings_action,
@@ -34,6 +30,9 @@ from app.domain.contracts import (
     parse_action,
     resolve_response_policy,
 )
+from hypothesis import given
+from hypothesis import strategies as st
+from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
 REALISTIC_CONFIDENCE = 0.9428571428571428

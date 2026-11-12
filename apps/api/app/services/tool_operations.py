@@ -13,11 +13,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
 
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.domain.tool_operations import ToolReplayKind, arguments_fingerprint, replay_kind
 from app.infrastructure.database import ToolCall
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ToolOperationError(ValueError):

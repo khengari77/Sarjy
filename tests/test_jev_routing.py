@@ -3,24 +3,22 @@ import json
 
 import httpx
 import pytest
-from pydantic import ValidationError
-
 from app.domain.contracts import (
+    TIER_CAPS,
     AdjustSpeakingSpeed,
     Complexity,
     DecisionSource,
     Intent,
     ResponsePreference,
     SearchMemory,
-    TIER_CAPS,
 )
 from app.domain.routing import (
-    JEV_MODEL,
-    ROUTING_POLICY_VERSION,
     COMPLEXITY_QUESTION,
     INTENT_QUESTION,
+    JEV_MODEL,
     MAX_INSTRUCTION_CHARS,
     MAX_STATE_CHARS,
+    ROUTING_POLICY_VERSION,
     TIER_BY_OPTION,
     TIER_QUESTION,
     authorize_automatic_action,
@@ -33,6 +31,7 @@ from app.services.jev import (
     JevCircuitBreaker,
     JevClient,
 )
+from pydantic import ValidationError
 
 
 def choice(option_names, selected, top=0.96, confidence=0.99):

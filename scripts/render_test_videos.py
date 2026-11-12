@@ -1,8 +1,8 @@
 """Render recorded fixture UI checks to friendly MP4 filenames. No API calls."""
 
-from pathlib import Path
-import subprocess
 import json
+import subprocess
+from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 output = root / "artifacts/test-videos"

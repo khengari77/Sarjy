@@ -1,9 +1,10 @@
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
-from fastapi.testclient import TestClient
+from datetime import UTC, datetime, timedelta
+
 from app.config import Settings
 from app.main import create_app
+from fastapi.testclient import TestClient
 
 
 def test_worker_turn_retry_snapshot_and_finalization(tmp_path):
@@ -23,7 +24,7 @@ def test_worker_turn_retry_snapshot_and_finalization(tmp_path):
                     owner,
                     "room",
                     "active",
-                    (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+                    (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
                     json.dumps({}),
                 ),
             )

@@ -5,14 +5,14 @@ import os
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from app.infrastructure.database import Identity, Conversation, Turn
+from app.infrastructure.database import Conversation, Identity, Turn
 from app.services.tool_operations import (
+    ToolOperationError,
     claim_tool_operation,
     complete_tool_operation,
     unknown_tool_operation,
-    ToolOperationError,
 )
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 def test_postgres_concurrent_operation_claim_and_terminal_replay():

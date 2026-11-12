@@ -2,8 +2,10 @@
 
 import json
 import re
+from collections.abc import AsyncIterator
 from contextvars import ContextVar
 from dataclasses import dataclass
+
 import httpx
 
 
@@ -13,16 +15,16 @@ class CompletionState:
     done: bool = False
 
 
-completion_state = ContextVar("completion_state", default=None)
+completion_state: ContextVar[CompletionState | None] = ContextVar("completion_state", default=None)
 
 
 class ObservedStream(httpx.AsyncByteStream):
-    def __init__(self, stream, state):
+    def __init__(self, stream: httpx.AsyncByteStream, state: CompletionState) -> None:
         self.stream, self.state = stream, state
         self.buffer = b""
-        self.data = []
+        self.data: list[bytes] = []
 
-    def event(self):
+    def event(self) -> None:
         if not self.data:
             return
         data = b"\n".join(self.data)
@@ -35,13 +37,12 @@ class ObservedStream(httpx.AsyncByteStream):
         try:
             payload = json.loads(data)
             for choice in payload.get("choices", []):
-                if choice.get("index", 0) == 0 and choice.get("finish_reason"):
-                    if self.state.reason is None:
-                        self.state.reason = choice["finish_reason"]
+                if choice.get("index", 0) == 0 and choice.get("finish_reason") and self.state.reason is None:
+                    self.state.reason = choice["finish_reason"]
         except (ValueError, TypeError, AttributeError):
             pass  # Native SDK owns payload validation.
 
-    def feed(self, chunk):
+    def feed(self, chunk: bytes) -> None:
         self.buffer += chunk
         while match := re.search(rb"[\r\n]", self.buffer):
             index = match.start()
@@ -54,39 +55,39 @@ class ObservedStream(httpx.AsyncByteStream):
             elif line.startswith(b"data:"):
                 self.data.append(line[5:].lstrip(b" "))
 
-    def finish(self):
+    def finish(self) -> None:
         if self.buffer.endswith(b"\r"):
             self.feed(b"\n")
 
-    async def __aiter__(self):
+    async def __aiter__(self) -> AsyncIterator[bytes]:
         async for chunk in self.stream:
             self.feed(chunk)
             yield chunk
         self.finish()
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         await self.stream.aclose()
 
 
 class DecodedResponseStream(httpx.AsyncByteStream):
     """Let HTTPX decode compression before observing SSE framing."""
 
-    def __init__(self, response):
+    def __init__(self, response: httpx.Response) -> None:
         self.response = response
 
-    async def __aiter__(self):
+    async def __aiter__(self) -> AsyncIterator[bytes]:
         async for chunk in self.response.aiter_bytes():
             yield chunk
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         await self.response.aclose()
 
 
 class ObservedTransport(httpx.AsyncBaseTransport):
-    def __init__(self, transport=None):
+    def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.transport = transport or httpx.AsyncHTTPTransport(retries=0)
 
-    async def handle_async_request(self, request):
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         response = await self.transport.handle_async_request(request)
         state = completion_state.get()
         if state is None or response.status_code != 200:
@@ -103,5 +104,5 @@ class ObservedTransport(httpx.AsyncBaseTransport):
             extensions=response.extensions,
         )
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         await self.transport.aclose()

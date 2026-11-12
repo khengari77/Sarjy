@@ -9,7 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import day2_routing_benchmark as bench  # noqa: E402
-
 from app.domain.contracts import (  # noqa: E402
     Intent,
     SearchMemory,

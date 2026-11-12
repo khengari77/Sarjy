@@ -1,6 +1,7 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import String, Text, ForeignKey, JSON, Integer, UniqueConstraint, Float, Boolean
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 EMBEDDING_DIMENSIONS = 1536
@@ -10,7 +11,7 @@ EMBEDDING_TYPE = Vector(EMBEDDING_DIMENSIONS).with_variant(JSON(), "sqlite")
 
 
 def now():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class Base(DeclarativeBase):

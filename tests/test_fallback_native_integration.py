@@ -4,10 +4,9 @@ import asyncio
 from types import SimpleNamespace
 
 import httpx
+import main as worker
 import openai
 import pytest
-
-import main as worker
 from generation import GenerationFailure
 from provider_factory import build_llm
 from stream_completion import ObservedTransport

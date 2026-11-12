@@ -6,12 +6,11 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from app.infrastructure.database import Conversation, DevelopmentBudget, Identity, MemoryWriteRequest
+from app.services.memory import MemoryService, OpenAIEmbedder
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-from app.infrastructure.database import Conversation, DevelopmentBudget, Identity, MemoryWriteRequest
-from app.services.memory import MemoryService, OpenAIEmbedder
 
 
 def test_postgres_duplicate_request_has_one_reservation_and_one_delivery():

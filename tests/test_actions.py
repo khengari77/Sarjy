@@ -1,13 +1,13 @@
 import sqlite3
 
 import pytest
-from fastapi.testclient import TestClient
-from hypothesis import given, strategies as st
-
 from app.config import Settings
-from app.main import create_app
 from app.domain.commands import parse_exact_command
-from app.services.voices import VoiceOption, VoiceCatalogError
+from app.main import create_app
+from app.services.voices import VoiceCatalogError, VoiceOption
+from fastapi.testclient import TestClient
+from hypothesis import given
+from hypothesis import strategies as st
 
 
 class Catalog:

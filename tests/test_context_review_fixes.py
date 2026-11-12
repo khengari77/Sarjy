@@ -1,13 +1,12 @@
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.domain.context import compile_turn_context, validate_assembly
 from app.domain.weather_permissions import LocationEvidence, decide_weather_request
 from app.main import create_app
+from fastapi.testclient import TestClient
 from test_context_assembly import configured, seed_memories
 
 
@@ -83,7 +82,7 @@ def test_real_reader_filters_tracked_sources_derivatives_and_unknown_tools_but_k
                     owner,
                     "room",
                     "active",
-                    (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+                    (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
                     "{}",
                 ),
             )

@@ -2,14 +2,14 @@
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from aiohttp import ClientTimeout
-from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
-from sqlalchemy import select, update
 from app.infrastructure.database import VoiceSession
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 CLEANUP_TIMEOUT_SECONDS = 10
 
@@ -17,7 +17,7 @@ CLEANUP_TIMEOUT_SECONDS = 10
 async def cleanup_room(
     db: AsyncSession, voice: VoiceSession, settings: Settings, *, now: datetime | None = None
 ) -> Literal["already_complete", "complete", "pending"]:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     if voice.status not in {"ended", "failed"}:
         raise ValueError("SESSION_NOT_TERMINAL")
     if voice.room_cleanup_completed_at:

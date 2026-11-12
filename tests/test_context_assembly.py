@@ -1,12 +1,9 @@
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
-
-import pytest
-from fastapi.testclient import TestClient
-from hypothesis import given, strategies as st
+from datetime import UTC, datetime, timedelta
 
 import app.main as main_module
+import pytest
 from app.config import Settings
 from app.domain.context import (
     ContextCandidate,
@@ -14,6 +11,9 @@ from app.domain.context import (
     validate_assembly,
 )
 from app.main import create_app
+from fastapi.testclient import TestClient
+from hypothesis import given
+from hypothesis import strategies as st
 
 
 def memory(record_id, text, status="active"):
@@ -137,7 +137,7 @@ def start_turn(client, chat, owner, file, memories, exclusions=(), text="What is
                 owner,
                 "room",
                 "active",
-                (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+                (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
                 json.dumps({}),
             ),
         )
@@ -281,7 +281,7 @@ def test_city_in_both_included_and_excluded_allowed_by_inclusion(tmp_path, monke
         turn_snapshot = result["context"]
         if "weather_policy" in turn_snapshot:
             # We can't easily inject both via the API, so test the pure function directly
-            from app.domain.weather_permissions import decide_weather_request, LocationEvidence
+            from app.domain.weather_permissions import LocationEvidence, decide_weather_request
 
             trip_evidence = LocationEvidence("trip", "Trip to Tripoli")
             decision = decide_weather_request(

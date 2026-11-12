@@ -1,7 +1,8 @@
-from hypothesis import given, strategies as st
-from app.domain.context import ContextRecord, compile_context
-from app.services.weather import select_location, WeatherError
 import pytest
+from app.domain.context import ContextRecord, compile_context
+from app.services.weather import WeatherError, select_location
+from hypothesis import given
+from hypothesis import strategies as st
 
 
 @given(st.lists(st.text(min_size=1), unique=True, max_size=30), st.sets(st.text(min_size=1), max_size=30))
