@@ -460,9 +460,9 @@ export interface components {
             /** Outcome */
             outcome: string;
             /** Revision Before */
-            revision_before: number;
+            revision_before?: number | null;
             /** Revision After */
-            revision_after: number;
+            revision_after?: number | null;
             /** Idempotency Key */
             idempotency_key: string;
             /** Created At */

@@ -1019,11 +1019,25 @@
             "title": "Outcome"
           },
           "revision_before": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Revision Before"
           },
           "revision_after": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Revision After"
           },
           "idempotency_key": {
@@ -1050,8 +1064,6 @@
           "id",
           "command_type",
           "outcome",
-          "revision_before",
-          "revision_after",
           "idempotency_key",
           "created_at",
           "diff"

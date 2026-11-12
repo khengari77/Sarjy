@@ -131,8 +131,8 @@ class ContextOperationItem(BaseModel):
     id: str
     command_type: str
     outcome: str
-    revision_before: int
-    revision_after: int
+    revision_before: int | None = None
+    revision_after: int | None = None
     idempotency_key: str
     created_at: str
     diff: ContextDiff | None
