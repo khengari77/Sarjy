@@ -11,10 +11,11 @@ _shared_source = Path(__file__).resolve().parents[2] / "apps/api"
 if _shared_source.is_dir():
     sys.path.insert(0, str(_shared_source))
 
-from app.domain.contracts import ModelRequest, ModelToolItem, ToolSpec
+from app.domain.contracts import ModelRequest, ModelToolItem, ToolSpec, AssistantContinuation
 from app.domain.tool_operations import operation_key
 from fallback import fallback_decision, next_attempt
 from generation import GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
+from snapshot_request import snapshot_request
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -122,15 +123,14 @@ class SarjyAgent(Agent):
             task = asyncio.create_task(persist_playout())
             self.pending.add(task)
             task.add_done_callback(self.pending.discard)
-        request = ModelRequest.model_validate(snapshot['model_request'])
-        if (request.turn_id != self.current_turn or request.selection.revision != snapshot['revision']
-                or [item.model_dump() for item in request.messages] != snapshot['messages']):
-            raise ValueError('MODEL_SNAPSHOT_MISMATCH')
+        request = snapshot_request(snapshot, self.current_turn)
         schemas = [build_legacy_openai_schema(tool)['function'] for tool in tools]
         continuation = []
         index = chat_ctx.items.index(user)
         for item in chat_ctx.items[index+1:]:
-            if isinstance(item, llm.FunctionCall):
+            if isinstance(item, llm.ChatMessage) and item.role == 'assistant':
+                continuation.append(AssistantContinuation(content=item.text_content, interrupted=item.interrupted))
+            elif isinstance(item, llm.FunctionCall):
                 continuation.append(ModelToolItem(kind='call', call_id=item.call_id,
                     name=item.name, content=item.arguments))
             elif isinstance(item, llm.FunctionCallOutput):
