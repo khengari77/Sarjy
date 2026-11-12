@@ -21,6 +21,7 @@ from app.domain.contracts import (
     apply_settings_action,
 )
 from app.infrastructure.database import ContextOperation, Conversation, SessionGate, SettingRevision, UserSetting, now
+from app.infrastructure.upsert import insert_ignore
 
 SETTING_ACTIONS = (AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed)
 
@@ -147,12 +148,6 @@ async def _claim_preparation(factory, *, owner_id, conversation_id, key, fingerp
         conversation = await claim_db.get(Conversation, conversation_id)
         if not conversation or conversation.owner_id != owner_id:
             raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
-        if claim_db.bind.dialect.name == "sqlite":
-            from sqlalchemy.dialects.sqlite import insert
-        elif claim_db.bind.dialect.name == "postgresql":
-            from sqlalchemy.dialects.postgresql import insert
-        else:
-            raise ValueError("Unsupported dispatch database")
         identifier = str(uuid4())
         values = dict(
             id=identifier,
@@ -166,9 +161,7 @@ async def _claim_preparation(factory, *, owner_id, conversation_id, key, fingerp
             outcome="preparing",
             created_at=now(),
         )
-        result = await claim_db.execute(
-            insert(ContextOperation).values(**values).on_conflict_do_nothing(index_elements=["idempotency_key"])
-        )
+        result = await insert_ignore(claim_db, ContextOperation, values, index_elements=["idempotency_key"])
         if result.rowcount == 1:
             return "winner", identifier, None
         existing = await claim_db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
@@ -182,9 +175,7 @@ async def _claim_preparation(factory, *, owner_id, conversation_id, key, fingerp
             return "in_progress", existing.id, None
         await claim_db.delete(existing)
         await claim_db.flush()
-        retry = await claim_db.execute(
-            insert(ContextOperation).values(**values).on_conflict_do_nothing(index_elements=["idempotency_key"])
-        )
+        retry = await insert_ignore(claim_db, ContextOperation, values, index_elements=["idempotency_key"])
         if retry.rowcount == 1:
             return "winner", identifier, None
         existing = await claim_db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))

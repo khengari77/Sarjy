@@ -27,6 +27,16 @@ def test_domain_has_no_io_or_framework_imports():
     assert not {path: modules for path, modules in violations.items() if modules}
 
 
+def test_dialect_specific_imports_live_in_infrastructure():
+    violations = []
+    for path in APP.rglob("*.py"):
+        if "infrastructure" in path.parts:
+            continue
+        if any(module.startswith("sqlalchemy.dialects") for module in _imports(path)):
+            violations.append(path.relative_to(ROOT).as_posix())
+    assert not violations
+
+
 def test_conversation_ownership_has_a_single_definition():
     definitions = []
     for path in APP.rglob("*.py"):

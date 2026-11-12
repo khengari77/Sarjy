@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 from app.infrastructure.database import Memory, MemoryWriteRequest, Turn, now
+from app.infrastructure.upsert import insert_ignore
 from app.services.authorization import owned_conversation, owned_memory
 from app.services.budget import guarded_openai_request, reserve_in_transaction
 from app.services.memory_eligibility import blocked_memory_ids
@@ -180,10 +181,6 @@ class MemoryService:
                 )
                 if legacy_fingerprint != fingerprint:
                     raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-            if db.bind.dialect.name == "sqlite":
-                from sqlalchemy.dialects.sqlite import insert
-            else:
-                from sqlalchemy.dialects.postgresql import insert
             identifier = str(uuid4())
             values = dict(
                 id=identifier,
@@ -196,11 +193,7 @@ class MemoryService:
                 created_at=now(),
                 updated_at=now(),
             )
-            inserted = await db.execute(
-                insert(MemoryWriteRequest)
-                .values(**values)
-                .on_conflict_do_nothing(index_elements=["owner_id", "request_key"])
-            )
+            inserted = await insert_ignore(db, MemoryWriteRequest, values, index_elements=["owner_id", "request_key"])
             if inserted.rowcount != 1:
                 existing = await db.scalar(
                     select(MemoryWriteRequest).where(
