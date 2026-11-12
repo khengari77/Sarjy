@@ -111,3 +111,37 @@ def test_handler_prepare_runs_once_outside_effect_transaction_and_replay(tmp_pat
         assert first.status_code==200
         assert submit(client,conversation,**values).json()==first.json()
         assert calls==['prepare','effect']
+
+
+def test_handler_prepare_runs_once_for_concurrent_duplicate_submission(tmp_path):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    app, path = setup(tmp_path)
+    calls = []
+
+    async def prepare(**kwargs):
+        calls.append('prepare')
+        await asyncio.sleep(0.1)
+        return {'proposal_id': 'detached-preview'}
+
+    async def handler(**kwargs):
+        calls.append('effect')
+        assert kwargs['prepared'] == {'proposal_id': 'detached-preview'}
+        return kwargs['prepared']
+
+    handler.prepare = prepare
+    app.state.action_handlers['ProposeContextExclusion'] = handler
+
+    with TestClient(app) as client:
+        conversation = chat(client)
+
+        def action(_):
+            return submit(client, conversation, source='ui', action={'kind': 'ProposeContextExclusion', 'query': 'trip'})
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(action, range(2)))
+
+        assert all(result.status_code == 200 for result in results)
+        assert results[0].json() == results[1].json()
+        assert calls.count('prepare') == 1
