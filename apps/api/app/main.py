@@ -220,7 +220,11 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
     embedder = embedding_adapter or OpenAIEmbedder(config.openai_api_key)
 
     async def semantic_search(db, *, owner_id, conversation_id, query, limit):
-        rows = await MemoryService(db, embedder).search_memories(owner_id, conversation_id, query, limit)
+        try:
+            rows = await MemoryService(db, embedder).search_memories(owner_id, conversation_id, query, limit)
+        except ValueError as exc:
+            raise HTTPException(429 if str(exc) == "DAILY_BUDGET_EXHAUSTED" else 422,
+                detail={"code": str(exc)}) from exc
         return tuple(MemoryCandidate(id=row.id, content=row.content, source_turn_id=row.source_turn_id,
             score=1.0 - (row.distance or 0.0), kind=classify(row.content)) for row in rows)
 
