@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 from app.config import Settings
@@ -93,7 +94,7 @@ def seed(
         ("budget", "Budget 500 USD for the trip"),
     ),
 ):
-    with sqlite3.connect(file) as db:
+    with closing(sqlite3.connect(file)) as db, db:
         for record_id, content in rows:
             db.execute(
                 "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,created_at,updated_at) "
@@ -106,7 +107,7 @@ def seed(
 
 
 def counts(file):
-    with sqlite3.connect(file) as db:
+    with closing(sqlite3.connect(file)) as db, db:
         revision = db.execute("SELECT revision FROM conversations").fetchone()[0]
         exclusions = db.execute("SELECT count(*) FROM context_exclusions").fetchone()[0]
         active = db.execute("SELECT count(*) FROM context_exclusions WHERE active=1").fetchone()[0]

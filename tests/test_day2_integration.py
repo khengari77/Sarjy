@@ -11,6 +11,7 @@ import json
 import os
 import sqlite3
 import sys
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -144,7 +145,7 @@ def configured(tmp_path):
 
 
 def add_turn_session(client, file, chat, owner):
-    with sqlite3.connect(file) as db:
+    with closing(sqlite3.connect(file)) as db, db:
         db.execute(
             "INSERT INTO voice_sessions (id,conversation_id,owner_id,room_name,status,expires_at,pipeline) VALUES (?,?,?,?,?,?,?)",
             (
@@ -228,7 +229,7 @@ def test_weather_cannot_use_an_excluded_location_memory(tmp_path, monkeypatch):
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
-        with sqlite3.connect(file) as db:
+        with closing(sqlite3.connect(file)) as db, db:
             db.execute(
                 "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,created_at,updated_at) "
                 "VALUES ('trip', ?, 'Trip to Tripoli', 'text-embedding-3-small', ?, 1, 'active', "
@@ -268,7 +269,7 @@ def test_trip_exclusion_preserves_budget_and_undo_restores_exactly(tmp_path):
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
-        with sqlite3.connect(file) as db:
+        with closing(sqlite3.connect(file)) as db, db:
             for record_id, content in (
                 ("trip", "Trip to Tripoli from 1 to 5 May"),
                 ("hotel", "Hotel in Rome, 3 nights"),
@@ -285,21 +286,21 @@ def test_trip_exclusion_preserves_budget_and_undo_restores_exactly(tmp_path):
             f"/v1/conversations/{chat}/context/proposals", json={"query": "forget the trip hotel"}
         ).json()
         assert {item["id"] for item in preview["preserved"]} == {"budget"}
-        with sqlite3.connect(file) as db:
+        with closing(sqlite3.connect(file)) as db, db:
             assert db.execute("SELECT count(*) FROM context_exclusions").fetchone()[0] == 0
         applied = client.post(
             f"/v1/conversations/{chat}/context/confirm",
             json={"proposal": preview["proposal"], "expected_revision": 0, "idempotency_key": "c1"},
         ).json()
         assert set(applied["excluded_ids"]) == {"trip", "hotel"}
-        with sqlite3.connect(file) as db:
+        with closing(sqlite3.connect(file)) as db, db:
             assert db.execute("SELECT count(*) FROM context_exclusions WHERE active=1").fetchone()[0] == 2
         restored = client.post(
             f"/v1/conversations/{chat}/context/undo",
             json={"operation_id": applied["operation_id"], "expected_revision": 1, "idempotency_key": "u1"},
         ).json()
         assert set(restored["restored_ids"]) == {"trip", "hotel"}
-        with sqlite3.connect(file) as db:
+        with closing(sqlite3.connect(file)) as db, db:
             assert db.execute("SELECT count(*) FROM context_exclusions WHERE active=1").fetchone()[0] == 0
 
 

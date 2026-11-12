@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import app.main as main_module
@@ -105,7 +106,7 @@ def configured(tmp_path):
 
 
 def seed_memories(file, chat, memories, exclusions=()):
-    with sqlite3.connect(file) as db:
+    with closing(sqlite3.connect(file)) as db, db:
         db.execute("INSERT OR IGNORE INTO development_budgets VALUES ('2026-11-12','openai',0)")
         for record_id, content, status in memories:
             db.execute(
@@ -128,7 +129,7 @@ def seed_memories(file, chat, memories, exclusions=()):
 
 
 def start_turn(client, chat, owner, file, memories, exclusions=(), text="What is the weather?"):
-    with sqlite3.connect(file) as db:
+    with closing(sqlite3.connect(file)) as db, db:
         db.execute(
             "INSERT INTO voice_sessions (id,conversation_id,owner_id,room_name,status,expires_at,pipeline) VALUES (?,?,?,?,?,?,?)",
             (

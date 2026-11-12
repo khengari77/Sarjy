@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 from app.config import Settings
@@ -15,7 +16,7 @@ def test_worker_turn_retry_snapshot_and_finalization(tmp_path):
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
-        with sqlite3.connect(file) as db:
+        with closing(sqlite3.connect(file)) as db, db:
             db.execute(
                 "INSERT INTO voice_sessions (id,conversation_id,owner_id,room_name,status,expires_at,pipeline) VALUES (?,?,?,?,?,?,?)",
                 (

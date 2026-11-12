@@ -1,3 +1,4 @@
+from contextlib import closing
 from copy import deepcopy
 
 import pytest
@@ -56,7 +57,7 @@ def test_api_replay_adapts_legacy_snapshot_without_rewriting_history(tmp_path):
         headers, first = start_turn(client, chat, owner, file, memories=())
         old = deepcopy(first["context"])
         old.pop("model_request")
-        with sqlite3.connect(file) as db:
+        with closing(sqlite3.connect(file)) as db, db:
             db.execute("UPDATE turns SET snapshot=? WHERE id=?", (json.dumps(old), first["turn_id"]))
             db.commit()
         replay = client.post(
@@ -112,7 +113,7 @@ def test_api_replay_adapts_legacy_snapshot_without_rewriting_history(tmp_path):
         asyncio.run(drive_worker())
         assert observed == old["messages"]
 
-        with sqlite3.connect(file) as db:
+        with closing(sqlite3.connect(file)) as db, db:
             assert (
                 json.loads(db.execute("SELECT snapshot FROM turns WHERE id=?", (first["turn_id"],)).fetchone()[0])
                 == old

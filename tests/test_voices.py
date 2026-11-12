@@ -1,6 +1,7 @@
 import copy
 import json
 import sqlite3
+from contextlib import closing
 from types import SimpleNamespace
 
 import httpx
@@ -99,7 +100,7 @@ def test_unavailable_voice_never_reserves_or_dispatches_a_call(tmp_path):
             response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "voice_id": selection})
             assert response.status_code == 422
             assert response.json()["detail"]["code"] == code
-        with sqlite3.connect(tmp_path / "voice.db") as db:
+        with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
             assert db.execute("SELECT COUNT(*) FROM voice_sessions").fetchone()[0] == 0
 
 
@@ -140,7 +141,7 @@ def test_selected_voice_is_frozen_per_call_and_reaches_snapshot(tmp_path, liveki
         first = start("arabic-voice")
         assert first.status_code == 201
         session_id = first.json()["id"]
-        with sqlite3.connect(tmp_path / "voice.db") as db:
+        with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
             room, pipeline = db.execute(
                 "SELECT room_name,pipeline FROM voice_sessions WHERE id=?", (session_id,)
             ).fetchone()
@@ -167,7 +168,7 @@ def test_start_voice_resolves_tier_from_preference_and_bootstrap_carries_guidanc
             )
             assert response.status_code == 201
             session = response.json()
-            with sqlite3.connect(tmp_path / "voice.db") as db:
+            with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
                 room, pipeline = db.execute(
                     "SELECT room_name,pipeline FROM voice_sessions WHERE id=?", (session["id"],)
                 ).fetchone()
@@ -215,7 +216,7 @@ def test_legacy_bootstrap_and_snapshot_share_effective_configuration(tmp_path, l
                 "response_preference": "brief",
             },
         ).json()
-        with sqlite3.connect(tmp_path / "voice.db") as db:
+        with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
             room, raw = db.execute(
                 "SELECT room_name,pipeline FROM voice_sessions WHERE id=?", (session["id"],)
             ).fetchone()
@@ -227,7 +228,7 @@ def test_legacy_bootstrap_and_snapshot_share_effective_configuration(tmp_path, l
                 source.pop("response_preference")
                 source["max_output_tokens"] = 96
                 source["revision"] = 1
-                with sqlite3.connect(tmp_path / "voice.db") as db:
+                with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
                     db.execute("UPDATE voice_sessions SET pipeline=? WHERE id=?", (json.dumps(source), session["id"]))
             bootstrap = client.post("/internal/agent/bootstrap", headers=headers).json()
             body = {"request_id": str(legacy), "text": "Hello"}

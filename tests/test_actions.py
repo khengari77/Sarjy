@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 
 import pytest
 from app.config import Settings
@@ -82,7 +83,7 @@ def test_ui_and_final_transcript_share_persisted_settings_and_idempotency(tmp_pa
             ).status_code
             == 409
         )
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 2
             assert db.execute("SELECT COUNT(*) FROM context_operations").fetchone()[0] == 2
 
@@ -108,7 +109,7 @@ def test_unsafe_inputs_noops_and_invalid_actions_have_no_effects(tmp_path):
             ).status_code
             == 409
         )
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 0
 
 
@@ -192,7 +193,7 @@ def test_concurrent_duplicate_submission_applies_setting_once(tmp_path):
         assert all(result.status_code == 200 for result in results)
         assert results[0].json() == results[1].json()
         assert client.get("/v1/settings").json()["speaking_speed"] == 0.9
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 1
 
 
