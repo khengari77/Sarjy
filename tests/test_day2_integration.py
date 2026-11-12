@@ -251,7 +251,7 @@ def test_weather_cannot_use_an_excluded_location_memory(tmp_path, monkeypatch):
 @pytest.mark.skipif(not HAS_CONTEXT_OPERATIONS, reason='blocked on PR #35 / issue #8 (proposal service not merged)')
 def test_trip_exclusion_preserves_budget_and_undo_restores_exactly(tmp_path):
     file, settings = configured(tmp_path)
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
         owner = client.post('/v1/demo-session').json()['id']
         chat = client.post('/v1/conversations').json()['id']
         with sqlite3.connect(file) as db:
@@ -265,6 +265,7 @@ def test_trip_exclusion_preserves_budget_and_undo_restores_exactly(tmp_path):
                     "VALUES (?, ?, ?, 'text-embedding-3-small', ?, 1, 'active', '2026-11-12T00:00:00+00:00', '2026-11-12T00:00:00+00:00')",
                     (record_id, owner, content, chat),
                 )
+            db.execute('UPDATE memories SET embedding=?', (json.dumps([1.0] + [0.0] * 1535),))
             db.commit()
         preview = client.post(f'/v1/conversations/{chat}/context/proposals', json={'query': 'forget the trip hotel'}).json()
         assert {item['id'] for item in preview['preserved']} == {'budget'}

@@ -49,7 +49,6 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --locked
       - name: Create isolated verification databases
-        if: hashFiles('tests/test_memory_postgres.py') != ''
         run: |
           uv run python - <<'PYCODE'
           import asyncio, asyncpg
@@ -61,17 +60,14 @@ jobs:
           asyncio.run(main())
           PYCODE
       - name: Migration preservation
-        if: hashFiles('tests/test_memory_postgres.py') != ''
         run: uv run pytest -q tests/test_migrations.py
         env:
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/migration_tests
       - name: Prepare service databases
-        if: hashFiles('tests/test_memory_postgres.py') != ''
         run: |
           DATABASE_URL=postgresql+asyncpg://postgres:test-only@localhost/memory_tests uv run python -m alembic upgrade head
           DATABASE_URL=postgresql+asyncpg://postgres:test-only@localhost/integration_tests uv run python -m alembic upgrade head
       - name: Real vector and integration checks
-        if: hashFiles('tests/test_memory_postgres.py') != ''
         run: |
           uv run python -c "import sys; sys.path.insert(0, 'apps/api'); import app.services.memory, app.services.context_operations, app.domain.weather_permissions"
           uv run pytest -q tests/test_memory_postgres.py tests/test_day2_integration.py
