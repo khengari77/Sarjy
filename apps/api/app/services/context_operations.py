@@ -132,12 +132,11 @@ async def keyword_search(
     query: str,
     limit: int,
 ) -> Sequence[MemoryCandidate]:
-    """Local fallback retrieval against the shared memory table.
+    """Deterministic owner-scoped keyword retrieval against persisted memories.
 
-    #5 owns semantic/pgvector retrieval.  Until that service is merged this
-    adapter provides deterministic owner-scoped keyword matching so preview and
-    confirmation are exercised against real persisted rows.  Integration with
-    the semantic service remains unverified.
+    This is the local fallback for preview and confirmation. Semantic/pgvector
+    retrieval is provided by ``MemoryService.search_memories`` and injected by
+    the composition root.
     """
     rows = (
         await db.scalars(

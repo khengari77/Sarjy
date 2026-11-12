@@ -59,7 +59,7 @@ LiveKit Build quotas must be checked in the account before testing. Hosted agent
 
 - Real provider replies and prerecorded English STT are verified; live English conversation acceptance remains pending.
 - Day 1 snapshots capture initial context assembly; tool continuations are retained in the worker but do not yet receive separate request snapshots.
-- Persistent history is implemented; extracted memory and context exclusion/Undo are Day 2 work.
+- Persistent history, extracted memory, context exclusion/Undo and typed action dispatch are implemented and covered by the test suite.
 - Managed DeepSeek/Cartesia fallback candidates are not enabled.
 - Disposable PostgreSQL migration parity and hosted Supabase connectivity/persistence passed; cleanup migration is deployed.
 - Public identity creation needs further abuse controls before unrestricted public exposure.

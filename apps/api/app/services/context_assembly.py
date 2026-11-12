@@ -3,7 +3,7 @@
 Reads the permitted turn history, active memories, active exclusions and
 permitted tool results for one conversation revision. Persistence stays behind
 this narrow seam: the default implementation uses the shared ORM, while tests
-and the not-yet-merged #5 memory service can supply the same shapes through
+and alternate memory services can supply the same shapes through
 ``read_context_inputs``/``MemoryCandidates``.
 """
 

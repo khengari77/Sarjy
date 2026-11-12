@@ -1,14 +1,10 @@
-"""Adapters from the D2.7 service to the #7 dispatcher handler shape.
+"""Adapters from the context service to the dispatcher handler shape.
 
-Published dispatcher interface: handlers are async callables registered at
+Handlers are async callables registered at
 ``app.state.action_handlers[action.kind]`` and receive ``db``, ``owner_id``,
 ``conversation_id``, ``request_id``, ``expected_revision`` and ``action`` by
-keyword.  The dispatcher owns the single commit; these handlers pass
+keyword. The dispatcher owns the single commit; these handlers pass
 ``commit=False`` for the mutating Undo path.
-
-The dispatcher module is not present on this branch, so registration is wired
-defensively in ``main.py`` and this integration remains unverified until #7
-merges.
 """
 
 from app.services.context_operations import (
