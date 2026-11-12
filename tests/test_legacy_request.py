@@ -54,6 +54,33 @@ def test_api_replay_adapts_legacy_snapshot_without_rewriting_history(tmp_path):
         assert replay.json()['context'] == old
         adapted = snapshot_request(replay.json()['context'], replay.json()['turn_id'])
         assert [message.model_dump() for message in adapted.messages] == old['messages']
+        import asyncio, httpx
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from livekit.agents import llm
+        from main import SarjyAgent
+        observed = []
+        class Provider:
+            @asynccontextmanager
+            async def chat(self, *, chat_ctx, **kwargs):
+                observed.extend({'role': item.role, 'content': item.text_content} for item in chat_ctx.items)
+                async def chunks():
+                    yield llm.ChatChunk(id='r', delta=llm.ChoiceDelta(content='Answer'))
+                yield chunks()
+        async def drive_worker():
+            def backend(request):
+                return httpx.Response(200, json={} if request.url.path.endswith('/reserve') else replay.json())
+            with patch.object(SarjyAgent, 'session', property(lambda self: SimpleNamespace(current_speech=None, llm=Provider()))):
+                async with httpx.AsyncClient(base_url='http://test', transport=httpx.MockTransport(backend)) as backend_client:
+                    agent = SarjyAgent(backend_client, {'llm': {'provider': 'openai_direct'}}, 'Current rules must not replace frozen rules')
+                    context = llm.ChatContext()
+                    context.add_message(role='assistant', content='Unrelated stale history')
+                    context.add_message(role='user', content='What is the weather?')
+                    assert [chunk async for chunk in agent.llm_node(context, [], None)]
+        asyncio.run(drive_worker())
+        assert observed == old['messages']
+
         with sqlite3.connect(file) as db:
             assert json.loads(db.execute('SELECT snapshot FROM turns WHERE id=?', (first['turn_id'],)).fetchone()[0]) == old
 
