@@ -61,9 +61,13 @@ class ToolCall(Base):
     __tablename__ = 'tool_calls'
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     turn_id: Mapped[str] = mapped_column(ForeignKey('turns.id'), index=True)
+    # Stable operation identity: one model tool call maps to exactly one row.
     request_id: Mapped[str] = mapped_column(String(100), unique=True)
     name: Mapped[str] = mapped_column(String(50))
-    result: Mapped[dict] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(20), default='completed', server_default='completed', index=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    arguments_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 class DevelopmentBudget(Base):
     __tablename__ = 'development_budgets'
