@@ -24,14 +24,6 @@ class PipelineConfig(BaseModel):
     response_preference: ResponsePreference = ResponsePreference.AUTOMATIC
     revision: int = 2
 
-    @model_validator(mode="after")
-    def tier_fits_preference(self):
-        # The API clamps before constructing this; the config refuses to persist
-        # an impossible pair if a caller tries to build one directly.
-        if self.response_tier > PREFERENCE_MAX_TIER[self.response_preference]:
-            raise ValueError("TIER_EXCEEDS_PREFERENCE")
-        return self
-
     @computed_field
     @property
     def max_output_tokens(self) -> int:

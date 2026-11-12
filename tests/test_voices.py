@@ -126,9 +126,9 @@ def test_start_voice_resolves_tier_from_preference_and_bootstrap_carries_guidanc
             headers = {'x-agent-secret':'worker-secret','x-session-id':session['id'],'x-room-name':session['room']}
             return client.post('/internal/agent/bootstrap',headers=headers).json()
 
-        # An explicit request is clamped by the saved preference, not the reverse.
+        # An explicit current-turn request overrides the saved preference.
         brief = start(response_tier=5,response_preference='brief')
-        assert (brief['pipeline']['response_tier'],brief['pipeline']['max_output_tokens']) == (2,128)
+        assert (brief['pipeline']['response_tier'],brief['pipeline']['max_output_tokens']) == (5,1024)
         assert client.post(f"/v1/voice/sessions/{brief['id']}/end").status_code == 200
 
         detailed = start(response_tier=4,response_preference='detailed')

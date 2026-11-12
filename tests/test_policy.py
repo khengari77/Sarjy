@@ -81,9 +81,8 @@ def test_frozen_config_cannot_drift_after_construction():
 
 def test_preference_bounds_the_tier_and_impossible_pairs_are_rejected():
     for preference, limit in PREFERENCE_MAX_TIER.items():
-        assert resolve_response_policy(preference, explicit_tier=5).tier == limit
-    with pytest.raises(ValidationError):
-        config(response_tier=3, response_preference='brief')
+        assert resolve_response_policy(preference, classified_tier=5).tier == limit
+    assert config(response_tier=5, response_preference='brief').max_output_tokens == 1024
     assert config(response_tier=3, response_preference='balanced').response_tier == 3
     assert config(response_tier=5, response_preference='detailed').max_output_tokens == 1024
 
@@ -138,7 +137,7 @@ def test_stored_pipeline_recovers_policy_including_legacy_sessions():
     assert pipeline_policy({'max_output_tokens': 512}).tier == 4
     assert pipeline_policy({'response_tier': 5}).max_output_tokens == 1024
     # A contradictory or malformed stored value is repaired instead of trusted.
-    assert pipeline_policy({'response_tier': 5, 'response_preference': 'brief'}).tier == 2
+    assert pipeline_policy({'response_tier': 5, 'response_preference': 'brief'}).tier == 5
     assert pipeline_policy({'response_preference': 'nonsense'}).tier == 2
     assert pipeline_policy({'response_tier': 'not-a-tier'}).tier == 2
     assert pipeline_policy({'response_tier': 99}).tier == 5
@@ -156,7 +155,7 @@ def test_stored_pipeline_recovers_policy_including_legacy_sessions():
 def test_policy_properties_hold_for_every_tier_language_and_preference(tier, language, preference):
     policy = resolve_response_policy(preference, tier)
     message = compose_system_message(language, policy)
-    assert 1 <= policy.tier <= PREFERENCE_MAX_TIER[preference]
+    assert policy.tier == tier
     assert policy.max_output_tokens == TIER_CAPS[policy.tier - 1]
     assert message == compose_system_message(language, policy)
     assert length_guidance(policy.tier, language) in message

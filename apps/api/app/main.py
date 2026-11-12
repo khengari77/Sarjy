@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from app.config import Settings
 from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy
 from app.domain.pipeline import PipelineConfig, validate_pipeline, PRESET, KEYS
-from app.domain.policy import pipeline_instructions
+from app.domain.policy import pipeline_instructions, pipeline_policy
 from app.domain.sessions import admission_error
 from app.domain.context import ContextRecord, compile_context
 from app.infrastructure.database import Base, Identity, Conversation, Turn, VoiceSession, SessionGate, ToolCall
@@ -272,7 +272,9 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         await db.commit()
         if not changed.rowcount:
             raise HTTPException(403, detail={'code':'SESSION_NOT_ACTIVE'})
-        return {'pipeline':voice.pipeline, 'instructions':pipeline_instructions(voice.pipeline), 'expires_at':voice.expires_at}
+        policy = pipeline_policy(voice.pipeline)
+        pipeline = dict(voice.pipeline, response_tier=policy.tier, max_output_tokens=policy.max_output_tokens, response_preference=policy.preference.value)
+        return {'pipeline':pipeline, 'instructions':pipeline_instructions(pipeline), 'expires_at':voice.expires_at}
 
     @app.post('/internal/agent/turn/start')
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
