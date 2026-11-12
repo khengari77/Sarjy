@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -46,7 +47,7 @@ def test_real_reader_filters_tracked_sources_derivatives_and_unknown_tools_but_k
         seed_memories(
             file, chat, [("m-city", "I live in Paris", "active"), ("old", "I lived in Rome", "superseded")], ["m-city"]
         )
-        with sqlite3.connect(file) as db:
+        with closing(sqlite3.connect(file)) as db, db:
 
             def turn(identifier, role, text, request, snapshot=None):
                 db.execute(
@@ -97,7 +98,7 @@ def test_real_reader_filters_tracked_sources_derivatives_and_unknown_tools_but_k
         assert not ids & {"m-city", "source", "assistant", "derived", "unknown"}
         assert context["weather_policy"]["excluded_memory_ids"] == ["m-city"]
         assert "old" not in context["weather_policy"]["excluded_memory_ids"]
-        with sqlite3.connect(file) as db:
+        with closing(sqlite3.connect(file)) as db, db:
             db.execute("UPDATE context_exclusions SET active=0")
         restored = client.post(
             "/internal/agent/turn/start", headers=headers, json={"request_id": "restored", "text": "Next"}

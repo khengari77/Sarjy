@@ -2,6 +2,7 @@ import asyncio
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 
 import pytest
 from app.domain.contracts import SetCaptionsVisible
@@ -34,7 +35,7 @@ def test_handler_cannot_persist_effects_without_dispatch_ledger(tmp_path, commit
         conversation = chat(client)
         result = submit(client, conversation, source="ui", action={"kind": "ProposeContextExclusion", "query": "trip"})
         assert result.status_code == (503 if commit_attempt else 409)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             assert (
                 db.execute("SELECT title FROM conversations WHERE id=?", (conversation,)).fetchone()[0] != "uncommitted"
             )

@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -86,7 +87,7 @@ def reserve_ledger(client):
 
 
 def session_row(db_path, session_id):
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.row_factory = sqlite3.Row
         row = connection.execute("SELECT * FROM voice_sessions WHERE id=?", (session_id,)).fetchone()
     assert row is not None
@@ -94,13 +95,13 @@ def session_row(db_path, session_id):
 
 
 def sessions_with_status(db_path, status):
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.row_factory = sqlite3.Row
         return [dict(row) for row in connection.execute("SELECT * FROM voice_sessions WHERE status=?", (status,))]
 
 
 def expire(db_path, session_id):
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.execute(
             "UPDATE voice_sessions SET expires_at=? WHERE id=?",
             ((datetime.now(UTC) - timedelta(minutes=1)).isoformat(), session_id),
@@ -133,7 +134,7 @@ def test_failed_dispatch_releases_capacity_without_resetting_ledger(tmp_path, mo
         # Two active sessions remain the hard cap; the failed one does not add a third.
         carol = TestClient(app)
         assert start(carol, conversation(carol)).status_code == 429
-        with sqlite3.connect(db_path) as connection:
+        with closing(sqlite3.connect(db_path)) as connection, connection:
             assert connection.execute("SELECT reserved_units FROM development_budgets").fetchone()[0] == reserved
 
 
@@ -159,7 +160,7 @@ def test_expired_session_is_reaped_and_frees_capacity(tmp_path, monkeypatch):
         assert session_row(db_path, first.json()["id"])["status"] == "ended"
         # Reaping an expired reservation is not room cleanup; no room delete was invented.
         assert session_row(db_path, first.json()["id"])["room_cleanup_completed_at"] is None
-        with sqlite3.connect(db_path) as connection:
+        with closing(sqlite3.connect(db_path)) as connection, connection:
             assert connection.execute("SELECT reserved_units FROM development_budgets").fetchone()[0] == reserved
 
 
@@ -203,7 +204,7 @@ def test_room_cleanup_failure_retries_then_skips_after_success(tmp_path, monkeyp
 
 
 def ledger(db_path):
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
         return connection.execute(
             "SELECT day,provider,reserved_units FROM development_budgets ORDER BY day,provider"
         ).fetchall()
@@ -347,12 +348,11 @@ def test_concurrent_endings_converge_without_resetting_budget(tmp_path, monkeypa
         identifier = start(alice, conversation(alice)).json()["id"]
         reserve_ledger(alice)
         before = ledger(db_path)
-        cookies = dict(alice.cookies)
 
         def end():
-            with TestClient(app) as client:
-                client.cookies.update(cookies)
-                return client.post(f"/v1/voice/sessions/{identifier}/end").status_code
+            # Concurrent requests share the running application's one lifespan.
+            # Starting/stopping extra lifespans races disposal of its shared engine.
+            return alice.post(f"/v1/voice/sessions/{identifier}/end").status_code
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             assert list(pool.map(lambda _: end(), range(2))) == [200, 200]
