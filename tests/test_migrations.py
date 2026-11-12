@@ -71,6 +71,9 @@ async def _postgres_migration():
     alembic(POSTGRES_URL, 'upgrade', '0003')
     connection = await asyncpg.connect(plain)
     try:
+        for role in ('anon', 'authenticated'):
+            if not await connection.fetchval('SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1)', role):
+                await connection.execute('CREATE ROLE ' + role)
         await connection.execute("INSERT INTO identities VALUES ('owner-1','hash','2030-01-01T00:00:00+00:00')")
         await connection.execute("INSERT INTO conversations VALUES ('conversation-1','owner-1','Tripoli trip',3,'2026-11-11T00:00:00+00:00')")
         await connection.execute("INSERT INTO turns VALUES ('turn-1','conversation-1','request-1','user','Plan a trip','completed','2026-11-11T00:00:00+00:00',NULL)")
@@ -95,11 +98,16 @@ async def _postgres_migration():
             await connection.fetch("SELECT id,text,status FROM turns"),
             await connection.fetch("SELECT day,provider,reserved_units FROM development_budgets"),
         )
-        for table in ('memories', 'context_revisions', 'context_operations', 'context_exclusions', 'context_snapshots', 'turn_metrics', 'user_settings', 'setting_revisions'):
+        for table in ('memories', 'context_revisions', 'context_operations', 'context_exclusions', 'context_snapshots', 'turn_metrics', 'user_settings', 'setting_revisions', 'memory_write_requests'):
             rls = await connection.fetchval(
                 "SELECT relrowsecurity FROM pg_class WHERE relname=$1", table
             )
             assert rls is True, table
+            for role in ('anon', 'authenticated'):
+                for privilege in ('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'):
+                    assert not await connection.fetchval(
+                        'SELECT has_table_privilege($1, $2, $3)', role, table, privilege
+                    ), (role, table, privilege)
     finally:
         await connection.close()
     assert embedding == 'vector(1536)'
