@@ -1,7 +1,7 @@
-from typing import Literal
-from pydantic import BaseModel, Field, ConfigDict, computed_field, model_validator
+from typing import Any, Literal
 
-from app.domain.contracts import PREFERENCE_MAX_TIER, TIER_CAPS, ResponsePreference
+from app.domain.contracts import TIER_CAPS, ResponsePreference
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class ModelChoice(BaseModel):
@@ -33,12 +33,19 @@ class PipelineConfig(BaseModel):
         return TIER_CAPS[self.response_tier - 1]
 
 
-PRESET = {"stt": ("deepgram_direct", "nova-3"), "llm": ("openai_direct", "gpt-6-luna"), "tts": ("elevenlabs_direct", "eleven_flash_v2_5")}
-LLM_CHOICES = {("openai_direct", "gpt-6-luna"): "OPENAI_API_KEY", ("deepseek_direct", "deepseek-flash"): "DEEPSEEK_API_KEY"}
+PRESET = {
+    "stt": ("deepgram_direct", "nova-3"),
+    "llm": ("openai_direct", "gpt-6-luna"),
+    "tts": ("elevenlabs_direct", "eleven_flash_v2_5"),
+}
+LLM_CHOICES = {
+    ("openai_direct", "gpt-6-luna"): "OPENAI_API_KEY",
+    ("deepseek_direct", "deepseek-flash"): "DEEPSEEK_API_KEY",
+}
 KEYS = {"stt": "DEEPGRAM_API_KEY", "llm": "OPENAI_API_KEY", "tts": "ELEVEN_API_KEY"}
 
 
-def validate_pipeline(config: PipelineConfig, configured: set[str]) -> list[dict]:
+def validate_pipeline(config: PipelineConfig, configured: set[str]) -> list[dict[str, Any]]:
     errors = []
     for role in PRESET:
         choice = getattr(config, role)

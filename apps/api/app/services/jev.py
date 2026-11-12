@@ -5,6 +5,7 @@ Provider I/O lives here; all decision validation remains in
 spending ledger: callers inject their reservation callback and durable request
 identity, so another component can own caching/claims.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -12,10 +13,10 @@ import json
 import math
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import suppress
 from typing import Final
 
 import httpx
-
 from app.domain.routing import (
     JEV_MODEL,
     ROUTING_POLICY_VERSION,
@@ -28,7 +29,7 @@ from app.domain.routing import (
     validate_classification_payload,
 )
 
-JEV_ENDPOINT: Final = 'https://api.typesafe.ai/v1/systemone'
+JEV_ENDPOINT: Final = "https://api.typesafe.ai/v1/systemone"
 DEFAULT_DEADLINE_SECONDS: Final = 0.75
 DEFAULT_FAILURE_THRESHOLD: Final = 3
 DEFAULT_BYPASS_SECONDS: Final = 300.0
@@ -56,9 +57,9 @@ class JevCircuitBreaker:
         bypass_seconds: float = DEFAULT_BYPASS_SECONDS,
     ):
         if failure_threshold < 1:
-            raise ValueError('failure_threshold must be positive')
+            raise ValueError("failure_threshold must be positive")
         if bypass_seconds <= 0:
-            raise ValueError('bypass_seconds must be positive')
+            raise ValueError("bypass_seconds must be positive")
         self._clock = clock
         self._failure_threshold = failure_threshold
         self._bypass_seconds = bypass_seconds
@@ -110,10 +111,10 @@ class JevClient:
         endpoint: str = JEV_ENDPOINT,
     ):
         if not callable(reserve):
-            raise TypeError('reserve must be an injected async callback')
+            raise TypeError("reserve must be an injected async callback")
         if deadline_seconds <= 0:
-            raise ValueError('deadline_seconds must be positive')
-        self._api_key = api_key or ''
+            raise ValueError("deadline_seconds must be positive")
+        self._api_key = api_key or ""
         self._reserve = reserve
         self._transport = transport
         self._clock = clock
@@ -138,31 +139,31 @@ class JevClient:
         started = self._clock()
 
         if not self._api_key.strip():
-            return self._bypass(request_id, turn_id, 'MISSING_CREDENTIALS', started)
+            return self._bypass(request_id, turn_id, "MISSING_CREDENTIALS", started)
         if self._circuit.is_open():
-            return self._bypass(request_id, turn_id, 'CIRCUIT_OPEN', started)
+            return self._bypass(request_id, turn_id, "CIRCUIT_OPEN", started)
 
         try:
             state = build_classification_state(instruction, context)
         except InstructionTooLong:
-            return self._bypass(request_id, turn_id, 'INSTRUCTION_TOO_LONG', started)
+            return self._bypass(request_id, turn_id, "INSTRUCTION_TOO_LONG", started)
         except ValueError:
-            return self._bypass(request_id, turn_id, 'INVALID_INSTRUCTION', started)
+            return self._bypass(request_id, turn_id, "INVALID_INSTRUCTION", started)
 
         payload = build_systemone_request(state)
-        serialized = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+        serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         estimated_tokens = max(1, math.ceil(len(serialized) / 4))
         reservation = ReservationRequest(
             request_id=request_id,
-            provider='jev',
+            provider="jev",
             model=JEV_MODEL,
             estimated_input_tokens=estimated_tokens,
             estimated_output_tokens=0,
             estimated_cost_micro_usd=max(1, math.ceil(estimated_tokens * MICRO_USD_PER_INPUT_TOKEN)),
-            purpose='classification',
+            purpose="classification",
         )
 
-        phase = 'reservation'
+        phase = "reservation"
         try:
             async with asyncio.timeout(self._deadline_seconds):
                 try:
@@ -170,15 +171,15 @@ class JevClient:
                 except Exception:
                     permitted = False
                 if not permitted:
-                    return self._bypass(request_id, turn_id, 'RESERVATION_DENIED', started)
-                phase = 'network'
+                    return self._bypass(request_id, turn_id, "RESERVATION_DENIED", started)
+                phase = "network"
                 response = await self._post(payload)
         except TimeoutError:
-            if phase == 'reservation':
-                return self._bypass(request_id, turn_id, 'RESERVATION_DENIED', started)
-            return self._failure(request_id, turn_id, 'TIMEOUT', started)
+            if phase == "reservation":
+                return self._bypass(request_id, turn_id, "RESERVATION_DENIED", started)
+            return self._failure(request_id, turn_id, "TIMEOUT", started)
         except httpx.HTTPError:
-            return self._failure(request_id, turn_id, 'PROVIDER_FAILURE', started)
+            return self._failure(request_id, turn_id, "PROVIDER_FAILURE", started)
 
         failure = self._status_failure(response)
         if failure is not None:
@@ -187,7 +188,7 @@ class JevClient:
         try:
             body = response.json()
         except ValueError:
-            return self._failure(request_id, turn_id, 'INVALID_RESPONSE', started)
+            return self._failure(request_id, turn_id, "INVALID_RESPONSE", started)
 
         try:
             outcome = validate_classification_payload(
@@ -197,11 +198,11 @@ class JevClient:
                 policy_version=policy_version,
             )
         except ClassificationError as exc:
-            code = 'MODEL_MISMATCH' if exc.code == 'MODEL_MISMATCH' else 'INVALID_RESPONSE'
+            code = "MODEL_MISMATCH" if exc.code == "MODEL_MISMATCH" else "INVALID_RESPONSE"
             return self._failure(request_id, turn_id, code, started)
 
         self._circuit.record_success()
-        return outcome.model_copy(update={'elapsed_ms': self._elapsed(started)})
+        return outcome.model_copy(update={"elapsed_ms": self._elapsed(started)})
 
     async def _post(self, payload: Mapping[str, object]) -> httpx.Response:
         transport = self._transport
@@ -215,8 +216,8 @@ class JevClient:
             return await client.post(
                 self._endpoint,
                 headers={
-                    'Authorization': 'Bearer ' + self._api_key,
-                    'Content-Type': 'application/json',
+                    "Authorization": "Bearer " + self._api_key,
+                    "Content-Type": "application/json",
                 },
                 json=payload,
             )
@@ -226,24 +227,22 @@ class JevClient:
         status = response.status_code
         if status == 200:
             return None
-        text = ''
-        try:
+        text = ""
+        with suppress(Exception):
             text = response.text.casefold()
-        except Exception:
-            pass
         if status == 402 or any(
             marker in text
-            for marker in ('insufficient credit', 'credit balance', 'credit exhausted', 'insufficient_quota', 'billing')
+            for marker in ("insufficient credit", "credit balance", "credit exhausted", "insufficient_quota", "billing")
         ):
-            return 'CREDIT_EXHAUSTED'
-        return 'PROVIDER_FAILURE'
+            return "CREDIT_EXHAUSTED"
+        return "PROVIDER_FAILURE"
 
     def _elapsed(self, started: float) -> float:
         return round(max(0.0, self._clock() - started) * 1000, 3)
 
     def _bypass(self, request_id: str, turn_id: str, reason: str, started: float) -> RoutingOutcome:
         return RoutingOutcome(
-            kind='bypass',
+            kind="bypass",
             request_id=request_id,
             turn_id=turn_id,
             reason=reason,
@@ -256,10 +255,10 @@ class JevClient:
 
 
 __all__ = [
-    'DEFAULT_BYPASS_SECONDS',
-    'DEFAULT_DEADLINE_SECONDS',
-    'JEV_ENDPOINT',
-    'JevCircuitBreaker',
-    'JevClient',
-    'ReservationCallback',
+    "DEFAULT_BYPASS_SECONDS",
+    "DEFAULT_DEADLINE_SECONDS",
+    "JEV_ENDPOINT",
+    "JevCircuitBreaker",
+    "JevClient",
+    "ReservationCallback",
 ]
