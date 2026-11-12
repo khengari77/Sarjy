@@ -18,7 +18,9 @@ from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response
 from app.domain.pipeline import PipelineConfig, validate_pipeline, PRESET, KEYS
 from app.domain.policy import pipeline_instructions, normalize_pipeline
 from app.domain.sessions import admission_error
-from app.domain.context import ContextRecord, compile_context
+from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
+from app.domain.weather_permissions import decide_weather_request
+from app.services.context_assembly import location_evidence, read_context_inputs
 from app.infrastructure.database import Base, Identity, Conversation, Turn, VoiceSession, SessionGate, ToolCall
 from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogError
 from app.services.budget import reserve as reserve_development_budget
@@ -152,7 +154,7 @@ def _context_error(exc: ContextOperationError) -> HTTPException:
     return HTTPException(exc.status, detail={'code': exc.code})
 
 
-def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None):
+def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None, embedding_adapter=None):
     config = settings or Settings()
     catalog = voice_catalog or ElevenLabsVoices(config.eleven_api_key)
     engine = create_async_engine(config.database_url)
@@ -207,6 +209,13 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         if not conversation or conversation.owner_id != user.id:
             raise HTTPException(404, detail={'code': 'CONVERSATION_NOT_FOUND'})
         return conversation
+
+    from app.routes.actions import register_action_routes
+    register_action_routes(app, database, identity, owned, catalog)
+
+    from app.routes.memory import memory_router
+    from app.services.memory import OpenAIEmbedder
+    app.include_router(memory_router(database, identity, embedding_adapter or OpenAIEmbedder(config.openai_api_key)))
 
     @app.get('/healthz')
     def health():
@@ -381,12 +390,23 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         existing = await db.scalar(select(Turn).where(Turn.conversation_id == voice.conversation_id, Turn.request_id == body.request_id))
         if existing:
             return {'turn_id':existing.id, 'context':existing.snapshot}
-        history = (await db.scalars(select(Turn).where(Turn.conversation_id == voice.conversation_id, Turn.status == 'completed').order_by(Turn.created_at.desc()).limit(20))).all()
         turn = Turn(id=str(uuid4()), conversation_id=voice.conversation_id, request_id=body.request_id, role='user', text=body.text, status='completed')
         pipeline = normalize_pipeline(voice.pipeline)
-        records = (ContextRecord('system','system',pipeline_instructions(pipeline)),) + tuple(ContextRecord(t.id,t.role,t.text) for t in reversed(history)) + (ContextRecord(turn.id,'user',turn.text),)
-        turn.snapshot = compile_context(records, conversation.revision)
-        turn.snapshot['pipeline_config'] = pipeline
+        inputs = await read_context_inputs(db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id)
+        compiled = compile_turn_context(
+            revision=conversation.revision,
+            instructions=pipeline_instructions(pipeline),
+            history=inputs.history,
+            memories=inputs.memories.included,
+            tool_results=inputs.tool_results,
+            current_turn=ContextCandidate(id=turn.id, role='user', text=turn.text, origin='history'),
+            excluded_ids=inputs.excluded_ids,
+            pipeline=pipeline,
+        )
+        # The weather decision is frozen with the snapshot: the tool call later
+        # authorizes against this revision, never against live or stale state.
+        turn.snapshot = {**compiled.to_snapshot(), 'weather_policy': inputs.weather_policy()}
+        validate_assembly(conversation.revision, compiled.manifest, turn.snapshot)
         conversation_id = voice.conversation_id
         db.add(turn)
         if conversation.title == 'New conversation':
@@ -412,6 +432,9 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         if existing:
             return {'id':existing.id}
         turn = Turn(id=str(uuid4()), conversation_id=voice.conversation_id, request_id=key, role='assistant', text=body.text, status=body.status)
+        record_ids = (user_turn.snapshot or {}).get('included_record_ids')
+        if isinstance(record_ids, list) and all(isinstance(value, str) for value in record_ids):
+            turn.snapshot = {'derivation': {'turn_id': user_turn.id, 'record_ids': record_ids}}
         conversation_id = voice.conversation_id
         db.add(turn)
         try:
@@ -430,6 +453,16 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         turn = await db.get(Turn, body.turn_id)
         if not turn or turn.conversation_id != voice.conversation_id:
             raise HTTPException(404)
+        policy = (turn.snapshot or {}).get('weather_policy') or {}
+        decision = decide_weather_request(
+            city=body.city,
+            country=body.country,
+            user_text=turn.text,
+            included=location_evidence(policy.get('included_locations', [])),
+            excluded=location_evidence(policy.get('excluded_locations', [])),
+        )
+        if not decision.allowed:
+            return {'error': decision.reason or 'LOCATION_EXCLUDED'}
         existing = await db.scalar(select(ToolCall).where(ToolCall.request_id == body.request_id, ToolCall.turn_id == body.turn_id))
         if existing:
             return existing.result
