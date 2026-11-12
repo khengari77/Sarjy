@@ -1,4 +1,5 @@
 """Account voice discovery. Credentials and raw provider metadata stay server-side."""
+
 import httpx
 from pydantic import BaseModel, ConfigDict
 
@@ -25,13 +26,15 @@ class VoiceCatalogError(Exception):
 def public_catalog(payload: dict) -> VoiceCatalog:
     """Pure projection: never pass through samples, settings, or account metadata."""
     voices = []
-    for voice in payload.get('voices', []):
-        languages = {entry['language'] for entry in voice.get('verified_languages', []) if entry.get('language')}
-        label = (voice.get('labels') or {}).get('language')
+    for voice in payload.get("voices", []):
+        languages = {entry["language"] for entry in voice.get("verified_languages", []) if entry.get("language")}
+        label = (voice.get("labels") or {}).get("language")
         if label:
             languages.add(label)
-        voices.append(VoiceOption(id=voice['voice_id'], name=voice['name'], languages=tuple(sorted(languages))))
-    return VoiceCatalog(voices=tuple(voices), next_page_token=payload.get('next_page_token') if payload.get('has_more') else None)
+        voices.append(VoiceOption(id=voice["voice_id"], name=voice["name"], languages=tuple(sorted(languages))))
+    return VoiceCatalog(
+        voices=tuple(voices), next_page_token=payload.get("next_page_token") if payload.get("has_more") else None
+    )
 
 
 class ElevenLabsVoices:
@@ -39,29 +42,33 @@ class ElevenLabsVoices:
         self.api_key = api_key
         self.transport = transport
 
-    async def list(self, search: str = '', next_page_token: str | None = None, voice_id: str | None = None) -> VoiceCatalog:
+    async def list(
+        self, search: str = "", next_page_token: str | None = None, voice_id: str | None = None
+    ) -> VoiceCatalog:
         if not self.api_key:
-            raise VoiceCatalogError('VOICE_PROVIDER_NOT_CONFIGURED')
-        params = {'page_size': '100', 'include_total_count': 'false', 'include_custom_rates': 'false'}
+            raise VoiceCatalogError("VOICE_PROVIDER_NOT_CONFIGURED")
+        params = {"page_size": "100", "include_total_count": "false", "include_custom_rates": "false"}
         if search:
-            params['search'] = search
+            params["search"] = search
         if next_page_token:
-            params['next_page_token'] = next_page_token
+            params["next_page_token"] = next_page_token
         if voice_id:
-            params['voice_ids'] = voice_id
+            params["voice_ids"] = voice_id
         try:
             async with httpx.AsyncClient(timeout=8, transport=self.transport) as client:
-                result = await client.get('https://api.elevenlabs.io/v2/voices', params=params, headers={'xi-api-key': self.api_key})
+                result = await client.get(
+                    "https://api.elevenlabs.io/v2/voices", params=params, headers={"xi-api-key": self.api_key}
+                )
                 if result.status_code in {401, 403}:
-                    raise VoiceCatalogError('VOICE_CATALOG_ACCESS_DENIED')
+                    raise VoiceCatalogError("VOICE_CATALOG_ACCESS_DENIED")
                 result.raise_for_status()
                 return public_catalog(result.json())
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-            raise VoiceCatalogError('VOICE_CATALOG_UNAVAILABLE') from exc
+            raise VoiceCatalogError("VOICE_CATALOG_UNAVAILABLE") from exc
 
     async def require(self, voice_id: str) -> VoiceOption:
         catalog = await self.list(voice_id=voice_id)
         for voice in catalog.voices:
             if voice.id == voice_id:
                 return voice
-        raise VoiceCatalogError('VOICE_UNAVAILABLE', 422)
+        raise VoiceCatalogError("VOICE_UNAVAILABLE", 422)
