@@ -30,6 +30,7 @@ from app.domain.context_operations import (
     sign_proposal,
     verify_proposal,
 )
+from app.services.memory_eligibility import blocked_memory_ids
 from app.infrastructure.database import (
     Conversation,
     ContextExclusion,
@@ -86,12 +87,10 @@ async def keyword_search(
     query: str,
     limit: int,
 ) -> Sequence[MemoryCandidate]:
-    """Local fallback retrieval against the shared memory table.
+    """Deterministic fallback retrieval against the shared memory table.
 
-    #5 owns semantic/pgvector retrieval.  Until that service is merged this
-    adapter provides deterministic owner-scoped keyword matching so preview and
-    confirmation are exercised against real persisted rows.  Integration with
-    the semantic service remains unverified.
+    Applies the same owner-scoped correction-lineage exclusions as semantic
+    retrieval so injected/test adapters cannot drift from production policy.
     """
     rows = (
         await db.scalars(
@@ -117,9 +116,7 @@ async def keyword_search(
                 )
             )
     scored.sort(key=lambda candidate: (-candidate.score, candidate.id))
-    excluded = set(await db.scalars(select(ContextExclusion.memory_id).where(
-        ContextExclusion.owner_id == owner_id, ContextExclusion.conversation_id == conversation_id,
-        ContextExclusion.active.is_(True))))
+    excluded = await blocked_memory_ids(db, owner_id, conversation_id)
     return tuple(item for item in scored if item.id not in excluded)[:limit]
 
 
