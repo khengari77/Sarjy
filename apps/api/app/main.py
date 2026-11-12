@@ -110,6 +110,9 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
             raise HTTPException(404, detail={'code': 'CONVERSATION_NOT_FOUND'})
         return conversation
 
+    from app.routes.actions import register_action_routes
+    register_action_routes(app, database, identity, owned, catalog)
+
     from app.routes.memory import memory_router
     from app.services.memory import OpenAIEmbedder
     app.include_router(memory_router(database, identity, embedding_adapter or OpenAIEmbedder(config.openai_api_key)))
