@@ -13,7 +13,9 @@ class ModelChoice(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    """Resolved session configuration. The output cap is derived, never supplied."""
+    """Already-resolved session configuration, including valid preference overrides.
+
+    The output cap is derived, never supplied."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     runtime: Literal["livekit_remote"] = "livekit_remote"

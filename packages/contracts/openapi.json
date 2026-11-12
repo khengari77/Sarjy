@@ -705,7 +705,7 @@
           "tts"
         ],
         "title": "PipelineConfig",
-        "description": "Resolved session configuration. The output cap is derived, never supplied."
+        "description": "Already-resolved session configuration, including valid preference overrides.\n\nThe output cap is derived, never supplied."
       },
       "ResponsePreference": {
         "enum": [

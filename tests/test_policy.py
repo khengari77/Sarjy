@@ -79,9 +79,12 @@ def test_frozen_config_cannot_drift_after_construction():
     assert built.response_tier == 2 and built.max_output_tokens == 128
 
 
-def test_preference_bounds_the_tier_and_impossible_pairs_are_rejected():
+def test_classified_tiers_are_bounded_by_saved_preference():
     for preference, limit in PREFERENCE_MAX_TIER.items():
         assert resolve_response_policy(preference, classified_tier=5).tier == limit
+
+
+def test_resolved_configuration_preserves_explicit_preference_overrides():
     assert config(response_tier=5, response_preference='brief').max_output_tokens == 1024
     assert config(response_tier=3, response_preference='balanced').response_tier == 3
     assert config(response_tier=5, response_preference='detailed').max_output_tokens == 1024

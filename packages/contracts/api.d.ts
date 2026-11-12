@@ -334,7 +334,9 @@ export interface components {
         };
         /**
          * PipelineConfig
-         * @description Resolved session configuration. The output cap is derived, never supplied.
+         * @description Already-resolved session configuration, including valid preference overrides.
+         *
+         *     The output cap is derived, never supplied.
          */
         PipelineConfig: {
             /**

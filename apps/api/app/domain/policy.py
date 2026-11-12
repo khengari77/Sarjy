@@ -92,8 +92,8 @@ def pipeline_policy(pipeline: Mapping[str, Any]) -> ResponsePolicy:
     """Read the resolved policy back from a stored/bootstrapped pipeline.
 
     Revision-1 sessions stored only ``max_output_tokens`` (96 by default), so a
-    missing tier is inferred instead of failing an in-flight call. The result is
-    always preference-consistent because it goes through the same resolver.
+    missing tier is inferred instead of failing an in-flight call. A stored tier
+    is already resolved and is preserved, including explicit preference overrides.
     """
     try:
         preference = ResponsePreference(pipeline.get('response_preference', ResponsePreference.AUTOMATIC))

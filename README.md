@@ -98,7 +98,7 @@ OpenAI is the temporary default (`openai_direct`, `gpt-6-luna`, Responses API, r
 
 OpenAI has a separate **$1/day development ceiling**, enforced with durable conservative reservations of **$0.02 before each LLM request** (50 requests/day, including tool continuations). This deliberately stops earlier than token billing would require. The bounded text-only request uses at most 64KB canonical context, the one fixed weather tool, at most 1024 output tokens (tier 5; tier 2 by default), Standard tier, no provider built-in tools, and no SDK/LiveKit retries. The allowance is based on the checked 11 November 2026 Luna rates ($0.10/M input, $0.50/M output); recheck pricing before changing models or request bounds. Reservations are not invoices and are not refunded after errors, interruptions, or uncertain delivery.
 
-Response length is one of five tiers with hard provider caps of **64/128/256/512/1024** output tokens. The session resolves a tier from the saved preference and any explicit request (a `brief` preference caps at tier 2, `balanced` at tier 3, `detailed` at tier 5), and the tier is stored with the session. The model additionally receives a plain-language word target well below its cap (for example "about 40 words or fewer" for tier 2) so ordinary replies do not approach truncation. Instructions never contain token counts, and complexity never changes reasoning: reasoning stays disabled for every tier. Arabic has separately authored targets because it needs roughly 1.5–2x the tokens per word.
+Response length is one of five tiers with hard provider caps of **64/128/256/512/1024** output tokens. The session resolves a tier from the saved preference and any explicit request (for automatic/classified requests, `brief` caps at tier 2, `balanced` at tier 3, `detailed` at tier 5; a valid explicit current-turn tier overrides these preference limits), and the tier is stored with the session. The model additionally receives a plain-language word target well below its cap (for example "about 40 words or fewer" for tier 2) so ordinary replies do not approach truncation. Instructions never contain token counts, and complexity never changes reasoning: reasoning stays disabled for every tier. Arabic has separately authored targets because it needs roughly 1.5–2x the tokens per word.
 
 ElevenLabs is more conservative: **500 characters/day**, reserved before text is forwarded for synthesis. No unattended audio simulations, repeated synthesis benchmarks, paid top-ups, or quota-triggered provider switching. Prefer text-only development. Partial/failed synthesis reservations also remain charged to this local allowance.
 
@@ -151,3 +151,8 @@ Each remote deletion is bounded to 10 seconds. Results report selected/completed
 ## Agent contributions
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before claiming work. Use a separate worktree and branch per issue; open a PR and await coordinator review. Authors must not merge.
+
+
+### Response-policy deployment order
+
+Deploy the API before the worker: the new worker requires authoritative `instructions` in bootstrap. Verify the API returns those instructions before updating the worker. Keep the existing worker until that check succeeds; roll back the worker before rolling back the API. This PR does not authorize deployment.
