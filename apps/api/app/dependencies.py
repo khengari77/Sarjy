@@ -7,7 +7,8 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.infrastructure.database import Conversation, Identity
+from app.infrastructure.database import Identity
+from app.services.authorization import owned_conversation
 
 COOKIE = "sarjy_demo"
 
@@ -29,9 +30,6 @@ def build_dependencies(sessions):
         return user
 
     async def owned(conversation_id: str, user: Identity, db: AsyncSession):
-        conversation = await db.get(Conversation, conversation_id)
-        if not conversation or conversation.owner_id != user.id:
-            raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
-        return conversation
+        return await owned_conversation(db, user.id, conversation_id)
 
     return database, identity, owned

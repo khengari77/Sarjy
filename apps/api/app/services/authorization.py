@@ -7,10 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.infrastructure.database import ContextOperation, ContextSnapshot, Conversation, Memory, Turn
 
 
-async def owned_conversation(db: AsyncSession, owner_id: str, conversation_id: str):
-    record = await db.scalar(
-        select(Conversation).where(Conversation.id == conversation_id, Conversation.owner_id == owner_id)
-    )
+async def owned_conversation(db: AsyncSession, owner_id: str, conversation_id: str, *, lock: bool = False):
+    statement = select(Conversation).where(Conversation.id == conversation_id, Conversation.owner_id == owner_id)
+    if lock:
+        statement = statement.with_for_update()
+    record = await db.scalar(statement)
     if record is None:
         raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
     return record

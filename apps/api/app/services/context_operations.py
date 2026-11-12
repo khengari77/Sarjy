@@ -35,11 +35,11 @@ from app.infrastructure.database import (
     ContextExclusion,
     ContextOperation,
     ContextRevision,
-    Conversation,
     Memory,
     SessionGate,
     now,
 )
+from app.services.authorization import owned_conversation
 
 SCOPE = "conversation"
 EXCLUDE = "exclude"
@@ -183,18 +183,6 @@ def _operation_key(owner_id: str, conversation_id: str, kind: str, idempotency_k
     return _digest("context-operation", owner_id, conversation_id, kind, idempotency_key)
 
 
-async def _owned_conversation(
-    db: AsyncSession, owner_id: str, conversation_id: str, *, lock: bool = False
-) -> Conversation:
-    statement = select(Conversation).where(Conversation.id == conversation_id, Conversation.owner_id == owner_id)
-    if lock:
-        statement = statement.with_for_update()
-    conversation = await db.scalar(statement)
-    if conversation is None:
-        raise ContextOperationError("CONVERSATION_NOT_FOUND", 404)
-    return conversation
-
-
 async def _replay(db: AsyncSession, key: str, owner_id: str, conversation_id: str, request_hash: str) -> dict | None:
     existing = await db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
     if existing is None:
@@ -224,7 +212,7 @@ async def create_proposal(
     """Build a preview without writing anything. Read-only by construction."""
     if not secret:
         raise ContextOperationError("CONTEXT_PROPOSALS_NOT_CONFIGURED", 503)
-    conversation = await _owned_conversation(db, owner_id, conversation_id)
+    conversation = await owned_conversation(db, owner_id, conversation_id)
     candidates = tuple(await search(db, owner_id=owner_id, conversation_id=conversation_id, query=query, limit=limit))
     # The owner filter is re-applied defensively for adapters that might return
     # foreign rows; preview must never surface another tenant's memory.
@@ -290,7 +278,7 @@ async def confirm_proposal(
     if not secret:
         raise ContextOperationError("CONTEXT_PROPOSALS_NOT_CONFIGURED", 503)
     await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
-    conversation = await _owned_conversation(db, owner_id, conversation_id, lock=True)
+    conversation = await owned_conversation(db, owner_id, conversation_id, lock=True)
     try:
         payload = verify_proposal(proposal, secret)
     except ValueError as exc:
@@ -412,7 +400,7 @@ async def _undo_operation(
     commit: bool = True,
 ) -> dict:
     await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
-    conversation = await _owned_conversation(db, owner_id, conversation_id, lock=True)
+    conversation = await owned_conversation(db, owner_id, conversation_id, lock=True)
     original = await db.scalar(
         select(ContextOperation).where(
             ContextOperation.id == operation_id,
@@ -519,7 +507,7 @@ async def _undo_operation(
 
 
 async def list_operations(db: AsyncSession, *, owner_id: str, conversation_id: str) -> dict:
-    conversation = await _owned_conversation(db, owner_id, conversation_id)
+    conversation = await owned_conversation(db, owner_id, conversation_id)
     rows = (
         await db.scalars(
             select(ContextOperation)
@@ -547,7 +535,7 @@ async def list_operations(db: AsyncSession, *, owner_id: str, conversation_id: s
 
 
 async def context_state(db: AsyncSession, *, owner_id: str, conversation_id: str) -> dict:
-    conversation = await _owned_conversation(db, owner_id, conversation_id)
+    conversation = await owned_conversation(db, owner_id, conversation_id)
     excluded_ids = (
         await db.scalars(
             select(ContextExclusion.memory_id).where(

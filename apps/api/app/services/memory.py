@@ -15,7 +15,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
-from app.infrastructure.database import Conversation, Memory, MemoryWriteRequest, Turn, now
+from app.infrastructure.database import Memory, MemoryWriteRequest, Turn, now
+from app.services.authorization import owned_conversation, owned_memory
 from app.services.budget import guarded_openai_request, reserve_in_transaction
 from app.services.memory_eligibility import blocked_memory_ids
 
@@ -138,19 +139,8 @@ class MemoryService:
         self.db, self.embedder = db, embedder
         self.sessions = async_sessionmaker(db.bind, expire_on_commit=False)
 
-    async def conversation(self, owner_id, conversation_id):
-        row = await self.db.scalar(
-            select(Conversation).where(Conversation.id == conversation_id, Conversation.owner_id == owner_id)
-        )
-        if row is None:
-            raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
-        return row
-
     async def get_memory(self, owner_id, memory_id):
-        row = await self.db.scalar(select(Memory).where(Memory.id == memory_id, Memory.owner_id == owner_id))
-        if row is None:
-            raise HTTPException(404, detail={"code": "MEMORY_NOT_FOUND"})
-        return row
+        return await owned_memory(self.db, owner_id, memory_id)
 
     async def create_memory(self, owner_id, conversation_id, source_turn_id, content, idempotency_key):
         return await self._write(owner_id, conversation_id, source_turn_id, content, idempotency_key, None, None)
@@ -291,11 +281,7 @@ class MemoryService:
                 raise HTTPException(503, detail={"code": "MEMORY_REQUEST_UNKNOWN"})
             if claim["fingerprint"] != fingerprint:
                 raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-            conversation = await db.scalar(
-                select(Conversation).where(Conversation.id == conversation_id, Conversation.owner_id == owner_id)
-            )
-            if conversation is None:
-                raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
+            await owned_conversation(db, owner_id, conversation_id)
             if source_turn_id is not None:
                 source = await db.scalar(
                     select(Turn).where(Turn.id == source_turn_id, Turn.conversation_id == conversation_id)
@@ -347,7 +333,7 @@ class MemoryService:
             raise HTTPException(422, detail={"code": "INVALID_MEMORY_REQUEST"})
         if previous_id is not None and (not isinstance(expected_version, int) or expected_version < 1):
             raise HTTPException(422, detail={"code": "INVALID_MEMORY_VERSION"})
-        await self.conversation(owner_id, conversation_id)
+        await owned_conversation(self.db, owner_id, conversation_id)
         if source_turn_id is not None:
             turn = await self.db.scalar(
                 select(Turn).where(Turn.id == source_turn_id, Turn.conversation_id == conversation_id)
@@ -413,11 +399,7 @@ class MemoryService:
             raise HTTPException(422, detail={"code": "INVALID_MEMORY_QUERY"})
         # Search owns its read and budget sessions; never rollback a caller's effects.
         async with self.sessions() as access:
-            conversation = await access.scalar(
-                select(Conversation).where(Conversation.id == conversation_id, Conversation.owner_id == owner_id)
-            )
-            if conversation is None:
-                raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
+            await owned_conversation(access, owner_id, conversation_id)
         async with self.sessions() as budget_db:
             vector = validate_embedding(await self.embedder.embed(budget_db, query))
         async with self.sessions() as db:
