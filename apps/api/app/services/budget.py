@@ -34,6 +34,10 @@ async def guarded_openai_request(db: AsyncSession, request):
 
     This covers embeddings/extraction as well as generation. No refunds follow
     delivery uncertainty. Call only after authorization and argument validation.
+
+    reserve() commits its session. The caller MUST provide a clean/separate
+    session with no pending business mutations and call outside business-effect
+    transactions; never use a dispatcher/proposal transaction for this guard.
     """
     await reserve(db, 'openai')
     return await request()

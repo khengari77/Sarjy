@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from app.infrastructure.database import Base, Identity, Conversation, Memory, DevelopmentBudget
-from app.services.authorization import owned_conversation, owned_memory
+from app.infrastructure.database import Base, Identity, Conversation, Memory, DevelopmentBudget, ContextOperation, ContextSnapshot, Turn
+from app.services.authorization import owned_conversation, owned_memory, owned_operation, owned_snapshot
 from app.services.budget import guarded_openai_request
 from app.domain.budget import budget_day, OPENAI_DAILY_MICRO_USD
 
@@ -63,6 +63,40 @@ def test_guard_reserves_before_delivery_and_retains_uncertain_spending(tmp_path)
                     await guarded_openai_request(db,external)
             async with factory() as db:
                 assert await db.scalar(select(DevelopmentBudget.reserved_units)) == OPENAI_REQUEST_MICRO_USD
+        finally:
+            await engine.dispose()
+    asyncio.run(run())
+
+
+def test_operation_and_snapshot_owner_isolation(tmp_path):
+    async def run():
+        engine=create_async_engine(f'sqlite+aiosqlite:///{tmp_path}/resources.db')
+        factory=async_sessionmaker(engine,expire_on_commit=False)
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            async with factory() as db:
+                db.add_all([Identity(id='alice',token_hash='a',expires_at='2030-01-01'),Identity(id='bob',token_hash='b',expires_at='2030-01-01')])
+                await db.commit()
+                db.add_all([Conversation(id='chat',owner_id='alice',title='Alice',revision=0),Conversation(id='bob-chat',owner_id='bob',title='Bob',revision=0),Conversation(id='other',owner_id='alice',title='Other',revision=0)])
+                await db.commit()
+                db.add(Turn(id='turn',conversation_id='chat',request_id='request',role='user',text='Fact',status='completed'))
+                db.add(ContextOperation(id='operation',owner_id='alice',conversation_id='chat',command_type='exclude',payload={},idempotency_key='operation-key',outcome='completed'))
+                await db.commit()
+                db.add(ContextSnapshot(id='snapshot',turn_id='turn',revision=0,canonical_messages=[],manifest={},pipeline_config={}))
+                await db.commit()
+                assert (await owned_operation(db,'alice','operation',conversation_id='chat')).id=='operation'
+                assert (await owned_snapshot(db,'alice','turn')).id=='snapshot'
+                for owner,conversation in [('bob','chat'),('bob','bob-chat'),('alice','other'),('alice','missing')]:
+                    with pytest.raises(HTTPException) as error:
+                        await owned_operation(db,owner,'operation',conversation_id=conversation)
+                    assert error.value.status_code==404
+                with pytest.raises(HTTPException):
+                    await owned_operation(db,'alice','missing',conversation_id='chat')
+                for owner,turn in [('bob','turn'),('unknown','turn'),('alice','missing')]:
+                    with pytest.raises(HTTPException) as error:
+                        await owned_snapshot(db,owner,turn)
+                    assert error.value.status_code==404
         finally:
             await engine.dispose()
     asyncio.run(run())
