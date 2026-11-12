@@ -459,7 +459,11 @@ async def list_operations(db: AsyncSession, *, owner_id: str, conversation_id: s
     rows = (
         await db.scalars(
             select(ContextOperation)
-            .where(ContextOperation.owner_id == owner_id, ContextOperation.conversation_id == conversation_id)
+            .where(
+                ContextOperation.owner_id == owner_id,
+                ContextOperation.conversation_id == conversation_id,
+                ContextOperation.command_type.in_((EXCLUDE, RESTORE)),
+            )
             .order_by(ContextOperation.created_at.desc(), ContextOperation.id)
         )
     ).all()
