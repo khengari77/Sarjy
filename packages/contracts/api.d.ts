@@ -1129,6 +1129,22 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** AssistantContinuation */
+        AssistantContinuation: {
+            /**
+             * Kind
+             * @default assistant
+             * @constant
+             */
+            kind: "assistant";
+            /** Content */
+            content: string;
+            /**
+             * Interrupted
+             * @default false
+             */
+            interrupted: boolean;
+        };
         /** ModelMessage */
         ModelMessage: {
             /**
@@ -1168,7 +1184,7 @@ export interface components {
             instructions: string;
             selection: components["schemas"]["ContextSelection"];
             response_policy: components["schemas"]["ResponsePolicy"];
-            settings: components["schemas"]["UserSettings"];
+            settings: components["schemas"]["UserSettings"] | null;
             /**
              * Messages
              * @default []
@@ -1178,7 +1194,7 @@ export interface components {
              * Tool History
              * @default []
              */
-            tool_history: components["schemas"]["ModelToolItem"][];
+            tool_history: (components["schemas"]["ModelToolItem"] | components["schemas"]["AssistantContinuation"])[];
             /**
              * Memories
              * @default []
@@ -1193,7 +1209,7 @@ export interface components {
              * Settings Revision
              * @default 0
              */
-            settings_revision: number;
+            settings_revision: number | null;
             /**
              * Language
              * @default en

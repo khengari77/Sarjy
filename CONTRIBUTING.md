@@ -53,3 +53,8 @@ Implement only assigned scope, verify acceptance, inspect exact staged paths/dif
 **Authors MUST NOT merge their own PRs, push directly to main, enable auto-merge, deploy changes or declare integration complete. The coordinating assistant must review the PR and acceptance evidence first. Passing CI is necessary but does not authorize merging. Changes after review require re-review.**
 
 PR descriptions must include linked issue/checklist IDs, problem and resulting behavior, scope/contracts/migrations, criterion-by-criterion evidence, commands/results, limitations and unrun checks. Do not auto-close issues in PR text; the coordinator closes them after reviewed integration and required acceptance. Stop at review handoff and leave your worktree intact.
+
+
+### Final-commit bug review
+
+Every merge requires a written bug review tied to the exact final commit SHA, separate from test execution. Review changed code, callers, compatibility and failure paths; record findings and reproduction evidence in the PR. Resolve all blocking findings and require passing CI for that SHA. Changes after review invalidate approval and require review of the new head. Green tests alone never authorize merging.
