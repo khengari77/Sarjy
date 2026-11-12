@@ -214,8 +214,19 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
     register_action_routes(app, database, identity, owned, catalog)
 
     from app.routes.memory import memory_router
-    from app.services.memory import OpenAIEmbedder
-    app.include_router(memory_router(database, identity, embedding_adapter or OpenAIEmbedder(config.openai_api_key)))
+    from app.services.memory import OpenAIEmbedder, MemoryService
+    from app.domain.context_operations import MemoryCandidate, classify
+    from app.services.context_actions import build_context_action_handlers
+    embedder = embedding_adapter or OpenAIEmbedder(config.openai_api_key)
+
+    async def semantic_search(db, *, owner_id, conversation_id, query, limit):
+        rows = await MemoryService(db, embedder).search_memories(owner_id, conversation_id, query, limit)
+        return tuple(MemoryCandidate(id=row.id, content=row.content, source_turn_id=row.source_turn_id,
+            score=1.0 - (row.distance or 0.0), kind=classify(row.content)) for row in rows)
+
+    app.state.action_handlers.update(build_context_action_handlers(
+        secret=config.context_proposal_secret or config.agent_service_secret, search=semantic_search))
+    app.include_router(memory_router(database, identity, embedder))
 
     @app.get('/healthz')
     def health():
@@ -508,6 +519,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
                 keep=body.keep,
                 limit=body.limit,
                 secret=proposal_secret(),
+                search=semantic_search,
             )
         except ContextOperationError as exc:
             raise _context_error(exc) from exc

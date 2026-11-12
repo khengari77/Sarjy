@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fastapi.testclient import TestClient
 from app.config import Settings
-from app.main import create_app
+from test_context_workflow import create_app
 from app.domain.context_operations import restore_diff, sign_proposal
 from test_context_workflow import configured, seed
 

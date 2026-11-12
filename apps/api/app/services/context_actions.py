@@ -20,7 +20,7 @@ from app.services.context_operations import (
 
 
 def build_context_action_handlers(*, secret: str, search: MemorySearcher = keyword_search) -> dict:
-    async def search_memory(*, db, owner_id, conversation_id, request_id, expected_revision, action):
+    async def prepare_search(*, db, owner_id, conversation_id, request_id, expected_revision, action):
         # Read-only preview: semantic search results with keep-exceptions.
         return await create_proposal(
             db,
@@ -32,6 +32,16 @@ def build_context_action_handlers(*, secret: str, search: MemorySearcher = keywo
             secret=secret,
             search=search,
         )
+
+    async def search_memory(*, db, owner_id, conversation_id, request_id, expected_revision, action, prepared):
+        from fastapi import HTTPException
+        from app.infrastructure.database import Conversation
+        conversation = await db.get(Conversation, conversation_id)
+        if conversation.revision != prepared['revision'] or conversation.revision != expected_revision:
+            raise HTTPException(409, detail={'code': 'REVISION_CONFLICT'})
+        return prepared
+
+    search_memory.prepare = prepare_search
 
     async def restore_operation(*, db, owner_id, conversation_id, request_id, expected_revision, action):
         # Undo is revision-guarded; request_id supplies durable idempotency.

@@ -14,7 +14,14 @@ from app.domain.context_operations import (
     sign_proposal,
     verify_proposal,
 )
-from app.main import create_app
+from app.main import create_app as real_create_app
+
+class FakeEmbedder:
+    async def embed(self, db, text):
+        return (1.0,) + (0.0,) * 1535
+
+def create_app(settings):
+    return real_create_app(settings, embedding_adapter=FakeEmbedder())
 
 
 def candidate(record_id, content, kind='memory'):
@@ -89,6 +96,7 @@ def seed(file, chat, rows=(
                 "'2026-11-12T00:00:00+00:00', '2026-11-12T00:00:00+00:00')",
                 (record_id, chat, content, chat),
             )
+        db.execute('UPDATE memories SET embedding=?', (json.dumps([1.0] + [0.0] * 1535),))
         db.commit()
 
 
@@ -189,3 +197,18 @@ def test_tenant_isolation_and_bad_proposals(tmp_path):
         )
         assert forged.status_code == 404
     assert counts(file) == (0, 0, 0, 0)
+
+
+def test_registered_semantic_actions_find_nonlexical_match_and_replay(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post('/v1/demo-session')
+        chat = client.post('/v1/conversations').json()['id']
+        seed(file, chat)
+        body = {'conversation_id': chat, 'request_id': 'semantic', 'expected_revision': 0,
+                'source': 'ui', 'action': {'kind': 'SearchMemory', 'query': 'vacation'}}
+        response = client.post('/v1/actions', json=body)
+        assert response.status_code == 200, response.text
+        assert {row['id'] for row in response.json()['result']['matches']} == {'trip', 'hotel', 'budget'}
+        assert client.post('/v1/actions', json=body).json() == response.json()
+        assert counts(file)[:3] == (0, 0, 0)
