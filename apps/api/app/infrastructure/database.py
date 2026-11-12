@@ -90,6 +90,23 @@ class Memory(Base):
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
 
 
+class MemoryWriteRequest(Base):
+    __tablename__ = 'memory_write_requests'
+    __table_args__ = (UniqueConstraint('owner_id', 'request_key', name='uq_memory_write_owner_request'),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey('identities.id'), index=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey('conversations.id'))
+    request_key: Mapped[str] = mapped_column(String(100))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(20))
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
 class ContextRevision(Base):
     __tablename__ = 'context_revisions'
     __table_args__ = (UniqueConstraint('conversation_id', 'revision'),)
