@@ -54,7 +54,7 @@ class WeatherInput(BaseModel):
     country: str | None = Field(default=None, max_length=120)
 
 
-def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None):
+def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None, embedding_adapter=None):
     config = settings or Settings()
     catalog = voice_catalog or ElevenLabsVoices(config.eleven_api_key)
     engine = create_async_engine(config.database_url)
@@ -109,6 +109,10 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         if not conversation or conversation.owner_id != user.id:
             raise HTTPException(404, detail={'code': 'CONVERSATION_NOT_FOUND'})
         return conversation
+
+    from app.routes.memory import memory_router
+    from app.services.memory import OpenAIEmbedder
+    app.include_router(memory_router(database, identity, embedding_adapter or OpenAIEmbedder(config.openai_api_key)))
 
     @app.get('/healthz')
     def health():

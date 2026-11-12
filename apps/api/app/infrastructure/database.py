@@ -74,6 +74,9 @@ class DevelopmentBudget(Base):
 
 class Memory(Base):
     __tablename__ = 'memories'
+    __table_args__ = (UniqueConstraint('owner_id', 'request_key'),)
+    supersedes_id: Mapped[str | None] = mapped_column(ForeignKey('memories.id'), nullable=True)
+    request_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey('identities.id'), index=True)
     content: Mapped[str] = mapped_column(Text)
