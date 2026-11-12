@@ -142,6 +142,8 @@ class SarjyAgent(Agent):
             if not openai_request_within_bounds(serialized, tools, request.response_policy.max_output_tokens):
                 raise ValueError('OPENAI_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS')
             await self.reserve('openai')
+        elif self.pipeline['llm']['provider'] == 'deepseek_direct':
+            await self.reserve('deepseek')
         adapter = adapter_for(self.session.llm, self.pipeline['llm']['provider'])
         async for event in adapter.stream(request, tools, model_settings.tool_choice if model_settings else None):
             chunk = livekit_chunk(event)

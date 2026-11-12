@@ -8,8 +8,9 @@ from main import SarjyAgent
 from test_generation import request
 
 
+@pytest.mark.parametrize('provider', ['openai_direct', 'deepseek_direct'])
 @pytest.mark.parametrize('denied', [False, True])
-def test_worker_replaces_stale_history_and_reserves_before_provider(monkeypatch, denied):
+def test_worker_replaces_stale_history_and_reserves_before_provider(monkeypatch, denied, provider):
     observed, order = [], []
     class Provider:
         @asynccontextmanager
@@ -28,7 +29,7 @@ def test_worker_replaces_stale_history_and_reserves_before_provider(monkeypatch,
                 return httpx.Response(429 if denied else 200, json={})
             return httpx.Response(200, json={'turn_id': 'turn', 'context': {'model_request': request().model_dump(mode='json'), 'revision': 7, 'messages': [item.model_dump() for item in request().messages]}})
         async with httpx.AsyncClient(base_url='http://test', transport=httpx.MockTransport(backend)) as client:
-            agent = SarjyAgent(client, {'llm': {'provider': 'openai_direct'}, 'max_output_tokens': 128}, 'Rules')
+            agent = SarjyAgent(client, {'llm': {'provider': provider}, 'max_output_tokens': 128}, 'Rules')
             context = llm.ChatContext()
             context.add_message(role='assistant', content='Excluded stale city')
             context.add_message(role='user', content='Weather?')

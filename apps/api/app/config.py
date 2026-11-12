@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ''
     openai_api_key: str = ''
     default_llm_provider: Literal['openai_direct','deepseek_direct'] = 'deepseek_direct'
+    deepseek_budget_enabled: bool = True
+    deepseek_daily_micro_usd: int = 250_000
+    deepseek_request_micro_usd: int = 2_000
     eleven_api_key: str = ''
     livekit_url: str = ''
     livekit_api_key: str = ''
