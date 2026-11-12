@@ -302,3 +302,24 @@ def test_resume_retains_original_plan_when_capacity_shrinks(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="Deployment changed"):
         asyncio.run(runner.execute(Namespace(mode="resume", owner="owner", report=path)))
     assert visited == ["S1", "S2", "S3"]
+
+
+def test_resume_after_start_never_instructs_another_admission(tmp_path, monkeypatch, capsys):
+    class Reader:
+        async def preflight(self, owner):
+            return {"allocation": []}  # Original session occupies the active slot.
+
+        async def session(self, owner, session, supported):
+            return {"conversation_id": "c"}
+
+    inputs = iter(["original-session", "stop"])
+    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+    report = {
+        "owner": "owner",
+        "before": {"session_ids": []},
+        "scenarios": {"S1": {"human": {}, "start_requested_at": "2026-11-13"}},
+    }
+    with pytest.raises(InterruptedError):
+        asyncio.run(runner.scenario(Reader(), report, "S1", tmp_path / "report.json"))
+    assert report["scenarios"]["S1"]["session"] == "original-session"
+    assert "Do not start another call" in capsys.readouterr().out

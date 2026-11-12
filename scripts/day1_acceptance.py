@@ -306,11 +306,16 @@ async def scenario(reader, report: dict, label: str, path: Path) -> None:
         raise InterruptedError
     if "session" not in item:
         current = await reader.preflight(report["owner"])
-        if not current["allocation"]:
-            raise InterruptedError
-        print(f"{label}: follow docs/day1-acceptance-runbook.md. Start at most ONE call. Stop on any guard/error.")
-        print("For S2 block microphone before starting. If denial admits no call, record it in the manual record;")
-        print("the helper cannot bind a nonexistent session. Do not retry blindly.")
+        if "start_requested_at" in item:
+            print("Resume: bind the ORIGINAL admitted session ID only. Do not start another call.")
+        else:
+            if not current["allocation"]:
+                raise InterruptedError
+            item["start_requested_at"] = now()
+            save(path, report)
+            print(f"{label}: follow docs/day1-acceptance-runbook.md. Start at most ONE call. Stop on any guard/error.")
+            print("For S2 block microphone before starting. If denial admits no call, record it in the manual record;")
+            print("the helper cannot bind a nonexistent session. Do not retry blindly.")
         session_id = identifier("Exact newly admitted session ID (not the response token): ")
         if session_id in report["before"]["session_ids"] or any(
             s.get("session") == session_id for s in report["scenarios"].values()
