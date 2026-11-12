@@ -348,12 +348,11 @@ def test_concurrent_endings_converge_without_resetting_budget(tmp_path, monkeypa
         identifier = start(alice, conversation(alice)).json()["id"]
         reserve_ledger(alice)
         before = ledger(db_path)
-        cookies = dict(alice.cookies)
 
         def end():
-            with TestClient(app) as client:
-                client.cookies.update(cookies)
-                return client.post(f"/v1/voice/sessions/{identifier}/end").status_code
+            # Concurrent requests share the running application's one lifespan.
+            # Starting/stopping extra lifespans races disposal of its shared engine.
+            return alice.post(f"/v1/voice/sessions/{identifier}/end").status_code
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             assert list(pool.map(lambda _: end(), range(2))) == [200, 200]
