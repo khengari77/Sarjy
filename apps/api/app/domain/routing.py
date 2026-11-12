@@ -284,6 +284,7 @@ class ReservationRequest(Contract):
     provider: str = Field(min_length=1, max_length=40)
     model: str = Field(min_length=1, max_length=100)
     estimated_input_tokens: int = Field(ge=0)
+    estimated_output_tokens: int = Field(default=0, ge=0)
     estimated_cost_micro_usd: int = Field(ge=0)
     purpose: Literal['classification', 'extraction'] = 'classification'
 

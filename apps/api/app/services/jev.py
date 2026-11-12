@@ -157,6 +157,7 @@ class JevClient:
             provider='jev',
             model=JEV_MODEL,
             estimated_input_tokens=estimated_tokens,
+            estimated_output_tokens=0,
             estimated_cost_micro_usd=max(1, math.ceil(estimated_tokens * MICRO_USD_PER_INPUT_TOKEN)),
             purpose='classification',
         )

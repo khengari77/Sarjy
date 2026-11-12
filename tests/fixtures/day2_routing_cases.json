@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "frozen_at": "2026-11-12",
   "description": "Day 2 routing benchmark. Eight tuning cases were authored first; the sixteen holdout cases and their digest were frozen before any live or scripted model output existed.",
   "approved_voices": [
@@ -9,7 +9,7 @@
   "allowed_operation_ids": [
     "operation-last-exclusion"
   ],
-  "holdout_sha256": "493c55bbed2a9e00d266fe2afb9782a2cf7b78fb008fb3e4a78a8849bdd94adb",
+  "holdout_sha256": "9db2b83c7102c038f55538251066c5e0c361deeadd08e707efbb49d0fe24a19c",
   "cases": [
     {
       "id": "tune-01",
@@ -22,7 +22,9 @@
         "action_kind": null,
         "clarification": false
       },
-      "tags": ["conversation"],
+      "tags": [
+        "conversation"
+      ],
       "rationale": "A normal conversational question, not an application control."
     },
     {
@@ -34,9 +36,17 @@
         "tier": 1,
         "complexity": "simple",
         "action_kind": "AdjustSpeakingSpeed",
-        "clarification": false
+        "clarification": false,
+        "effect": {
+          "settings": {
+            "speaking_speed": 0.9
+          }
+        }
       },
-      "tags": ["voice_setting", "exact"],
+      "tags": [
+        "voice_setting",
+        "exact"
+      ],
       "rationale": "The existing exact fast path applies a single relative speed step."
     },
     {
@@ -48,9 +58,17 @@
         "tier": 1,
         "complexity": "simple",
         "action_kind": "SetCaptionsVisible",
-        "clarification": false
+        "clarification": false,
+        "effect": {
+          "settings": {
+            "captions_visible": false
+          }
+        }
       },
-      "tags": ["ui_control", "exact"],
+      "tags": [
+        "ui_control",
+        "exact"
+      ],
       "rationale": "The existing exact fast path toggles captions off."
     },
     {
@@ -62,9 +80,16 @@
         "tier": 2,
         "complexity": "simple",
         "action_kind": "SearchMemory",
-        "clarification": false
+        "clarification": false,
+        "effect": {
+          "memory_query_terms": [
+            "Rome"
+          ]
+        }
       },
-      "tags": ["memory_search"],
+      "tags": [
+        "memory_search"
+      ],
       "rationale": "Recall is a search over saved memory; it does not modify memory."
     },
     {
@@ -76,9 +101,16 @@
         "tier": 3,
         "complexity": "simple",
         "action_kind": "ProposeContextExclusion",
-        "clarification": false
+        "clarification": false,
+        "effect": {
+          "proposal_terms": [
+            "hotel"
+          ]
+        }
       },
-      "tags": ["memory_modification"],
+      "tags": [
+        "memory_modification"
+      ],
       "rationale": "Forgetting produces a server-owned exclusion proposal, never automatic confirmation."
     },
     {
@@ -90,9 +122,15 @@
         "tier": 1,
         "complexity": "simple",
         "action_kind": "ShowConversationHistory",
-        "clarification": false
+        "clarification": false,
+        "effect": {
+          "navigation": "history"
+        }
       },
-      "tags": ["conversation_navigation", "exact"],
+      "tags": [
+        "conversation_navigation",
+        "exact"
+      ],
       "rationale": "The exact fast path returns a navigation result."
     },
     {
@@ -106,7 +144,9 @@
         "action_kind": null,
         "clarification": false
       },
-      "tags": ["tool_request"],
+      "tags": [
+        "tool_request"
+      ],
       "rationale": "A bounded external tool request; it is not one of the typed app actions."
     },
     {
@@ -120,7 +160,9 @@
         "action_kind": null,
         "clarification": true
       },
-      "tags": ["ambiguity"],
+      "tags": [
+        "ambiguity"
+      ],
       "rationale": "No concrete referent exists, so clarification is the intended behavior."
     },
     {
@@ -134,7 +176,9 @@
         "action_kind": null,
         "clarification": false
       },
-      "tags": ["conversation"],
+      "tags": [
+        "conversation"
+      ],
       "rationale": "A direct conversational answer with no app control."
     },
     {
@@ -148,7 +192,9 @@
         "action_kind": null,
         "clarification": false
       },
-      "tags": ["conversation"],
+      "tags": [
+        "conversation"
+      ],
       "rationale": "The user asks for a detailed explanation, not a memory change."
     },
     {
@@ -162,7 +208,9 @@
         "action_kind": null,
         "clarification": false
       },
-      "tags": ["conversation"],
+      "tags": [
+        "conversation"
+      ],
       "rationale": "Complex synthesis with an explicitly detailed answer, but still conversation."
     },
     {
@@ -174,9 +222,16 @@
         "tier": 1,
         "complexity": "simple",
         "action_kind": "SetSpeakingSpeed",
-        "clarification": false
+        "clarification": false,
+        "effect": {
+          "settings": {
+            "speaking_speed": 1.2
+          }
+        }
       },
-      "tags": ["voice_setting"],
+      "tags": [
+        "voice_setting"
+      ],
       "rationale": "A free-form speed setting that is not one of the exact whole-utterance commands."
     },
     {
@@ -190,7 +245,10 @@
         "action_kind": null,
         "clarification": true
       },
-      "tags": ["voice_setting", "quotation"],
+      "tags": [
+        "voice_setting",
+        "quotation"
+      ],
       "rationale": "Quoted commands must not become executable; approved voice references need deterministic validation."
     },
     {
@@ -204,7 +262,10 @@
         "action_kind": null,
         "clarification": true
       },
-      "tags": ["ui_control", "negation"],
+      "tags": [
+        "ui_control",
+        "negation"
+      ],
       "rationale": "A negated command must not open the memory explorer."
     },
     {
@@ -218,7 +279,10 @@
         "action_kind": null,
         "clarification": true
       },
-      "tags": ["ui_control", "compound"],
+      "tags": [
+        "ui_control",
+        "compound"
+      ],
       "rationale": "Two controls in one utterance are a compound request; clarify instead of executing one."
     },
     {
@@ -230,9 +294,16 @@
         "tier": 2,
         "complexity": "simple",
         "action_kind": "SearchMemory",
-        "clarification": false
+        "clarification": false,
+        "effect": {
+          "memory_query_terms": [
+            "Rome"
+          ]
+        }
       },
-      "tags": ["memory_search"],
+      "tags": [
+        "memory_search"
+      ],
       "rationale": "A read-only search over saved memories."
     },
     {
@@ -244,9 +315,17 @@
         "tier": 3,
         "complexity": "complex",
         "action_kind": "SearchMemory",
-        "clarification": false
+        "clarification": false,
+        "effect": {
+          "memory_query_terms": [
+            "Rome",
+            "Paris"
+          ]
+        }
       },
-      "tags": ["memory_search"],
+      "tags": [
+        "memory_search"
+      ],
       "rationale": "A multi-memory comparison is still a read-only search."
     },
     {
@@ -258,9 +337,16 @@
         "tier": 3,
         "complexity": "simple",
         "action_kind": "ProposeContextExclusion",
-        "clarification": false
+        "clarification": false,
+        "effect": {
+          "proposal_terms": [
+            "hotel"
+          ]
+        }
       },
-      "tags": ["memory_modification"],
+      "tags": [
+        "memory_modification"
+      ],
       "rationale": "The user explicitly asks for a proposal, which remains server-owned and unconfirmed."
     },
     {
@@ -274,7 +360,10 @@
         "action_kind": null,
         "clarification": true
       },
-      "tags": ["memory_modification", "compound"],
+      "tags": [
+        "memory_modification",
+        "compound"
+      ],
       "rationale": "A compound exclusion with a keep-exception is clarified rather than interpreted by a single extraction."
     },
     {
@@ -286,9 +375,14 @@
         "tier": 1,
         "complexity": "simple",
         "action_kind": "ShowConversationHistory",
-        "clarification": false
+        "clarification": false,
+        "effect": {
+          "navigation": "history"
+        }
       },
-      "tags": ["conversation_navigation"],
+      "tags": [
+        "conversation_navigation"
+      ],
       "rationale": "A navigation request without an exact phrase; the typed navigation action applies."
     },
     {
@@ -300,9 +394,14 @@
         "tier": 5,
         "complexity": "complex",
         "action_kind": "ShowConversationHistory",
-        "clarification": false
+        "clarification": false,
+        "effect": {
+          "navigation": "history"
+        }
       },
-      "tags": ["conversation_navigation"],
+      "tags": [
+        "conversation_navigation"
+      ],
       "rationale": "Detailed navigation description still resolves to the conversation list action."
     },
     {
@@ -316,7 +415,9 @@
         "action_kind": null,
         "clarification": false
       },
-      "tags": ["tool_request"],
+      "tags": [
+        "tool_request"
+      ],
       "rationale": "A tool request that informs a later decision, not a typed app action."
     },
     {
@@ -330,7 +431,9 @@
         "action_kind": null,
         "clarification": true
       },
-      "tags": ["ambiguity"],
+      "tags": [
+        "ambiguity"
+      ],
       "rationale": "The earlier request is unspecified, so clarification is required."
     },
     {
@@ -344,8 +447,11 @@
         "action_kind": null,
         "clarification": false
       },
-      "tags": ["conversation"],
+      "tags": [
+        "conversation"
+      ],
       "rationale": "An explicitly detailed explanation with multi-step reasoning, not a control."
     }
-  ]
+  ],
+  "revision_note": "Post-review label correction: expected effects were added before any live or scripted model output was produced. The holdout digest was refrozen for this correction."
 }

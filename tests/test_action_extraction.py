@@ -13,12 +13,21 @@ from app.domain.contracts import (
 from app.domain.routing import MAX_INSTRUCTION_CHARS
 from app.services.action_extraction import (
     ExtractionOutcome,
+    GenerationConfig,
+    GenerationRequest,
     GenerationResult,
     build_extraction_prompt,
     extract_action,
     unsafe_utterance_reason,
 )
 from app.domain.routing import UsageMetadata
+
+GENERATION = GenerationConfig(
+    model='deepseek-flash',
+    max_output_tokens=64,
+    input_usd_per_million=0.5,
+    output_usd_per_million=1.0,
+)
 
 
 def run_extract(
@@ -31,6 +40,7 @@ def run_extract(
     context=(),
     allowed_kinds=None,
     generate_error=None,
+    generation=GENERATION,
 ):
     reservations = []
     prompts = []
@@ -39,8 +49,8 @@ def run_extract(
         reservations.append(request)
         return allow
 
-    async def generate(prompt):
-        prompts.append(prompt)
+    async def generate(request):
+        prompts.append(request)
         if generate_error is not None:
             raise generate_error
         return raw
@@ -51,6 +61,7 @@ def run_extract(
             request_id='extract-1',
             reserve=reserve,
             generate=generate,
+            generation=generation,
             approved_voice_ids=approved_voice_ids,
             allowed_operation_ids=allowed_operation_ids,
             context=context,
@@ -86,9 +97,15 @@ def test_valid_generated_action_is_returned_with_usage_and_a_bounded_prompt():
     assert reservations[0].provider == 'deepseek'
     assert reservations[0].purpose == 'extraction'
     assert len(prompts) == 1
-    assert 'current_instruction' in prompts[0]
-    assert 'Set my speaking speed to 1.2' in prompts[0]
-    assert 'NoAction' in prompts[0]
+    assert isinstance(prompts[0], GenerationRequest)
+    assert prompts[0].model == 'deepseek-flash'
+    assert prompts[0].max_output_tokens == 64
+    assert 'current_instruction' in prompts[0].prompt
+    assert 'Set my speaking speed to 1.2' in prompts[0].prompt
+    assert 'NoAction' in prompts[0].prompt
+    assert reservations[0].estimated_output_tokens == 64
+    assert reservations[0].estimated_cost_micro_usd > 0
+    assert reservations[0].estimated_cost_micro_usd >= 64
 
 
 @pytest.mark.parametrize(
@@ -154,6 +171,7 @@ def test_operation_ids_must_be_caller_supplied_and_never_invented():
         ("Don't open the memory explorer.", 'NEGATED_UTTERANCE'),
         ('Open the memory explorer and show captions.', 'COMPOUND_UTTERANCE'),
         ('Open the memory explorer. Show captions.', 'COMPOUND_UTTERANCE'),
+        ('Open the memory explorer. Show captions', 'COMPOUND_UTTERANCE'),
         ('Never set my speed to 1.2.', 'NEGATED_UTTERANCE'),
     ],
 )
@@ -217,7 +235,17 @@ def test_oversized_instruction_and_empty_instruction_clarify_before_reservation(
     assert prompts == []
 
 
-def test_allowed_kinds_are_enforced_after_parsing():
+def test_allowed_kinds_are_enforced_for_exact_and_generated_actions():
+    exact, reservations, prompts = run_extract(
+        'Hide captions',
+        {'kind': 'NoAction'},
+        allowed_kinds={'SearchMemory'},
+    )
+    assert exact.kind == 'clarification'
+    assert exact.reason == 'UNSUPPORTED_ACTION'
+    assert reservations == []
+    assert prompts == []
+
     outcome, _, _ = run_extract(
         'Open my history',
         {'kind': 'ShowConversationHistory'},
@@ -266,6 +294,7 @@ def test_missing_dependencies_raise_instead_of_creating_an_unreserved_path():
             request_id='r',
             reserve=None,
             generate=generate,
+            generation=GENERATION,
         )
 
     async def missing_generate():
@@ -274,9 +303,21 @@ def test_missing_dependencies_raise_instead_of_creating_an_unreserved_path():
             request_id='r',
             reserve=reserve,
             generate=None,
+            generation=GENERATION,
+        )
+
+    async def missing_generation():
+        return await extract_action(
+            'Set my speaking speed to 1.2',
+            request_id='r',
+            reserve=reserve,
+            generate=generate,
+            generation=None,
         )
 
     with pytest.raises(TypeError):
         asyncio.run(missing_reserve())
     with pytest.raises(TypeError):
         asyncio.run(missing_generate())
+    with pytest.raises(TypeError):
+        asyncio.run(missing_generation())

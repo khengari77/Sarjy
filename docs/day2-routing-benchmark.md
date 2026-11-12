@@ -20,14 +20,24 @@ explicit live run inside the shared budget.
 - ambiguity, negation, quotation and compound instructions.
 
 Labels describe intended behavior only: intent, tier, complexity, the expected
-action kind (or none) and whether clarification is expected. They were authored
-before any model output existed. No model-generated answer is ground truth.
+action kind (or none), the expected effect/arguments and whether clarification is
+expected. They were authored before any model output existed. No model-generated
+answer is ground truth.
 
 The holdout cases and their digest were frozen before tuning. The digest covers
 the dataclass-normalized holdout cases (`id`, `split`, `text`, expected fields,
-tags and rationale) in fixture order, using canonical JSON (`sort_keys=True`,
-compact separators). `validate_fixture` rejects any change to the holdout split.
-Do not tune on holdout outputs and continue describing them as unseen.
+expected effect, tags and rationale) in fixture order, using canonical JSON
+(`sort_keys=True`, compact separators). Fixture version 2 is a post-review label
+correction that added expected effects before any live or scripted model output;
+the holdout digest was refrozen for that correction. `validate_fixture` rejects
+any later change to the holdout split. Do not tune on holdout outputs and continue
+describing them as unseen.
+
+Expected effects are scored, not just action kinds. Settings actions compare the
+resulting settings fields, navigation actions compare the navigation target,
+memory searches require the labeled query terms, and exclusion proposals require
+the labeled proposal terms. An authorized action with the right kind but wrong
+arguments or effects is an unsafe authorization and fails the gate.
 
 ## What is compared
 
@@ -103,12 +113,17 @@ failure, never a dropped case.
 
 ## Cache and resume
 
-Results are cached by a SHA-256 of case ID, router ID, model and prompt hash.
-The default cache is `artifacts/day2-routing-benchmark/cache.json` (ignored).
-Each cache entry retains the result, usage, latency, raw non-secret request/
-response metadata where supplied, and any failure. A resume reads the cache and
-does not repeat work. Failures are cached too, so a rerun does not silently
-retry a paid failure to improve the result.
+Results are cached by a SHA-256 of execution mode, case ID, router ID, model,
+router provenance and prompt hash. Scripted and live runs use separate caches:
+
+- `artifacts/day2-routing-benchmark/cache-scripted.json`
+- `artifacts/day2-routing-benchmark/cache-live.json`
+
+An explicit `--cache` path is still mode-checked; a live run refuses a scripted
+cache. Each entry stores and validates its cache key, mode, case, router, model,
+prompt hash and provenance. A resume reads the cache and does not repeat work.
+Failures are cached too, so a rerun does not silently retry a paid failure to
+improve the result. Scripted evidence can never satisfy the live gate.
 
 ## Recorded metrics
 
@@ -119,15 +134,19 @@ Per router the report includes:
 - invalid action proposals;
 - requests issued and requests avoided compared with one direct call per case;
 - raw latency samples and median latency;
-- input/output tokens and estimated cost where a price was supplied;
+- per-model usage records (`provider`, `model`, `purpose`, input/output tokens);
+- per-model estimated cost and an overall total only when every used model is
+  explicitly priced;
 - failures and sample size.
 
 The holdout gate is:
 
+- the run mode and every Jev/direct result must be live, never scripted;
 - at least 90% intent agreement on 16 holdout cases;
-- zero unsafe authorizations;
+- zero unsafe authorizations, including wrong arguments/effects;
 - median paired added Jev overhead at most 250 ms;
-- all 16 holdout cases measured and paired latency available.
+- all 16 Jev results and all 16 direct results measured without errors, with all
+  16 valid latency pairs.
 
 A failed gate is a valid result. The report sets
 `automatic_routing_enabled: false` unconditionally; passing the gate is evidence
@@ -143,14 +162,18 @@ for review, not an automatic change to production routing.
   requires an injected reservation callback and enforces the 750 ms deadline,
   zero retries and the circuit breaker.
 - `app.services.action_extraction.extract_action(...)` requires injected
-  reservation and generation callbacks, returns a typed action or clarification,
-  and never executes or mutates state.
+  reservation and generation callbacks plus an explicit `GenerationConfig`
+  (`model`, bounded `max_output_tokens`, input/output prices). The reservation
+  covers worst-case input plus bounded output tokens, and the generation callback
+  receives a typed `GenerationRequest`. It returns a typed action or
+  clarification and never executes or mutates state.
 
 ## Limitations
 
 - No live Jev key/account check, no live DeepSeek benchmark, no measured deployed
   latency and no production cost measurement.
-- Scripted results validate the harness, not model quality.
+- Scripted results validate the harness, not model quality, and always fail the
+  live gate with `NOT_LIVE`.
 - Direct-model pricing is only recorded when explicitly supplied.
 - The corpus is English text only; Arabic remains out of scope.
 - No automatic-routing switch was implemented or enabled.

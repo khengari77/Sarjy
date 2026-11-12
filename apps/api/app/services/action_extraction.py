@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Literal
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 from app.domain.commands import parse_exact_command
 from app.domain.contracts import (
@@ -52,7 +52,36 @@ class GenerationResult:
     usage: UsageMetadata | None = None
 
 
-JsonGenerationCallback = Callable[[str], Awaitable[Mapping[str, Any] | str | GenerationResult]]
+class GenerationConfig(Contract):
+    """Explicit, bounded generation and worst-case pricing for extraction."""
+
+    provider: str = Field(default='deepseek', min_length=1, max_length=40)
+    model: str = Field(min_length=1, max_length=100)
+    max_output_tokens: int = Field(ge=1, le=8192)
+    input_usd_per_million: float = Field(ge=0)
+    output_usd_per_million: float = Field(ge=0)
+
+    @field_validator('input_usd_per_million', 'output_usd_per_million')
+    @classmethod
+    def prices_are_finite(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError('PRICE_NOT_FINITE')
+        return value
+
+
+class GenerationRequest(Contract):
+    """A bounded instruction passed to the caller-owned generation callback."""
+
+    prompt: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
+    model: str = Field(min_length=1, max_length=100)
+    max_output_tokens: int = Field(ge=1, le=8192)
+    response_format: Literal['json'] = 'json'
+
+
+JsonGenerationCallback = Callable[
+    [GenerationRequest],
+    Awaitable[Mapping[str, Any] | str | GenerationResult],
+]
 
 
 class ExtractionOutcome(Contract):
@@ -101,6 +130,7 @@ _COMPOUND_MARKERS: Final = (' and ', ' then ', ' also ', ' but ', ' plus ', ';')
 _QUOTE_CHARS: Final = frozenset('"“”‘’')
 _STRAIGHT_QUOTE = re.compile(r"(?:^|[\s(])'[^']*'")
 _SENTENCE_END = re.compile(r'[!?]|\.(?=\s|$)')
+_INTERNAL_SENTENCE_BOUNDARY = re.compile(r'[.!?]\s+\S|\n\s*\S')
 _WORD = re.compile(r"[a-z]+n't|[a-z]+")
 
 
@@ -118,6 +148,8 @@ def unsafe_utterance_reason(text: str) -> str | None:
         return 'NEGATED_UTTERANCE'
     normalized = ' ' + ' '.join(text.casefold().split()) + ' '
     if any(marker in normalized for marker in _COMPOUND_MARKERS):
+        return 'COMPOUND_UTTERANCE'
+    if _INTERNAL_SENTENCE_BOUNDARY.search(text.strip()):
         return 'COMPOUND_UTTERANCE'
     if len(_SENTENCE_END.findall(text.strip())) > 1:
         return 'COMPOUND_UTTERANCE'
@@ -222,6 +254,22 @@ def build_extraction_prompt(
     return prompt
 
 
+def _restriction_reason(
+    action: Action,
+    *,
+    allowed_kinds: Collection[str] | None,
+    approved_voice_ids: Sequence[str],
+    allowed_operation_ids: Sequence[str],
+) -> str | None:
+    if allowed_kinds is not None and action.kind not in allowed_kinds:
+        return 'UNSUPPORTED_ACTION'
+    if isinstance(action, SelectApprovedVoice) and action.voice_id not in set(approved_voice_ids):
+        return 'UNSUPPORTED_VOICE'
+    if isinstance(action, RestoreContextOperation) and action.operation_id not in set(allowed_operation_ids):
+        return 'UNSUPPORTED_OPERATION'
+    return None
+
+
 def _clarification(
     reason: str,
     *,
@@ -256,11 +304,11 @@ async def extract_action(
     request_id: str,
     reserve: ReservationCallback,
     generate: JsonGenerationCallback,
+    generation: GenerationConfig,
     approved_voice_ids: Sequence[str] = (),
     allowed_operation_ids: Sequence[str] = (),
     context: Sequence[str] = (),
     allowed_kinds: Collection[str] | None = None,
-    generation_model: str = EXTRACTION_MODEL,
 ) -> ExtractionOutcome:
     """Extract one supported typed action, or safely request clarification.
 
@@ -271,6 +319,8 @@ async def extract_action(
         raise TypeError('reserve must be an injected async callback')
     if not callable(generate):
         raise TypeError('generate must be an injected async callback')
+    if not isinstance(generation, GenerationConfig):
+        raise TypeError('generation must be an explicit GenerationConfig')
     if not isinstance(request_id, str) or not request_id.strip():
         raise ValueError('request_id is required')
 
@@ -282,6 +332,14 @@ async def extract_action(
 
     exact = parse_exact_command(instruction)
     if exact is not None:
+        reason = _restriction_reason(
+            exact,
+            allowed_kinds=allowed_kinds,
+            approved_voice_ids=approved_voice_ids,
+            allowed_operation_ids=allowed_operation_ids,
+        )
+        if reason is not None:
+            return _clarification(reason)
         return ExtractionOutcome(kind='action', source='exact', action=exact)
 
     safety_reason = unsafe_utterance_reason(instruction)
@@ -301,13 +359,19 @@ async def extract_action(
     except ValueError:
         return _clarification('INVALID_INSTRUCTION')
 
-    estimated_tokens = max(1, math.ceil(len(prompt) / 4))
+    estimated_input_tokens = max(1, math.ceil(len(prompt) / 4))
+    estimated_output_tokens = generation.max_output_tokens
+    estimated_cost_micro_usd = max(1, math.ceil(
+        estimated_input_tokens * generation.input_usd_per_million
+        + estimated_output_tokens * generation.output_usd_per_million
+    ))
     reservation = ReservationRequest(
         request_id=request_id,
-        provider='deepseek',
-        model=generation_model,
-        estimated_input_tokens=estimated_tokens,
-        estimated_cost_micro_usd=0,
+        provider=generation.provider,
+        model=generation.model,
+        estimated_input_tokens=estimated_input_tokens,
+        estimated_output_tokens=estimated_output_tokens,
+        estimated_cost_micro_usd=estimated_cost_micro_usd,
         purpose='extraction',
     )
     try:
@@ -318,7 +382,11 @@ async def extract_action(
         return _clarification('RESERVATION_DENIED')
 
     try:
-        raw = await generate(prompt)
+        raw = await generate(GenerationRequest(
+            prompt=prompt,
+            model=generation.model,
+            max_output_tokens=generation.max_output_tokens,
+        ))
     except Exception:
         return _clarification('GENERATION_FAILED')
 
@@ -336,12 +404,14 @@ async def extract_action(
     except (ValueError, TypeError, OverflowError, ValidationError):
         return _clarification('INVALID_ACTION', usage=usage)
 
-    if isinstance(action, SelectApprovedVoice):
-        if action.voice_id not in set(approved_voice_ids):
-            return _clarification('UNSUPPORTED_VOICE', usage=usage)
-    if isinstance(action, RestoreContextOperation):
-        if action.operation_id not in set(allowed_operation_ids):
-            return _clarification('UNSUPPORTED_OPERATION', usage=usage)
+    reason = _restriction_reason(
+        action,
+        allowed_kinds=allowed_kinds,
+        approved_voice_ids=approved_voice_ids,
+        allowed_operation_ids=allowed_operation_ids,
+    )
+    if reason is not None:
+        return _clarification(reason, usage=usage)
 
     return ExtractionOutcome(kind='action', source='generated', action=action, usage=usage)
 
@@ -349,6 +419,8 @@ async def extract_action(
 __all__ = [
     'EXTRACTION_MODEL',
     'ExtractionOutcome',
+    'GenerationConfig',
+    'GenerationRequest',
     'GenerationResult',
     'JsonGenerationCallback',
     'MAX_INSTRUCTION_CHARS',
