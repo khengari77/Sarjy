@@ -72,7 +72,7 @@ def livekit_control_plane(monkeypatch):
     # Replace only the external LiveKit control-plane boundary. State and auth are real.
     from livekit import api
     class ControlPlane:
-        def __init__(self,*args):
+        def __init__(self,*args,**kwargs):
             self.agent_dispatch = SimpleNamespace(create_dispatch=self.dispatch)
             self.room = SimpleNamespace(delete_room=self.delete)
         async def dispatch(self,request):

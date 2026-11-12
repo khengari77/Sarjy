@@ -453,7 +453,7 @@ export interface components {
         Intent: "conversation" | "ui_control" | "voice_setting" | "memory_search" | "memory_modification" | "conversation_navigation" | "tool_request" | "ambiguous";
         /**
          * Decision
-         * @description Validated routing output. Confidence cannot authorize mutation by itself.
+         * @description Validated routing output. Vendor confidence is informational, not evidence.
          */
         Decision: {
             /** Turn Id */
@@ -463,7 +463,10 @@ export interface components {
             probabilities: {
                 [key: string]: number;
             };
-            /** Confidence */
+            /**
+             * Confidence
+             * @description Vendor distribution confidence, not the selected probability.
+             */
             confidence: number;
             /** Tier */
             tier: number;

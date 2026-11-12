@@ -129,3 +129,25 @@ Frontend: https://sarjy-web-dev-otbaod.cranl.net (password required). API: https
 Deployment branches add the appropriate root `Dockerfile` to the same tested source revision; CranL's nested Dockerfile build did not include repository-root files. The API and frontend root-Dockerfile branch checks passed.
 
 Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source and the worker Dockerfile. Inject secrets separately through LiveKit. Worker deployment and live English voice acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.
+
+## Retryable voice-session cleanup
+
+Session admission status and confirmed room cleanup are separate. An ended session releases capacity immediately; failed room deletion returns `503 ROOM_CLEANUP_FAILED` with `cleanup: pending` and can be retried. Successful deletion or the specific LiveKit `not_found` code records completion. Later requests return `already_complete` without another delete. Missing cleanup credentials return `ROOM_CLEANUP_NOT_CONFIGURED`.
+
+Failed dispatch retains its original error and remains eligible for reconciliation through its original expiry, even after an early successful delete or absent-room response, because remote dispatch can finish late. Early reconciliation reports `pending`; after expiry it can confirm cleanup. Terminal worker bootstrap is rejected. Expiry reaping releases admission capacity but does not itself claim external cleanup.
+
+Apply the additive `0004_voice_cleanup` migration before running this version. Existing terminal sessions are unconfirmed and can be reconciled. No usage/spending reservations are refunded.
+
+Coordinator-only recovery (uses the configured DATABASE_URL; no hosted execution is automatic):
+
+```sh
+uv run python scripts/reconcile_voice_sessions.py             # dry run, at most 20 terminal rows
+uv run python scripts/reconcile_voice_sessions.py --apply     # explicitly delete/reconcile
+uv run python scripts/reconcile_voice_sessions.py --apply --limit 5
+```
+
+Each remote deletion is bounded to 10 seconds. Results report selected/completed/pending/errors; nonzero exit means errors remain. Run again to retry unfinished work after recovery. Active sessions are skipped. Concurrent retries may repeat an idempotent deletion, but confirmed sequential retries skip it; no exactly-once network guarantee is claimed. No scheduler is introduced. Late external creation after the reconciliation window is not covered by an absolute cleanup guarantee.
+
+## Agent contributions
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before claiming work. Use a separate worktree and branch per issue; open a PR and await coordinator review. Authors must not merge.

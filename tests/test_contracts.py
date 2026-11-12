@@ -1,4 +1,5 @@
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ from app.domain.contracts import (
     SetSpeakingSpeed,
     ShowConversationHistory,
     TIER_CAPS,
+    ToolSpec,
     UserSettings,
     apply_settings_action,
     contract_components,
@@ -34,6 +36,7 @@ from app.domain.contracts import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+REALISTIC_CONFIDENCE = 0.9428571428571428
 
 
 def probabilities(chosen=Intent.CONVERSATION, value=0.95):
@@ -77,9 +80,60 @@ def test_tier_caps_are_exact_and_invalid_tiers_are_rejected():
         resolve_response_policy(explicit_tier=0)
     with pytest.raises(ValidationError):
         resolve_response_policy(explicit_tier=6)
-    # A saved preference limits the tier; an explicit request still wins within bounds.
-    assert resolve_response_policy(ResponsePreference.BRIEF, explicit_tier=5).tier == 2
+    # Explicit current-turn instructions win, even outside a saved preference cap.
+    assert resolve_response_policy(ResponsePreference.BRIEF, explicit_tier=5).tier == 5
+    assert resolve_response_policy(ResponsePreference.BRIEF, explicit_tier=5).max_output_tokens == 1024
     assert resolve_response_policy(ResponsePreference.BALANCED, explicit_tier=3).tier == 3
+
+
+@pytest.mark.parametrize('preference', list(ResponsePreference))
+@pytest.mark.parametrize('tier', range(1, 6))
+def test_explicit_tier_overrides_saved_preference_for_every_tier(preference, tier):
+    policy = resolve_response_policy(preference, explicit_tier=tier)
+    assert policy.tier == tier
+    assert policy.max_output_tokens == TIER_CAPS[tier - 1]
+
+
+@pytest.mark.parametrize(
+    ('preference', 'classified_tier', 'expected'),
+    [
+        (ResponsePreference.AUTOMATIC, 1, 1),
+        (ResponsePreference.AUTOMATIC, 5, 5),
+        (ResponsePreference.BRIEF, 1, 1),
+        (ResponsePreference.BRIEF, 3, 2),
+        (ResponsePreference.BRIEF, 5, 2),
+        (ResponsePreference.BALANCED, 2, 2),
+        (ResponsePreference.BALANCED, 4, 3),
+        (ResponsePreference.BALANCED, 5, 3),
+        (ResponsePreference.DETAILED, 4, 4),
+        (ResponsePreference.DETAILED, 5, 5),
+    ],
+)
+def test_classified_tier_is_bounded_by_saved_preference(preference, classified_tier, expected):
+    policy = resolve_response_policy(preference, classified_tier=classified_tier)
+    assert policy.tier == expected
+    assert policy.max_output_tokens == TIER_CAPS[expected - 1]
+
+
+@pytest.mark.parametrize('preference', list(ResponsePreference))
+def test_default_policy_is_normal_conversation_tier(preference):
+    policy = resolve_response_policy(preference)
+    assert policy.tier == 2
+    assert policy.max_output_tokens == TIER_CAPS[1]
+
+
+@pytest.mark.parametrize(
+    'kwargs',
+    [
+        {'explicit_tier': 0},
+        {'explicit_tier': 6},
+        {'classified_tier': 0},
+        {'classified_tier': 6},
+    ],
+)
+def test_invalid_explicit_and_classified_tiers_are_rejected(kwargs):
+    with pytest.raises(ValidationError):
+        resolve_response_policy(**kwargs)
 
 
 def test_unknown_actions_and_invalid_arguments_are_rejected():
@@ -114,20 +168,141 @@ def test_every_shared_action_round_trips_through_the_discriminator():
     assert {type(parse_action(payload)) for payload in payloads} == set(ACTION_TYPES)
 
 
-def test_decision_rejects_inconsistent_or_unknown_classifications():
+def test_vendor_confidence_is_independent_of_selected_probability():
+    decision_value = decision(confidence=REALISTIC_CONFIDENCE)
+    assert decision_value.selected_probability == pytest.approx(0.95)
+    assert decision_value.confidence == pytest.approx(REALISTIC_CONFIDENCE)
+    assert decision_value.permits_automatic_action()
+    # Confidence is informational; it must not drive either routing check.
+    assert decision(confidence=0.1).permits_automatic_action()
+    assert not decision(confidence=0.99, probabilities=probabilities(value=0.6)).permits_automatic_action()
+
+
+def test_selected_intent_must_be_the_maximum_probability_outcome():
+    outcomes = {intent: 0.025 for intent in Intent}
+    outcomes[Intent.CONVERSATION] = 0.4
+    outcomes[Intent.AMBIGUOUS] = 0.45
     with pytest.raises(ValidationError):
-        decision(probabilities={Intent.CONVERSATION: 0.4, Intent.AMBIGUOUS: 0.4})
+        decision(intent=Intent.CONVERSATION, probabilities=outcomes, confidence=0.95)
+
+
+def test_routing_uses_selected_probability_and_runner_up_margin():
+    tied = {intent: 0.125 for intent in Intent}
+    tied_decision = decision(probabilities=tied, confidence=0.99)
+    assert tied_decision.lead == pytest.approx(0.0)
+    assert not tied_decision.permits_automatic_action()
+
+    ambiguous = decision(intent=Intent.AMBIGUOUS, probabilities=probabilities(Intent.AMBIGUOUS), confidence=0.99)
+    assert not ambiguous.permits_automatic_action()
+
+    assert decision().permits_automatic_action(threshold=0.95, lead=0.2)
+    assert not decision().permits_automatic_action(threshold=0.9500001, lead=0.2)
+
+    outcomes = {intent: (1 - 0.5 - 0.3) / (len(Intent) - 2) for intent in Intent}
+    outcomes[Intent.CONVERSATION] = 0.5
+    outcomes[Intent.AMBIGUOUS] = 0.3
+    margin_decision = decision(probabilities=outcomes, confidence=0.1)
+    assert margin_decision.lead == pytest.approx(0.2)
+    assert margin_decision.permits_automatic_action(threshold=0.4, lead=0.2)
+    assert not margin_decision.permits_automatic_action(threshold=0.4, lead=0.2000001)
+    assert not margin_decision.permits_automatic_action(threshold=0.6, lead=0.2)
+
+
+@pytest.mark.parametrize(
+    'bad_value',
+    [float('nan'), float('inf'), float('-inf'), -0.1, 1.1],
+)
+def test_invalid_probability_range_and_finiteness_are_rejected(bad_value):
+    outcomes = probabilities()
+    outcomes[Intent.CONVERSATION] = bad_value
     with pytest.raises(ValidationError):
-        decision(confidence=0.5)
+        decision(probabilities=outcomes)
+
+
+def test_missing_unknown_and_wrong_total_distributions_are_rejected():
+    missing = probabilities()
+    missing.pop(Intent.CONVERSATION)
     with pytest.raises(ValidationError):
-        decision(intent='delete_everything')
+        decision(probabilities=missing)
+
+    unknown = probabilities()
+    unknown['not_an_intent'] = 0.0
     with pytest.raises(ValidationError):
-        decision(tier=9)
-    assert decision().permits_automatic_action()
-    assert not decision(confidence=0.6, probabilities=probabilities(value=0.6)).permits_automatic_action()
-    assert not decision(intent=Intent.AMBIGUOUS, probabilities=probabilities(Intent.AMBIGUOUS)).permits_automatic_action()
-    close = {intent: 0.125 for intent in Intent}
-    assert not decision(probabilities=close, confidence=0.125).permits_automatic_action()
+        decision(probabilities=unknown)
+
+    wrong_total = probabilities()
+    wrong_total[Intent.CONVERSATION] = 0.94
+    with pytest.raises(ValidationError):
+        decision(probabilities=wrong_total)
+
+
+@pytest.mark.parametrize('confidence', [float('nan'), float('inf'), float('-inf')])
+def test_non_finite_vendor_confidence_is_rejected(confidence):
+    with pytest.raises(ValidationError):
+        decision(confidence=confidence)
+
+
+@given(st.floats(allow_nan=True, allow_infinity=True))
+def test_any_accepted_distribution_is_valid_and_has_a_maximum_selected_intent(value):
+    outcomes = probabilities()
+    outcomes[Intent.CONVERSATION] = value
+    try:
+        accepted = decision(probabilities=outcomes)
+    except ValidationError:
+        return
+    assert all(math.isfinite(probability) and 0 <= probability <= 1 for probability in accepted.probabilities.values())
+    assert abs(math.fsum(accepted.probabilities.values()) - 1) <= 1e-6
+    assert accepted.selected_probability == max(accepted.probabilities.values())
+
+
+def test_probability_mapping_is_immutable_and_copied_from_the_caller():
+    outcomes = probabilities()
+    accepted = decision(probabilities=outcomes)
+    with pytest.raises(TypeError):
+        accepted.probabilities[Intent.CONVERSATION] = 0.1
+    outcomes[Intent.CONVERSATION] = 0.0
+    assert accepted.probabilities[Intent.CONVERSATION] == pytest.approx(0.95)
+    assert json.loads(accepted.model_dump_json())['probabilities']['conversation'] == pytest.approx(0.95)
+    reordered = dict(reversed(list(probabilities().items())))
+    assert decision(probabilities=reordered).model_dump_json() == decision().model_dump_json()
+
+
+def test_nested_tool_parameters_are_immutable_and_json_serializable():
+    parameters = {
+        'type': 'object',
+        'properties': {'city': {'type': 'string'}, 'days': {'type': 'integer'}},
+        'required': ['city'],
+    }
+    tool = ToolSpec(name='weather', parameters=parameters)
+
+    with pytest.raises(TypeError):
+        tool.parameters['type'] = 'array'
+    with pytest.raises(TypeError):
+        tool.parameters['properties']['city']['type'] = 'number'
+    with pytest.raises((AttributeError, TypeError)):
+        tool.parameters['required'].append('days')
+
+    parameters['properties']['city']['type'] = 'number'
+    parameters['required'].append('days')
+    assert tool.parameters['properties']['city']['type'] == 'string'
+    assert tool.parameters['required'] == ('city',)
+    json.dumps(tool.model_dump(mode='json'))
+
+    reordered = {
+        'required': ['city'],
+        'properties': {'days': {'type': 'integer'}, 'city': {'type': 'string'}},
+        'type': 'object',
+    }
+    assert ToolSpec(name='weather', parameters=reordered).model_dump_json() == tool.model_dump_json()
+    assert ToolSpec(name='empty').parameters == {}
+    with pytest.raises(TypeError):
+        ToolSpec(name='empty').parameters['type'] = 'object'
+
+
+@pytest.mark.parametrize('parameters', [{'x': {1: 'not-a-string-key'}}, {'x': float('nan')}])
+def test_non_json_tool_parameters_are_rejected(parameters):
+    with pytest.raises(ValidationError):
+        ToolSpec(name='weather', parameters=parameters)
 
 
 def test_settings_transforms_do_not_mutate_inputs():
@@ -160,11 +335,15 @@ def test_memory_and_request_permissions():
             selection=selection, response_policy=policy, settings=UserSettings(),
             memories=(memory(),),
         )
+    tool = ToolSpec(name='weather', parameters={'type': 'object'})
     request = ModelRequest(
         turn_id='turn-1', attempt_id='attempt-1', instructions='System rules.',
         selection=selection, response_policy=policy, settings=UserSettings(),
+        tools=(tool,),
     )
     assert request.language == 'en' and request.memories == ()
+    with pytest.raises(TypeError):
+        request.tools[0].parameters['type'] = 'array'
 
 
 @given(

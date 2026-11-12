@@ -9,8 +9,8 @@ import sqlalchemy as sa
 
 from app.infrastructure.database import EMBEDDING_TYPE
 
-revision = '0004'
-down_revision = '0003'
+revision = '0005_day2_context'
+down_revision = '0004_voice_cleanup'
 
 TABLES = (
     'memories', 'context_revisions', 'context_operations', 'context_exclusions',

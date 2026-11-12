@@ -50,6 +50,7 @@ class VoiceSession(Base):
     status: Mapped[str] = mapped_column(String(20), default='starting')
     expires_at: Mapped[str] = mapped_column(String(40))
     pipeline: Mapped[dict] = mapped_column(JSON)
+    room_cleanup_completed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 class SessionGate(Base):
     __tablename__ = 'session_gate'
