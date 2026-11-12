@@ -361,7 +361,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 ### D2.1 — Define immutable decision, action, settings, context and model-request contracts
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -374,11 +374,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Add pure contract/property tests and regenerate API contracts; run pytest and frontend check.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** PR #23, cdbaef4; merged 0382d68; 62 contract tests and CI passed. Recorded 12 November 2026; implementation/local verification, not hosted acceptance.
 
 ### D2.2 — Add additive migrations: pgvector, atomic memory/provenance, settings, revisions, proposals, operations, snapshots and metrics
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -391,7 +391,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Apply migrations to disposable PostgreSQL fixtures, inspect schema and compare seeded records before/after; do not reset hosted data.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** PR #23; single 0005_day2_context head; disposable pgvector migrations 5 passed; no hosted migration. Recorded 12 November 2026; implementation/local verification, not hosted acceptance.
 
 ### D2.3 — Extend tenant restrictions and shared budget accounting to every new path
 
@@ -498,7 +498,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 ### D2.9 — Implement configurable five-tier response policy and update current 800-token bound safely
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -511,7 +511,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Add tier/property tests and inspect outgoing adapter requests, including tier 5 and exhausted speech allowance.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** PR #24, merged 8451e4b; full suite 131 passed, 1 PostgreSQL-only skip; frontend and CI passed. Recorded 12 November 2026; implementation/local verification, not hosted acceptance.
 
 ### D2.10 — Introduce provider-independent streaming request/response adapters
 
@@ -1152,6 +1152,6 @@ Wake words, browser-local speech, extra providers, speculative partial routing, 
 
 ## Prerequisite map and completion rules
 
-D1 starts from M0; D2 starts after baseline acceptance. D2.2 follows D2.1; D2.3–D2.5 follow schema/contracts; D2.6 follows contracts; D2.7 follows retrieval/compiler/dispatcher; D2.8 follows D2.5 and D2.7. D2.9–D2.10 follow contracts; D2.11 follows adapters and funding confirmation; D2.12 follows adapters/budgets; D2.13 follows operation schema; D2.14 requires key setup; D2.15 requires dispatcher and Jev adapter; D2.16 requires classifications and funded primary; D2.17 requires D2.4–D2.13. D3 consumes the corresponding D2 capabilities; D3.5–D3.6 follow settings/dispatcher; D3.9 follows context operations/explorer; D3.13–D3.14 follow mandatory feature acceptance. D4 follows feature freeze. V1–V6 verify their corresponding implemented subsystems; P1/P2 require frozen deployed features.
+D1 starts from M0; Day 2 local implementation proceeds from reviewed merged contracts/schema while #3 human acceptance remains pending. Hosted release and human acceptance stay separate. D2.2 follows D2.1; D2.3–D2.5 follow schema/contracts; D2.6 follows contracts; D2.7 follows retrieval/compiler/dispatcher; D2.8 follows D2.5 and D2.7. D2.9–D2.10 follow contracts; D2.11 follows adapters and funding confirmation; D2.12 follows adapters/budgets; D2.13 follows operation schema; D2.14 requires key setup; D2.15 requires dispatcher and Jev adapter; D2.16 requires classifications and funded primary; D2.17 requires D2.4–D2.13. D3 consumes the corresponding D2 capabilities; D3.5–D3.6 follow settings/dispatcher; D3.9 follows context operations/explorer; D3.13–D3.14 follow mandatory feature acceptance. D4 follows feature freeze. V1–V6 verify their corresponding implemented subsystems; P1/P2 require frozen deployed features.
 
 Checked items retain their original implementation/verification scope. A new broader requirement gets a pending follow-up. Missing account access or human verification is pending, never a pass. Evidence distinguishes local implementation, local tests, deployment and hosted acceptance. Secrets and media stay ignored; all paid checks use the shared ledger.
