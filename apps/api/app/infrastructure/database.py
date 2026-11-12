@@ -128,6 +128,8 @@ class ContextOperation(Base):
     revision_after: Mapped[int | None] = mapped_column(Integer, nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(100), unique=True)
     outcome: Mapped[str] = mapped_column(String(20), default='pending')
+    lease_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    lease_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), default=now)
 
 
