@@ -3,6 +3,7 @@ import json
 import pytest
 import httpx
 import openai as sdk
+from stream_completion import ObservedTransport
 from livekit.agents import llm, function_tool
 from livekit.plugins import openai
 from app.domain.contracts import ModelRequest, ContextSelection, ResponsePolicy, UserSettings
@@ -48,7 +49,7 @@ def events(kind, tool=False):
 
 
 async def run_stream(kind, transport, req, tools=()):
-    async with httpx.AsyncClient(transport=transport) as http:
+    async with httpx.AsyncClient(transport=ObservedTransport(transport)) as http:
         client = sdk.AsyncOpenAI(api_key='test', base_url='https://provider.test/v1', max_retries=0, http_client=http)
         provider = build_llm({'llm': {'provider': kind,
             'model': 'gpt-6-luna' if kind == 'openai_direct' else 'deepseek-flash'}},
@@ -200,3 +201,136 @@ def test_request_rejects_mixed_revisions_and_fabricated_tool_results():
     with pytest.raises(ValidationError, match='UNSUPPORTED_TOOL_CONTINUATION'):
         ModelRequest.model_validate({**original, 'tool_history': [
             {'kind': 'call', 'call_id': 'call', 'name': 'unknown', 'content': '{}'}]})
+
+
+@pytest.mark.parametrize('mode', ['missing_finish', 'missing_done', 'length'])
+def test_deepseek_incomplete_stream_never_reports_completed(mode):
+    payload = events('deepseek_direct')
+    if mode == 'missing_finish':
+        payload = payload.replace('"finish_reason": "stop"', '"finish_reason": null')
+    elif mode == 'missing_done':
+        payload = payload.replace('data: [DONE]\n\n', '')
+    else:
+        payload = payload.replace('"finish_reason": "stop"', '"finish_reason": "length"')
+    def transport(req):
+        return httpx.Response(200, headers={'content-type': 'text/event-stream'}, text=payload)
+    with pytest.raises(GenerationFailure) as error:
+        asyncio.run(run_stream('deepseek_direct', httpx.MockTransport(transport), request()))
+    assert error.value.event.error_code == 'incomplete_response'
+    assert error.value.event.partial
+
+
+@pytest.mark.parametrize('kind', ['openai_direct', 'deepseek_direct'])
+def test_assistant_text_survives_tool_continuation_in_order(kind):
+    history = ({'kind': 'assistant', 'content': 'Already explained the lookup.', 'interrupted': True},
+        {'kind': 'call', 'call_id': 'call', 'name': 'weather', 'content': '{"city":"Tripoli"}'},
+        {'kind': 'result', 'call_id': 'call', 'name': 'weather', 'content': '{"temperature":20}'})
+    captured = []
+    def transport(req):
+        captured.append(req.content.decode())
+        return httpx.Response(200, headers={'content-type': 'text/event-stream'}, text=events(kind))
+    asyncio.run(run_stream(kind, httpx.MockTransport(transport), request([weather], history), [weather]))
+    wire = captured[0]
+    assert wire.index('Already explained') < wire.index('temperature')
+
+
+def test_fragmented_crlf_terminal_frames_are_observed():
+    from stream_completion import CompletionState, ObservedStream
+    async def run():
+        state = CompletionState()
+        class Pieces(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                for part in (b'data: {"choices":[{"index":0,"finish_', b'reason":"stop"}]}\r',
+                             b'\n\r\ndata: [DO', b'NE]\r\n\r\n'):
+                    yield part
+        observer = ObservedStream(Pieces(), state)
+        assert b''.join([chunk async for chunk in observer])
+        assert state.reason == 'stop' and state.done
+    asyncio.run(run())
+
+
+def test_incomplete_stream_does_not_emit_buffered_tool_calls():
+    from contextlib import asynccontextmanager
+    from stream_completion import completion_state
+    from generation import DeepSeekAdapter
+    class Provider:
+        @asynccontextmanager
+        async def chat(self, **kwargs):
+            async def chunks():
+                yield llm.ChatChunk(id='r', delta=llm.ChoiceDelta(tool_calls=[
+                    llm.FunctionToolCall(call_id='call', name='weather', arguments='{"city":"Tripoli"}')]))
+                completion_state.get().reason = 'length'
+                completion_state.get().done = True
+            yield chunks()
+    async def run():
+        emitted = []
+        with pytest.raises(GenerationFailure):
+            async for event in DeepSeekAdapter(Provider()).stream(request([weather]), [weather]):
+                emitted.append(event)
+        assert not any(event.kind in ('tool', 'completed') for event in emitted)
+    asyncio.run(run())
+
+
+def test_terminal_state_is_isolated_between_concurrent_attempts():
+    async def run():
+        count = 0
+        async def transport(req):
+            nonlocal count
+            count += 1
+            number = count
+            await asyncio.sleep(0)
+            body = events('deepseek_direct')
+            if number == 2:
+                body = body.replace('data: [DONE]\n\n', '')
+            return httpx.Response(200, headers={'content-type': 'text/event-stream'}, text=body)
+        results = await asyncio.gather(
+            run_stream('deepseek_direct', httpx.MockTransport(transport), request()),
+            run_stream('deepseek_direct', httpx.MockTransport(transport), request()), return_exceptions=True)
+        assert sum(isinstance(result, GenerationFailure) for result in results) == 1
+        assert sum(isinstance(result, list) and result[-1].kind == 'completed' for result in results) == 1
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('kind', ['openai_direct', 'deepseek_direct'])
+def test_factory_owned_provider_client_is_closed(kind):
+    async def run():
+        provider = build_llm({'llm': {'provider': kind, 'model': 'deepseek-flash' if kind == 'deepseek_direct' else 'gpt-6-luna'}},
+            {'DEEPSEEK_API_KEY': 'test', 'OPENAI_API_KEY': 'test'})
+        client = provider.application_client
+        await provider.aclose()
+        assert client.is_closed()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('newline', [b'\r', b'\n', b'\r\n'])
+def test_terminal_observer_accepts_standard_sse_line_endings(newline):
+    from stream_completion import CompletionState, ObservedStream
+    async def run():
+        state = CompletionState()
+        payload = b'data: {"choices":[{"index":0,"finish_reason":"stop"}]}' + newline*2 + b'data: [DONE]' + newline*2
+        class Bytes(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                for value in payload:
+                    yield bytes([value])
+        stream = ObservedStream(Bytes(), state)
+        [part async for part in stream]
+        assert state.done and state.reason == 'stop'
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('encoding', ['gzip', 'deflate'])
+def test_terminal_observer_handles_compressed_wire_streams(encoding):
+    import gzip, zlib
+    raw = events('deepseek_direct').encode()
+    compressed = gzip.compress(raw) if encoding == 'gzip' else zlib.compress(raw)
+    closed = []
+    class Wire(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for index in range(0, len(compressed), 7):
+                yield compressed[index:index+7]
+        async def aclose(self):
+            closed.append(True)
+    def transport(req):
+        return httpx.Response(200, headers={'content-type': 'text/event-stream', 'content-encoding': encoding}, stream=Wire())
+    result = asyncio.run(run_stream('deepseek_direct', httpx.MockTransport(transport), request()))
+    assert result[-1].kind == 'completed' and closed
