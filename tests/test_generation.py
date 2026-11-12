@@ -315,3 +315,21 @@ def test_terminal_observer_accepts_standard_sse_line_endings(newline):
         [part async for part in stream]
         assert state.done and state.reason == 'stop'
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('encoding', ['gzip', 'deflate'])
+def test_terminal_observer_handles_compressed_wire_streams(encoding):
+    import gzip, zlib
+    raw = events('deepseek_direct').encode()
+    compressed = gzip.compress(raw) if encoding == 'gzip' else zlib.compress(raw)
+    closed = []
+    class Wire(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for index in range(0, len(compressed), 7):
+                yield compressed[index:index+7]
+        async def aclose(self):
+            closed.append(True)
+    def transport(req):
+        return httpx.Response(200, headers={'content-type': 'text/event-stream', 'content-encoding': encoding}, stream=Wire())
+    result = asyncio.run(run_stream('deepseek_direct', httpx.MockTransport(transport), request()))
+    assert result[-1].kind == 'completed' and closed

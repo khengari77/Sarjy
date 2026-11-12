@@ -67,6 +67,19 @@ class ObservedStream(httpx.AsyncByteStream):
         await self.stream.aclose()
 
 
+class DecodedResponseStream(httpx.AsyncByteStream):
+    """Let HTTPX decode compression before observing SSE framing."""
+    def __init__(self, response):
+        self.response = response
+
+    async def __aiter__(self):
+        async for chunk in self.response.aiter_bytes():
+            yield chunk
+
+    async def aclose(self):
+        await self.response.aclose()
+
+
 class ObservedTransport(httpx.AsyncBaseTransport):
     def __init__(self, transport=None):
         self.transport = transport or httpx.AsyncHTTPTransport(retries=0)
@@ -74,13 +87,12 @@ class ObservedTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request):
         response = await self.transport.handle_async_request(request)
         state = completion_state.get()
-        if state is not None and response.status_code == 200:
-            observer = ObservedStream(response.stream, state)
-            if response.is_stream_consumed:
-                observer.feed(response.content)
-                observer.finish()
-            response.stream = observer
-        return response
+        if state is None or response.status_code != 200:
+            return response
+        headers = [(key, value) for key, value in response.headers.raw
+            if key.lower() not in (b'content-encoding', b'content-length')]
+        return httpx.Response(response.status_code, headers=headers,
+            stream=ObservedStream(DecodedResponseStream(response), state), extensions=response.extensions)
 
     async def aclose(self):
         await self.transport.aclose()
