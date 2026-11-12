@@ -26,6 +26,7 @@ dev = [
 pythonpath = ["apps/api", "services/voice-agent"]
 
 testpaths = ["tests"]
+filterwarnings = ["error"]
 norecursedirs = [".*", ".hypothesis", "artifacts", "node_modules", "build", "dist", "venv"]
 
 [tool.ruff]
@@ -44,6 +45,7 @@ python_version = "3.12"
 mypy_path = "apps/api:services/voice-agent"
 files = ["apps/api/app/domain", "services/voice-agent/generation.py"]
 strict = true
+warn_unused_configs = true
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

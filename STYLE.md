@@ -17,3 +17,5 @@ Install local pre-commit and pre-push enforcement with `bash scripts/install_hoo
 Existing B008 exemptions permit FastAPI dependency defaults. The pipeline computed-field decorator exception is scoped to that module. Dynamic JSON uses explicit Any at serialization boundaries; native provider plugins use Any to support injected test doubles. Keep these boundaries narrow.
 
 Every PR must confirm both hooks are installed and used without bypasses, and report quality/type results for its final SHA. The pre-commit hook requires complete Python/config changes to be staged, so it checks the version being committed. CI checks the committed tree independently.
+
+Warnings are failures: pytest uses `filterwarnings = ["error"]`; mypy strict mode rejects unused ignores, redundant casts and Any returns, and unused configuration warnings are enabled. Do not add warning filters or type suppressions to hide failures without a narrow justification and linked issue.

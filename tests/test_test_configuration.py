@@ -25,3 +25,7 @@ def test_pytest_only_collects_the_curated_suite():
 def test_documented_command_matches_the_configured_suite():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "uv run pytest -q" in readme
+
+
+def test_warnings_fail_the_suite():
+    assert _pytest_config()["filterwarnings"] == ["error"]
