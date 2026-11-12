@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import {
     request,
     type Conversation,
@@ -49,6 +49,9 @@
   let pendingSwitch = $state<string | null>(null);
   let selectionEpoch = 0;
   let switchCancel: HTMLButtonElement | undefined = $state();
+  let transcriptButton: HTMLButtonElement | undefined = $state();
+  let announcement = $state('');
+  let lastAnnounced = '';
   let voiceErrorCode = $state('');
   let busy = $state(false);
   let connecting = $state(false);
@@ -167,6 +170,26 @@
   $effect(() => {
     if (pendingSwitch) switchCancel?.focus();
   });
+
+  $effect(() => {
+    const label = arabic ? presentation.statusLabel.ar : presentation.statusLabel.en;
+    if (label === lastAnnounced) return;
+    const timer = setTimeout(() => {
+      lastAnnounced = label;
+      announcement = label;
+    }, 400);
+    return () => clearTimeout(timer);
+  });
+
+  async function openTranscript() {
+    transcriptOpen = true;
+  }
+
+  async function closeTranscript() {
+    transcriptOpen = false;
+    await tick();
+    transcriptButton?.focus();
+  }
 
   function requestSelect(id: string) {
     if (id === current) return;
@@ -582,40 +605,49 @@
         </button>
       {/if}
 
-      {#if turns.length}
+      <div class="orb-zone">
+        <VoiceOrb
+          {presentation}
+          {micLevel}
+          label={arabic ? presentation.ariaLabel.ar : presentation.ariaLabel.en}
+          disabled={busy}
+          onactivate={() => {
+            if (live) {
+              if (muted) void toggleMute();
+              else if (canInterrupt) void interrupt();
+              return;
+            }
+            void connect(true);
+          }}
+        />
+        {#if !live && !turns.length && !provisional}
+          <h1>{words.title}</h1>
+          <p class="intro">{words.intro}</p>
+        {/if}
+      </div>
+
+      {#if turns.length || provisional}
         <LiveCaptionPreview
           {turns}
+          {provisional}
           {arabic}
           {captionsVisible}
           expanded={transcriptOpen}
-          onexpand={() => (transcriptOpen = true)}
+          onexpand={openTranscript}
         />
         {#if toolCalls.length}
           <div class="trace-row">
             {#each toolCalls as tool}
-              <ToolTraceChip name={tool.name} {arabic} />
+              <ToolTraceChip name={tool.name} result={tool.result} {arabic} />
             {/each}
           </div>
         {/if}
-      {:else}
-        <div class="idle-block">
-          <VoiceOrb
-            {presentation}
-            {micLevel}
-            label={arabic ? presentation.ariaLabel.ar : presentation.ariaLabel.en}
-            disabled={busy}
-            onactivate={() => {
-              if (live) {
-                if (muted) void toggleMute();
-                else if (canInterrupt) void interrupt();
-                return;
-              }
-              void connect(true);
-            }}
-          />
-          <h1>{words.title}</h1>
-          <p class="intro">{words.intro}</p>
-        </div>
+      {/if}
+
+      {#if live || turns.length || provisional}
+        <button class="ghost-button transcript-trigger" bind:this={transcriptButton} type="button" onclick={openTranscript}>
+          {arabic ? 'سجل المحادثة' : 'Transcript'}
+        </button>
       {/if}
 
     </section>
@@ -725,10 +757,13 @@
 <TranscriptDrawer
   open={transcriptOpen}
   {turns}
+  {provisional}
   tools={toolCalls}
   {arabic}
-  onclose={() => (transcriptOpen = false)}
+  onclose={closeTranscript}
 />
+
+<p class="sr-only" aria-live="polite" aria-atomic="true">{announcement}</p>
 
 <style>
   .ghost-button,
@@ -816,7 +851,7 @@
     max-width: 46ch;
   }
 
-  .idle-block {
+  .orb-zone {
     display: flex;
     flex-direction: column;
     align-items: center;

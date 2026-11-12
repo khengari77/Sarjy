@@ -6,13 +6,26 @@
     arabic: boolean;
     captionsVisible: boolean;
     expanded: boolean;
+    provisional?: { id: string; text: string; speaker: 'user' | 'assistant' } | null;
     onexpand: () => void;
   }
 
-  let { turns, arabic, captionsVisible, expanded, onexpand }: Props = $props();
+  let { turns, arabic, captionsVisible, expanded, provisional = null, onexpand }: Props = $props();
 
   const lastUser = $derived([...turns].reverse().find((turn) => turn.role === 'user'));
   const lastAssistant = $derived([...turns].reverse().find((turn) => turn.role === 'assistant'));
+  // A provisional segment takes the place of the final line for its speaker
+  // so the preview never grows past two lines.
+  const previewUser = $derived(
+    provisional?.speaker === 'user' ? { text: provisional.text, provisional: true } : lastUser ? { text: line(lastUser), provisional: false } : null
+  );
+  const previewAssistant = $derived(
+    provisional?.speaker === 'assistant'
+      ? { text: provisional.text, provisional: true }
+      : lastAssistant
+        ? { text: line(lastAssistant), provisional: false }
+        : null
+  );
 
   function line(turn: Turn | undefined): string {
     if (!turn) return '';
@@ -20,13 +33,19 @@
   }
 </script>
 
-{#if captionsVisible && turns.length}
-  <div class="captions" aria-live="polite" aria-atomic="true">
-    {#if lastUser}
-      <p class="caption user" dir="auto"><span>{arabic ? 'أنت' : 'You'}</span>{line(lastUser)}</p>
+{#if captionsVisible && (turns.length || provisional)}
+  <!-- Partial text is visible but not announced; the page owns a debounced
+       live region for final state changes only. -->
+  <div class="captions">
+    {#if previewUser}
+      <p class="caption user" class:provisional={previewUser.provisional} dir="auto">
+        <span>{arabic ? 'أنت' : 'You'}</span>{previewUser.text}{#if previewUser.provisional}<span class="pending" aria-hidden="true">…</span>{/if}
+      </p>
     {/if}
-    {#if lastAssistant}
-      <p class="caption assistant" dir="auto"><span>{arabic ? 'سَرْجي' : 'Sarjy'}</span>{line(lastAssistant)}</p>
+    {#if previewAssistant}
+      <p class="caption assistant" class:provisional={previewAssistant.provisional} dir="auto">
+        <span>{arabic ? 'سَرْجي' : 'Sarjy'}</span>{previewAssistant.text}{#if previewAssistant.provisional}<span class="pending" aria-hidden="true">…</span>{/if}
+      </p>
     {/if}
     {#if !expanded}
       <button class="expand" type="button" onclick={onexpand}>
@@ -68,6 +87,18 @@
   }
 
   .caption.user {
+    color: var(--text-muted);
+  }
+
+  .caption.provisional {
+    font-style: italic;
+    opacity: 0.72;
+    border-inline-start: 2px dashed var(--border-subtle);
+    padding-inline-start: 8px;
+  }
+
+  .caption .pending {
+    margin-inline-start: 4px;
     color: var(--text-muted);
   }
 

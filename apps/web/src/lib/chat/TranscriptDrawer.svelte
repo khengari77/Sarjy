@@ -7,10 +7,11 @@
     turns: Turn[];
     tools: { id: string; name: string; result: unknown }[];
     arabic: boolean;
+    provisional?: { id: string; text: string; speaker: 'user' | 'assistant' } | null;
     onclose: () => void;
   }
 
-  let { open, turns, tools, arabic, onclose }: Props = $props();
+  let { open, turns, tools, arabic, provisional = null, onclose }: Props = $props();
 
   let closeButton: HTMLButtonElement | undefined = $state();
 
@@ -26,7 +27,7 @@
 <svelte:window onkeydown={open ? onkeydown : undefined} />
 
 {#if open}
-  <section class="drawer" aria-label={arabic ? 'سجل المحادثة' : 'Conversation transcript'}>
+  <div class="drawer" role="dialog" aria-modal="false" aria-label={arabic ? 'سجل المحادثة' : 'Conversation transcript'}>
     <header class="drawer-head">
       <h2>{arabic ? 'المحادثة' : 'Transcript'}</h2>
       <button class="close" bind:this={closeButton} type="button" onclick={onclose} aria-label={arabic ? 'إغلاق السجل' : 'Close transcript'}>
@@ -44,15 +45,21 @@
           </article>
         {/each}
       {/if}
+      {#if provisional}
+        <article class="turn provisional" dir="auto" aria-label={arabic ? 'نص مؤقت' : 'Provisional transcript'}>
+          <small>{provisional.speaker} · {arabic ? 'مؤقت' : 'provisional'}</small>
+          <p>{provisional.text}…</p>
+        </article>
+      {/if}
       {#if tools.length}
         <div class="traces">
           {#each tools as tool}
-            <ToolTraceChip name={tool.name} {arabic} />
+            <ToolTraceChip name={tool.name} result={tool.result} {arabic} />
           {/each}
         </div>
       {/if}
     </div>
-  </section>
+  </div>
 {/if}
 
 <style>
@@ -125,6 +132,12 @@
     color: var(--text-muted);
     font-size: 11px;
     letter-spacing: 0.04em;
+  }
+
+  .turn.provisional {
+    border-style: dashed;
+    opacity: 0.75;
+    font-style: italic;
   }
 
   .turn p {
