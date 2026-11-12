@@ -19,6 +19,11 @@ def test_worker_replaces_stale_history_and_reserves_before_provider(monkeypatch,
             order.append('provider')
             assert order == ['reserve', 'provider']
             async def chunks():
+                if provider == 'deepseek_direct':
+                    from stream_completion import completion_state
+                    state = completion_state.get()
+                    if state is not None:
+                        state.done, state.reason = True, 'stop'
                 yield llm.ChatChunk(id='r', delta=llm.ChoiceDelta(content='output'))
             yield chunks()
     monkeypatch.setattr(SarjyAgent, 'session', property(lambda self: SimpleNamespace(current_speech=None, llm=Provider())))

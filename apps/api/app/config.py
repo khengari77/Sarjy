@@ -1,6 +1,7 @@
 from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from app.domain.budget import DEEPSEEK_MINIMUM_REQUEST_MICRO_USD
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
@@ -16,7 +17,7 @@ class Settings(BaseSettings):
     default_llm_provider: Literal['openai_direct','deepseek_direct'] = 'deepseek_direct'
     deepseek_budget_enabled: bool = True
     deepseek_daily_micro_usd: int = 250_000
-    deepseek_request_micro_usd: int = 5_000
+    deepseek_request_micro_usd: int = 7_000
     eleven_api_key: str = ''
     livekit_url: str = ''
     livekit_api_key: str = ''
@@ -27,6 +28,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode='after')
     def validate_deepseek_budget(self):
-        if self.deepseek_budget_enabled and not (0 < self.deepseek_request_micro_usd <= self.deepseek_daily_micro_usd):
+        if self.deepseek_budget_enabled and not (
+            DEEPSEEK_MINIMUM_REQUEST_MICRO_USD <= self.deepseek_request_micro_usd <= self.deepseek_daily_micro_usd
+        ):
             raise ValueError('DEEPSEEK_BUDGET_CONFIGURATION_INVALID')
         return self

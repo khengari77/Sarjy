@@ -94,5 +94,5 @@ def test_agent_uses_the_backend_instructions_without_rewriting_them():
 
 def test_deepseek_request_bound():
     assert deepseek_request_within_bounds(b'{}')
-    assert deepseek_request_within_bounds(b'x' * (64 * 1024))
-    assert not deepseek_request_within_bounds(b'x' * (64 * 1024 + 1))
+    assert deepseek_request_within_bounds(b'x' * (16 * 1024))
+    assert not deepseek_request_within_bounds(b'x' * (16 * 1024 + 1))

@@ -22,7 +22,7 @@ def reserve(client, provider='deepseek'):
 
 
 def test_deepseek_ceiling_is_provider_specific_and_persistent(tmp_path):
-    file, app = configured(tmp_path, deepseek_daily_micro_usd=4000, deepseek_request_micro_usd=2000)
+    file, app = configured(tmp_path, deepseek_daily_micro_usd=14_000, deepseek_request_micro_usd=7_000)
     with TestClient(app) as client:
         assert reserve(client).status_code == 200
         assert reserve(client).status_code == 200
@@ -32,11 +32,11 @@ def test_deepseek_ceiling_is_provider_specific_and_persistent(tmp_path):
         assert reserve(client, 'openai').status_code == 200
     with sqlite3.connect(file) as db:
         rows = dict(db.execute('SELECT provider, reserved_units FROM development_budgets').fetchall())
-        assert rows == {'deepseek': 4000, 'openai': 20_000}
+        assert rows == {'deepseek': 14_000, 'openai': 20_000}
     # A restarted app must see the committed ceiling.
     with TestClient(create_app(Settings(database_url=f'sqlite+aiosqlite:///{file}',
-            agent_service_secret='test-service-secret', deepseek_daily_micro_usd=4000,
-            deepseek_request_micro_usd=2000, _env_file=None))) as restarted:
+            agent_service_secret='test-service-secret', deepseek_daily_micro_usd=14_000,
+            deepseek_request_micro_usd=7_000, _env_file=None))) as restarted:
         assert reserve(restarted).status_code == 429
 
 
@@ -51,11 +51,19 @@ def test_disabled_guard_sends_without_a_ledger(tmp_path):
         assert db.execute('SELECT COUNT(*) FROM development_budgets').fetchone()[0] == 0
 
 
+def test_reservation_covers_the_peak_token_bound():
+    from app.domain.budget import DEEPSEEK_MINIMUM_REQUEST_MICRO_USD, deepseek_reservation_micro_usd
+    assert deepseek_reservation_micro_usd() == 6_144
+    assert DEEPSEEK_MINIMUM_REQUEST_MICRO_USD == 6_144
+
+
 def test_invalid_enabled_configuration_fails_fast():
     from pydantic import ValidationError
     from app.config import Settings
     import pytest
     with pytest.raises(ValidationError, match='DEEPSEEK_BUDGET_CONFIGURATION_INVALID'):
         Settings(deepseek_request_micro_usd=2000, deepseek_daily_micro_usd=1000, _env_file=None)
+    with pytest.raises(ValidationError, match='DEEPSEEK_BUDGET_CONFIGURATION_INVALID'):
+        Settings(deepseek_request_micro_usd=6000, deepseek_daily_micro_usd=250_000, _env_file=None)
     Settings(deepseek_budget_enabled=False, deepseek_request_micro_usd=2000,
         deepseek_daily_micro_usd=1000, _env_file=None)
