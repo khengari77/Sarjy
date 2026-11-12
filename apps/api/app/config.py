@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     development_protected: bool = False
     web_service_secret: str = ''
+    context_proposal_secret: str = ''
     demo_ttl_hours: int = 24
     deepgram_api_key: str = ''
     deepseek_api_key: str = ''

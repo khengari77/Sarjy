@@ -362,6 +362,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations/{conversation_id}/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Context */
+        get: operations["get_context_v1_conversations__conversation_id__context_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/context/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Context Operations */
+        get: operations["get_context_operations_v1_conversations__conversation_id__context_operations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/context/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Propose Context */
+        post: operations["propose_context_v1_conversations__conversation_id__context_proposals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/context/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Context */
+        post: operations["confirm_context_v1_conversations__conversation_id__context_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/context/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Undo Context */
+        post: operations["undo_context_v1_conversations__conversation_id__context_undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -431,6 +516,162 @@ export interface components {
              * @default 0
              */
             characters: number;
+        };
+        /** ContextConfirmInput */
+        ContextConfirmInput: {
+            /** Proposal */
+            proposal: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+        };
+        /** ContextConfirmation */
+        ContextConfirmation: {
+            /** Operation Id */
+            operation_id: string;
+            /** Status */
+            status: string;
+            /** Idempotent */
+            idempotent: boolean;
+            /** Excluded Ids */
+            excluded_ids: string[];
+            /** Kept Ids */
+            kept_ids: string[];
+            /** Revision Before */
+            revision_before: number;
+            /** Revision After */
+            revision_after: number;
+            diff: components["schemas"]["ContextDiff"];
+        };
+        /** ContextDiff */
+        ContextDiff: {
+            /** Added */
+            added: string[];
+            /** Removed */
+            removed: string[];
+            /** Kept */
+            kept: string[];
+            /** Revision Before */
+            revision_before: number;
+            /** Revision After */
+            revision_after: number;
+        };
+        /** ContextMatch */
+        ContextMatch: {
+            /** Id */
+            id: string;
+            /** Content */
+            content: string;
+            /** Source Turn Id */
+            source_turn_id: string | null;
+            /** Score */
+            score: number;
+            /** Kind */
+            kind: string;
+        };
+        /** ContextOperationItem */
+        ContextOperationItem: {
+            /** Id */
+            id: string;
+            /** Command Type */
+            command_type: string;
+            /** Outcome */
+            outcome: string;
+            /** Revision Before */
+            revision_before?: number | null;
+            /** Revision After */
+            revision_after?: number | null;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Created At */
+            created_at: string;
+            diff: components["schemas"]["ContextDiff"] | null;
+        };
+        /** ContextOperationList */
+        ContextOperationList: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Revision */
+            revision: number;
+            /** Operations */
+            operations: components["schemas"]["ContextOperationItem"][];
+        };
+        /** ContextPreserved */
+        ContextPreserved: {
+            /** Id */
+            id: string;
+            /** Content */
+            content: string;
+            /** Reason */
+            reason: string;
+        };
+        /** ContextProposal */
+        ContextProposal: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Query */
+            query: string;
+            /** Revision */
+            revision: number;
+            /** Proposal */
+            proposal: string;
+            /** Matches */
+            matches: components["schemas"]["ContextMatch"][];
+            /** Preserved */
+            preserved: components["schemas"]["ContextPreserved"][];
+            diff: components["schemas"]["ContextDiff"];
+        };
+        /** ContextProposalInput */
+        ContextProposalInput: {
+            /** Query */
+            query: string;
+            /**
+             * Keep
+             * @default []
+             */
+            keep: string[];
+            /**
+             * Limit
+             * @default 20
+             */
+            limit: number;
+        };
+        /** ContextState */
+        ContextState: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Revision */
+            revision: number;
+            /** Excluded Ids */
+            excluded_ids: string[];
+        };
+        /** ContextUndoInput */
+        ContextUndoInput: {
+            /** Operation Id */
+            operation_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+        };
+        /** ContextUndoResult */
+        ContextUndoResult: {
+            /** Operation Id */
+            operation_id: string;
+            /** Restored Operation Id */
+            restored_operation_id: string;
+            /** Status */
+            status: string;
+            /** Idempotent */
+            idempotent: boolean;
+            /** Restored Ids */
+            restored_ids: string[];
+            /** Revision Before */
+            revision_before: number;
+            /** Revision After */
+            revision_after: number;
+            diff: components["schemas"]["ContextDiff"];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1546,6 +1787,173 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_context_v1_conversations__conversation_id__context_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_context_operations_v1_conversations__conversation_id__context_operations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextOperationList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    propose_context_v1_conversations__conversation_id__context_proposals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContextProposalInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextProposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_context_v1_conversations__conversation_id__context_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContextConfirmInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextConfirmation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    undo_context_v1_conversations__conversation_id__context_undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContextUndoInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextUndoResult"];
                 };
             };
             /** @description Validation Error */

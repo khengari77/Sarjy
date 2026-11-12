@@ -8,6 +8,7 @@ from app.domain.contracts import Action, UserSettings, parse_action
 from app.infrastructure.database import UserSetting
 from app.services.actions import dispatch_action, settings_value
 from app.services.voices import VoiceCatalogError
+from app.services.context_operations import ContextOperationError
 
 
 class ActionSubmission(BaseModel):
@@ -82,6 +83,6 @@ def register_action_routes(app, database, identity, owned, catalog):
             result = await dispatch_action(db,owner_id=user.id,conversation_id=body.conversation_id,
                 request_id=body.request_id,expected_revision=body.expected_revision,action=action,
                 catalog=catalog,handlers=app.state.action_handlers)
-        except VoiceCatalogError as exc:
+        except (VoiceCatalogError, ContextOperationError) as exc:
             raise HTTPException(exc.status,detail={'code':exc.code}) from exc
         return {'handled':True,'result':result}
