@@ -58,8 +58,8 @@
 </script>
 <svelte:head><title>Sarjy — Voice Context Studio</title><meta name="description" content="A bilingual voice assistant with transparent context."/></svelte:head>
 <div class="shell" dir={arabic ? 'rtl':'ltr'}>
- <aside><strong>سَرْجي <span>SARJY</span></strong><button disabled={busy} onclick={create}>{words.new} +</button>{#each conversations as chat}<button class:chosen={current===chat.id} disabled={busy} onclick={()=>run(()=>select(chat.id))}>{chat.title}</button>{/each}<p>Voice Context Studio</p></aside>
- <main><header><span>● {status}</span><button onclick={toggleLanguage}>{arabic ? 'English':'العربية'}</button></header>{#if error}<p role="alert">{error}</p>{/if}{#if audioBlocked}<button onclick={()=>run(async()=>{await runtime.resumeAudio();audioBlocked=false})}>Enable audio / تشغيل الصوت</button>{/if}<section>{#if turns.length}{#each turns as turn}<article dir="auto"><small>{turn.role} · {turn.status}</small><p>{turn.text}</p></article>{/each}{:else}<div class="orb">س</div><h1>{words.title}</h1><p>{words.intro}</p>{/if}{#each toolCalls as tool}<details><summary>{tool.name} · Open-Meteo</summary><pre dir="ltr">{JSON.stringify(tool.result,null,2)}</pre></details>{/each}</section><fieldset class="voice-settings">
+ <aside><strong>سَرْجي <span>SARJY</span></strong><button disabled={busy} onclick={create}>{words.new} +</button>{#each conversations as chat (chat.id)}<button class:chosen={current===chat.id} disabled={busy} onclick={()=>run(()=>select(chat.id))}>{chat.title}</button>{/each}<p>Voice Context Studio</p></aside>
+ <main><header><span>● {status}</span><button onclick={toggleLanguage}>{arabic ? 'English':'العربية'}</button></header>{#if error}<p role="alert">{error}</p>{/if}{#if audioBlocked}<button onclick={()=>run(async()=>{await runtime.resumeAudio();audioBlocked=false})}>Enable audio / تشغيل الصوت</button>{/if}<section>{#if turns.length}{#each turns as turn (turn.id)}<article dir="auto"><small>{turn.role} · {turn.status}</small><p>{turn.text}</p></article>{/each}{:else}<div class="orb">س</div><h1>{words.title}</h1><p>{words.intro}</p>{/if}{#each toolCalls as tool (tool.id)}<details><summary>{tool.name} · Open-Meteo</summary><pre dir="ltr">{JSON.stringify(tool.result,null,2)}</pre></details>{/each}</section><fieldset class="voice-settings">
  <legend>{arabic?'صوت المساعد':'Assistant voice'}</legend>
  <form onsubmit={(event)=>{event.preventDefault();void loadVoices()}}>
   <input aria-label={arabic?'البحث عن صوت':'Search voices'} bind:value={voiceSearch} maxlength="120" placeholder={arabic?'ابحث باسم الصوت أو اللغة':'Search by voice name or language'} />
@@ -69,7 +69,7 @@
  <select id="assistant-voice" bind:value={voiceId} onchange={rememberVoice}>
   <option value="">{arabic?'اختر صوتًا قبل بدء المكالمة':'Select a voice before calling'}</option>
   {#if voiceId && !voices.some(voice=>voice.id===voiceId)}<option value={voiceId}>{arabic?'الصوت المحفوظ (أعد تحميل القائمة)':'Saved voice (reload list)'}</option>{/if}
-  {#each voices as voice}<option value={voice.id}>{voice.name}{voice.languages?.length?' · '+voice.languages.join(', '):''}</option>{/each}
+  {#each voices as voice (voice.id)}<option value={voice.id}>{voice.name}{voice.languages?.length?' · '+voice.languages.join(', '):''}</option>{/each}
  </select>
  {#if nextVoicePage}<button disabled={voiceLoading} onclick={()=>loadVoices(true)}>{arabic?'المزيد':'Load more'}</button>{/if}
  {#if voiceError}<p class="voice-error">{arabic?'تعذّر تحميل الأصوات':'Could not load voices'}: {voiceError}</p>{/if}
