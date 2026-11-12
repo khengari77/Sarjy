@@ -46,14 +46,18 @@ Read-only capacity checks (owner id is the coordinator's identity; do not write 
 psql "$DATABASE_URL" -c \
   "SELECT owner_id, count(*) FROM voice_sessions WHERE owner_id = '<owner-id>' GROUP BY owner_id;"
 psql "$DATABASE_URL" -c \
-  "SELECT count(*) FROM voice_sessions WHERE expires_at >= date_trunc('month', now());"
+  "SELECT count(*) FROM voice_sessions
+     WHERE expires_at::timestamptz >=
+       (date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC');"
 psql "$DATABASE_URL" -c \
   "SELECT count(*) FROM voice_sessions WHERE status IN ('starting', 'active');"
 ```
 
 `remaining = 3 - identity_used`; also require `month_used < 80` and `active_now = 0` before starting.
-The month figure counts sessions whose `expires_at` falls in the current month, so a session started just
-before midnight can land in the next month's count; record the observed values.
+The month figure counts sessions whose expiry is at or after the current UTC month boundary, matching
+the API's lower-bound check without adding an upper bound. `expires_at` is stored as text, so the explicit
+cast is required in PostgreSQL. A session started just before a month boundary can have an expiry in the
+next month; record the observed values. The query is independent of the database session's timezone.
 
 The procedure needs at most three reservations, allocated as follows. Do not start a fourth.
 
@@ -100,13 +104,20 @@ Rules that keep this honest:
 
   Run this in a process that has the hosted `DATABASE_URL` injected; do not write to the ledger and do not
   create a reservation merely to test that it did not decrease. Reservations are guards, not invoices.
-- Optional session/cleanup read-back (read-only) for D1.6:
+- Required session/cleanup read-back (read-only) for D1.6. Capture each reservation's session ID from the
+  start response without copying its token. Query that exact ID, not just the latest sessions:
 
   ```sh
   psql "$DATABASE_URL" -c \
     "SELECT id, status, expires_at, room_cleanup_completed_at
-       FROM voice_sessions ORDER BY expires_at DESC LIMIT 5;"
+       FROM voice_sessions WHERE id = '<session-id>';"
   ```
+
+  Record the session ID, observed status, cleanup timestamp and observation time in the acceptance
+  record, with a sanitized artifact reference. Missing access, no matching row, `active`/`starting`
+  status or a null cleanup timestamp leaves cleanup pending or failed, never passed. Do not manually
+  end or reconcile an orphaned session before recording the failure; a repaired row does not prove
+  that the tested end or refresh path worked.
 
 ## D1.3 — Hosted English microphone, audible reply, durable turns
 
@@ -153,13 +164,14 @@ a typed message with no live call would start a new session and consume another 
 5. Confirm the spoken answer uses 8344, proving the voice turn also inherited the typed context.
 6. Press **End call**, then reload the page. Confirm the D1.3 user/assistant pair, the weather turns and
    both continuity turns all appear once, in order, in one conversation, and the persisted tool panel
-   still shows the Tripoli result. This also completes D1.6's end-and-cleanup check for S1.
+   still shows the Tripoli result. This proves history persistence. Complete the separate D1.6 end and
+   cleanup read-back for S1 before marking its lifecycle check passed.
 
 ## D1.6 — Mute, interruption, stale output, reconnect, refresh, end, microphone denial
 
-S1's end/cleanup was covered by the D1.5 reload. The remaining scenarios use reservations **S2** and
-**S3** as allocated above. Record the observed browser status line, transcript/audio behaviour, and the
-session row where noted.
+S1's history reload does not establish session termination or room cleanup. Verify S1 using the end and
+cleanup procedure below. The remaining scenarios use reservations **S2** and **S3** as allocated above.
+Record the observed browser status line, transcript/audio behaviour, and exact session row.
 
 ### S2 — Microphone denial and recovery
 
@@ -195,17 +207,26 @@ session row where noted.
 3. Confirm the status moves through `reconnecting` back to a live state. If the app instead ends the call
    cleanly, record that and leave refresh mid-call pending; do not open a fourth session.
 4. If the session is live again, reload the page mid-call. Confirm no orphaned or duplicate turns appear,
-   the conversation history is still readable, and the previous session ends rather than staying `active`
-   (optional SQL read-back).
+   the conversation history is still readable, and the browser returns to `idle`. Use the required
+   read-back for S3's exact session ID to confirm `status = 'ended'` and a non-null
+   `room_cleanup_completed_at`. Allow up to 90 seconds for the documented 60-second worker departure
+   grace period and cleanup. Record the elapsed time; if confirmation is missing, record the failure
+   and leave refresh/cleanup unpassed. History reload alone is insufficient.
 5. Do not start another call to test connectivity unless the read-only check at the end of S3 shows a
    remaining reservation; otherwise record "new call after recovery: pending".
 
 ### End and cleanup
 
-1. After the **End call** in S1, confirm the status returns to `idle` and the session row is `ended`.
-2. Within a few seconds, confirm `room_cleanup_completed_at` is set (optional SQL read-back). Repeating the
-   end request must return `cleanup: already_complete` without another provider delete; if you cannot issue
-   that request without exposing credentials, note it as not checked rather than guessing.
+1. After **End call** in S1 and S2 (when run), confirm the browser returns to `idle`. For each exact session
+   ID, use the required read-back to confirm `status = 'ended'` and a non-null
+   `room_cleanup_completed_at`. Observe for at most 30 seconds and record the elapsed time and evidence
+   reference. Missing confirmation leaves the lifecycle check unpassed even if history reload succeeds.
+2. Repeated end must return `cleanup: already_complete` without another provider delete. The existing
+   [hosted lifecycle evidence](day1-hosted-verification.md#migration-and-recovery), recorded 11 November
+   2026 against source `4a80697a97b25e4f55275d27b31193fa58c93fa8`, may satisfy this idempotency check
+   only when the coordinator confirms that revision's evidence applies to the lifecycle implementation
+   under test. Record that source and applicability explicitly. Otherwise record idempotency as pending
+   until separately verified; do not blindly repeat requests or infer it from a reload.
 
 ## D1.7 — Record revisions, input mode and guarded usage
 

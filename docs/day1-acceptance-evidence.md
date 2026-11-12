@@ -48,10 +48,15 @@ Commands used (read-only; no counter resets, identity rotation or limit changes)
 psql "$DATABASE_URL" -c \
   "SELECT owner_id, count(*) FROM voice_sessions WHERE owner_id = '<owner-id>' GROUP BY owner_id;"
 psql "$DATABASE_URL" -c \
-  "SELECT count(*) FROM voice_sessions WHERE expires_at >= date_trunc('month', now());"
+  "SELECT count(*) FROM voice_sessions
+     WHERE expires_at::timestamptz >=
+       (date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC');"
 psql "$DATABASE_URL" -c \
   "SELECT count(*) FROM voice_sessions WHERE status IN ('starting', 'active');"
 ```
+
+The month count uses expiry at or after the current UTC month boundary, matching the API's lower-bound
+check. `expires_at` is text and must be cast; the UTC boundary does not depend on the session timezone.
 
 ## Gate results
 
@@ -71,9 +76,38 @@ psql "$DATABASE_URL" -c \
 | Mute stops publication and recovers | pending | `<no transcript while muted; recovery confirmed>` |
 | Interruption stops abandoned audio | pending | `<audio stopped; no late transcript/audio>` |
 | Reconnect recovers or ends cleanly | pending | `<status transitions; next call works>` |
-| Refresh mid-call leaves no orphans | pending | `<turn count, session status>` |
-| End returns idle and cleanup completes | pending | `<session status, room_cleanup_completed_at>` |
+| Refresh mid-call leaves no orphans | pending | `<turn count, browser idle, exact S3 session ended, cleanup timestamp, evidence reference>` |
+| End returns idle and cleanup completes | pending | `<browser idle, exact S1/S2 sessions ended, cleanup timestamps, evidence references>` |
+| Repeated end is idempotent | pending | `<current verification or dated prior evidence, tested revision, applicability confirmed>` |
 | Microphone denial offers recovery | pending | `<error code, recovery step>` |
+
+### Required lifecycle read-back
+
+History persistence and browser `idle` alone cannot prove session termination or room cleanup. Run the
+following read-only query for each exact session ID captured from its start response; never copy tokens:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "SELECT id, status, expires_at, room_cleanup_completed_at
+     FROM voice_sessions WHERE id = '<session-id>';"
+```
+
+| Reservation / trigger | Session ID | Browser state | Persisted status | Cleanup completed at | Observed at (UTC) / elapsed | Evidence reference |
+|---|---|---|---|---|---|---|
+| S1 / End call | `<id>` | `<state>` | `<status>` | `<timestamp or null>` | `<time / seconds>` | `<artifact>` |
+| S2 / End call, if run | `<id or not run>` | `<state>` | `<status>` | `<timestamp or null>` | `<time / seconds>` | `<artifact>` |
+| S3 / refresh, if reached | `<id or not run>` | `<state>` | `<status>` | `<timestamp or null>` | `<time / seconds>` | `<artifact>` |
+
+Pass requires browser `idle`, persisted `ended` and a non-null cleanup timestamp for each tested path.
+Record failure if confirmation is absent after 30 seconds for explicit end or 90 seconds for refresh;
+missing read-back access leaves the check pending. Record failures before any coordinator repair; repair
+does not satisfy the original scenario. Scenarios not reached remain pending.
+
+For repeated-end idempotency, the [11 November hosted lifecycle evidence](day1-hosted-verification.md#migration-and-recovery)
+tested source `4a80697a97b25e4f55275d27b31193fa58c93fa8`. Record the prior evidence reference and
+coordinator-confirmed applicability to the lifecycle implementation under test before using it. Otherwise
+leave idempotency pending until separately verified. Prior evidence does not replace this run's S1–S3
+termination and cleanup observations.
 
 ## Ledger snapshot
 
