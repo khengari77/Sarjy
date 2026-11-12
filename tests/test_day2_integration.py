@@ -35,6 +35,15 @@ ROOT = Path(__file__).resolve().parents[1]
 POSTGRES_URL = os.environ.get('TEST_POSTGRES_URL', '')
 HAS_CONTEXT_ASSEMBLY = importlib.util.find_spec('app.domain.weather_permissions') is not None
 HAS_CONTEXT_OPERATIONS = importlib.util.find_spec('app.services.context_operations') is not None
+HAS_MEMORY = importlib.util.find_spec('app.services.memory') is not None
+MEMORY_BLOCKER = 'blocked on PR #33 / issue #5 (memory repository not merged)'
+
+
+class FakeEmbedder:
+    """Deterministic 1536-dim vector; never calls a provider."""
+
+    async def embed(self, db, text):
+        return tuple([1.0, 1.0 if 'budget' in text.lower() else 0.0] + [0.0] * 1534)
 
 
 def distribution(selected=Intent.CONVERSATION, top=0.55):
@@ -103,8 +112,12 @@ def test_migration_chain_has_one_head_and_expected_parent():
     config = Config(str(ROOT / 'alembic.ini'))
     config.set_main_option('script_location', str(ROOT / 'migrations'))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ['0005_day2_context']
+    heads = script.get_heads()
+    assert len(heads) == 1, f'expected one migration head, got {heads}'
     assert script.get_revision('0005_day2_context').down_revision == '0004_voice_cleanup'
+    revisions = {revision.revision for revision in script.walk_revisions()}
+    assert '0005_day2_context' in revisions
+    assert heads[0] in revisions, 'the single head must be in the same chain as the Day 2 schema'
 
 
 @given(st.lists(st.text(min_size=1, max_size=40), min_size=1, max_size=20))
@@ -265,17 +278,93 @@ def test_trip_exclusion_preserves_budget_and_undo_restores_exactly(tmp_path):
             assert db.execute('SELECT count(*) FROM context_exclusions WHERE active=1').fetchone()[0] == 0
 
 
-@pytest.mark.skip(reason='blocked on #5 memory repository (cross-session recall and correction versions not merged)')
-def test_cross_session_recall_and_correction_versions():
-    """Belongs here once #5 lands: seed a fact in conversation A, reopen in a
-    fresh process/connection from conversation B, correct it and assert only the
-    active version with source/provenance is returned."""
+@pytest.mark.skipif(not HAS_MEMORY, reason=MEMORY_BLOCKER)
+def test_cross_session_recall_and_correction_versions(tmp_path):
+    _, settings = configured(tmp_path)
+    app = create_app(settings, embedding_adapter=FakeEmbedder())
+    with TestClient(app) as client:
+        client.post('/v1/demo-session')
+        first = client.post('/v1/conversations').json()['id']
+        second = client.post('/v1/conversations').json()['id']
+        created = client.post(
+            f'/v1/conversations/{first}/memories',
+            json={'content': 'Trip to Tripoli', 'idempotency_key': 'city'},
+        )
+        assert created.status_code == 201, created.text
+        city = created.json()
+
+        recalled = client.post('/v1/memories/search', json={'conversation_id': second, 'query': 'city', 'limit': 5})
+        assert recalled.status_code == 200, recalled.text
+        hits = {item['id']: item for item in recalled.json()}
+        assert city['id'] in hits, 'an explicit fact must survive into another conversation'
+        assert hits[city['id']]['version'] == 1
+
+        corrected = client.post(
+            f"/v1/memories/{city['id']}/correct",
+            json={'content': 'Trip to London', 'expected_version': 1, 'idempotency_key': 'correction'},
+        )
+        assert corrected.status_code == 200, corrected.text
+        assert corrected.json()['version'] == 2
+        assert corrected.json()['supersedes_id'] == city['id']
+
+        after = client.post('/v1/memories/search', json={'conversation_id': second, 'query': 'city', 'limit': 5}).json()
+        assert city['id'] not in {item['id'] for item in after}
+        assert corrected.json()['id'] in {item['id'] for item in after}
+        assert {item['content'] for item in after} == {'Trip to London'}
+
+        stale = client.post(
+            f"/v1/memories/{city['id']}/correct",
+            json={'content': 'Trip to Paris', 'expected_version': 1, 'idempotency_key': 'stale'},
+        )
+        assert stale.status_code == 409, stale.text
 
 
-@pytest.mark.skip(reason='blocked on #5 memory repository (real pgvector retrieval not merged)')
+@pytest.mark.skipif(not HAS_MEMORY, reason=MEMORY_BLOCKER)
+def test_memory_is_owner_scoped_across_identities(tmp_path):
+    _, settings = configured(tmp_path)
+    app = create_app(settings, embedding_adapter=FakeEmbedder())
+    with TestClient(app) as client:
+        client.post('/v1/demo-session')
+        chat = client.post('/v1/conversations').json()['id']
+        city = client.post(
+            f'/v1/conversations/{chat}/memories',
+            json={'content': 'Trip to Tripoli', 'idempotency_key': 'city'},
+        ).json()
+    with TestClient(app) as other:
+        other.post('/v1/demo-session')
+        assert other.post('/v1/memories/search', json={'conversation_id': chat, 'query': 'city'}).status_code == 404
+        assert other.post(
+            f"/v1/memories/{city['id']}/correct",
+            json={'content': 'Hijacked', 'expected_version': 1, 'idempotency_key': 'hijack'},
+        ).status_code == 404
+
+
+@pytest.mark.skipif(not (HAS_MEMORY and POSTGRES_URL), reason=MEMORY_BLOCKER + ' or TEST_POSTGRES_URL is not set')
 def test_real_pgvector_retrieval_uses_owner_scope():
-    """Belongs here once #5 lands: insert embeddings in a disposable pgvector
-    database, query nearest neighbours and assert tenant isolation."""
+    import asyncio
+    import subprocess
+
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    env = os.environ | {'DATABASE_URL': POSTGRES_URL}
+    upgraded = subprocess.run(['.venv/bin/alembic', 'upgrade', 'head'], env=env, capture_output=True, text=True, timeout=180)
+    assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
+
+    async def run():
+        engine = create_async_engine(POSTGRES_URL)
+        try:
+            async with engine.connect() as db:
+                column = (await db.execute(text(
+                    "SELECT udt_name FROM information_schema.columns WHERE table_name='memories' AND column_name='embedding'"
+                ))).scalar_one()
+                assert column == 'vector', 'memory embeddings must use pgvector on PostgreSQL'
+                distance = (await db.execute(text("SELECT '[1,0]'::vector <-> '[0,1]'::vector"))).scalar_one()
+                assert distance == pytest.approx(2 ** 0.5)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
 
 
 @pytest.mark.skipif(not POSTGRES_URL, reason='TEST_POSTGRES_URL is not set (disposable PostgreSQL only)')
