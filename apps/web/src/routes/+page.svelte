@@ -25,6 +25,7 @@
   import ToolTraceChip from '../lib/chat/ToolTraceChip.svelte';
   import { deriveOrbPresentation, INITIAL_STATE, type VoicePhase } from '../lib/orb/orbState';
   import AppShell from '../lib/ui/AppShell.svelte';
+  import ChatHistorySidebar from '../lib/history/ChatHistorySidebar.svelte';
 
   let arabic = $state(false);
   let voiceId = $state('');
@@ -44,6 +45,10 @@
   let transportStatus = $state('idle');
   let agentState = $state<string | null>(null);
   let listError = $state('');
+  let loadingConversations = $state(true);
+  let pendingSwitch = $state<string | null>(null);
+  let selectionEpoch = 0;
+  let switchCancel: HTMLButtonElement | undefined = $state();
   let voiceErrorCode = $state('');
   let busy = $state(false);
   let connecting = $state(false);
@@ -135,16 +140,52 @@
 
   async function refresh() {
     const id = current;
+    const epoch = ++selectionEpoch;
     if (id) {
       const [history, tools] = await Promise.all([
         request<Turn[]>('conversations/' + id + '/turns'),
         request<typeof toolCalls>('conversations/' + id + '/tool-calls')
       ]);
-      if (current === id) {
+      // Ignore a response that was overtaken by a newer selection.
+      if (current === id && epoch === selectionEpoch) {
         turns = history;
         toolCalls = tools;
       }
     }
+  }
+
+  async function reloadHistory() {
+    listError = '';
+    loadingConversations = true;
+    try {
+      conversations = await request<Conversation[]>('conversations');
+    } finally {
+      loadingConversations = false;
+    }
+  }
+
+  $effect(() => {
+    if (pendingSwitch) switchCancel?.focus();
+  });
+
+  function requestSelect(id: string) {
+    if (id === current) return;
+    if (live) {
+      pendingSwitch = id;
+      return;
+    }
+    void run(() => select(id));
+  }
+
+  async function confirmSwitch() {
+    const id = pendingSwitch;
+    pendingSwitch = null;
+    if (!id) return;
+    await run(async () => {
+      await end();
+      current = id;
+      await refresh();
+    });
   }
 
   function errorCode(error: unknown): string {
@@ -390,13 +431,10 @@
     });
     void run(async () => {
       await request('demo-session', {});
-      conversations = await request<Conversation[]>('conversations');
+      await reloadHistory();
+      // Never create a conversation implicitly: the empty state owns that
+      // explicit action so the user always knows when a chat is started.
       if (conversations.length) await select(conversations[0].id);
-      else {
-        const chat = await request<Conversation>('conversations', {});
-        conversations = [chat];
-        current = chat.id;
-      }
     });
     const endOnPageHide = () => {
       if (!live) return;
@@ -453,28 +491,50 @@
 >
 
   {#snippet left()}
-    <div class="sidebar-inner">
-      <button class="primary-button" disabled={busy} onclick={create}>{words.new} +</button>
-      <p class="sidebar-label">{arabic ? 'المحادثات' : 'Conversations'}</p>
-      {#if listError}
-        <p class="panel-error" role="alert" data-code={listError}>
-          {arabic ? 'تعذّر تحميل المحادثات.' : 'Could not load conversations.'}
-          <button class="ghost-button" onclick={() => run(refresh)}>{arabic ? 'إعادة المحاولة' : 'Retry'}</button>
-        </p>
-      {/if}
-      <nav class="chat-list" aria-label={arabic ? 'قائمة المحادثات' : 'Conversation list'}>
-        {#each conversations as chat}
-          <button class="chat-item" class:chosen={current === chat.id} disabled={busy} onclick={() => run(() => select(chat.id))}>
-            {chat.title}
-          </button>
-        {/each}
-      </nav>
-      <p class="sidebar-foot">Voice Context Studio</p>
-    </div>
+    <ChatHistorySidebar
+      {conversations}
+      {current}
+      {arabic}
+      {busy}
+      loading={loadingConversations}
+      error={listError}
+      onselect={requestSelect}
+      oncreate={create}
+      onretry={() => run(reloadHistory)}
+    />
   {/snippet}
 
   {#snippet stage()}
     <section class="voice-stage" dir={arabic ? 'rtl' : 'ltr'}>
+      {#if pendingSwitch}
+        <div class="confirm-scrim" role="presentation">
+          <div
+            class="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            tabindex="-1"
+            aria-labelledby="switch-title"
+            onkeydown={(event) => {
+              if (event.key === 'Escape') pendingSwitch = null;
+            }}
+          >
+            <h2 id="switch-title">{arabic ? 'إنهاء المكالمة الحالية؟' : 'End the current voice session?'}</h2>
+            <p>
+              {arabic
+                ? 'تبديل المحادثة ينهي المكالمة الجارية. يبقى السجل محفوظًا.'
+                : 'Switching conversations ends the live call. The transcript stays saved.'}
+            </p>
+            <div class="confirm-actions">
+              <button class="ghost-button" bind:this={switchCancel} onclick={() => (pendingSwitch = null)}>
+                {arabic ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button class="primary-button" onclick={confirmSwitch}>
+                {arabic ? 'إنهاء وتبديل' : 'End & switch'}
+              </button>
+            </div>
+          </div>
+        </div>
+      {/if}
       <p class="status-line" data-phase={presentation.effectivePhase} role="status">
         <span class="status-dot" style:background-color={presentation.primaryColor} aria-hidden="true"></span>
         {arabic ? presentation.statusLabel.ar : presentation.statusLabel.en}
@@ -714,54 +774,6 @@
     min-height: 100%;
   }
 
-  .sidebar-label {
-    margin: 8px 0 0;
-    font-size: 11px;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-  }
-
-  .chat-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    overflow-y: auto;
-  }
-
-  .chat-item {
-    font: inherit;
-    text-align: start;
-    padding: 10px 12px;
-    min-height: 40px;
-    border-radius: var(--radius-control);
-    border: 1px solid transparent;
-    background: transparent;
-    color: var(--text-muted);
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .chat-item:hover {
-    background: var(--surface-hover);
-    color: var(--text-primary);
-  }
-
-  .chat-item.chosen {
-    background: var(--surface-elevated);
-    border-color: var(--border-subtle);
-    color: var(--text-primary);
-  }
-
-  .sidebar-foot {
-    margin-top: auto;
-    font-size: 11px;
-    color: var(--text-muted);
-    letter-spacing: 0.08em;
-  }
-
   .voice-stage {
     flex: 1;
     display: flex;
@@ -961,4 +973,43 @@
       padding-inline: 14px;
     }
   }
+
+  .confirm-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgb(0 0 0 / 0.55);
+    backdrop-filter: blur(3px);
+  }
+
+  .confirm-dialog {
+    width: min(420px, 100%);
+    padding: 20px;
+    border-radius: 14px;
+    border: 1px solid var(--border-subtle);
+    background: var(--surface-elevated);
+    color: var(--text-primary);
+  }
+
+  .confirm-dialog h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+  }
+
+  .confirm-dialog p {
+    margin: 0 0 16px;
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
 </style>
