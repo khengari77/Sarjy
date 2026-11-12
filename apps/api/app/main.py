@@ -511,6 +511,7 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
                 turn_id=body.turn_id,
                 operation_key=body.request_id,
                 name='get_current_weather',
+                arguments={'city': body.city, 'country': body.country},
             )
         except ToolOperationError as exc:
             raise HTTPException(exc.status, detail={'code': exc.code}) from exc

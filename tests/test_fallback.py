@@ -22,6 +22,19 @@ def test_transient_pre_output_failures_are_eligible():
     )
 
 
+def test_permanent_http_statuses_never_fall_back():
+    for status in (400, 401, 402, 403, 404, 405, 409, 410, 422):
+        assert not fallback_eligible(
+            failure('provider_error', status=status), emitted_output=False,
+            fallback_configured=True,
+        )
+    for status in (408, 429, 500, 502, 503, 504):
+        assert fallback_eligible(
+            failure('provider_error', status=status), emitted_output=False,
+            fallback_configured=True,
+        )
+
+
 def test_output_partial_cancellation_and_configuration_deny_fallback():
     assert not fallback_eligible(
         failure(), emitted_output=True, fallback_configured=True

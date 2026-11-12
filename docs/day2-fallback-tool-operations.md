@@ -10,6 +10,8 @@ merge is claimed.
 - fallback is eligible only before any text/tool output;
 - eligible failures are timeout, connection failure, rate limiting and transient
   5xx provider errors;
+- permanent HTTP statuses (400/401/402/403/404/405/409/410/422 and similar)
+  always deny fallback before generic error categories are considered;
 - cancellation, authentication, invalid request, insufficient balance and quota
   denial never fall back;
 - at most one fallback attempt is made;
@@ -18,6 +20,9 @@ merge is claimed.
 
 The worker reserves OpenAI through the existing durable budget before the
 fallback attempt. A denied reservation forwards nothing to the fallback provider.
+Startup passes the optional OpenAI key to the provider factory even when the
+primary is DeepSeek; the key remains optional and primary-only startup still
+works without it.
 
 ## Tool operation identities
 
@@ -29,6 +34,10 @@ weather service:
 - `completed` — return the stored result;
 - `failed` — return the stored terminal error;
 - `unknown` — return uncertainty and never replay the effect.
+
+The operation key is bound to the tool name and a canonical fingerprint of its
+arguments. Reusing one key with different arguments or a different tool returns a
+typed conflict instead of another operation’s result.
 
 Only completed tool results enter model context. A timeout or unrecognized
 delivery is recorded as `unknown`; it is not silently retried. A different

@@ -7,14 +7,15 @@ executed again.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.tool_operations import ToolReplayKind, replay_kind
+from app.domain.tool_operations import ToolReplayKind, arguments_fingerprint, replay_kind
 from app.infrastructure.database import ToolCall
 
 
@@ -38,8 +39,14 @@ async def claim_tool_operation(
     turn_id: str,
     operation_key: str,
     name: str,
+    arguments: Mapping[str, Any],
 ) -> ToolOperationClaim:
-    """Atomically claim one operation; return an existing outcome when present."""
+    """Atomically claim one operation; return an existing outcome when present.
+
+    The key is bound to the tool name and normalized arguments. Reusing it for a
+    different request is a conflict even when the turn matches.
+    """
+    fingerprint = arguments_fingerprint(arguments)
     dialect = db.bind.dialect.name if db.bind is not None else ''
     if dialect == 'sqlite':
         from sqlalchemy.dialects.sqlite import insert
@@ -56,6 +63,7 @@ async def claim_tool_operation(
         state='pending',
         result=None,
         error_code=None,
+        arguments_hash=fingerprint,
     ).on_conflict_do_nothing(index_elements=['request_id']))
     if result.rowcount == 1:
         return ToolOperationClaim('claimed')
@@ -63,7 +71,11 @@ async def claim_tool_operation(
     existing = await db.scalar(select(ToolCall).where(ToolCall.request_id == operation_key))
     if existing is None:
         raise ToolOperationError('TOOL_OPERATION_UNAVAILABLE', 503)
-    if existing.turn_id != turn_id:
+    if (
+        existing.turn_id != turn_id
+        or existing.name != name
+        or existing.arguments_hash != fingerprint
+    ):
         raise ToolOperationError('TOOL_OPERATION_CONFLICT', 409)
 
     kind = replay_kind(existing.state)

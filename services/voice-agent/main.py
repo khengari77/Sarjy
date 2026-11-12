@@ -26,7 +26,7 @@ from livekit import rtc
 from livekit.agents import Agent, AgentSession, AgentServer, JobContext, RunContext, cli, llm, function_tool, APIConnectOptions, SessionConnectOptions, room_io
 from livekit.plugins import silero
 from provider_factory import build_providers
-from config import read_worker_environment, require_values
+from config import provider_credentials, read_worker_environment, require_values
 
 server = AgentServer()
 
@@ -235,7 +235,7 @@ async def entrypoint(ctx: JobContext):
         config = bootstrap['pipeline']
         async def notify(code):
             await ctx.room.local_participant.publish_data(json.dumps({'code':code}).encode(), reliable=True, topic='sarjy.error')
-        providers = build_providers(config, require_values(values, 'DEEPGRAM_API_KEY', 'ELEVEN_API_KEY', 'OPENAI_API_KEY' if config['llm']['provider']=='openai_direct' else 'DEEPSEEK_API_KEY'))
+        providers = build_providers(config, provider_credentials(values, config['llm']['provider']))
         fallback_llm = providers.pop('fallback_llm', None)
         agent = SarjyAgent(backend, config, instructions=bootstrap['instructions'], notify=notify, fallback_llm=fallback_llm)
         session = AgentSession(

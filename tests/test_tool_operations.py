@@ -52,19 +52,19 @@ def test_claim_complete_and_replay_are_durable(tmp_path):
         engine, sessions = await setup(tmp_path)
         try:
             async with sessions() as db:
-                claim = await claim_tool_operation(db, turn_id='turn', operation_key='turn:call', name='weather')
+                claim = await claim_tool_operation(db, turn_id='turn', operation_key='turn:call', name='weather', arguments={'city': 'Tripoli', 'country': None})
                 assert claim.kind == 'claimed'
                 await db.commit()
             async with sessions() as db:
-                pending = await claim_tool_operation(db, turn_id='turn', operation_key='turn:call', name='weather')
+                pending = await claim_tool_operation(db, turn_id='turn', operation_key='turn:call', name='weather', arguments={'city': 'Tripoli', 'country': None})
                 assert pending.kind == 'pending'
                 await complete_tool_operation(db, operation_key='turn:call', result={'city': 'Tripoli'})
                 await db.commit()
             async with sessions() as db:
-                replay = await claim_tool_operation(db, turn_id='turn', operation_key='turn:call', name='weather')
+                replay = await claim_tool_operation(db, turn_id='turn', operation_key='turn:call', name='weather', arguments={'city': 'Tripoli', 'country': None})
                 assert replay.kind == 'completed'
                 assert replay.result == {'city': 'Tripoli'}
-                other = await claim_tool_operation(db, turn_id='turn', operation_key='turn:other', name='weather')
+                other = await claim_tool_operation(db, turn_id='turn', operation_key='turn:other', name='weather', arguments={'city': 'Tripoli', 'country': None})
                 assert other.kind == 'claimed'
                 await db.commit()
         finally:
@@ -78,19 +78,19 @@ def test_failed_and_unknown_are_terminal_and_turn_scoped(tmp_path):
         engine, sessions = await setup(tmp_path)
         try:
             async with sessions() as db:
-                await claim_tool_operation(db, turn_id='turn', operation_key='turn:failed', name='weather')
+                await claim_tool_operation(db, turn_id='turn', operation_key='turn:failed', name='weather', arguments={'city': 'Tripoli', 'country': None})
                 await fail_tool_operation(db, operation_key='turn:failed', error_code='LOCATION_NOT_FOUND')
-                await claim_tool_operation(db, turn_id='turn', operation_key='turn:unknown', name='weather')
+                await claim_tool_operation(db, turn_id='turn', operation_key='turn:unknown', name='weather', arguments={'city': 'Tripoli', 'country': None})
                 await unknown_tool_operation(db, operation_key='turn:unknown', error_code='WEATHER_UNAVAILABLE')
                 await db.commit()
             async with sessions() as db:
-                failed = await claim_tool_operation(db, turn_id='turn', operation_key='turn:failed', name='weather')
+                failed = await claim_tool_operation(db, turn_id='turn', operation_key='turn:failed', name='weather', arguments={'city': 'Tripoli', 'country': None})
                 assert failed.kind == 'failed'
                 assert failed.result == {'error': 'LOCATION_NOT_FOUND'}
-                unknown = await claim_tool_operation(db, turn_id='turn', operation_key='turn:unknown', name='weather')
+                unknown = await claim_tool_operation(db, turn_id='turn', operation_key='turn:unknown', name='weather', arguments={'city': 'Tripoli', 'country': None})
                 assert unknown.kind == 'unknown'
                 with pytest.raises(ToolOperationError) as error:
-                    await claim_tool_operation(db, turn_id='other', operation_key='turn:unknown', name='weather')
+                    await claim_tool_operation(db, turn_id='other', operation_key='turn:unknown', name='weather', arguments={'city': 'Tripoli', 'country': None})
                 assert error.value.code == 'TOOL_OPERATION_CONFLICT'
         finally:
             await engine.dispose()

@@ -67,6 +67,7 @@ class ToolCall(Base):
     state: Mapped[str] = mapped_column(String(20), default='completed', server_default='completed', index=True)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    arguments_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 class DevelopmentBudget(Base):
     __tablename__ = 'development_budgets'

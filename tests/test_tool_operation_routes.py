@@ -27,6 +27,9 @@ def test_weather_operation_replays_without_second_external_call(tmp_path, monkey
         assert first_result.status_code == 200
         assert replay_result.status_code == 200
         assert replay_result.json() == first_result.json() == {'city': 'Tripoli', 'temperature': 21}
+        mismatch = client.post('/internal/agent/tool/weather', headers=headers, json={**payload, 'country': 'LY'})
+        assert mismatch.status_code == 409
+        assert mismatch.json()['detail']['code'] == 'TOOL_OPERATION_CONFLICT'
         assert calls == ['Tripoli']
 
         async def unavailable(city, country=None):

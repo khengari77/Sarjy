@@ -18,7 +18,7 @@ TRANSIENT_ERROR_CODES: Final = frozenset({
     'rate_limit',
     'provider_error',
 })
-TRANSIENT_STATUS_CODES: Final = frozenset({500, 502, 503, 504})
+TRANSIENT_STATUS_CODES: Final = frozenset({408, 429, 500, 502, 503, 504})
 BLOCKED_ERROR_CODES: Final = frozenset({
     'authentication',
     'invalid_request',
@@ -52,8 +52,11 @@ def fallback_decision(
         return FallbackDecision(False, 'OUTPUT_ALREADY_EMITTED')
     if failure.error_code in BLOCKED_ERROR_CODES:
         return FallbackDecision(False, 'INELIGIBLE_FAILURE')
-    if failure.status_code in TRANSIENT_STATUS_CODES:
-        return FallbackDecision(True, 'TRANSIENT_PROVIDER_FAILURE')
+    if failure.status_code is not None:
+        if failure.status_code in TRANSIENT_STATUS_CODES:
+            return FallbackDecision(True, 'TRANSIENT_PROVIDER_FAILURE')
+        # A permanent HTTP status always wins over a generic provider_error code.
+        return FallbackDecision(False, 'INELIGIBLE_FAILURE')
     if failure.error_code in TRANSIENT_ERROR_CODES:
         return FallbackDecision(True, 'TRANSIENT_PROVIDER_FAILURE')
     return FallbackDecision(False, 'INELIGIBLE_FAILURE')
