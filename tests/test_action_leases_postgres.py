@@ -68,7 +68,7 @@ def test_postgres_lease_resume_and_fencing():
                 assert row.lease_id is None
             async with factory() as db:
                 db.add(ContextOperation(id='fenced', owner_id=owner, conversation_id=conversation,
-                    command_type='DispatchAction', payload={'fingerprint': 'f', 'prepared': {'ok': True}},
+                    command_type='DispatchAction', payload={'fingerprint': fingerprint(conversation, action), 'prepared': {'ok': True}},
                     idempotency_key=identity(owner, 'r2'), outcome='preparing', lease_id='new',
                     lease_expires_at='2030', created_at='2026-11-12T00:00:00+00:00'))
                 await db.commit()
