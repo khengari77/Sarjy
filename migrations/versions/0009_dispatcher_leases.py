@@ -2,8 +2,8 @@
 from alembic import op
 import sqlalchemy as sa
 
-revision = '0008_dispatcher_leases'
-down_revision = '0007_memory_write_requests'
+revision = '0009_dispatcher_leases'
+down_revision = '0008_tool_operation_state'
 
 
 def upgrade():
