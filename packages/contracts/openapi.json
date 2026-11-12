@@ -5,6 +5,217 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/settings": {
+      "get": {
+        "summary": "Get Settings",
+        "operationId": "get_settings_v1_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSettings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/actions": {
+      "post": {
+        "summary": "Submit",
+        "operationId": "submit_v1_actions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/HandledAction"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UnhandledAction"
+                    }
+                  ],
+                  "title": "Response Submit V1 Actions Post",
+                  "discriminator": {
+                    "propertyName": "handled",
+                    "mapping": {
+                      "true": "#/components/schemas/HandledAction",
+                      "false": "#/components/schemas/UnhandledAction"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{conversation_id}/memories": {
+      "post": {
+        "summary": "Create",
+        "operationId": "create_v1_conversations__conversation_id__memories_post",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryWrite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/{memory_id}/correct": {
+      "post": {
+        "summary": "Correct",
+        "operationId": "correct_v1_memories__memory_id__correct_post",
+        "parameters": [
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Memory Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryCorrection"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/search": {
+      "post": {
+        "summary": "Search",
+        "operationId": "search_v1_memories_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryQuery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryResult"
+                  },
+                  "type": "array",
+                  "title": "Response Search V1 Memories Search Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "summary": "Health",
@@ -536,10 +747,365 @@
           }
         }
       }
+    },
+    "/v1/conversations/{conversation_id}/context": {
+      "get": {
+        "summary": "Get Context",
+        "operationId": "get_context_v1_conversations__conversation_id__context_get",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{conversation_id}/context/operations": {
+      "get": {
+        "summary": "Get Context Operations",
+        "operationId": "get_context_operations_v1_conversations__conversation_id__context_operations_get",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextOperationList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{conversation_id}/context/proposals": {
+      "post": {
+        "summary": "Propose Context",
+        "operationId": "propose_context_v1_conversations__conversation_id__context_proposals_post",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextProposalInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextProposal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{conversation_id}/context/confirm": {
+      "post": {
+        "summary": "Confirm Context",
+        "operationId": "confirm_context_v1_conversations__conversation_id__context_confirm_post",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextConfirmInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextConfirmation"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{conversation_id}/context/undo": {
+      "post": {
+        "summary": "Undo Context",
+        "operationId": "undo_context_v1_conversations__conversation_id__context_undo_post",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextUndoInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextUndoResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ActionSubmission": {
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Conversation Id"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "ui",
+              "transcript"
+            ],
+            "title": "Source"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AdjustSpeakingSpeed"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SetSpeakingSpeed"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SelectApprovedVoice"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ShowConversationHistory"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OpenMemoryExplorer"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SetCaptionsVisible"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SearchMemory"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ProposeContextExclusion"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RestoreContextOperation"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "AdjustSpeakingSpeed": "#/components/schemas/AdjustSpeakingSpeed",
+                    "OpenMemoryExplorer": "#/components/schemas/OpenMemoryExplorer",
+                    "ProposeContextExclusion": "#/components/schemas/ProposeContextExclusion",
+                    "RestoreContextOperation": "#/components/schemas/RestoreContextOperation",
+                    "SearchMemory": "#/components/schemas/SearchMemory",
+                    "SelectApprovedVoice": "#/components/schemas/SelectApprovedVoice",
+                    "SetCaptionsVisible": "#/components/schemas/SetCaptionsVisible",
+                    "SetSpeakingSpeed": "#/components/schemas/SetSpeakingSpeed",
+                    "ShowConversationHistory": "#/components/schemas/ShowConversationHistory"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "transcript": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript"
+          },
+          "finalized": {
+            "type": "boolean",
+            "const": true,
+            "title": "Finalized",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "conversation_id",
+          "request_id",
+          "expected_revision",
+          "source"
+        ],
+        "title": "ActionSubmission"
+      },
+      "AdjustSpeakingSpeed": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "AdjustSpeakingSpeed",
+            "default": "AdjustSpeakingSpeed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "delta": {
+            "title": "Delta",
+            "type": "number"
+          }
+        },
+        "required": [
+          "delta"
+        ],
+        "title": "AdjustSpeakingSpeed",
+        "type": "object"
+      },
       "AgentInput": {
         "properties": {
           "request_id": {
@@ -615,6 +1181,469 @@
         ],
         "title": "BudgetReservation"
       },
+      "ContextConfirmInput": {
+        "properties": {
+          "proposal": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Proposal"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "proposal",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "title": "ContextConfirmInput"
+      },
+      "ContextConfirmation": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "idempotent": {
+            "type": "boolean",
+            "title": "Idempotent"
+          },
+          "excluded_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Excluded Ids"
+          },
+          "kept_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Kept Ids"
+          },
+          "revision_before": {
+            "type": "integer",
+            "title": "Revision Before"
+          },
+          "revision_after": {
+            "type": "integer",
+            "title": "Revision After"
+          },
+          "diff": {
+            "$ref": "#/components/schemas/ContextDiff"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id",
+          "status",
+          "idempotent",
+          "excluded_ids",
+          "kept_ids",
+          "revision_before",
+          "revision_after",
+          "diff"
+        ],
+        "title": "ContextConfirmation"
+      },
+      "ContextDiff": {
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Added"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Removed"
+          },
+          "kept": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Kept"
+          },
+          "revision_before": {
+            "type": "integer",
+            "title": "Revision Before"
+          },
+          "revision_after": {
+            "type": "integer",
+            "title": "Revision After"
+          }
+        },
+        "type": "object",
+        "required": [
+          "added",
+          "removed",
+          "kept",
+          "revision_before",
+          "revision_after"
+        ],
+        "title": "ContextDiff"
+      },
+      "ContextMatch": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "source_turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Turn Id"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "source_turn_id",
+          "score",
+          "kind"
+        ],
+        "title": "ContextMatch"
+      },
+      "ContextOperationItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "command_type": {
+            "type": "string",
+            "title": "Command Type"
+          },
+          "outcome": {
+            "type": "string",
+            "title": "Outcome"
+          },
+          "revision_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Before"
+          },
+          "revision_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision After"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "title": "Idempotency Key"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "diff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextDiff"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "command_type",
+          "outcome",
+          "idempotency_key",
+          "created_at",
+          "diff"
+        ],
+        "title": "ContextOperationItem"
+      },
+      "ContextOperationList": {
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/ContextOperationItem"
+            },
+            "type": "array",
+            "title": "Operations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conversation_id",
+          "revision",
+          "operations"
+        ],
+        "title": "ContextOperationList"
+      },
+      "ContextPreserved": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "reason"
+        ],
+        "title": "ContextPreserved"
+      },
+      "ContextProposal": {
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "proposal": {
+            "type": "string",
+            "title": "Proposal"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/ContextMatch"
+            },
+            "type": "array",
+            "title": "Matches"
+          },
+          "preserved": {
+            "items": {
+              "$ref": "#/components/schemas/ContextPreserved"
+            },
+            "type": "array",
+            "title": "Preserved"
+          },
+          "diff": {
+            "$ref": "#/components/schemas/ContextDiff"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conversation_id",
+          "query",
+          "revision",
+          "proposal",
+          "matches",
+          "preserved",
+          "diff"
+        ],
+        "title": "ContextProposal"
+      },
+      "ContextProposalInput": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Query"
+          },
+          "keep": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Keep",
+            "default": []
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "default": 20
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "ContextProposalInput"
+      },
+      "ContextState": {
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "excluded_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Excluded Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conversation_id",
+          "revision",
+          "excluded_ids"
+        ],
+        "title": "ContextState"
+      },
+      "ContextUndoInput": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "maxLength": 36,
+            "minLength": 1,
+            "title": "Operation Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operation_id",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "title": "ContextUndoInput"
+      },
+      "ContextUndoResult": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "restored_operation_id": {
+            "type": "string",
+            "title": "Restored Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "idempotent": {
+            "type": "boolean",
+            "title": "Idempotent"
+          },
+          "restored_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Restored Ids"
+          },
+          "revision_before": {
+            "type": "integer",
+            "title": "Revision Before"
+          },
+          "revision_after": {
+            "type": "integer",
+            "title": "Revision After"
+          },
+          "diff": {
+            "$ref": "#/components/schemas/ContextDiff"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id",
+          "restored_operation_id",
+          "status",
+          "idempotent",
+          "restored_ids",
+          "revision_before",
+          "revision_after",
+          "diff"
+        ],
+        "title": "ContextUndoResult"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -627,6 +1656,216 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HandledAction": {
+        "properties": {
+          "handled": {
+            "type": "boolean",
+            "const": true,
+            "title": "Handled"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SettingsActionResult"
+              },
+              {
+                "$ref": "#/components/schemas/NavigationActionResult"
+              },
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              }
+            ],
+            "title": "Result"
+          }
+        },
+        "type": "object",
+        "required": [
+          "handled",
+          "result"
+        ],
+        "title": "HandledAction"
+      },
+      "JsonValue": {},
+      "MemoryCorrection": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Content"
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "source_turn_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Turn Id"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content",
+          "expected_version",
+          "idempotency_key"
+        ],
+        "title": "MemoryCorrection"
+      },
+      "MemoryQuery": {
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Query"
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "default": 5
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "conversation_id",
+          "query"
+        ],
+        "title": "MemoryQuery"
+      },
+      "MemoryResult": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "owner_id": {
+            "type": "string",
+            "title": "Owner Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "source_conversation_id": {
+            "type": "string",
+            "title": "Source Conversation Id"
+          },
+          "source_turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Turn Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "supersedes_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Id"
+          },
+          "distance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "owner_id",
+          "content",
+          "version",
+          "source_conversation_id",
+          "source_turn_id",
+          "status",
+          "supersedes_id"
+        ],
+        "title": "MemoryResult"
+      },
+      "MemoryWrite": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Content"
+          },
+          "source_turn_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Turn Id"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content",
+          "idempotency_key"
+        ],
+        "title": "MemoryWrite"
       },
       "ModelChoice": {
         "properties": {
@@ -662,6 +1901,45 @@
           "model"
         ],
         "title": "ModelChoice"
+      },
+      "NavigationActionResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ShowConversationHistory",
+              "OpenMemoryExplorer"
+            ],
+            "title": "Kind"
+          },
+          "navigation": {
+            "type": "string",
+            "enum": [
+              "history",
+              "memory_explorer"
+            ],
+            "title": "Navigation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "navigation"
+        ],
+        "title": "NavigationActionResult"
+      },
+      "OpenMemoryExplorer": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "OpenMemoryExplorer",
+            "default": "OpenMemoryExplorer",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "OpenMemoryExplorer",
+        "type": "object"
       },
       "PipelineConfig": {
         "properties": {
@@ -707,6 +1985,36 @@
         "title": "PipelineConfig",
         "description": "Already-resolved session configuration, including valid preference overrides.\n\nThe output cap is derived, never supplied."
       },
+      "ProposeContextExclusion": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "ProposeContextExclusion",
+            "default": "ProposeContextExclusion",
+            "title": "Kind",
+            "type": "string"
+          },
+          "query": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "keep": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Keep",
+            "type": "array"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "ProposeContextExclusion",
+        "type": "object"
+      },
       "ResponsePreference": {
         "enum": [
           "automatic",
@@ -716,6 +2024,161 @@
         ],
         "title": "ResponsePreference",
         "type": "string"
+      },
+      "RestoreContextOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "RestoreContextOperation",
+            "default": "RestoreContextOperation",
+            "title": "Kind",
+            "type": "string"
+          },
+          "operation_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Operation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id"
+        ],
+        "title": "RestoreContextOperation",
+        "type": "object"
+      },
+      "SearchMemory": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "SearchMemory",
+            "default": "SearchMemory",
+            "title": "Kind",
+            "type": "string"
+          },
+          "query": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 20,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "SearchMemory",
+        "type": "object"
+      },
+      "SelectApprovedVoice": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "SelectApprovedVoice",
+            "default": "SelectApprovedVoice",
+            "title": "Kind",
+            "type": "string"
+          },
+          "voice_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,100}$",
+            "title": "Voice Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "voice_id"
+        ],
+        "title": "SelectApprovedVoice",
+        "type": "object"
+      },
+      "SetCaptionsVisible": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "SetCaptionsVisible",
+            "default": "SetCaptionsVisible",
+            "title": "Kind",
+            "type": "string"
+          },
+          "visible": {
+            "title": "Visible",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "visible"
+        ],
+        "title": "SetCaptionsVisible",
+        "type": "object"
+      },
+      "SetSpeakingSpeed": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "SetSpeakingSpeed",
+            "default": "SetSpeakingSpeed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "speed": {
+            "maximum": 1.2,
+            "minimum": 0.8,
+            "title": "Speed",
+            "type": "number"
+          }
+        },
+        "required": [
+          "speed"
+        ],
+        "title": "SetSpeakingSpeed",
+        "type": "object"
+      },
+      "SettingsActionResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "AdjustSpeakingSpeed",
+              "SetSpeakingSpeed",
+              "SelectApprovedVoice",
+              "SetCaptionsVisible"
+            ],
+            "title": "Kind"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/UserSettings"
+          },
+          "changed": {
+            "type": "boolean",
+            "title": "Changed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "settings",
+          "changed"
+        ],
+        "title": "SettingsActionResult"
+      },
+      "ShowConversationHistory": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "ShowConversationHistory",
+            "default": "ShowConversationHistory",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "ShowConversationHistory",
+        "type": "object"
       },
       "StartVoice": {
         "properties": {
@@ -769,6 +2232,62 @@
           "conversation_id"
         ],
         "title": "StartVoice"
+      },
+      "UnhandledAction": {
+        "properties": {
+          "handled": {
+            "type": "boolean",
+            "const": false,
+            "title": "Handled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "handled"
+        ],
+        "title": "UnhandledAction"
+      },
+      "UserSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "speaking_speed": {
+            "default": 1.0,
+            "maximum": 1.2,
+            "minimum": 0.8,
+            "title": "Speaking Speed",
+            "type": "number"
+          },
+          "captions_visible": {
+            "default": true,
+            "title": "Captions Visible",
+            "type": "boolean"
+          },
+          "approved_voice_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_-]{1,100}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Approved Voice Id"
+          },
+          "response_preference": {
+            "$ref": "#/components/schemas/ResponsePreference",
+            "default": "automatic"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "title": "UserSettings",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {
@@ -1028,48 +2547,6 @@
           "policy_version"
         ],
         "title": "Decision",
-        "type": "object"
-      },
-      "UserSettings": {
-        "additionalProperties": false,
-        "properties": {
-          "speaking_speed": {
-            "default": 1.0,
-            "maximum": 1.2,
-            "minimum": 0.8,
-            "title": "Speaking Speed",
-            "type": "number"
-          },
-          "captions_visible": {
-            "default": true,
-            "title": "Captions Visible",
-            "type": "boolean"
-          },
-          "approved_voice_id": {
-            "anyOf": [
-              {
-                "pattern": "^[A-Za-z0-9_-]{1,100}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Approved Voice Id"
-          },
-          "response_preference": {
-            "$ref": "#/components/schemas/ResponsePreference",
-            "default": "automatic"
-          },
-          "revision": {
-            "default": 0,
-            "minimum": 0,
-            "title": "Revision",
-            "type": "integer"
-          }
-        },
-        "title": "UserSettings",
         "type": "object"
       },
       "MemorySource": {
@@ -1336,196 +2813,6 @@
           "settings"
         ],
         "title": "ModelRequest",
-        "type": "object"
-      },
-      "AdjustSpeakingSpeed": {
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "const": "AdjustSpeakingSpeed",
-            "default": "AdjustSpeakingSpeed",
-            "title": "Kind",
-            "type": "string"
-          },
-          "delta": {
-            "title": "Delta",
-            "type": "number"
-          }
-        },
-        "required": [
-          "delta"
-        ],
-        "title": "AdjustSpeakingSpeed",
-        "type": "object"
-      },
-      "SetSpeakingSpeed": {
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "const": "SetSpeakingSpeed",
-            "default": "SetSpeakingSpeed",
-            "title": "Kind",
-            "type": "string"
-          },
-          "speed": {
-            "maximum": 1.2,
-            "minimum": 0.8,
-            "title": "Speed",
-            "type": "number"
-          }
-        },
-        "required": [
-          "speed"
-        ],
-        "title": "SetSpeakingSpeed",
-        "type": "object"
-      },
-      "SelectApprovedVoice": {
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "const": "SelectApprovedVoice",
-            "default": "SelectApprovedVoice",
-            "title": "Kind",
-            "type": "string"
-          },
-          "voice_id": {
-            "pattern": "^[A-Za-z0-9_-]{1,100}$",
-            "title": "Voice Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "voice_id"
-        ],
-        "title": "SelectApprovedVoice",
-        "type": "object"
-      },
-      "ShowConversationHistory": {
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "const": "ShowConversationHistory",
-            "default": "ShowConversationHistory",
-            "title": "Kind",
-            "type": "string"
-          }
-        },
-        "title": "ShowConversationHistory",
-        "type": "object"
-      },
-      "OpenMemoryExplorer": {
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "const": "OpenMemoryExplorer",
-            "default": "OpenMemoryExplorer",
-            "title": "Kind",
-            "type": "string"
-          }
-        },
-        "title": "OpenMemoryExplorer",
-        "type": "object"
-      },
-      "SetCaptionsVisible": {
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "const": "SetCaptionsVisible",
-            "default": "SetCaptionsVisible",
-            "title": "Kind",
-            "type": "string"
-          },
-          "visible": {
-            "title": "Visible",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "visible"
-        ],
-        "title": "SetCaptionsVisible",
-        "type": "object"
-      },
-      "SearchMemory": {
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "const": "SearchMemory",
-            "default": "SearchMemory",
-            "title": "Kind",
-            "type": "string"
-          },
-          "query": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Query",
-            "type": "string"
-          },
-          "limit": {
-            "default": 20,
-            "maximum": 20,
-            "minimum": 1,
-            "title": "Limit",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "query"
-        ],
-        "title": "SearchMemory",
-        "type": "object"
-      },
-      "ProposeContextExclusion": {
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "const": "ProposeContextExclusion",
-            "default": "ProposeContextExclusion",
-            "title": "Kind",
-            "type": "string"
-          },
-          "query": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Query",
-            "type": "string"
-          },
-          "keep": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Keep",
-            "type": "array"
-          }
-        },
-        "required": [
-          "query"
-        ],
-        "title": "ProposeContextExclusion",
-        "type": "object"
-      },
-      "RestoreContextOperation": {
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "const": "RestoreContextOperation",
-            "default": "RestoreContextOperation",
-            "title": "Kind",
-            "type": "string"
-          },
-          "operation_id": {
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Operation Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "operation_id"
-        ],
-        "title": "RestoreContextOperation",
         "type": "object"
       },
       "Action": {

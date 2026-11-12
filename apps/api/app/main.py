@@ -8,7 +8,7 @@ from uuid import uuid4
 from typing import Literal
 
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, update, event, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
@@ -18,12 +18,22 @@ from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response
 from app.domain.pipeline import PipelineConfig, validate_pipeline, PRESET, KEYS
 from app.domain.policy import pipeline_instructions, normalize_pipeline
 from app.domain.sessions import admission_error
-from app.domain.context import ContextRecord, compile_context
+from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
+from app.domain.weather_permissions import decide_weather_request
+from app.services.context_assembly import location_evidence, read_context_inputs
 from app.infrastructure.database import Base, Identity, Conversation, Turn, VoiceSession, SessionGate, ToolCall
 from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogError
 from app.services.budget import reserve as reserve_development_budget
 from app.services.session_cleanup import cleanup_room
 from app.services.weather import get_current_weather, WeatherError
+from app.services.context_operations import (
+    ContextOperationError,
+    confirm_proposal,
+    context_state,
+    create_proposal,
+    list_operations,
+    undo_operation,
+)
 
 COOKIE = 'sarjy_demo'
 
@@ -53,8 +63,98 @@ class WeatherInput(BaseModel):
     city: str = Field(min_length=1, max_length=120)
     country: str | None = Field(default=None, max_length=120)
 
+class ContextProposalInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    query: str = Field(min_length=1, max_length=200)
+    keep: tuple[str, ...] = ()
+    limit: int = Field(default=20, ge=1, le=20)
 
-def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None):
+class ContextConfirmInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    proposal: str = Field(min_length=1, max_length=20000)
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=100)
+
+class ContextUndoInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    operation_id: str = Field(min_length=1, max_length=36)
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=100)
+
+class ContextDiff(BaseModel):
+    added: list[str]
+    removed: list[str]
+    kept: list[str]
+    revision_before: int
+    revision_after: int
+
+class ContextMatch(BaseModel):
+    id: str
+    content: str
+    source_turn_id: str | None
+    score: float
+    kind: str
+
+class ContextPreserved(BaseModel):
+    id: str
+    content: str
+    reason: str
+
+class ContextProposal(BaseModel):
+    conversation_id: str
+    query: str
+    revision: int
+    proposal: str
+    matches: list[ContextMatch]
+    preserved: list[ContextPreserved]
+    diff: ContextDiff
+
+class ContextConfirmation(BaseModel):
+    operation_id: str
+    status: str
+    idempotent: bool
+    excluded_ids: list[str]
+    kept_ids: list[str]
+    revision_before: int
+    revision_after: int
+    diff: ContextDiff
+
+class ContextUndoResult(BaseModel):
+    operation_id: str
+    restored_operation_id: str
+    status: str
+    idempotent: bool
+    restored_ids: list[str]
+    revision_before: int
+    revision_after: int
+    diff: ContextDiff
+
+class ContextOperationItem(BaseModel):
+    id: str
+    command_type: str
+    outcome: str
+    revision_before: int | None = None
+    revision_after: int | None = None
+    idempotency_key: str
+    created_at: str
+    diff: ContextDiff | None
+
+class ContextOperationList(BaseModel):
+    conversation_id: str
+    revision: int
+    operations: list[ContextOperationItem]
+
+class ContextState(BaseModel):
+    conversation_id: str
+    revision: int
+    excluded_ids: list[str]
+
+
+def _context_error(exc: ContextOperationError) -> HTTPException:
+    return HTTPException(exc.status, detail={'code': exc.code})
+
+
+def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None, embedding_adapter=None):
     config = settings or Settings()
     catalog = voice_catalog or ElevenLabsVoices(config.eleven_api_key)
     engine = create_async_engine(config.database_url)
@@ -109,6 +209,24 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         if not conversation or conversation.owner_id != user.id:
             raise HTTPException(404, detail={'code': 'CONVERSATION_NOT_FOUND'})
         return conversation
+
+    from app.routes.actions import register_action_routes
+    register_action_routes(app, database, identity, owned, catalog)
+
+    from app.routes.memory import memory_router
+    from app.services.memory import OpenAIEmbedder, MemoryService
+    from app.domain.context_operations import MemoryCandidate, classify
+    from app.services.context_actions import build_context_action_handlers
+    embedder = embedding_adapter or OpenAIEmbedder(config.openai_api_key)
+
+    async def semantic_search(db, *, owner_id, conversation_id, query, limit):
+        rows = await MemoryService(db, embedder).search_memories(owner_id, conversation_id, query, limit)
+        return tuple(MemoryCandidate(id=row.id, content=row.content, source_turn_id=row.source_turn_id,
+            score=1.0 - (row.distance or 0.0), kind=classify(row.content)) for row in rows)
+
+    app.state.action_handlers.update(build_context_action_handlers(
+        secret=config.context_proposal_secret or config.agent_service_secret, search=semantic_search))
+    app.include_router(memory_router(database, identity, embedder))
 
     @app.get('/healthz')
     def health():
@@ -283,12 +401,23 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         existing = await db.scalar(select(Turn).where(Turn.conversation_id == voice.conversation_id, Turn.request_id == body.request_id))
         if existing:
             return {'turn_id':existing.id, 'context':existing.snapshot}
-        history = (await db.scalars(select(Turn).where(Turn.conversation_id == voice.conversation_id, Turn.status == 'completed').order_by(Turn.created_at.desc()).limit(20))).all()
         turn = Turn(id=str(uuid4()), conversation_id=voice.conversation_id, request_id=body.request_id, role='user', text=body.text, status='completed')
         pipeline = normalize_pipeline(voice.pipeline)
-        records = (ContextRecord('system','system',pipeline_instructions(pipeline)),) + tuple(ContextRecord(t.id,t.role,t.text) for t in reversed(history)) + (ContextRecord(turn.id,'user',turn.text),)
-        turn.snapshot = compile_context(records, conversation.revision)
-        turn.snapshot['pipeline_config'] = pipeline
+        inputs = await read_context_inputs(db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id)
+        compiled = compile_turn_context(
+            revision=conversation.revision,
+            instructions=pipeline_instructions(pipeline),
+            history=inputs.history,
+            memories=inputs.memories.included,
+            tool_results=inputs.tool_results,
+            current_turn=ContextCandidate(id=turn.id, role='user', text=turn.text, origin='history'),
+            excluded_ids=inputs.excluded_ids,
+            pipeline=pipeline,
+        )
+        # The weather decision is frozen with the snapshot: the tool call later
+        # authorizes against this revision, never against live or stale state.
+        turn.snapshot = {**compiled.to_snapshot(), 'weather_policy': inputs.weather_policy()}
+        validate_assembly(conversation.revision, compiled.manifest, turn.snapshot)
         conversation_id = voice.conversation_id
         db.add(turn)
         if conversation.title == 'New conversation':
@@ -314,6 +443,9 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         if existing:
             return {'id':existing.id}
         turn = Turn(id=str(uuid4()), conversation_id=voice.conversation_id, request_id=key, role='assistant', text=body.text, status=body.status)
+        record_ids = (user_turn.snapshot or {}).get('included_record_ids')
+        if isinstance(record_ids, list) and all(isinstance(value, str) for value in record_ids):
+            turn.snapshot = {'derivation': {'turn_id': user_turn.id, 'record_ids': record_ids}}
         conversation_id = voice.conversation_id
         db.add(turn)
         try:
@@ -332,6 +464,16 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         turn = await db.get(Turn, body.turn_id)
         if not turn or turn.conversation_id != voice.conversation_id:
             raise HTTPException(404)
+        policy = (turn.snapshot or {}).get('weather_policy') or {}
+        decision = decide_weather_request(
+            city=body.city,
+            country=body.country,
+            user_text=turn.text,
+            included=location_evidence(policy.get('included_locations', [])),
+            excluded=location_evidence(policy.get('excluded_locations', [])),
+        )
+        if not decision.allowed:
+            return {'error': decision.reason or 'LOCATION_EXCLUDED'}
         existing = await db.scalar(select(ToolCall).where(ToolCall.request_id == body.request_id, ToolCall.turn_id == body.turn_id))
         if existing:
             return existing.result
@@ -348,6 +490,68 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
         await owned(conversation_id, user, db)
         rows = (await db.scalars(select(ToolCall).join(Turn).where(Turn.conversation_id == conversation_id))).all()
         return [{'id':row.id, 'turn_id':row.turn_id, 'name':row.name, 'result':row.result} for row in rows]
+
+    def proposal_secret() -> str:
+        return config.context_proposal_secret or config.agent_service_secret
+
+    @app.get('/v1/conversations/{conversation_id}/context', response_model=ContextState)
+    async def get_context(conversation_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
+        try:
+            return await context_state(db, owner_id=user.id, conversation_id=conversation_id)
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+    @app.get('/v1/conversations/{conversation_id}/context/operations', response_model=ContextOperationList)
+    async def get_context_operations(conversation_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
+        try:
+            return await list_operations(db, owner_id=user.id, conversation_id=conversation_id)
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+    @app.post('/v1/conversations/{conversation_id}/context/proposals', response_model=ContextProposal)
+    async def propose_context(conversation_id: str, body: ContextProposalInput, user=Depends(identity), db: AsyncSession = Depends(database)):
+        try:
+            return await create_proposal(
+                db,
+                owner_id=user.id,
+                conversation_id=conversation_id,
+                query=body.query,
+                keep=body.keep,
+                limit=body.limit,
+                secret=proposal_secret(),
+                search=semantic_search,
+            )
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+    @app.post('/v1/conversations/{conversation_id}/context/confirm', response_model=ContextConfirmation)
+    async def confirm_context(conversation_id: str, body: ContextConfirmInput, user=Depends(identity), db: AsyncSession = Depends(database)):
+        try:
+            return await confirm_proposal(
+                db,
+                owner_id=user.id,
+                conversation_id=conversation_id,
+                proposal=body.proposal,
+                expected_revision=body.expected_revision,
+                idempotency_key=body.idempotency_key,
+                secret=proposal_secret(),
+            )
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+    @app.post('/v1/conversations/{conversation_id}/context/undo', response_model=ContextUndoResult)
+    async def undo_context(conversation_id: str, body: ContextUndoInput, user=Depends(identity), db: AsyncSession = Depends(database)):
+        try:
+            return await undo_operation(
+                db,
+                owner_id=user.id,
+                conversation_id=conversation_id,
+                operation_id=body.operation_id,
+                expected_revision=body.expected_revision,
+                idempotency_key=body.idempotency_key,
+            )
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
 
 
     return app
