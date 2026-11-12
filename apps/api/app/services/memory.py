@@ -312,8 +312,10 @@ class MemoryService:
         try:
             return await self._finalize(claim['id'],fingerprint,owner_id,conversation_id,source_turn_id,content,key,previous_id,expected_version)
         except HTTPException as exc:
-            if exc.status_code == 409:
-                await self._mark_error(claim['id'], exc.detail['code'], 409)
+            if exc.status_code in {400, 403, 404, 409, 422}:
+                # Terminal finalization failures must be durable so a retry
+                # returns the recorded outcome instead of re-running finalize.
+                await self._mark_error(claim['id'], exc.detail['code'], exc.status_code)
             raise
 
     async def search_memories(self, owner_id, conversation_id, query, limit=5):
