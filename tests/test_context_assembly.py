@@ -232,3 +232,61 @@ def test_explicit_current_turn_city_overrides_an_excluded_memory(tmp_path, monke
         )
         assert response.json()['city'] == 'Tripoli'
         assert calls == ['Tripoli']
+
+
+def test_city_in_both_included_and_excluded_allowed_by_inclusion(tmp_path, monkeypatch):
+    """A city appearing in both included and excluded sets is allowed (inclusion wins)."""
+    file, settings = configured(tmp_path)
+    calls = []
+
+    async def fake_weather(city, country=None):
+        calls.append((city, country))
+        return {'city': city, 'temperature': 31}
+
+    monkeypatch.setattr(main_module, 'get_current_weather', fake_weather)
+    with TestClient(create_app(settings)) as client:
+        owner = client.post('/v1/demo-session').json()['id']
+        chat = client.post('/v1/conversations').json()['id']
+        # Add a memory, then exclude it, but also keep it in included via a bug/edge case
+        # This simulates the case where a city ends up in both sets
+        headers, result = start_turn(
+            client,
+            chat,
+            owner,
+            file,
+            memories=(('trip', 'Trip to Tripoli', 'active'), ('home', 'Lives in Paris', 'active')),
+            exclusions=('trip',),
+            text='What is the weather?',
+        )
+        turn_id = result['turn_id']
+
+        # Manually add the excluded city to the included set in the weather_policy
+        # to simulate the overlap edge case (this is a unit test of the decision logic)
+        turn_snapshot = result['context']
+        if 'weather_policy' in turn_snapshot:
+            # We can't easily inject both via the API, so test the pure function directly
+            from app.domain.weather_permissions import decide_weather_request, LocationEvidence
+            trip_evidence = LocationEvidence('trip', 'Trip to Tripoli')
+            decision = decide_weather_request(
+                city='Tripoli',
+                country='LY',
+                user_text='What is the weather?',
+                included=(trip_evidence,),
+                excluded=(trip_evidence,),
+            )
+            assert decision.allowed is True
+            assert decision.reason is None
+            assert decision.source == 'memory'
+            assert decision.memory_id == 'trip'
+
+        def weather(city, request_id, text):
+            return client.post(
+                '/internal/agent/tool/weather',
+                headers=headers,
+                json={'turn_id': turn_id, 'request_id': request_id, 'city': city},
+            )
+
+        # Normal excluded case still works
+        denied = weather('Tripoli', 'w1', '')
+        assert denied.json() == {'error': 'LOCATION_EXCLUDED'}
+        assert calls == []

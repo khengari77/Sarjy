@@ -58,6 +58,8 @@ def decide_weather_request(
     * an excluded/inactive memory's city is denied when the model supplies it
       without the user saying it, so a remembered city cannot silently bypass
       an exclusion.
+    * if a city appears in both included and excluded sets, the included wins
+      (explicit allowance overrides exclusion).
     """
     explicit = mentions(user_text, city)
     included_memory = _match(city, included)
