@@ -19,3 +19,5 @@ Existing B008 exemptions permit FastAPI dependency defaults. The pipeline comput
 Every PR must confirm both hooks are installed and used without bypasses, and report quality/type results for its final SHA. The pre-commit hook requires complete Python/config changes to be staged, so it checks the version being committed. CI checks the committed tree independently.
 
 Warnings are failures: pytest uses `filterwarnings = ["error"]`; mypy strict mode rejects unused ignores, redundant casts and Any returns, and unused configuration warnings are enabled. Do not add warning filters or type suppressions to hide failures without a narrow justification and linked issue.
+
+Use `bash scripts/check_types.sh` for the enforced mypy gate. It checks without incremental caching so unused configuration is detected, preserves mypy failure codes, and rejects warning output even when mypy returns zero. Both Git hooks and CI use this wrapper.
