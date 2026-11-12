@@ -160,6 +160,11 @@ class Decision(Contract):
             raise ValueError("CONFIDENCE_NOT_FINITE")
         return value
 
+    @field_validator("probabilities", mode="after")
+    @classmethod
+    def probabilities_are_immutable(cls, value: Mapping[Intent, float]) -> Mapping[Intent, float]:
+        return MappingProxyType(dict(value))
+
     @model_validator(mode="after")
     def probabilities_are_consistent(self) -> "Decision":
         if set(self.probabilities) != set(Intent):
@@ -173,11 +178,6 @@ class Decision(Contract):
         selected = self.probabilities[self.intent]
         if selected < max(self.probabilities.values()) - PROBABILITY_MAX_TOLERANCE:
             raise ValueError("SELECTED_INTENT_NOT_MAXIMUM")
-        object.__setattr__(
-            self,
-            "probabilities",
-            MappingProxyType({intent: self.probabilities[intent] for intent in Intent}),
-        )
         return self
 
     @field_serializer("probabilities")
@@ -404,33 +404,15 @@ def apply_settings_action(settings: UserSettings, action: Action) -> UserSetting
         speed = min(max(round(speed * 10) / 10, SPEAKING_SPEED_MIN), SPEAKING_SPEED_MAX)
         if speed == settings.speaking_speed:
             return settings
-        return UserSettings(
-            speaking_speed=speed,
-            captions_visible=settings.captions_visible,
-            approved_voice_id=settings.approved_voice_id,
-            response_preference=settings.response_preference,
-            revision=settings.revision + 1,
-        )
+        return settings.model_copy(update={"speaking_speed": speed, "revision": settings.revision + 1})
     if isinstance(action, SelectApprovedVoice):
         if action.voice_id == settings.approved_voice_id:
             return settings
-        return UserSettings(
-            speaking_speed=settings.speaking_speed,
-            captions_visible=settings.captions_visible,
-            approved_voice_id=action.voice_id,
-            response_preference=settings.response_preference,
-            revision=settings.revision + 1,
-        )
+        return settings.model_copy(update={"approved_voice_id": action.voice_id, "revision": settings.revision + 1})
     if isinstance(action, SetCaptionsVisible):
         if action.visible == settings.captions_visible:
             return settings
-        return UserSettings(
-            speaking_speed=settings.speaking_speed,
-            captions_visible=action.visible,
-            approved_voice_id=settings.approved_voice_id,
-            response_preference=settings.response_preference,
-            revision=settings.revision + 1,
-        )
+        return settings.model_copy(update={"captions_visible": action.visible, "revision": settings.revision + 1})
     return settings
 
 

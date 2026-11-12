@@ -50,6 +50,15 @@ def test_conversation_ownership_has_a_single_definition():
     assert definitions == ["apps/api/app/services/authorization.py"]
 
 
+def test_domain_never_uses_setattr_escape_hatches():
+    violations = [
+        path.relative_to(ROOT).as_posix()
+        for path in (APP / "domain").glob("*.py")
+        if "object.__setattr__" in path.read_text(encoding="utf-8")
+    ]
+    assert not violations
+
+
 def test_application_factory_is_not_constructed_at_import_time():
     tree = ast.parse((APP / "main.py").read_text(encoding="utf-8"), filename="app/main.py")
     for node in tree.body:

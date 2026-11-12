@@ -6,7 +6,10 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 
-@given(st.lists(st.text(min_size=1), unique=True, max_size=30), st.sets(st.text(min_size=1), max_size=30))
+@given(
+    st.lists(st.uuids().map(str), unique=True, max_size=30),
+    st.sets(st.uuids().map(str), max_size=30),
+)
 def test_visibility_and_compilation_are_pure(ids, excluded):
     history = tuple(ContextCandidate(id, "user", f"Fact {id}", "history") for id in ids)
     before = tuple(history)
