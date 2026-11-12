@@ -110,6 +110,9 @@ def create_app(settings: Settings | None = None, *, voice_catalog: ElevenLabsVoi
             raise HTTPException(404, detail={'code': 'CONVERSATION_NOT_FOUND'})
         return conversation
 
+    from app.routes.actions import register_action_routes
+    register_action_routes(app, database, identity, owned, catalog)
+
     @app.get('/healthz')
     def health():
         return {'status': 'ok'}
