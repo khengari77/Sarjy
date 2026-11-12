@@ -14,6 +14,7 @@ declare global {
       simulateStale: (event: Record<string, unknown>) => void;
     };
     __fakeState?: FakeState;
+    __fakeOutputLevel?: number;
     __SARJY_VOICE_RUNTIME_FACTORY__?: () => unknown;
   }
 }
@@ -72,6 +73,9 @@ async function installFakeRuntime(page: Page, connectDelay = 0) {
         },
         microphoneStream() {
           return null;
+        },
+        remoteAudioLevel() {
+          return window.__fakeOutputLevel ?? 0;
         }
       };
       window.__fakeState = state;
@@ -198,6 +202,43 @@ test('orb interrupts only while the agent is speaking or thinking', async ({ pag
   await page.getByRole('button', { name: 'Speaking. Interrupt Sarjy' }).click();
   await expect.poll(() => page.evaluate(() => window.__fakeState?.interrupts)).toBe(1);
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'listening');
+});
+
+test('muting the microphone keeps the assistant envelope and speaking state live', async ({ page }) => {
+  await mockSessions(page);
+  await allowMicrophone(page);
+  await installFakeRuntime(page);
+
+  await page.goto('/');
+  await waitForReady(page);
+  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
+
+  await page.evaluate(() => {
+    window.__fakeOutputLevel = 0.8;
+    window.__fakeRuntime?.simulate({ type: 'status', source: 'agent', text: 'speaking' });
+  });
+  const orb = page.locator('.orb-button');
+  await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'speaking');
+  await expect(page.locator('.status-line')).toContainText('Speaking');
+  await expect
+    .poll(async () => Number(await orb.getAttribute('data-output-level')))
+    .toBeGreaterThan(0.5);
+
+  await page.getByRole('button', { name: 'Mute', exact: true }).click();
+  await page.evaluate(() => {
+    window.__fakeOutputLevel = 0.2;
+  });
+
+  // The microphone is off, but the assistant is still talking: both the
+  // envelope and the live phase label must keep updating.
+  await expect
+    .poll(async () => Number(await orb.getAttribute('data-output-level')))
+    .toBeCloseTo(0.2, 2);
+  await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'speaking');
+  await expect(page.locator('.status-line')).toContainText('Speaking');
+  await expect(page.locator('.mic-slash')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Enable microphone', exact: true })).toBeVisible();
 });
 
 test('events from a replaced session epoch are ignored', async ({ page }) => {

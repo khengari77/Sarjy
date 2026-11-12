@@ -179,10 +179,15 @@ export function deriveOrbPresentation(state: VoiceUiState): OrbPresentation {
       statusLabel = OVERLAY_LABELS.memory_work!;
     } else if (state.overlay === 'muted') {
       // Muted keeps the live phase colour but desaturates and shows a mic slash.
+      // The agent's speaking/thinking label still wins: muting the microphone
+      // must not hide that the assistant is producing a reply.
       primaryColor = `color-mix(in srgb, ${COLORS[effectivePhase]} 55%, #5e7189)`;
       accent = COLORS.memory;
       accentOnly = true;
-      statusLabel = OVERLAY_LABELS.muted!;
+      statusLabel =
+        effectivePhase === 'speaking' || effectivePhase === 'thinking'
+          ? PHASE_LABELS[effectivePhase]
+          : OVERLAY_LABELS.muted!;
       enabledActions = enabledActions.filter((action) => action !== 'mute');
       if (!enabledActions.includes('unmute')) enabledActions = [...enabledActions, 'unmute'];
     }

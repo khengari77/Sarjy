@@ -61,6 +61,15 @@ describe('labels and accessibility', () => {
     expect(presentation.statusLabel.en).toBe('Microphone muted');
   });
 
+  it('keeps the speaking state visible while the microphone is muted', () => {
+    const presentation = deriveOrbPresentation(state({ phase: 'speaking', overlay: 'muted', outputLevel: 0.9 }));
+    expect(presentation.effectivePhase).toBe('speaking');
+    expect(presentation.statusLabel.en).toBe('Speaking…');
+    expect(presentation.showMicSlash).toBe(true);
+    expect(presentation.enabledActions).toContain('unmute');
+    expect(presentation.enabledActions).toContain('interrupt');
+  });
+
   it('exposes only start from idle and never duplicate start', () => {
     expect(deriveOrbPresentation(state({})).enabledActions).toEqual(['start']);
   });

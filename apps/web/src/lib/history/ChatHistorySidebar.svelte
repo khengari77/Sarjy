@@ -1,4 +1,5 @@
 <script lang="ts">
+import { tick } from 'svelte';
 import type { Conversation } from '../api';
 import { filterConversations } from './chatSearch';
 
@@ -18,6 +19,8 @@ let { conversations, current, arabic, busy, loading, error, onselect, oncreate, 
 
 let query = $state('');
 let menuOpenFor = $state<string | null>(null);
+let menuTrigger: HTMLButtonElement | null = null;
+let menuElement = $state<HTMLElement | null>(null);
 
 const filtered = $derived(filterConversations(conversations, query));
 const hasConversations = $derived(conversations.length > 0);
@@ -25,12 +28,55 @@ const noMatches = $derived(hasConversations && filtered.length === 0);
 
 function select(id: string) {
   menuOpenFor = null;
+  menuTrigger = null;
   onselect(id);
 }
+
+function closeMenu(restoreFocus = false) {
+  const trigger = menuTrigger;
+  menuOpenFor = null;
+  menuTrigger = null;
+  menuElement = null;
+  if (restoreFocus) void tick().then(() => trigger?.focus());
+}
+
+function toggleMenu(id: string, event: MouseEvent) {
+  if (menuOpenFor === id) {
+    closeMenu();
+    return;
+  }
+  menuTrigger = event.currentTarget as HTMLButtonElement;
+  menuOpenFor = id;
+}
+
+// Dismiss on Escape (returning focus to the trigger) or on any outside
+// pointer interaction. The menu holds only disabled items today, but the
+// dismissal path must stay reliable once actions are enabled.
+$effect(() => {
+  if (!menuOpenFor) return;
+  const onPointerDown = (event: PointerEvent) => {
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (menuElement?.contains(target) || menuTrigger?.contains(target)) return;
+    closeMenu();
+  };
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenu(true);
+  };
+  document.addEventListener('pointerdown', onPointerDown, true);
+  document.addEventListener('keydown', onKeyDown);
+  return () => {
+    document.removeEventListener('pointerdown', onPointerDown, true);
+    document.removeEventListener('keydown', onKeyDown);
+  };
+});
 </script>
 
 <div class="sidebar-inner" dir={arabic ? 'rtl' : 'ltr'}>
-  <button class="primary-button" disabled={busy} onclick={oncreate}>
+  <button class="primary-button new-chat" disabled={busy} onclick={oncreate}>
     {arabic ? 'محادثة جديدة' : 'New conversation'} +
   </button>
 
@@ -95,14 +141,15 @@ function select(id: string) {
           <button
             class="menu-toggle"
             type="button"
+            aria-haspopup="menu"
             aria-expanded={menuOpenFor === chat.id}
             aria-label={(arabic ? 'خيارات المحادثة ' : 'Conversation actions for ') + chat.title}
-            onclick={() => (menuOpenFor = menuOpenFor === chat.id ? null : chat.id)}
+            onclick={(event) => toggleMenu(chat.id, event)}
           >
             ⋯
           </button>
           {#if menuOpenFor === chat.id}
-            <div class="menu" role="menu">
+            <div class="menu" role="menu" bind:this={menuElement}>
               <button role="menuitem" disabled>{arabic ? 'إعادة التسمية' : 'Rename'}</button>
               <button role="menuitem" disabled>{arabic ? 'حذف' : 'Delete'}</button>
               <p>
@@ -121,6 +168,84 @@ function select(id: string) {
 </div>
 
 <style>
+  .new-chat {
+    font: inherit;
+    min-height: var(--control-height);
+    padding: 10px 16px;
+    border-radius: var(--radius-control);
+    border: 1px solid color-mix(in srgb, var(--orb-idle) 45%, var(--border-subtle));
+    background: color-mix(in srgb, var(--orb-idle) 18%, transparent);
+    color: var(--text-primary);
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background var(--transition-quick),
+      opacity var(--transition-quick);
+  }
+
+  .new-chat:hover:enabled {
+    background: color-mix(in srgb, var(--orb-idle) 28%, transparent);
+  }
+
+  .new-chat:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .chat-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .chat-item {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    padding: 9px 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 14px;
+    text-align: start;
+    cursor: pointer;
+    transition:
+      background var(--transition-quick),
+      color var(--transition-quick),
+      border-color var(--transition-quick);
+  }
+
+  .chat-item .title {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chat-item:hover:enabled {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+  }
+
+  .chat-item.chosen,
+  .chat-item[aria-current='page'] {
+    background: color-mix(in srgb, var(--orb-listening) 16%, transparent);
+    border-color: color-mix(in srgb, var(--orb-listening) 38%, var(--border-subtle));
+    box-shadow: inset 3px 0 0 var(--orb-listening);
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .chat-item:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
   .history-head {
     display: flex;
     align-items: baseline;

@@ -67,11 +67,11 @@ LiveKit Build quotas must be checked in the account before testing. Hosted agent
 
 ## Day 1 acceptance status
 
-Verified locally: anonymous identity isolation, conversation persistence, worker authorization/idempotent callbacks, deterministic bounded prompt compilation, initial migrations, a live Open-Meteo request for Tripoli, bilingual browser controls, same-origin proxy CSRF rejection, and explicit missing-configuration errors.
+Verified locally: anonymous identity isolation, conversation persistence, worker authorization/idempotent callbacks, deterministic bounded prompt compilation, initial migrations, a live Open-Meteo request for Tripoli, the English-first browser interface, same-origin proxy CSRF rejection, and explicit missing-configuration errors.
 
 Pending real-account checks: MSA/dialect/code-switching recognition; selected ElevenLabs Arabic voice intelligibility; spoken/typed shared turn flow; interruption and reconnect with real audio; measured free-tier usage; PostgreSQL integration; and the public CranL URL.
 
-The interface language selected at call start selects the speech pipeline language. Changing labels during a call does not rebuild the audio pipeline. Ask explicitly to change the reply language during that call.
+New voice sessions start in English. The localization and provider code retains Arabic support, but the language switch is hidden for this release, and a previously saved Arabic preference does not change the session language. Changing reply language during a call still does not rebuild the audio pipeline; ask explicitly if that is needed.
 
 ## Shared contracts
 

@@ -140,8 +140,8 @@ Rules that keep this honest:
 This is the first part of reservation **S1**. Keep the call live afterwards for D1.4 and D1.5; the
 post-end reload at the end of D1.5 covers this gate's durable-turn check.
 
-1. Start from a fresh conversation (**New conversation +**) with English selected (the toggle should read
-   **العربية**, meaning the current language is English) and a voice chosen.
+1. Start from a fresh conversation (**New conversation +**) with a voice chosen. The interface is
+   English-first for this release and the language switch is hidden.
 2. Press **Start call** and grant microphone permission when prompted. A successful start enables capture,
    so the microphone control reads **Mute**. Wait for the status line to show `listening` (cold starts can
    take 10–20 seconds).

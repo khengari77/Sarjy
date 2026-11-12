@@ -27,6 +27,10 @@
   import AppShell from '../lib/ui/AppShell.svelte';
   import ChatHistorySidebar from '../lib/history/ChatHistorySidebar.svelte';
 
+  // English-first release: the localization code and Arabic copy stay in place,
+  // but the reviewer-facing interface is fixed to English until the switch is
+  // deliberately re-enabled.
+  const LANGUAGE_SWITCH_ENABLED = false;
   let arabic = $state(false);
   let voiceId = $state('');
   let voices = $state<VoiceOption[]>([]);
@@ -340,10 +344,10 @@
         live = config;
         activeVoiceName = requestedVoiceName;
         muted = !microphone;
-        if (microphone) {
-          await runtime.startMicrophone();
-          setupMeters();
-        }
+        if (microphone) await runtime.startMicrophone();
+        // Playback metering always starts with the session; microphone
+        // metering is conditional inside setupMeters().
+        setupMeters();
       } catch (error) {
         await runtime.disconnect();
         await request('voice/sessions/' + config.id + '/end', {}).catch(() => {});
@@ -403,11 +407,11 @@
         if (muted) {
           await runtime.startMicrophone();
           muted = false;
-          setupMeters();
+          startMicMeter();
         } else {
           await runtime.stopMicrophone();
           muted = true;
-          teardownMeters();
+          stopMicMeter();
         }
       },
       (error) => {
@@ -416,25 +420,45 @@
     );
   }
 
-  function teardownMeters() {
+  function stopMicMeter() {
     micMeter?.dispose();
     micMeter = null;
-    if (meterTimer) clearInterval(meterTimer);
-    meterTimer = null;
     micLevel = 0;
-    outputLevel = 0;
   }
 
-  function setupMeters() {
-    teardownMeters();
+  function startMicMeter() {
+    stopMicMeter();
     if (!live || muted) return;
     const stream = runtime.microphoneStream?.();
     if (!stream) return;
     micMeter = createEnvelopeMeter(stream);
+  }
+
+  function stopOutputMeter() {
+    if (meterTimer) clearInterval(meterTimer);
+    meterTimer = null;
+    outputLevel = 0;
+  }
+
+  // Playback metering belongs to the live session, not to the microphone.
+  // Muting only detaches the microphone meter; the assistant envelope keeps
+  // following the remote audio so the orb still reflects speaking.
+  function startOutputMeter() {
+    if (meterTimer) return;
     meterTimer = setInterval(() => {
       micLevel = micMeter?.level() ?? 0;
       outputLevel = runtime.remoteAudioLevel?.() ?? 0;
     }, 80);
+  }
+
+  function teardownMeters() {
+    stopMicMeter();
+    stopOutputMeter();
+  }
+
+  function setupMeters() {
+    startMicMeter();
+    startOutputMeter();
   }
 
   onMount(() => {
@@ -447,7 +471,12 @@
       else if (fixture === 'listening' || fixture === 'thinking' || fixture === 'speaking') agentState = fixture;
       if (overlay === 'memory_work' || overlay === 'confirming' || overlay === 'muted' || overlay === 'error') devOverlay = overlay;
     }
-    arabic = localStorage.getItem('sarjy-language') === 'ar';
+    // The saved preference is retained for a future release, but it is not
+    // applied while the switch is hidden: an old Arabic preference must not
+    // silently start an Arabic session during the English-first release.
+    if (LANGUAGE_SWITCH_ENABLED) {
+      arabic = localStorage.getItem('sarjy-language') === 'ar';
+    }
     voiceId = localStorage.getItem('sarjy-voice-id') || '';
     captionsVisible = localStorage.getItem('sarjy-captions') !== 'off';
     runtime = createVoiceRuntime();
@@ -530,14 +559,14 @@
 
 <svelte:head>
   <title>Sarjy — Voice Context Studio</title>
-  <meta name="description" content="A bilingual voice assistant with transparent context." />
+  <meta name="description" content="An English-first voice assistant with transparent context." />
 </svelte:head>
 
 <AppShell
   dir={arabic ? 'rtl' : 'ltr'}
   modeLabel={arabic ? 'بسيط' : 'Simple'}
   languageLabel={arabic ? 'English' : 'العربية'}
-  onLanguage={toggleLanguage}
+  onLanguage={LANGUAGE_SWITCH_ENABLED ? toggleLanguage : undefined}
   leftLabel={arabic ? 'المحادثات' : 'Conversations'}
   rightLabel={arabic ? 'الذاكرة والإعدادات' : 'Memory and settings'}
 >

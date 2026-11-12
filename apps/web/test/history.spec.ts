@@ -118,6 +118,50 @@ test('Arabic titles match without diacritics or hamza variants', async ({ page }
   await expect(page.getByRole('button', { name: 'ميزانية Tripoli', exact: true })).toBeVisible();
 });
 
+test('the selected conversation exposes aria-current and a visible selection', async ({ page }) => {
+  await mockHistory(page);
+  await page.goto('/');
+
+  const first = page.getByRole('button', { name: 'Trip to Paris', exact: true });
+  await expect(first).toHaveAttribute('aria-current', 'page');
+  const firstBackground = await first.evaluate((element) => getComputedStyle(element).backgroundColor);
+  expect(firstBackground).not.toBe('rgba(0, 0, 0, 0)');
+
+  const second = page.getByRole('button', { name: 'Work ideas', exact: true });
+  await second.click();
+  await expect(second).toHaveAttribute('aria-current', 'page');
+  await expect(first).not.toHaveAttribute('aria-current', 'page');
+  const secondBackground = await second.evaluate((element) => getComputedStyle(element).backgroundColor);
+  expect(secondBackground).not.toBe('rgba(0, 0, 0, 0)');
+});
+
+test('conversation menus dismiss on Escape or outside interaction and restore focus', async ({ page }) => {
+  await mockHistory(page);
+  await page.goto('/');
+
+  const trigger = page.getByRole('button', { name: 'Conversation actions for Trip to Paris' });
+  const menu = page.getByRole('menu');
+
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  await expect(menu).toBeVisible();
+  await page.getByRole('searchbox', { name: 'Search conversations' }).click();
+  await expect(menu).toHaveCount(0);
+
+  // After dismissal the rows are interactive again.
+  await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Work ideas', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page'
+  );
+});
+
 test('resuming a conversation loads turns without starting a microphone session', async ({ page }) => {
   const mocked = await mockHistory(page);
   let sessionPosts = 0;

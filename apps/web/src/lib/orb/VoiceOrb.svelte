@@ -464,6 +464,8 @@
   {disabled}
   data-renderer={failed ? 'static' : tier}
   data-phase={presentation.effectivePhase}
+  data-mic-level={micLevel.toFixed(2)}
+  data-output-level={outputLevel.toFixed(2)}
   onclick={() => onactivate?.()}
 >
   {#if tier === 'static' || failed}
