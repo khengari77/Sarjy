@@ -680,17 +680,21 @@
           "tts": {
             "$ref": "#/components/schemas/ModelChoice"
           },
-          "max_output_tokens": {
+          "response_tier": {
             "type": "integer",
-            "maximum": 800.0,
-            "minimum": 32.0,
-            "title": "Max Output Tokens",
-            "default": 96
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Response Tier",
+            "default": 2
+          },
+          "response_preference": {
+            "$ref": "#/components/schemas/ResponsePreference",
+            "default": "automatic"
           },
           "revision": {
             "type": "integer",
             "title": "Revision",
-            "default": 1
+            "default": 2
           }
         },
         "additionalProperties": false,
@@ -700,7 +704,18 @@
           "llm",
           "tts"
         ],
-        "title": "PipelineConfig"
+        "title": "PipelineConfig",
+        "description": "Already-resolved session configuration, including valid preference overrides.\n\nThe output cap is derived, never supplied."
+      },
+      "ResponsePreference": {
+        "enum": [
+          "automatic",
+          "brief",
+          "balanced",
+          "detailed"
+        ],
+        "title": "ResponsePreference",
+        "type": "string"
       },
       "StartVoice": {
         "properties": {
@@ -730,6 +745,23 @@
               }
             ],
             "title": "Voice Id"
+          },
+          "response_tier": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 5.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Tier"
+          },
+          "response_preference": {
+            "$ref": "#/components/schemas/ResponsePreference",
+            "default": "automatic"
           }
         },
         "type": "object",
@@ -869,16 +901,6 @@
           "city"
         ],
         "title": "WeatherInput"
-      },
-      "ResponsePreference": {
-        "enum": [
-          "automatic",
-          "brief",
-          "balanced",
-          "detailed"
-        ],
-        "title": "ResponsePreference",
-        "type": "string"
       },
       "ResponsePolicy": {
         "additionalProperties": false,

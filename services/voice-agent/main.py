@@ -4,6 +4,7 @@ import json
 import os
 import logging
 from datetime import datetime, timezone
+from typing import Any, Mapping
 from uuid import uuid4
 
 import httpx
@@ -16,9 +17,21 @@ from config import read_worker_environment, require_values
 
 server = AgentServer()
 
+# D2.9 tier 5 ceiling. The worker refuses anything above the published caps even
+# if a stale or tampered backend payload asks for it.
+MAX_TIER_OUTPUT_TOKENS = 1024
+MAX_CONTEXT_BYTES = 64000
+MAX_TOOLS = 1
+
+
+def openai_request_within_bounds(serialized: bytes, tools: list, max_output_tokens: int) -> bool:
+    """Pure budget guard: 64KB context, one fixed tool and at most the tier-5 cap."""
+    return len(serialized) <= MAX_CONTEXT_BYTES and len(tools) <= MAX_TOOLS and max_output_tokens <= MAX_TIER_OUTPUT_TOKENS
+
+
 class SarjyAgent(Agent):
-    def __init__(self, backend: httpx.AsyncClient, pipeline: dict, notify=None):
-        super().__init__(instructions='You are Sarjy, a concise voice assistant. Reply in '+('English' if pipeline['llm'].get('language','en')=='en' else 'Arabic')+' unless asked otherwise.')
+    def __init__(self, backend: httpx.AsyncClient, pipeline: Mapping[str, Any], instructions: str, notify=None):
+        super().__init__(instructions=instructions)
         self.backend = backend
         self.pipeline = pipeline
         self.notify = notify
@@ -101,9 +114,9 @@ class SarjyAgent(Agent):
         fresh.items.extend(chat_ctx.items[index+1:])
         if self.pipeline['llm']['provider'] == 'openai_direct':
             serialized = json.dumps(fresh.to_dict(), ensure_ascii=False, default=str).encode()
-            # $0.02 reservation comfortably exceeds standard Luna text pricing for
-            # <=64KB context + the one fixed weather tool + <=800 output tokens.
-            if len(serialized) > 64000 or len(tools) > 1 or self.pipeline['max_output_tokens'] > 800:
+            # $0.02 reservation covers <=64KB context, the one fixed weather tool
+            # and at most the tier-5 cap (1024), the widest published policy.
+            if not openai_request_within_bounds(serialized, tools, self.pipeline['max_output_tokens']):
                 raise ValueError('OPENAI_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS')
             await self.reserve('openai')
         async for chunk in Agent.default.llm_node(self, fresh, tools, model_settings):
@@ -129,7 +142,7 @@ async def entrypoint(ctx: JobContext):
         config = bootstrap['pipeline']
         async def notify(code):
             await ctx.room.local_participant.publish_data(json.dumps({'code':code}).encode(), reliable=True, topic='sarjy.error')
-        agent = SarjyAgent(backend, config, notify)
+        agent = SarjyAgent(backend, config, instructions=bootstrap['instructions'], notify=notify)
         session = AgentSession(
             **build_providers(config, require_values(values, 'DEEPGRAM_API_KEY', 'ELEVEN_API_KEY', 'OPENAI_API_KEY' if config['llm']['provider']=='openai_direct' else 'DEEPSEEK_API_KEY')),
             vad=silero.VAD.load(), preemptive_generation=False,

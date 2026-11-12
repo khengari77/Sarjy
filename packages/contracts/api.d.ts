@@ -332,7 +332,12 @@ export interface components {
             /** Voice Id */
             voice_id?: string | null;
         };
-        /** PipelineConfig */
+        /**
+         * PipelineConfig
+         * @description Already-resolved session configuration, including valid preference overrides.
+         *
+         *     The output cap is derived, never supplied.
+         */
         PipelineConfig: {
             /**
              * Runtime
@@ -344,16 +349,23 @@ export interface components {
             llm: components["schemas"]["ModelChoice"];
             tts: components["schemas"]["ModelChoice"];
             /**
-             * Max Output Tokens
-             * @default 96
+             * Response Tier
+             * @default 2
              */
-            max_output_tokens: number;
+            response_tier: number;
+            /** @default automatic */
+            response_preference: components["schemas"]["ResponsePreference"];
             /**
              * Revision
-             * @default 1
+             * @default 2
              */
             revision: number;
         };
+        /**
+         * ResponsePreference
+         * @enum {string}
+         */
+        ResponsePreference: "automatic" | "brief" | "balanced" | "detailed";
         /** StartVoice */
         StartVoice: {
             /** Conversation Id */
@@ -366,6 +378,10 @@ export interface components {
             language: "ar" | "en";
             /** Voice Id */
             voice_id?: string | null;
+            /** Response Tier */
+            response_tier?: number | null;
+            /** @default automatic */
+            response_preference: components["schemas"]["ResponsePreference"];
         };
         /** ValidationError */
         ValidationError: {
@@ -410,11 +426,6 @@ export interface components {
             /** Country */
             country?: string | null;
         };
-        /**
-         * ResponsePreference
-         * @enum {string}
-         */
-        ResponsePreference: "automatic" | "brief" | "balanced" | "detailed";
         /**
          * ResponsePolicy
          * @description One validated tier. The cap is a ceiling, never a target length.
