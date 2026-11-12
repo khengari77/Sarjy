@@ -27,3 +27,13 @@ async def reserve(db: AsyncSession, provider: str, characters: int = 0, *, now: 
     total = await db.scalar(select(DevelopmentBudget.reserved_units).where(DevelopmentBudget.day == day,DevelopmentBudget.provider == provider))
     await db.commit()
     return {'day':day,'provider':provider,'reserved_units':total,'remaining_units':limit-total,'unit':'micro_usd' if provider=='openai' else 'characters'}
+
+
+async def guarded_openai_request(db: AsyncSession, request):
+    """Reserve on the shared durable ledger before invoking an async boundary.
+
+    This covers embeddings/extraction as well as generation. No refunds follow
+    delivery uncertainty. Call only after authorization and argument validation.
+    """
+    await reserve(db, 'openai')
+    return await request()
