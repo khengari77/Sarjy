@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import sqlite3
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -178,22 +179,28 @@ def test_tenant_isolation_for_conversation_reads(tmp_path):
         assert other.get(f'/v1/conversations/{chat}/tool-calls').status_code == 404
 
 
-def test_budget_denial_is_reported_before_any_provider_work(tmp_path, monkeypatch):
+@pytest.mark.skipif(not HAS_MEMORY, reason=MEMORY_BLOCKER)
+def test_budget_denial_is_reported_before_any_provider_work(tmp_path):
+    import httpx
+    from app.services.memory import OpenAIEmbedder
+
     _, settings = configured(tmp_path)
     calls = []
+    def transport(request):
+        calls.append(request)
+        return httpx.Response(200, json={'data': [{'embedding': [1.0] + [0.0] * 1535}]})
 
-    async def fake_weather(city, country=None):
-        calls.append(city)
-        return {'city': city}
-
-    monkeypatch.setattr(main_module, 'get_current_weather', fake_weather)
-    with TestClient(create_app(settings)) as client:
+    adapter = OpenAIEmbedder('test-only', transport=httpx.MockTransport(transport))
+    with TestClient(create_app(settings, embedding_adapter=adapter)) as client:
+        client.post('/v1/demo-session')
+        chat = client.post('/v1/conversations').json()['id']
         headers = {'x-agent-secret': 'test-service-secret'}
-        first = client.post('/internal/development/reserve', headers=headers, json={'provider': 'elevenlabs', 'characters': 500})
-        second = client.post('/internal/development/reserve', headers=headers, json={'provider': 'elevenlabs', 'characters': 500})
-        assert first.status_code == 200
-        assert second.status_code == 429
-        assert second.json()['detail']['code'] == 'DAILY_BUDGET_EXHAUSTED'
+        for _ in range(50):
+            reservation = client.post('/internal/development/reserve', headers=headers, json={'provider': 'openai'})
+            assert reservation.status_code == 200
+        denied = client.post(f'/v1/conversations/{chat}/memories',
+                            json={'content': 'Must not embed', 'idempotency_key': 'denied'})
+        assert denied.status_code == 429, denied.text
         assert calls == []
 
 
@@ -235,9 +242,9 @@ def test_weather_cannot_use_an_excluded_location_memory(tmp_path, monkeypatch):
             headers=headers,
             json={'turn_id': turn['turn_id'], 'request_id': 'w1', 'city': 'Tripoli'},
         )
-        if 'weather_policy' in turn['context']:
-            assert response.json() == {'error': 'LOCATION_EXCLUDED'}
-            assert calls == []
+        assert 'weather_policy' in turn['context'], 'authoritative weather policy is required'
+        assert response.json() == {'error': 'LOCATION_EXCLUDED'}
+        assert calls == []
 
 
 @pytest.mark.skipif(not HAS_CONTEXT_OPERATIONS, reason='blocked on PR #35 / issue #8 (proposal service not merged)')
@@ -332,6 +339,11 @@ def test_memory_is_owner_scoped_across_identities(tmp_path):
         ).json()
     with TestClient(app) as other:
         other.post('/v1/demo-session')
+        own_chat = other.post('/v1/conversations').json()['id']
+        own_memory = other.post(f'/v1/conversations/{own_chat}/memories', json={'content': 'My own city', 'idempotency_key': 'own-city'}).json()
+        results = other.post('/v1/memories/search', json={'conversation_id': own_chat, 'query': 'city'}).json()
+        assert own_memory['id'] in {item['id'] for item in results}
+        assert city['id'] not in {item['id'] for item in results}
         assert other.post('/v1/memories/search', json={'conversation_id': chat, 'query': 'city'}).status_code == 404
         assert other.post(
             f"/v1/memories/{city['id']}/correct",
@@ -348,19 +360,54 @@ def test_real_pgvector_retrieval_uses_owner_scope():
     from sqlalchemy.ext.asyncio import create_async_engine
 
     env = os.environ | {'DATABASE_URL': POSTGRES_URL}
-    upgraded = subprocess.run(['.venv/bin/alembic', 'upgrade', 'head'], env=env, capture_output=True, text=True, timeout=180)
+    upgraded = subprocess.run([sys.executable, '-m', 'alembic', '-c', str(ROOT / 'alembic.ini'), 'upgrade', 'head'], env=env, capture_output=True, text=True, timeout=180)
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
 
     async def run():
+        from uuid import uuid4
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+        from app.infrastructure.database import Identity, Conversation
+        from app.services.memory import MemoryService
+
         engine = create_async_engine(POSTGRES_URL)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        owner_a, owner_b, chat_a, chat_b = (str(uuid4()) for _ in range(4))
         try:
-            async with engine.connect() as db:
+            async with sessions() as db:
                 column = (await db.execute(text(
-                    "SELECT udt_name FROM information_schema.columns WHERE table_name='memories' AND column_name='embedding'"
+                    "SELECT format_type(atttypid, atttypmod) FROM pg_attribute "
+                    "WHERE attrelid='memories'::regclass AND attname='embedding'"
                 ))).scalar_one()
-                assert column == 'vector', 'memory embeddings must use pgvector on PostgreSQL'
-                distance = (await db.execute(text("SELECT '[1,0]'::vector <-> '[0,1]'::vector"))).scalar_one()
-                assert distance == pytest.approx(2 ** 0.5)
+                assert column == 'vector(1536)'
+                db.add_all([Identity(id=owner_a, token_hash=owner_a, expires_at='2030'),
+                            Identity(id=owner_b, token_hash=owner_b, expires_at='2030')])
+                await db.commit()
+                db.add_all([Conversation(id=chat_a, owner_id=owner_a), Conversation(id=chat_b, owner_id=owner_b)])
+                await db.commit()
+                service = MemoryService(db, FakeEmbedder())
+                foreign = await service.create_memory(owner_a, chat_a, None, 'Budget foreign', 'foreign')
+                own = await service.create_memory(owner_b, chat_b, None, 'Budget own', 'own')
+                city = await service.create_memory(owner_b, chat_b, None, 'Tripoli', 'city')
+                hits = await service.search_memories(owner_b, chat_b, 'budget', 10)
+                assert [item.id for item in hits] == [own.id, city.id]
+                assert foreign.id not in {item.id for item in hits}
+                assert hits[0].distance == pytest.approx(0)
+                assert hits[1].distance > hits[0].distance
+                assert hits[0].source_conversation_id == chat_b
+                corrected = await service.correct_memory(owner_b, own.id, 1, 'Budget corrected', 'correct')
+                hits = await service.search_memories(owner_b, chat_b, 'budget', 1)
+                assert [item.id for item in hits] == [corrected.id]
+                assert hits[0].version == 2
+                from app.infrastructure.database import ContextOperation, ContextExclusion
+                operation_id = str(uuid4())
+                db.add(ContextOperation(id=operation_id, owner_id=owner_b, conversation_id=chat_b,
+                    command_type='exclude', idempotency_key=str(uuid4()), outcome='applied', payload={}))
+                await db.flush()
+                db.add(ContextExclusion(id=str(uuid4()), owner_id=owner_b, conversation_id=chat_b,
+                    memory_id=corrected.id, operation_id=operation_id, active=True, scope='conversation'))
+                await db.commit()
+                hits = await service.search_memories(owner_b, chat_b, 'budget', 10)
+                assert [item.id for item in hits] == [city.id]
         finally:
             await engine.dispose()
 
@@ -372,7 +419,19 @@ def test_disposable_postgres_migrations_reach_the_day2_head():
     import asyncio
     import subprocess
 
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(ROOT / 'alembic.ini'))
+    config.set_main_option('script_location', str(ROOT / 'migrations'))
+    script = ScriptDirectory.from_config(config)
+    expected_head = script.get_current_head()
+    assert expected_head is not None
     env = os.environ | {'DATABASE_URL': POSTGRES_URL}
-    result = subprocess.run(['.venv/bin/alembic', 'heads'], env=env, capture_output=True, text=True, timeout=120)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert '0005_day2_context' in result.stdout
+    for command in (['upgrade', 'head'], ['current']):
+        result = subprocess.run(
+            [sys.executable, '-m', 'alembic', '-c', str(ROOT / 'alembic.ini'), *command],
+            cwd=ROOT, env=env, capture_output=True, text=True, timeout=120,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+    assert expected_head in result.stdout
