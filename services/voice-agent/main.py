@@ -11,6 +11,7 @@ _shared_source = Path(__file__).resolve().parents[2] / "apps/api"
 if _shared_source.is_dir():
     sys.path.insert(0, str(_shared_source))
 
+from app.domain.budget import DEEPSEEK_MAX_REQUEST_BYTES
 from app.domain.contracts import ModelRequest, ModelToolItem, ToolSpec
 from generation import adapter_for, livekit_chunk
 from livekit.agents.llm.utils import build_legacy_openai_schema
@@ -33,6 +34,10 @@ server = AgentServer()
 MAX_TIER_OUTPUT_TOKENS = 1024
 MAX_CONTEXT_BYTES = 64000
 MAX_TOOLS = 1
+
+
+def deepseek_request_within_bounds(serialized: bytes) -> bool:
+    return len(serialized) <= DEEPSEEK_MAX_REQUEST_BYTES
 
 
 def openai_request_within_bounds(serialized: bytes, tools: list, max_output_tokens: int) -> bool:
@@ -143,6 +148,10 @@ class SarjyAgent(Agent):
                 raise ValueError('OPENAI_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS')
             await self.reserve('openai')
         elif self.pipeline['llm']['provider'] == 'deepseek_direct':
+            serialized = json.dumps({key: value for key, value in request.model_dump(mode='json').items()
+                if key in {'messages', 'tool_history', 'tools'}}, ensure_ascii=False).encode()
+            if not deepseek_request_within_bounds(serialized):
+                raise ValueError('DEEPSEEK_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS')
             await self.reserve('deepseek')
         adapter = adapter_for(self.session.llm, self.pipeline['llm']['provider'])
         async for event in adapter.stream(request, tools, model_settings.tool_choice if model_settings else None):

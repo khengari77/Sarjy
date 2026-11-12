@@ -4,7 +4,7 @@ import httpx
 import pytest
 from livekit.agents import Agent
 
-from main import SarjyAgent, openai_request_within_bounds
+from main import SarjyAgent, deepseek_request_within_bounds, openai_request_within_bounds
 
 
 def agent_for(client, max_output_tokens=128, notify=None, instructions='Authoritative instructions.'):
@@ -90,3 +90,9 @@ def test_agent_uses_the_backend_instructions_without_rewriting_them():
             assert agent.instructions == 'Tier directive from the API.'
 
     asyncio.run(run())
+
+
+def test_deepseek_request_bound():
+    assert deepseek_request_within_bounds(b'{}')
+    assert deepseek_request_within_bounds(b'x' * (64 * 1024))
+    assert not deepseek_request_within_bounds(b'x' * (64 * 1024 + 1))

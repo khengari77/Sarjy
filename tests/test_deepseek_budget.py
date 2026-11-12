@@ -49,3 +49,13 @@ def test_disabled_guard_sends_without_a_ledger(tmp_path):
             assert response.json()['enabled'] is False
     with sqlite3.connect(file) as db:
         assert db.execute('SELECT COUNT(*) FROM development_budgets').fetchone()[0] == 0
+
+
+def test_invalid_enabled_configuration_fails_fast():
+    from pydantic import ValidationError
+    from app.config import Settings
+    import pytest
+    with pytest.raises(ValidationError, match='DEEPSEEK_BUDGET_CONFIGURATION_INVALID'):
+        Settings(deepseek_request_micro_usd=2000, deepseek_daily_micro_usd=1000, _env_file=None)
+    Settings(deepseek_budget_enabled=False, deepseek_request_micro_usd=2000,
+        deepseek_daily_micro_usd=1000, _env_file=None)
