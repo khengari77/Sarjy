@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:unit": "vitest run",
+    "test:unit": "svelte-kit sync && vitest run",
     "test:browser": "playwright test",
     "test:deadline": "playwright test --config playwright.deadline.config.ts",
     "test:videos": "playwright test --config playwright.recording.config.ts --grep \"demo session|voice picker\" --workers 1"

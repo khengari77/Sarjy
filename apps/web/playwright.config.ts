@@ -5,7 +5,7 @@ export default defineConfig({
   use: { baseURL: 'http://127.0.0.1:4173' },
   webServer: [
     {
-      command: '../../.venv/bin/uvicorn app.main:app --app-dir ../api --host 127.0.0.1 --port 8000',
+      command: '../../.venv/bin/uvicorn app.main:create_app --factory --app-dir ../api --host 127.0.0.1 --port 8000',
       url: 'http://127.0.0.1:8000/healthz',
       env: {
         DATABASE_URL: 'sqlite+aiosqlite:///./browser-test.db',

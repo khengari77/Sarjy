@@ -20,6 +20,13 @@ test.beforeEach(async ({ page }, info) => {
 });
 test('demo session, bilingual controls, history and explicit missing-service errors', async ({ page }) => {
   await page.goto('/');
+  const bodyStyle = await page.evaluate(() => {
+    const style = getComputedStyle(document.body);
+    return { margin: style.margin, background: style.backgroundColor, font: style.fontFamily };
+  });
+  expect(bodyStyle.margin).toBe('0px');
+  expect(bodyStyle.background).toBe('rgb(248, 247, 243)');
+  expect(bodyStyle.font.toLowerCase()).toContain('system-ui');
   await expect(page.getByRole('button', { name: 'بدء مكالمة' })).toBeEnabled();
   await expect(page.locator('.shell')).toHaveAttribute('dir', 'rtl');
   await page.getByRole('button', { name: 'English', exact: true }).click();

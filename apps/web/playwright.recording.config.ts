@@ -14,7 +14,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: '../../.venv/bin/uvicorn app.main:app --app-dir ../api --host 127.0.0.1 --port 8001',
+      command: '../../.venv/bin/uvicorn app.main:create_app --factory --app-dir ../api --host 127.0.0.1 --port 8001',
       url: 'http://127.0.0.1:8001/healthz',
       env: {
         DATABASE_URL: 'sqlite+aiosqlite:///./browser-video.db',
