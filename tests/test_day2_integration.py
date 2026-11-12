@@ -3,6 +3,7 @@
 This file is deliberately test-only. Cases whose implementation is still on an
 unmerged branch (or owned by #5) are skipped with a named blocker instead of
 being replaced by a passing mock; re-run them once the dependency lands.
+The required PostgreSQL CI job fails if any selected acceptance case skips.
 """
 import importlib.util
 import json
