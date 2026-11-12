@@ -33,8 +33,15 @@ class PipelineConfig(BaseModel):
         return TIER_CAPS[self.response_tier - 1]
 
 
-PRESET = {"stt": ("deepgram_direct", "nova-3"), "llm": ("openai_direct", "gpt-6-luna"), "tts": ("elevenlabs_direct", "eleven_flash_v2_5")}
-LLM_CHOICES = {("openai_direct", "gpt-6-luna"): "OPENAI_API_KEY", ("deepseek_direct", "deepseek-flash"): "DEEPSEEK_API_KEY"}
+PRESET = {
+    "stt": ("deepgram_direct", "nova-3"),
+    "llm": ("openai_direct", "gpt-6-luna"),
+    "tts": ("elevenlabs_direct", "eleven_flash_v2_5"),
+}
+LLM_CHOICES = {
+    ("openai_direct", "gpt-6-luna"): "OPENAI_API_KEY",
+    ("deepseek_direct", "deepseek-flash"): "DEEPSEEK_API_KEY",
+}
 KEYS = {"stt": "DEEPGRAM_API_KEY", "llm": "OPENAI_API_KEY", "tts": "ELEVEN_API_KEY"}
 
 

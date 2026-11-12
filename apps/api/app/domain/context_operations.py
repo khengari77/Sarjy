@@ -4,6 +4,7 @@ Everything here is deterministic and side-effect free.  Authorization,
 revision checks and persistence live in the service shell so they cannot be
 bypassed by a caller of these helpers.
 """
+
 import base64
 import hashlib
 import hmac
@@ -22,9 +23,9 @@ BUDGET_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-KEEP_REASON_EXPLICIT_ID = 'explicit keep id'
-KEEP_REASON_EXPLICIT_TERM = 'explicit keep exception'
-KEEP_REASON_BUDGET = 'protected budget'
+KEEP_REASON_EXPLICIT_ID = "explicit keep id"
+KEEP_REASON_EXPLICIT_TERM = "explicit keep exception"
+KEEP_REASON_BUDGET = "protected budget"
 
 
 @dataclass(frozen=True)
@@ -35,11 +36,11 @@ class MemoryCandidate:
     content: str
     source_turn_id: str | None = None
     score: float = 0.0
-    kind: str = 'memory'
+    kind: str = "memory"
 
     @property
     def is_budget(self) -> bool:
-        return self.kind == 'budget' or bool(BUDGET_PATTERN.search(self.content))
+        return self.kind == "budget" or bool(BUDGET_PATTERN.search(self.content))
 
 
 @dataclass(frozen=True)
@@ -60,16 +61,16 @@ class Selection:
 
     def diff(self, revision_before: int, revision_after: int | None = None) -> dict:
         return {
-            'added': [],
-            'removed': sorted(self.excluded_ids),
-            'kept': sorted(self.kept_ids),
-            'revision_before': revision_before,
-            'revision_after': revision_before if revision_after is None else revision_after,
+            "added": [],
+            "removed": sorted(self.excluded_ids),
+            "kept": sorted(self.kept_ids),
+            "revision_before": revision_before,
+            "revision_after": revision_before if revision_after is None else revision_after,
         }
 
 
 def classify(content: str) -> str:
-    return 'budget' if BUDGET_PATTERN.search(content) else 'memory'
+    return "budget" if BUDGET_PATTERN.search(content) else "memory"
 
 
 def _keep_reason(candidate: MemoryCandidate, keep_terms: tuple[str, ...]) -> str | None:
@@ -117,23 +118,27 @@ def select_candidates(
     )
 
 
-def exclusion_diff(excluded_ids: frozenset[str], kept_ids: frozenset[str], revision_before: int, revision_after: int) -> dict:
+def exclusion_diff(
+    excluded_ids: frozenset[str], kept_ids: frozenset[str], revision_before: int, revision_after: int
+) -> dict:
     return {
-        'added': [],
-        'removed': sorted(excluded_ids),
-        'kept': sorted(kept_ids),
-        'revision_before': revision_before,
-        'revision_after': revision_after,
+        "added": [],
+        "removed": sorted(excluded_ids),
+        "kept": sorted(kept_ids),
+        "revision_before": revision_before,
+        "revision_after": revision_after,
     }
 
 
-def restore_diff(restored_ids: frozenset[str], still_excluded: frozenset[str], revision_before: int, revision_after: int) -> dict:
+def restore_diff(
+    restored_ids: frozenset[str], still_excluded: frozenset[str], revision_before: int, revision_after: int
+) -> dict:
     return {
-        'added': sorted(restored_ids - still_excluded),
-        'removed': [],
-        'kept': sorted(still_excluded),
-        'revision_before': revision_before,
-        'revision_after': revision_after,
+        "added": sorted(restored_ids - still_excluded),
+        "removed": [],
+        "kept": sorted(still_excluded),
+        "revision_before": revision_before,
+        "revision_after": revision_after,
     }
 
 
@@ -145,28 +150,28 @@ def sign_proposal(payload: dict, secret: str) -> str:
     the client.
     """
     if not secret:
-        raise ValueError('CONTEXT_PROPOSALS_NOT_CONFIGURED')
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
-    body = base64.urlsafe_b64encode(raw).decode().rstrip('=')
+        raise ValueError("CONTEXT_PROPOSALS_NOT_CONFIGURED")
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     signature = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
-    return f'{body}.{signature}'
+    return f"{body}.{signature}"
 
 
 def verify_proposal(token: str, secret: str) -> dict:
     if not secret:
-        raise ValueError('CONTEXT_PROPOSALS_NOT_CONFIGURED')
+        raise ValueError("CONTEXT_PROPOSALS_NOT_CONFIGURED")
     try:
-        body, signature = token.rsplit('.', 1)
+        body, signature = token.rsplit(".", 1)
     except (AttributeError, ValueError) as exc:
-        raise ValueError('PROPOSAL_INVALID') from exc
+        raise ValueError("PROPOSAL_INVALID") from exc
     expected = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, expected):
-        raise ValueError('PROPOSAL_INVALID')
+        raise ValueError("PROPOSAL_INVALID")
     try:
-        padded = body + '=' * (-len(body) % 4)
+        padded = body + "=" * (-len(body) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded.encode()))
     except (ValueError, json.JSONDecodeError) as exc:
-        raise ValueError('PROPOSAL_INVALID') from exc
+        raise ValueError("PROPOSAL_INVALID") from exc
     if not isinstance(payload, dict):
-        raise ValueError('PROPOSAL_INVALID')
+        raise ValueError("PROPOSAL_INVALID")
     return payload

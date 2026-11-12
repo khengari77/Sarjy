@@ -8,38 +8,57 @@ from main import SarjyAgent
 from test_generation import request
 
 
-@pytest.mark.parametrize('denied', [False, True])
+@pytest.mark.parametrize("denied", [False, True])
 def test_worker_replaces_stale_history_and_reserves_before_provider(monkeypatch, denied):
     observed, order = [], []
+
     class Provider:
         @asynccontextmanager
         async def chat(self, *, chat_ctx, **kwargs):
             observed.extend(item.text_content for item in chat_ctx.items)
-            order.append('provider')
-            assert order == ['reserve', 'provider']
+            order.append("provider")
+            assert order == ["reserve", "provider"]
+
             async def chunks():
-                yield llm.ChatChunk(id='r', delta=llm.ChoiceDelta(content='output'))
+                yield llm.ChatChunk(id="r", delta=llm.ChoiceDelta(content="output"))
+
             yield chunks()
-    monkeypatch.setattr(SarjyAgent, 'session', property(lambda self: SimpleNamespace(current_speech=None, llm=Provider())))
+
+    monkeypatch.setattr(
+        SarjyAgent, "session", property(lambda self: SimpleNamespace(current_speech=None, llm=Provider()))
+    )
+
     async def run():
         def backend(http_request):
-            if http_request.url.path.endswith('/reserve'):
-                order.append('reserve')
+            if http_request.url.path.endswith("/reserve"):
+                order.append("reserve")
                 return httpx.Response(429 if denied else 200, json={})
-            return httpx.Response(200, json={'turn_id': 'turn', 'context': {'model_request': request().model_dump(mode='json'), 'revision': 7, 'messages': [item.model_dump() for item in request().messages]}})
-        async with httpx.AsyncClient(base_url='http://test', transport=httpx.MockTransport(backend)) as client:
-            agent = SarjyAgent(client, {'llm': {'provider': 'openai_direct'}, 'max_output_tokens': 128}, 'Rules')
+            return httpx.Response(
+                200,
+                json={
+                    "turn_id": "turn",
+                    "context": {
+                        "model_request": request().model_dump(mode="json"),
+                        "revision": 7,
+                        "messages": [item.model_dump() for item in request().messages],
+                    },
+                },
+            )
+
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = SarjyAgent(client, {"llm": {"provider": "openai_direct"}, "max_output_tokens": 128}, "Rules")
             context = llm.ChatContext()
-            context.add_message(role='assistant', content='Excluded stale city')
-            context.add_message(role='user', content='Weather?')
+            context.add_message(role="assistant", content="Excluded stale city")
+            context.add_message(role="user", content="Weather?")
             if denied:
                 with pytest.raises(httpx.HTTPStatusError):
                     [chunk async for chunk in agent.llm_node(context, [], None)]
             else:
                 chunks = [chunk async for chunk in agent.llm_node(context, [], None)]
-                assert chunks[0].delta.content == 'output'
+                assert chunks[0].delta.content == "output"
+
     asyncio.run(run())
     if denied:
-        assert observed == [] and order == ['reserve']
+        assert observed == [] and order == ["reserve"]
     else:
-        assert observed == ['Protected rules', 'Permitted memory: Tripoli; version 2', 'Weather?']
+        assert observed == ["Protected rules", "Permitted memory: Tripoli; version 2", "Weather?"]
