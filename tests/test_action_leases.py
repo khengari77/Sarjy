@@ -218,7 +218,13 @@ def test_completed_claim_replays_before_lease_validation(tmp_path):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('prepared', [object(), 'x' * 70_000])
+@pytest.mark.parametrize('prepared', [
+    object(),
+    'x' * 70_000,
+    {'score': float('nan')},
+    {'items': [{'value': float('inf')}]},
+    {'items': [{'value': float('-inf')}]},
+])
 def test_unusable_prepared_payload_fails_before_effects(tmp_path, prepared):
     app, path = setup(tmp_path)
     calls = []

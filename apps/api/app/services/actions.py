@@ -208,7 +208,7 @@ async def _claim_preparation(factory, *, owner_id, conversation_id, key, fingerp
 
 async def _store_prepared(factory, preparation_id, lease_id, prepared):
     try:
-        serialized = json.dumps(prepared, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+        serialized = json.dumps(prepared, allow_nan=False, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
     except (TypeError, ValueError) as exc:
         raise HTTPException(409, detail={'code': 'ACTION_PREPARATION_INVALID'}) from exc
     if len(serialized.encode()) > PREPARED_MAX_BYTES:
