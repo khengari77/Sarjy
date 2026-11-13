@@ -14,6 +14,7 @@ export default defineConfig({
       command: '../../.venv/bin/python ../../scripts/fake_api.py',
       url: `http://127.0.0.1:${upstream}/healthz`,
       env: { FAKE_API_PORT: upstream, FAKE_API_DELAY: '0' },
+      reuseExistingServer: false,
     },
     {
       command: 'node build/index.js',
@@ -26,6 +27,7 @@ export default defineConfig({
         HOST: '127.0.0.1',
         ORIGIN: `http://127.0.0.1:${port}`,
       },
+      reuseExistingServer: false,
     },
   ],
 });

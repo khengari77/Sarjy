@@ -23,7 +23,7 @@ const proxy: RequestHandler = async ({ request, params, url }) => {
       headers,
       body: request.method === 'POST' ? await request.arrayBuffer() : undefined,
       redirect: 'manual',
-      signal: AbortSignal.timeout(proxyTimeoutMs(params.path ?? '', request.method)),
+      signal: AbortSignal.timeout(proxyTimeoutMs(target.pathname.slice(1), request.method)),
     });
     const outgoing = new Headers({ 'cache-control': 'no-store' });
     outgoing.set('content-type', result.headers.get('content-type') || 'application/json');

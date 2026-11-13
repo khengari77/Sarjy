@@ -14,6 +14,11 @@ describe('decodeProxyPath', () => {
     'v1//internal',
     'v1/internal%00/example',
     'v1/%zz',
+    'v1/foo?bar',
+    'v1/foo bar',
+    'v1/./internal',
+    'v1/foo/',
+    'v1/foo//',
   ])('rejects traversal input %s', (path) => {
     expect(decodeProxyPath(path)).toBeNull();
   });

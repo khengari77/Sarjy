@@ -10,7 +10,7 @@
  */
 
 const PROXY_PREFIX = 'v1/';
-const MAX_DECODE_PASSES = 3;
+const MAX_DECODE_LAYERS = 4;
 const SEGMENT_PATTERN = /^[A-Za-z0-9._~-]+$/;
 
 function hasForbiddenCharacters(value: string): boolean {
@@ -38,16 +38,27 @@ function unsafe(candidate: string): boolean {
   );
 }
 
-/** Decode every encoding layer; ``null`` means the path cannot be trusted. */
+function validSegments(candidate: string): boolean {
+  return candidate.split('/').every((segment) => segment !== '.' && segment !== '..' && SEGMENT_PATTERN.test(segment));
+}
+
+/**
+ * Decode every encoding layer and validate the complete path.
+ *
+ * ``null`` means the path cannot be trusted. A non-null result is safe to
+ * hand to ``new URL`` because it retains no percent escapes, dot segments,
+ * backslashes, control characters or empty segments.
+ */
 export function decodeProxyPath(path: string): string | null {
-  let candidate = path.endsWith('/') ? path.slice(0, -1) : path;
-  for (let pass = 0; pass <= MAX_DECODE_PASSES; pass += 1) {
+  let candidate = path;
+  for (let layer = 0; layer < MAX_DECODE_LAYERS; layer += 1) {
     if (unsafe(candidate)) return null;
     const decoded = decode(candidate);
     if (decoded === null) return null;
-    if (decoded === candidate) return candidate;
+    if (decoded === candidate) return validSegments(candidate) ? candidate : null;
     candidate = decoded;
   }
+  // Still encoded after the supported depth: refuse rather than guess.
   return null;
 }
 
@@ -55,11 +66,8 @@ export function decodeProxyPath(path: string): string | null {
 export function resolveProxyTarget(path: string, upstream: string): URL | null {
   const decoded = decodeProxyPath(path);
   if (decoded === null) return null;
-  const segments = decoded.split('/');
-  if (!segments.every((segment) => SEGMENT_PATTERN.test(segment))) return null;
   const base = new URL(upstream);
   const target = new URL('/' + decoded, base);
-  const rebuilt = '/' + decoded;
-  if (target.origin !== base.origin || target.pathname !== rebuilt) return null;
+  if (target.origin !== base.origin || target.pathname !== '/' + decoded) return null;
   return target;
 }

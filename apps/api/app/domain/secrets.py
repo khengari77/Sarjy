@@ -9,14 +9,14 @@ denial. Comparing UTF-8 bytes keeps every rejection closed and constant-time.
 import hmac
 
 
-def secret_matches(supplied: object, expected: str) -> bool:
+def secret_matches(supplied: object, expected: object) -> bool:
     """Return whether ``supplied`` equals the configured ``expected`` secret.
 
     Missing, malformed or unencodable values are denied without raising. An
     empty configured secret never matches, so an unset secret cannot authorize
     a caller.
     """
-    if not isinstance(supplied, str) or not expected:
+    if not isinstance(supplied, str) or not isinstance(expected, str) or not expected:
         return False
     try:
         submitted = supplied.encode("utf-8")

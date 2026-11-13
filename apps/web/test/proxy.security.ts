@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-const ORIGIN = 'http://127.0.0.1:4175';
+const ORIGIN = `http://127.0.0.1:${process.env.PROXY_PORT ?? '4175'}`;
 
 test('built proxy forwards a legitimate path and upstream query', async ({ request }) => {
   const response = await request.get('/api/v1/echo?q=hello');

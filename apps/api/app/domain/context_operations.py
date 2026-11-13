@@ -167,7 +167,10 @@ def verify_proposal(token: str, secret: str) -> dict[str, Any]:
         body, signature = token.rsplit(".", 1)
     except (AttributeError, ValueError) as exc:
         raise ValueError("PROPOSAL_INVALID") from exc
-    expected = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
+    try:
+        expected = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
+    except UnicodeEncodeError as exc:
+        raise ValueError("PROPOSAL_INVALID") from exc
     if not secret_matches(signature, expected):
         raise ValueError("PROPOSAL_INVALID")
     try:

@@ -1,7 +1,7 @@
-"""Delayed fake upstream used to reproduce proxy deadline behaviour.
+"""Fake upstream for proxy deadline and security tests.
 
-Serves the two paths the deadline check needs and delays every API response by
-FAKE_API_DELAY seconds so a slow dispatch can be reproduced without LiveKit.
+Serves ``/healthz``, a header/path echo at ``/v1/echo`` and delayed responses
+for the deadline scenarios. ``FAKE_API_DELAY`` controls the delay in seconds.
 """
 
 import json
