@@ -97,3 +97,35 @@ def test_deepseek_request_bound():
     assert deepseek_request_within_bounds(b"{}")
     assert deepseek_request_within_bounds(b"x" * (16 * 1024))
     assert not deepseek_request_within_bounds(b"x" * (16 * 1024 + 1))
+
+
+def test_oversized_deepseek_continuation_stops_before_reservation_or_provider():
+    from types import SimpleNamespace
+
+    from test_generation import request
+
+    calls = []
+
+    async def reserve(provider):
+        calls.append("reserve")
+
+    async def stream(*args):
+        calls.append("provider")
+        yield None
+
+    agent = SimpleNamespace(
+        pipeline={"llm": {"provider": "deepseek_direct"}},
+        reserve=reserve,
+        _stream_attempt=stream,
+    )
+    agent._require_deepseek_bounds = SarjyAgent._require_deepseek_bounds.__get__(agent)
+    data = request().model_dump(mode="json")
+    data["tool_history"] = [{"kind": "assistant", "content": "x" * (16 * 1024 + 1)}]
+    oversized = type(request()).model_validate(data)
+
+    async def run():
+        with pytest.raises(ValueError, match="DEEPSEEK_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS"):
+            _ = [chunk async for chunk in SarjyAgent._stream_with_fallback(agent, oversized, [], None)]
+
+    asyncio.run(run())
+    assert calls == []

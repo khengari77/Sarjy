@@ -99,7 +99,9 @@ class FakeRequest:
         return clone
 
 
-def run_fallback(monkeypatch, primary_events, fallback_events, *, reserve_error=None, fallback=True):
+def run_fallback(
+    monkeypatch, primary_events, fallback_events, *, reserve_error=None, denied_provider="deepseek", fallback=True
+):
     import main as worker
 
     reserved = []
@@ -115,7 +117,7 @@ def run_fallback(monkeypatch, primary_events, fallback_events, *, reserve_error=
 
     async def reserve(provider, characters=0):
         reserved.append(provider)
-        if reserve_error is not None:
+        if reserve_error is not None and provider == denied_provider:
             raise reserve_error
 
     agent.reserve = reserve
@@ -179,7 +181,7 @@ def test_emitted_output_blocks_fallback(monkeypatch):
     assert isinstance(error, GenerationFailure)
 
 
-def test_fallback_budget_denial_forwards_nothing(monkeypatch):
+def test_primary_budget_denial_forwards_nothing(monkeypatch):
     events, reserved, error = run_fallback(
         monkeypatch,
         [GenerationFailure(failure("timeout"))],
@@ -214,3 +216,26 @@ def test_attempt_deadline_raises_timeout_generation_failure(monkeypatch):
         assert exc.event.partial is False
     else:
         raise AssertionError("expected a timeout GenerationFailure")
+
+
+def test_fallback_budget_denial_never_invokes_fallback(monkeypatch):
+    calls = []
+    original = FakeAdapter.stream
+
+    async def observed(self, request, tools, tool_choice=None):
+        calls.append(self)
+        async for event in original(self, request, tools, tool_choice):
+            yield event
+
+    monkeypatch.setattr(FakeAdapter, "stream", observed)
+    events, reserved, error = run_fallback(
+        monkeypatch,
+        [GenerationFailure(failure("timeout"))],
+        [GenerationEvent("completed", turn_id="turn", attempt_id="attempt")],
+        reserve_error=ValueError("DAILY_BUDGET_EXHAUSTED"),
+        denied_provider="openai",
+    )
+    assert events == []
+    assert reserved == ["deepseek", "openai"]
+    assert len(calls) == 1
+    assert isinstance(error, ValueError)
