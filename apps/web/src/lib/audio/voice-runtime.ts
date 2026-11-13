@@ -1,5 +1,6 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
+import { displayedErrorCode } from './errorCodes';
 export type VoiceEvent = { type: 'status' | 'transcript' | 'error' | 'audio-blocked'; text: string };
 export interface VoiceRuntime {
   connect(config: SessionConfig): Promise<void>;
@@ -54,8 +55,8 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
       if (topic === 'sarjy.error' && participant?.isAgent) {
         try {
           const event = JSON.parse(new TextDecoder().decode(payload));
-          if (['DAILY_BUDGET_EXHAUSTED', 'BUDGET_SERVICE_UNAVAILABLE'].includes(event.code))
-            this.emit('error', event.code);
+          const code = displayedErrorCode(event?.code);
+          if (code) this.emit('error', code);
         } catch {
           // Ignore malformed provider data frames.
         }

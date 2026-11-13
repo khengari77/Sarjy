@@ -20,6 +20,7 @@ from app.domain.contracts import (
     resolve_response_policy,
 )
 from app.domain.policy import normalize_pipeline, pipeline_instructions
+from app.domain.provider_bounds import admission_reserve_bytes
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
@@ -132,7 +133,16 @@ def _register_session_routes(app, *, database, guard):
 
 
 def _compile_turn_context(
-    *, revision, instructions, history, memories, tool_results, current_turn, excluded_ids, pipeline
+    *,
+    revision,
+    instructions,
+    history,
+    memories,
+    tool_results,
+    current_turn,
+    excluded_ids,
+    pipeline,
+    reserve_bytes,
 ):
     try:
         return compile_turn_context(
@@ -144,6 +154,7 @@ def _compile_turn_context(
             current_turn=current_turn,
             excluded_ids=excluded_ids,
             pipeline=pipeline,
+            reserve_bytes=reserve_bytes,
         )
     except ValueError as exc:
         if str(exc) == "CONTEXT_BUDGET_EXCEEDED":
@@ -173,6 +184,7 @@ def _register_turn_routes(app, *, database, guard):
             status="completed",
         )
         pipeline = normalize_pipeline(voice.pipeline)
+        policy = resolve_response_policy(pipeline["response_preference"], pipeline["response_tier"])
         inputs = await read_context_inputs(db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id)
         compiled = _compile_turn_context(
             revision=conversation.revision,
@@ -183,6 +195,7 @@ def _register_turn_routes(app, *, database, guard):
             current_turn=ContextCandidate(id=turn.id, role="user", text=turn.text, origin="history"),
             excluded_ids=inputs.excluded_ids,
             pipeline=pipeline,
+            reserve_bytes=admission_reserve_bytes(policy.max_output_tokens),
         )
         # The weather decision is frozen with the snapshot: the tool call later
         # authorizes against this revision, never against live or stale state.
@@ -214,7 +227,7 @@ def _register_turn_routes(app, *, database, guard):
             instructions=pipeline_instructions(pipeline),
             selection=compiled.selection,
             messages=compiled.messages,
-            response_policy=resolve_response_policy(pipeline["response_preference"], pipeline["response_tier"]),
+            response_policy=policy,
             settings=settings_value,
             settings_revision=settings_value.revision,
             language=pipeline.get("llm", {}).get("language", pipeline.get("language", "en")),

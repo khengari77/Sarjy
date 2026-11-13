@@ -89,7 +89,8 @@ def test_system_instructions_survive_small_budgets():
         revision=0,
         instructions="Protected rules",
         history=(history("h1", "x" * 500),),
-        max_chars=20,
+        max_provider_bytes=120,
+        reserve_bytes=0,
     )
     assert compiled.included_ids == ("system",)
     assert "Protected rules" in compiled.canonical_prompt
@@ -313,8 +314,20 @@ def test_city_in_both_included_and_excluded_allowed_by_inclusion(tmp_path, monke
 def test_current_turn_is_mandatory_at_the_budget_boundary():
     current = history("u1", "x" * 12000)
     with pytest.raises(ValueError, match="CONTEXT_BUDGET_EXCEEDED"):
-        compile_turn_context(revision=1, instructions="i" * 5000, current_turn=current, max_chars=16000)
-    compiled = compile_turn_context(revision=1, instructions="i" * 502, current_turn=current, max_chars=16000)
+        compile_turn_context(
+            revision=1,
+            instructions="i" * 5000,
+            current_turn=current,
+            max_provider_bytes=16384,
+            reserve_bytes=0,
+        )
+    compiled = compile_turn_context(
+        revision=1,
+        instructions="i" * 502,
+        current_turn=current,
+        max_provider_bytes=16384,
+        reserve_bytes=0,
+    )
     assert compiled.included_ids[-1] == "u1"
 
 
@@ -329,7 +342,8 @@ def test_current_turn_is_included_or_explicitly_rejected(instructions, current_s
         instructions="i" * instructions,
         history=tuple(history(f"h{index}", text) for index, text in enumerate(older)),
         current_turn=history("current", "u" * current_size),
-        max_chars=16000,
+        max_provider_bytes=16384,
+        reserve_bytes=0,
     )
     if "i" * instructions == "" or current_size == 0:
         return
@@ -360,6 +374,17 @@ def test_turn_start_maps_budget_failure_to_typed_413(tmp_path, monkeypatch):
                 ),
             )
             db.commit()
+        headers = {"x-agent-secret": "test-service-secret", "x-session-id": "session", "x-room-name": "room"}
+        oversized = client.post(
+            "/internal/agent/turn/start",
+            headers=headers,
+            json={"request_id": "arabic", "text": "ا" * 12000},
+        )
+        assert oversized.status_code == 413
+        assert oversized.json()["detail"]["code"] == "CONTEXT_BUDGET_EXCEEDED"
+        with closing(sqlite3.connect(file)) as db, db:
+            assert db.execute("SELECT COUNT(*) FROM turns").fetchone()[0] == 0
+            assert db.execute("SELECT COUNT(*) FROM context_snapshots").fetchone()[0] == 0
         monkeypatch.setattr(
             worker_module,
             "compile_turn_context",
