@@ -92,6 +92,15 @@ jobs:
         run: |
           DATABASE_URL=postgresql+asyncpg://postgres:test-only@localhost/memory_tests uv run python -m alembic upgrade head
           DATABASE_URL=postgresql+asyncpg://postgres:test-only@localhost/integration_tests uv run python -m alembic upgrade head
+      - name: Memory claim concurrency
+        # The write ledger's duplicate-request guarantee is only meaningful on a
+        # real PostgreSQL database; run it as its own required step so a failure
+        # is attributable. A skip fails the step via tests/conftest.py.
+        run: uv run pytest -q tests/test_memory_claims_postgres.py
+        env:
+          REQUIRE_DAY2_INTEGRATION: '1'
+          TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
+          TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
       - name: Real vector and integration checks
         run: |
           uv run python -c "import sys; sys.path.insert(0, 'apps/api'); import app.services.memory, app.services.context_operations, app.domain.weather_permissions"
