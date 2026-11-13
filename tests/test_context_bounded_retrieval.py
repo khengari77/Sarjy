@@ -417,14 +417,14 @@ async def _postgres_plan_and_bounds():
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
     engine = create_async_engine(POSTGRES_URL)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
-    owner, chat = f"pg-owner-{uuid4()}", f"pg-chat-{uuid4()}"
+    owner, chat = f"pg-{uuid4()}", str(uuid4())
     try:
         async with sessions() as db:
             db.add(Identity(id=owner, token_hash=owner, expires_at="2030"))
             await db.commit()
             db.add(Conversation(id=chat, owner_id=owner))
             await db.commit()
-            await seed_memories(db, owner, chat, 3000)
+            await seed_memories(db, owner, chat, 3000, prefix=f"m-{uuid4().hex[:8]}")
             await seed_turns(db, chat, 3000)
             await db.commit()
             await db.execute(text("ANALYZE turns"))

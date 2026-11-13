@@ -27,13 +27,21 @@ def test_exclusion_is_idempotent_and_undo_restores_visible_set(ids, revision):
     assert added["revision_after"] == removed["revision_before"] + 2
 
 
-@given(st.lists(st.uuids().map(str), unique=True, max_size=20), st.data())
-def test_protected_and_explicitly_kept_records_never_enter_exclusion(ids, data):
+@given(st.lists(st.uuids().map(str), unique=True, max_size=20), st.data(), st.booleans())
+def test_budget_records_are_only_kept_by_explicit_authority(ids, data, names_budget):
     keep = data.draw(st.sets(st.sampled_from(ids), max_size=len(ids))) if ids else set()
     candidates = tuple(MemoryCandidate(key, "Budget 500 USD" if i % 2 else "Travel plan") for i, key in enumerate(ids))
-    result = select_candidates(candidates + candidates, tuple(keep))
-    protected = {row.id for row in candidates if row.is_budget} | keep
-    assert protected <= result.kept_ids
-    assert result.excluded_ids.isdisjoint(protected)
+    query = "forget the budget" if names_budget else "forget everything"
+    result = select_candidates(candidates + candidates, tuple(keep), query)
+    budget_ids = {row.id for row in candidates if row.is_budget}
+    assert keep <= result.kept_ids
+    assert result.excluded_ids.isdisjoint(keep)
     assert result.excluded_ids | result.kept_ids == set(ids)
     assert len(result.matches) == len(ids)
+    if names_budget:
+        assert budget_ids - keep <= result.excluded_ids
+        assert result.ambiguous == ()
+    else:
+        assert budget_ids - keep <= result.kept_ids
+        assert {record.id for record in result.ambiguous} == budget_ids - keep
+        assert result.requires_clarification is bool(budget_ids - keep)

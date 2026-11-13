@@ -394,3 +394,11 @@ def test_checked_in_budget_reservation_matches_runtime_schema():
 
     spec = json.loads((ROOT / "packages/contracts/openapi.json").read_text())
     assert spec["components"]["schemas"]["BudgetReservation"] == BudgetReservation.model_json_schema()
+
+
+def test_context_proposal_contract_surfaces_budget_ambiguity():
+    spec = json.loads((ROOT / "packages/contracts/openapi.json").read_text())
+    properties = spec["components"]["schemas"]["ContextProposal"]["properties"]
+    assert properties["requires_clarification"]["type"] == "boolean"
+    assert properties["ambiguous"]["items"]["$ref"].endswith("/ContextAmbiguity")
+    assert {"id", "content", "reason"} <= set(spec["components"]["schemas"]["ContextAmbiguity"]["properties"])

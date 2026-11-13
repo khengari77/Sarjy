@@ -58,6 +58,12 @@ class ContextPreserved(BaseModel):
     reason: str
 
 
+class ContextAmbiguity(BaseModel):
+    id: str
+    content: str
+    reason: str
+
+
 class ContextProposal(BaseModel):
     conversation_id: str
     query: str
@@ -65,6 +71,8 @@ class ContextProposal(BaseModel):
     proposal: str
     matches: list[ContextMatch]
     preserved: list[ContextPreserved]
+    ambiguous: list[ContextAmbiguity]
+    requires_clarification: bool
     diff: ContextDiff
 
 

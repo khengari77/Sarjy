@@ -218,7 +218,7 @@ async def create_proposal(
     ).all()
     owned = {row.id for row in rows}
     candidates = tuple(candidate for candidate in candidates if candidate.id in owned)
-    selection = select_candidates(candidates, keep)
+    selection = select_candidates(candidates, keep, query)
     revision = conversation.revision
     token = sign_proposal(
         {
@@ -251,6 +251,10 @@ async def create_proposal(
         "preserved": [
             {"id": record.id, "content": record.content, "reason": record.reason} for record in selection.preserved
         ],
+        "ambiguous": [
+            {"id": record.id, "content": record.content, "reason": record.reason} for record in selection.ambiguous
+        ],
+        "requires_clarification": selection.requires_clarification,
         "diff": selection.diff(revision, revision),
     }
 
@@ -365,6 +369,12 @@ def _exclusion_ids(payload: dict) -> tuple[frozenset[str], frozenset[str]]:
 
 
 def _validate_exclusion(payload, expected_revision, conversation, excluded_ids, kept_ids) -> None:
+    if payload.get("v") != 1:
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
+    keep_values = payload.get("keep")
+    if not isinstance(keep_values, list) or not all(isinstance(value, str) for value in keep_values):
+        # A signed proposal must carry the keep authority used at preview time.
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
     if payload.get("revision") != expected_revision or conversation.revision != expected_revision:
         raise ContextOperationError("REVISION_CONFLICT")
     if not excluded_ids:
@@ -386,7 +396,7 @@ async def _authorize_exclusion_rows(db: AsyncSession, owner_id: str, excluded_id
     ).all()
     if {row.id for row in rows} != excluded_ids:
         raise ContextOperationError("PROPOSAL_INVALID")
-    if any(classify(row.content) == "budget" or row.id in kept_ids for row in rows):
+    if any(row.id in kept_ids for row in rows):
         raise ContextOperationError("PROPOSAL_INVALID", 400)
 
 

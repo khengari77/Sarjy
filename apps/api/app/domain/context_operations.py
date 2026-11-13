@@ -13,10 +13,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-# Budget-like records are never removed by a bulk "forget" proposal.  The
-# architecture's signature interaction is "forget the trip but keep the
-# budget"; treating budget as a default keep-exception makes that safe even if
-# the parser only forwards an explicit keep token for the wording it understood.
+# Budget-like content remains a display label and an ambiguity signal, never an
+# unconditional keep authority.  Explicit per-operation keep exceptions (or a
+# query that names budget/cost/price) decide whether a budget record survives.
 BUDGET_PATTERN = re.compile(
     r"\b(budget|budgets|cost|costs|price|prices|spend|spending|sar|usd|dollars?)\b"
     r"|[$€£]"
@@ -26,7 +25,7 @@ BUDGET_PATTERN = re.compile(
 
 KEEP_REASON_EXPLICIT_ID = "explicit keep id"
 KEEP_REASON_EXPLICIT_TERM = "explicit keep exception"
-KEEP_REASON_BUDGET = "protected budget"
+KEEP_REASON_BUDGET_AMBIGUOUS = "budget requires clarification"
 
 
 @dataclass(frozen=True)
@@ -59,6 +58,11 @@ class Selection:
     preserved: tuple[PreservedRecord, ...]
     excluded_ids: frozenset[str]
     kept_ids: frozenset[str]
+    ambiguous: tuple[PreservedRecord, ...] = ()
+
+    @property
+    def requires_clarification(self) -> bool:
+        return bool(self.ambiguous)
 
     def diff(self, revision_before: int, revision_after: int | None = None) -> dict[str, Any]:
         return {
@@ -74,29 +78,37 @@ def classify(content: str) -> str:
     return "budget" if BUDGET_PATTERN.search(content) else "memory"
 
 
+def query_names_budget(query: str) -> bool:
+    """Whether the owner's query itself refers to budget/cost/price."""
+    return bool(BUDGET_PATTERN.search(query))
+
+
 def _keep_reason(candidate: MemoryCandidate, keep_terms: tuple[str, ...]) -> str | None:
     if candidate.id in keep_terms:
         return KEEP_REASON_EXPLICIT_ID
     lowered = candidate.content.casefold()
     if any(term.casefold() in lowered for term in keep_terms if term):
         return KEEP_REASON_EXPLICIT_TERM
-    if candidate.is_budget:
-        return KEEP_REASON_BUDGET
     return None
 
 
 def select_candidates(
     candidates: tuple[MemoryCandidate, ...],
     keep: tuple[str, ...] = (),
+    query: str = "",
 ) -> Selection:
     """Apply keep-exceptions exactly, without letting a keep id be dropped.
 
     ``keep`` entries are record ids first (exact match) and otherwise literal
-    case-insensitive content filters.  Budget-classified records are preserved
-    by policy.  Duplicate ids are collapsed so diffs stay canonical.
+    case-insensitive content filters.  Budget-classified records are only kept
+    by that explicit authority.  If the query does not itself name budget/cost/
+    price, a budget record is preserved as ambiguous rather than silently kept
+    or silently removed.  Duplicate ids are collapsed so diffs stay canonical.
     """
     keep_terms = tuple(term.strip() for term in keep if term and term.strip())
+    explicit_budget_scope = query_names_budget(query)
     preserved: dict[str, PreservedRecord] = {}
+    ambiguous: dict[str, PreservedRecord] = {}
     excluded: set[str] = set()
     seen: set[str] = set()
     ordered: list[MemoryCandidate] = []
@@ -108,6 +120,9 @@ def select_candidates(
         reason = _keep_reason(candidate, keep_terms)
         if reason is not None:
             preserved[candidate.id] = PreservedRecord(candidate.id, candidate.content, reason)
+        elif candidate.is_budget and not explicit_budget_scope:
+            ambiguous[candidate.id] = PreservedRecord(candidate.id, candidate.content, KEEP_REASON_BUDGET_AMBIGUOUS)
+            preserved[candidate.id] = ambiguous[candidate.id]
         else:
             excluded.add(candidate.id)
     kept_ids = frozenset(preserved)
@@ -116,6 +131,7 @@ def select_candidates(
         preserved=tuple(preserved[key] for key in sorted(preserved)),
         excluded_ids=frozenset(excluded - kept_ids),
         kept_ids=kept_ids,
+        ambiguous=tuple(ambiguous[key] for key in sorted(ambiguous)),
     )
 
 

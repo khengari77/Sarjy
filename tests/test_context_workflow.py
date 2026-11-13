@@ -30,7 +30,7 @@ def candidate(record_id, content, kind="memory"):
     return MemoryCandidate(id=record_id, content=content, kind=kind)
 
 
-def test_keep_exceptions_protect_budget_ids_and_terms():
+def test_budget_content_is_ambiguous_without_explicit_budget_scope():
     selection = select_candidates(
         (
             candidate("trip", "Trip to Tripoli from 1 to 5 May"),
@@ -43,8 +43,23 @@ def test_keep_exceptions_protect_budget_ids_and_terms():
     assert selection.excluded_ids == frozenset({"trip", "hotel"})
     assert selection.kept_ids == frozenset({"budget", "passport"})
     reasons = {record.id: record.reason for record in selection.preserved}
-    assert reasons["budget"] == "protected budget"
+    assert reasons["budget"] == "budget requires clarification"
     assert reasons["passport"] == "explicit keep id"
+    assert {record.id for record in selection.ambiguous} == {"budget"}
+    assert selection.requires_clarification is True
+
+
+def test_budget_query_allows_explicit_exclusion_and_keep_still_wins():
+    records = (candidate("budget", "Budget 500 USD for the trip"),)
+    excluded = select_candidates(records, query="forget the budget")
+    assert excluded.excluded_ids == frozenset({"budget"})
+    assert excluded.ambiguous == ()
+    assert excluded.requires_clarification is False
+
+    kept = select_candidates(records, keep=("budget",), query="forget the budget")
+    assert kept.excluded_ids == frozenset()
+    assert kept.kept_ids == frozenset({"budget"})
+    assert kept.requires_clarification is False
 
 
 def test_budget_detection_covers_english_and_arabic():
