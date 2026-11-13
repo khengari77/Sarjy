@@ -12,6 +12,7 @@
     "test:unit": "svelte-kit sync && vitest run",
     "test:browser": "playwright test",
     "test:deadline": "playwright test --config playwright.deadline.config.ts",
+    "test:proxy": "playwright test --config playwright.proxy.config.ts",
     "test:videos": "playwright test --config playwright.recording.config.ts --grep \"demo session|voice picker\" --workers 1"
   },
   "devDependencies": {

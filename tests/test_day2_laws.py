@@ -28,12 +28,23 @@ def test_exclusion_is_idempotent_and_undo_restores_visible_set(ids, revision):
 
 
 @given(st.lists(st.uuids().map(str), unique=True, max_size=20), st.data())
-def test_protected_and_explicitly_kept_records_never_enter_exclusion(ids, data):
+def test_budget_records_require_signed_keep_or_exclude_authority(ids, data):
     keep = data.draw(st.sets(st.sampled_from(ids), max_size=len(ids))) if ids else set()
+    exclude = data.draw(st.sets(st.sampled_from(ids), max_size=len(ids))) if ids else set()
     candidates = tuple(MemoryCandidate(key, "Budget 500 USD" if i % 2 else "Travel plan") for i, key in enumerate(ids))
-    result = select_candidates(candidates + candidates, tuple(keep))
-    protected = {row.id for row in candidates if row.is_budget} | keep
-    assert protected <= result.kept_ids
-    assert result.excluded_ids.isdisjoint(protected)
+    result = select_candidates(candidates + candidates, tuple(keep), tuple(exclude))
+    budget_ids = {row.id for row in candidates if row.is_budget}
+    ambiguous_ids = {record.id for record in result.ambiguous}
+    assert keep <= result.kept_ids
+    assert result.excluded_ids.isdisjoint(keep)
     assert result.excluded_ids | result.kept_ids == set(ids)
     assert len(result.matches) == len(ids)
+    for identifier in budget_ids:
+        if identifier in keep:
+            assert identifier in result.kept_ids and identifier not in ambiguous_ids
+        elif identifier in exclude:
+            assert identifier in result.excluded_ids and identifier not in ambiguous_ids
+        else:
+            assert identifier in result.kept_ids
+            assert identifier in ambiguous_ids
+    assert ambiguous_ids == budget_ids - keep - exclude

@@ -1,3 +1,5 @@
+from contextlib import closing
+
 from app.config import Settings
 from app.main import create_app
 from fastapi.testclient import TestClient
@@ -13,7 +15,8 @@ def test_identity_isolation_and_durable_history(tmp_path):
         _env_file=None,
     )
     application = create_app(settings)
-    with TestClient(application) as alice, TestClient(application) as bob:
+    # One managed lifespan; the second identity reuses it and is closed explicitly.
+    with TestClient(application) as alice, closing(TestClient(application)) as bob:
         assert alice.get("/v1/conversations").status_code == 401
         aid = alice.post("/v1/demo-session").json()["id"]
         assert alice.post("/v1/demo-session").json()["id"] == aid

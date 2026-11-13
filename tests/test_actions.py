@@ -117,12 +117,14 @@ def test_owner_checks_and_approved_voice_validation(tmp_path):
     app, path = setup(tmp_path)
     with TestClient(app) as alice:
         conversation = chat(alice)
-        bob = TestClient(app)
-        chat(bob)
-        assert (
-            submit(bob, conversation, source="ui", action={"kind": "SetCaptionsVisible", "visible": False}).status_code
-            == 404
-        )
+        with closing(TestClient(app)) as bob:
+            chat(bob)
+            assert (
+                submit(
+                    bob, conversation, source="ui", action={"kind": "SetCaptionsVisible", "visible": False}
+                ).status_code
+                == 404
+            )
         assert (
             submit(
                 alice, conversation, source="ui", action={"kind": "SelectApprovedVoice", "voice_id": "missing"}
@@ -216,3 +218,32 @@ def test_nonfinite_action_arguments_fail_validation_without_mutation(tmp_path):
             )
             assert response.status_code == 422
         assert client.get("/v1/settings").json()["revision"] == 0
+
+
+def test_context_action_forwards_explicit_exclude(monkeypatch):
+    import asyncio
+
+    from app.domain.contracts import ProposeContextExclusion
+    from app.services import context_actions
+
+    captured = {}
+
+    async def fake_create_proposal(db, **kwargs):
+        captured.update(kwargs)
+        return {"proposal_id": "p1", "confirmed": False}
+
+    monkeypatch.setattr(context_actions, "create_proposal", fake_create_proposal)
+    handler = context_actions.build_context_action_handlers(secret="secret")["ProposeContextExclusion"]
+    action = ProposeContextExclusion(kind="ProposeContextExclusion", query="forget the budget", exclude=("budget",))
+    asyncio.run(
+        handler.prepare(
+            db=None,
+            owner_id="owner",
+            conversation_id="chat",
+            request_id="request",
+            expected_revision=0,
+            action=action,
+        )
+    )
+    assert captured["exclude"] == ("budget",)
+    assert captured["query"] == "forget the budget"

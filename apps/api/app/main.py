@@ -4,7 +4,6 @@ Routes live in :mod:`app.routes`; this module only wires configuration,
 persistence, providers and middleware together.
 """
 
-import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -14,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.config import Settings
 from app.dependencies import build_dependencies
 from app.domain.context_operations import MemoryCandidate, classify
+from app.domain.secrets import secret_matches
 from app.infrastructure.database import Base, SessionGate
 from app.services.context_actions import build_context_action_handlers
 from app.services.memory import MemoryService, OpenAIEmbedder
@@ -24,6 +24,10 @@ def create_app(
     settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None, embedding_adapter=None
 ):
     config = settings or Settings()
+    # Reject invalid configuration before allocating the engine so a failed
+    # create_app never leaves a connection pool behind.
+    if config.development_protected and not config.web_service_secret:
+        raise ValueError("WEB_SERVICE_SECRET_REQUIRED")
     catalog = voice_catalog or ElevenLabsVoices(config.eleven_api_key)
     engine = create_async_engine(config.database_url)
     if config.database_url.startswith("sqlite"):
@@ -38,19 +42,21 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app):
-        # Local bootstrap only. Production uses Alembic before application startup.
-        if config.database_url.startswith("sqlite"):
-            async with engine.begin() as connection:
-                await connection.run_sync(Base.metadata.create_all)
-            async with sessions() as db:
-                if not await db.get(SessionGate, 1):
-                    db.add(SessionGate(id=1, marker=1))
-                    await db.commit()
-        yield
-        await engine.dispose()
+        # Dispose on every exit path: startup failure, normal shutdown and an
+        # exception raised while the application is serving requests.
+        try:
+            # Local bootstrap only. Production uses Alembic before application startup.
+            if config.database_url.startswith("sqlite"):
+                async with engine.begin() as connection:
+                    await connection.run_sync(Base.metadata.create_all)
+                async with sessions() as db:
+                    if not await db.get(SessionGate, 1):
+                        db.add(SessionGate(id=1, marker=1))
+                        await db.commit()
+            yield
+        finally:
+            await engine.dispose()
 
-    if config.development_protected and not config.web_service_secret:
-        raise ValueError("WEB_SERVICE_SECRET_REQUIRED")
     app = FastAPI(
         title="Sarjy API",
         version="0.1.0",
@@ -64,7 +70,7 @@ def create_app(
     async def protect_web_api(request, call_next):
         if config.development_protected and request.url.path.startswith("/v1/"):
             supplied = request.headers.get("x-web-service-secret", "")
-            if not hmac.compare_digest(supplied, config.web_service_secret):
+            if not secret_matches(supplied, config.web_service_secret):
                 from fastapi.responses import JSONResponse
 
                 return JSONResponse({"detail": {"code": "WEB_AUTH_REQUIRED"}}, status_code=401)

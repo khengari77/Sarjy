@@ -83,8 +83,7 @@ def test_slow_catalog_does_not_lock_unrelated_mutations(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Catalog, "require", stalled)
     app, path = setup(tmp_path)
-    with TestClient(app) as alice:
-        bob = TestClient(app)
+    with TestClient(app) as alice, closing(TestClient(app)) as bob:
         alice_chat, bob_chat = chat(alice), chat(bob)
         with ThreadPoolExecutor(2) as pool:
             first = pool.submit(

@@ -1,6 +1,5 @@
 """Worker-only endpoints for bootstrap, turns, weather and budget reservations."""
 
-import hmac
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
@@ -21,6 +20,7 @@ from app.domain.contracts import (
     resolve_response_policy,
 )
 from app.domain.policy import normalize_pipeline, pipeline_instructions
+from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
 from app.infrastructure.database import Conversation, Memory, Turn, UserSetting, VoiceSession
@@ -62,7 +62,7 @@ class WeatherInput(BaseModel):
 def _session_guard(config: Settings):
     async def worker_session(request: Request, db: AsyncSession, allow_ended: bool = False):
         secret = request.headers.get("x-agent-secret", "")
-        if not config.agent_service_secret or not hmac.compare_digest(secret, config.agent_service_secret):
+        if not secret_matches(secret, config.agent_service_secret):
             raise HTTPException(401, detail={"code": "WORKER_AUTH_REQUIRED"})
         voice = await db.get(VoiceSession, request.headers.get("x-session-id", ""))
         statuses = {"starting", "active", "ended"} if allow_ended else {"starting", "active"}
@@ -90,9 +90,7 @@ def register_worker_routes(app, *, config: Settings, database):
 def _register_budget_routes(app, *, config: Settings, database):
     @app.post("/internal/development/reserve")
     async def development_reservation(body: BudgetReservation, request: Request, db: AsyncSession = Depends(database)):
-        if not config.agent_service_secret or not hmac.compare_digest(
-            request.headers.get("x-agent-secret", ""), config.agent_service_secret
-        ):
+        if not secret_matches(request.headers.get("x-agent-secret", ""), config.agent_service_secret):
             raise HTTPException(401)
         if body.provider == "deepseek" and not config.deepseek_budget_enabled:
             return {

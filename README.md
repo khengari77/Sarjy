@@ -47,6 +47,20 @@ Optional PostgreSQL migration parity against a disposable database (never a host
 TEST_POSTGRES_URL='postgresql+asyncpg://postgres:test@127.0.0.1:55432/sarjy' uv run pytest -q tests/test_migrations.py
 ```
 
+### Delayed resource-warning attribution (opt-in)
+
+The normal suite keeps `filterwarnings = ["error"]` and never forces garbage collection. To trace a delayed `ResourceWarning` back to the test that allocated the resource:
+
+```sh
+uv run python scripts/diagnose_resources.py --self-test
+uv run python scripts/diagnose_resources.py tests/test_session_lifecycle.py
+uv run --python 3.12 python scripts/diagnose_resources.py --self-test
+```
+
+The helper starts `tracemalloc`, records unclosed SQLite/aiosqlite objects at test boundaries, maps each allocation frame to its originating test, and separates application defects, test defects and unattributed timing observations. `--depth` controls the retained frame count (default 15).
+
+Outside `--self-test`, any observed unclosed resource makes the command exit `1`; that is the diagnostic signal, not a failing test run. This is diagnostic-only; do not add its forced collection to routine CI.
+
 ## Deployment
 
 Build images from repository root with `infra/api.Dockerfile`, `infra/web.Dockerfile`, and `infra/agent.Dockerfile`. Use CranL for frontend/API, LiveKit Build for the worker, and Supabase PostgreSQL. Set `DATABASE_URL` to an asyncpg SQLAlchemy URL, run `uv run alembic upgrade head` before API startup, and set `COOKIE_SECURE=true` in production. Never expose provider secrets to the frontend. Configure SvelteKit's trusted public origin for the deployed proxy; retain CSRF checks.
@@ -128,7 +142,7 @@ Frontend: https://sarjy-web-dev-otbaod.cranl.net (password required). API: https
 
 Deployment branches add the appropriate root `Dockerfile` to the same tested source revision; CranL's nested Dockerfile build did not include repository-root files. The API and frontend root-Dockerfile branch checks passed.
 
-Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source and the worker Dockerfile. Inject secrets separately through LiveKit. Worker deployment, hosted typed-input speech/weather and cleanup are verified. Human microphone, interruption and reconnect/refresh acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.
+Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source, shared domain Python source and the worker Dockerfile. Preparation stages a fresh context before replacing the helper-owned output, so stale files are removed and missing sources leave the previous context intact. Build from the generated context; inject secrets separately through LiveKit. Worker deployment, hosted typed-input speech/weather and cleanup are verified. Human microphone, interruption and reconnect/refresh acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.
 
 ## Retryable voice-session cleanup
 

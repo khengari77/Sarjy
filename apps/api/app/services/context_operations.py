@@ -2,8 +2,12 @@
 
 Wire format and authorization
 -----------------------------
-* Preview is read-only: it signs an opaque proposal token containing the exact
-  candidate ids and the conversation revision.  No rows are written.
+* Preview writes no memory, exclusion, operation or revision rows: it signs an
+  opaque proposal token containing the exact candidate ids and the conversation
+  revision.  Semantic preview may commit one conservative embedding reservation
+  through the shared ledger; that is a provider-cost boundary, not context state.
+* Confirmation and Undo change context state without provider calls or new
+  spending reservations.
 * Confirmation trusts only the signed token.  Ids supplied by a client are
   never read, and every id is re-authorized against the owner's active
   memories before the single transaction commits.
@@ -24,8 +28,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.context_operations import (
     MemoryCandidate,
+    budget_removal_authorized,
     classify,
     exclusion_diff,
+    keep_authorized,
     restore_diff,
     select_candidates,
     sign_proposal,
@@ -45,6 +51,9 @@ from app.services.memory_eligibility import blocked_memory_ids
 SCOPE = "conversation"
 EXCLUDE = "exclude"
 RESTORE = "restore"
+# Preview scoring is bounded at the database boundary.  This cap is larger than
+# the proposal result limit but prevents a lifetime owner-memory load.
+PREVIEW_SEARCH_ROW_LIMIT = 500
 STOPWORDS = frozenset(
     [
         "a",
@@ -142,7 +151,8 @@ async def keyword_search(
         await db.scalars(
             select(Memory)
             .where(Memory.owner_id == owner_id, Memory.status == "active")
-            .order_by(Memory.created_at.desc())
+            .order_by(Memory.created_at.desc(), Memory.id.desc())
+            .limit(PREVIEW_SEARCH_ROW_LIMIT)
         )
     ).all()
     wanted = _tokens(query)
@@ -196,11 +206,16 @@ async def create_proposal(
     conversation_id: str,
     query: str,
     keep: tuple[str, ...] = (),
+    exclude: tuple[str, ...] = (),
     limit: int = 20,
     secret: str,
     search: MemorySearcher = keyword_search,
 ) -> dict:
-    """Build a preview without writing anything. Read-only by construction."""
+    """Build a preview without changing context state.
+
+    Semantic retrieval may reserve one embedding request in the shared ledger;
+    no memory, exclusion, operation or revision rows are written.
+    """
     if not secret:
         raise ContextOperationError("CONTEXT_PROPOSALS_NOT_CONFIGURED", 503)
     conversation = await owned_conversation(db, owner_id, conversation_id)
@@ -218,7 +233,7 @@ async def create_proposal(
     ).all()
     owned = {row.id for row in rows}
     candidates = tuple(candidate for candidate in candidates if candidate.id in owned)
-    selection = select_candidates(candidates, keep)
+    selection = select_candidates(candidates, keep, exclude)
     revision = conversation.revision
     token = sign_proposal(
         {
@@ -228,6 +243,7 @@ async def create_proposal(
             "revision": revision,
             "query": query,
             "keep": list(keep),
+            "exclude": list(exclude),
             "excluded_ids": sorted(selection.excluded_ids),
             "kept_ids": sorted(selection.kept_ids),
         },
@@ -251,6 +267,10 @@ async def create_proposal(
         "preserved": [
             {"id": record.id, "content": record.content, "reason": record.reason} for record in selection.preserved
         ],
+        "ambiguous": [
+            {"id": record.id, "content": record.content, "reason": record.reason} for record in selection.ambiguous
+        ],
+        "requires_clarification": selection.requires_clarification,
         "diff": selection.diff(revision, revision),
     }
 
@@ -278,8 +298,17 @@ async def confirm_proposal(
     if replayed is not None:
         return replayed
 
-    _validate_exclusion(payload, expected_revision, conversation, excluded_ids, kept_ids)
-    await _authorize_exclusion_rows(db, owner_id, excluded_ids, kept_ids)
+    keep_authority, exclude_authority = _validate_exclusion(
+        payload, expected_revision, conversation, excluded_ids, kept_ids
+    )
+    await _authorize_exclusion_rows(
+        db,
+        owner_id,
+        excluded_ids,
+        kept_ids,
+        keep=keep_authority,
+        exclude=exclude_authority,
+    )
 
     before = conversation.revision
     after = before + 1
@@ -364,7 +393,19 @@ def _exclusion_ids(payload: dict) -> tuple[frozenset[str], frozenset[str]]:
     return excluded, kept
 
 
-def _validate_exclusion(payload, expected_revision, conversation, excluded_ids, kept_ids) -> None:
+def _validate_exclusion(
+    payload, expected_revision, conversation, excluded_ids, kept_ids
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if payload.get("v") != 1:
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
+    keep_values = payload.get("keep")
+    if not isinstance(keep_values, list) or not all(isinstance(value, str) for value in keep_values):
+        # A signed proposal must carry the keep authority used at preview time.
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
+    exclude_values = payload.get("exclude")
+    if not isinstance(exclude_values, list) or not all(isinstance(value, str) for value in exclude_values):
+        # Explicit budget exclusion authority must be signed too; losing it fails closed.
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
     if payload.get("revision") != expected_revision or conversation.revision != expected_revision:
         raise ContextOperationError("REVISION_CONFLICT")
     if not excluded_ids:
@@ -372,9 +413,30 @@ def _validate_exclusion(payload, expected_revision, conversation, excluded_ids, 
     if excluded_ids & kept_ids:
         # Defence in depth: a keep-exception can never be smuggled away.
         raise ContextOperationError("PROPOSAL_INVALID", 400)
+    return tuple(keep_values), tuple(exclude_values)
 
 
-async def _authorize_exclusion_rows(db: AsyncSession, owner_id: str, excluded_ids, kept_ids) -> None:
+async def _authorize_exclusion_rows(
+    db: AsyncSession,
+    owner_id: str,
+    excluded_ids,
+    kept_ids,
+    *,
+    keep: tuple[str, ...],
+    exclude: tuple[str, ...],
+) -> None:
+    if kept_ids:
+        kept_rows = (
+            await db.scalars(
+                select(Memory).where(
+                    Memory.id.in_(list(kept_ids)),
+                    Memory.owner_id == owner_id,
+                    Memory.status == "active",
+                )
+            )
+        ).all()
+        if {row.id for row in kept_rows} != kept_ids:
+            raise ContextOperationError("PROPOSAL_INVALID", 400)
     rows = (
         await db.scalars(
             select(Memory).where(
@@ -386,8 +448,22 @@ async def _authorize_exclusion_rows(db: AsyncSession, owner_id: str, excluded_id
     ).all()
     if {row.id for row in rows} != excluded_ids:
         raise ContextOperationError("PROPOSAL_INVALID")
-    if any(classify(row.content) == "budget" or row.id in kept_ids for row in rows):
+    if any(
+        row.id in kept_ids
+        or keep_authorized(
+            row.id,
+            row.content,
+            is_budget=classify(row.content) == "budget",
+            authority=keep,
+        )
+        for row in rows
+    ):
         raise ContextOperationError("PROPOSAL_INVALID", 400)
+    # Re-authorize from the database, not from preview-time labels: a signed
+    # token cannot remove a budget record without exact id/full-content authority.
+    for row in rows:
+        if classify(row.content) == "budget" and not budget_removal_authorized(row.id, row.content, exclude):
+            raise ContextOperationError("PROPOSAL_INVALID", 400)
 
 
 async def _finish(
