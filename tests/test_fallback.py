@@ -99,7 +99,9 @@ class FakeRequest:
         return clone
 
 
-def run_fallback(monkeypatch, primary_events, fallback_events, *, reserve_error=None, fallback=True):
+def run_fallback(
+    monkeypatch, primary_events, fallback_events, *, reserve_error=None, denied_provider="deepseek", fallback=True
+):
     import main as worker
 
     reserved = []
@@ -109,12 +111,13 @@ def run_fallback(monkeypatch, primary_events, fallback_events, *, reserve_error=
     agent.session = type("Session", (), {"llm": "primary"})()
     agent.fallback_llm = "fallback" if fallback else None
     agent._require_openai_bounds = lambda request, tools: None
+    agent._require_deepseek_bounds = lambda request: None
     agent._stream_attempt = worker.SarjyAgent._stream_attempt.__get__(agent)
     agent._stream_with_fallback = worker.SarjyAgent._stream_with_fallback.__get__(agent)
 
     async def reserve(provider, characters=0):
         reserved.append(provider)
-        if reserve_error is not None:
+        if reserve_error is not None and provider == denied_provider:
             raise reserve_error
 
     agent.reserve = reserve
@@ -146,7 +149,7 @@ def test_pre_output_failure_reserves_once_and_streams_fallback(monkeypatch):
         ],
     )
     assert error is None
-    assert reserved == ["openai"]
+    assert reserved == ["deepseek", "openai"]
     assert [event.kind for event in events] == ["text", "completed"]
 
 
@@ -160,7 +163,7 @@ def test_primary_success_does_not_reserve_fallback(monkeypatch):
         [],
     )
     assert error is None
-    assert reserved == []
+    assert reserved == ["deepseek"]
     assert [event.kind for event in events] == ["text", "completed"]
 
 
@@ -174,11 +177,11 @@ def test_emitted_output_blocks_fallback(monkeypatch):
         [GenerationEvent("completed", turn_id="turn", attempt_id="attempt")],
     )
     assert events == []
-    assert reserved == []
+    assert reserved == ["deepseek"]
     assert isinstance(error, GenerationFailure)
 
 
-def test_fallback_budget_denial_forwards_nothing(monkeypatch):
+def test_primary_budget_denial_forwards_nothing(monkeypatch):
     events, reserved, error = run_fallback(
         monkeypatch,
         [GenerationFailure(failure("timeout"))],
@@ -186,7 +189,7 @@ def test_fallback_budget_denial_forwards_nothing(monkeypatch):
         reserve_error=ValueError("DAILY_BUDGET_EXHAUSTED"),
     )
     assert events == []
-    assert reserved == ["openai"]
+    assert reserved == ["deepseek"]
     assert isinstance(error, ValueError)
 
 
@@ -213,3 +216,26 @@ def test_attempt_deadline_raises_timeout_generation_failure(monkeypatch):
         assert exc.event.partial is False
     else:
         raise AssertionError("expected a timeout GenerationFailure")
+
+
+def test_fallback_budget_denial_never_invokes_fallback(monkeypatch):
+    calls = []
+    original = FakeAdapter.stream
+
+    async def observed(self, request, tools, tool_choice=None):
+        calls.append(self)
+        async for event in original(self, request, tools, tool_choice):
+            yield event
+
+    monkeypatch.setattr(FakeAdapter, "stream", observed)
+    events, reserved, error = run_fallback(
+        monkeypatch,
+        [GenerationFailure(failure("timeout"))],
+        [GenerationEvent("completed", turn_id="turn", attempt_id="attempt")],
+        reserve_error=ValueError("DAILY_BUDGET_EXHAUSTED"),
+        denied_provider="openai",
+    )
+    assert events == []
+    assert reserved == ["deepseek", "openai"]
+    assert len(calls) == 1
+    assert isinstance(error, ValueError)

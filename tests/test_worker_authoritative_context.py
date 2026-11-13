@@ -9,8 +9,9 @@ from main import SarjyAgent
 from test_generation import request
 
 
+@pytest.mark.parametrize("provider", ["openai_direct", "deepseek_direct"])
 @pytest.mark.parametrize("denied", [False, True])
-def test_worker_replaces_stale_history_and_reserves_before_provider(monkeypatch, denied):
+def test_worker_replaces_stale_history_and_reserves_before_provider(monkeypatch, denied, provider):
     observed, order = [], []
 
     class Provider:
@@ -21,6 +22,12 @@ def test_worker_replaces_stale_history_and_reserves_before_provider(monkeypatch,
             assert order == ["reserve", "provider"]
 
             async def chunks():
+                if provider == "deepseek_direct":
+                    from stream_completion import completion_state
+
+                    state = completion_state.get()
+                    if state is not None:
+                        state.done, state.reason = True, "stop"
                 yield llm.ChatChunk(id="r", delta=llm.ChoiceDelta(content="output"))
 
             yield chunks()
@@ -47,7 +54,7 @@ def test_worker_replaces_stale_history_and_reserves_before_provider(monkeypatch,
             )
 
         async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
-            agent = SarjyAgent(client, {"llm": {"provider": "openai_direct"}, "max_output_tokens": 128}, "Rules")
+            agent = SarjyAgent(client, {"llm": {"provider": provider}, "max_output_tokens": 128}, "Rules")
             context = llm.ChatContext()
             context.add_message(role="assistant", content="Excluded stale city")
             context.add_message(role="user", content="Weather?")

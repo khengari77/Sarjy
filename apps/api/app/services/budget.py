@@ -3,18 +3,40 @@ from datetime import UTC, datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
-from app.domain.budget import ELEVENLABS_DAILY_CHARACTERS, OPENAI_DAILY_MICRO_USD, OPENAI_REQUEST_MICRO_USD, budget_day
+from app.domain.budget import (
+    DEEPSEEK_DAILY_MICRO_USD,
+    DEEPSEEK_REQUEST_MICRO_USD,
+    ELEVENLABS_DAILY_CHARACTERS,
+    OPENAI_DAILY_MICRO_USD,
+    OPENAI_REQUEST_MICRO_USD,
+    budget_day,
+)
 from app.infrastructure.database import DevelopmentBudget
 from app.infrastructure.upsert import insert_ignore
 
+REQUEST_UNITS = {"openai": OPENAI_REQUEST_MICRO_USD, "deepseek": DEEPSEEK_REQUEST_MICRO_USD}
+DAILY_LIMITS = {
+    "openai": OPENAI_DAILY_MICRO_USD,
+    "deepseek": DEEPSEEK_DAILY_MICRO_USD,
+    "elevenlabs": ELEVENLABS_DAILY_CHARACTERS,
+}
+
 
 async def reserve_in_transaction(
-    db: AsyncSession, provider: str, characters: int = 0, *, now: datetime | None = None
+    db: AsyncSession,
+    provider: str,
+    characters: int = 0,
+    *,
+    now: datetime | None = None,
+    units: int | None = None,
+    limit: int | None = None,
 ) -> dict:
-    if provider not in {"openai", "elevenlabs"}:
+    if provider not in DAILY_LIMITS:
         raise ValueError("Unsupported development budget")
-    units = OPENAI_REQUEST_MICRO_USD if provider == "openai" else characters
-    limit = OPENAI_DAILY_MICRO_USD if provider == "openai" else ELEVENLABS_DAILY_CHARACTERS
+    if units is None:
+        units = characters if provider == "elevenlabs" else REQUEST_UNITS[provider]
+    if limit is None:
+        limit = DAILY_LIMITS[provider]
     if units <= 0 or units > limit:
         raise ValueError("DAILY_BUDGET_EXHAUSTED")
     day = budget_day(now or datetime.now(UTC))
@@ -40,14 +62,22 @@ async def reserve_in_transaction(
         "provider": provider,
         "reserved_units": total,
         "remaining_units": limit - total,
-        "unit": "micro_usd" if provider == "openai" else "characters",
+        "unit": "characters" if provider == "elevenlabs" else "micro_usd",
     }
 
 
-async def reserve(db: AsyncSession, provider: str, characters: int = 0, *, now: datetime | None = None) -> dict:
+async def reserve(
+    db: AsyncSession,
+    provider: str,
+    characters: int = 0,
+    *,
+    now: datetime | None = None,
+    units: int | None = None,
+    limit: int | None = None,
+) -> dict:
     """Compatibility boundary owning commit/rollback; use only a clean session."""
     try:
-        result = await reserve_in_transaction(db, provider, characters, now=now)
+        result = await reserve_in_transaction(db, provider, characters, now=now, units=units, limit=limit)
         await db.commit()
         return result
     except Exception:

@@ -29,7 +29,7 @@ def test_native_stream_failure_respects_output_boundary(partial):
 
         def fallback_transport(req):
             order.append("fallback")
-            assert order[-2] == "reserve"
+            assert order[-2] == "reserve:openai"
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=events("openai_direct"))
 
         async with (
@@ -47,8 +47,7 @@ def test_native_stream_failure_respects_output_boundary(partial):
             )
 
             async def reserve(provider):
-                assert provider == "openai"
-                order.append("reserve")
+                order.append("reserve:" + provider)
 
             agent = SimpleNamespace(
                 pipeline={"llm": {"provider": "deepseek_direct"}},
@@ -56,6 +55,7 @@ def test_native_stream_failure_respects_output_boundary(partial):
                 fallback_llm=fallback,
                 reserve=reserve,
                 _require_openai_bounds=lambda req, tools: None,
+                _require_deepseek_bounds=lambda req: None,
             )
             agent._stream_attempt = worker.SarjyAgent._stream_attempt.__get__(agent)
             agent._stream_with_fallback = worker.SarjyAgent._stream_with_fallback.__get__(agent)
@@ -63,10 +63,10 @@ def test_native_stream_failure_respects_output_boundary(partial):
                 if partial:
                     with pytest.raises(GenerationFailure):
                         _ = [chunk async for chunk in agent._stream_with_fallback(request(), [], None)]
-                    assert order == ["primary"]
+                    assert order == ["reserve:deepseek", "primary"]
                 else:
                     chunks = [chunk async for chunk in agent._stream_with_fallback(request(), [], None)]
-                    assert chunks and order == ["primary", "reserve", "fallback"]
+                    assert chunks and order == ["reserve:deepseek", "primary", "reserve:openai", "fallback"]
             finally:
                 await primary.aclose()
                 await fallback.aclose()
