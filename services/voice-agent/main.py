@@ -130,6 +130,7 @@ class SarjyAgent(Agent):
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
         self.memory_proposal: dict | None = None
+        self.memory_outcome: str | None = None
 
     async def compile(self, message):
         if message.id not in self.prepared:
@@ -154,6 +155,7 @@ class SarjyAgent(Agent):
             "/internal/agent/memory/confirm",
             json={"token": proposal["token"], "decision": decision},
         )
+        self.memory_outcome = decision if response.is_success else "failed"
         if not response.is_success and self.notify:
             code = response.json().get("detail", {}).get("code") if response.content else None
             await self.notify(code or "MEMORY_SAVE_FAILED")
@@ -206,6 +208,14 @@ class SarjyAgent(Agent):
         request = snapshot_request(snapshot, self.current_turn)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
         request = _with_continuation(request, _continuation(chat_ctx, user), schemas)
+        if self.memory_outcome is not None:
+            outcome, self.memory_outcome = self.memory_outcome, None
+            note = {
+                "save": "The memory save succeeded; confirm to the user that it is saved.",
+                "failed": "The memory save failed; apologise and do not claim it was saved.",
+                "discard": "The user declined the memory save; do not claim it was saved.",
+            }[outcome]
+            request = request.model_copy(update={"instructions": f"{request.instructions}\n\n{note}"})
         async for chunk in self._stream_with_fallback(
             request, tools, model_settings.tool_choice if model_settings else None
         ):
