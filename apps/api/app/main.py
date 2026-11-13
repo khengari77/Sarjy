@@ -35,12 +35,26 @@ def _reviewer_gate_exempt(path: str) -> bool:
     return path in REVIEWER_PUBLIC_PATHS or REVIEWER_CLEANUP_PATH.fullmatch(path) is not None
 
 
+def _route_path(scope) -> str:
+    """Return the router-relative path, stripping any ASGI ``root_path``.
+
+    Middleware sees ``root_path + path`` while routing matches the relative
+    path. Without this adjustment a deployment mounted under ``--root-path``
+    would skip both gates while the router still served ``/v1/*``.
+    """
+    path = scope.get("path", "")
+    root_path = scope.get("root_path", "")
+    if root_path and path.startswith(root_path):
+        return path[len(root_path) :] or "/"
+    return path
+
+
 def _reviewer_gate(config: Settings, sessions, now):
     async def gate(request, call_next):
         # Only reviewer mode gates routes; development behavior is unchanged.
         if not config.reviewer_access_enabled:
             return await call_next(request)
-        path = request.url.path
+        path = _route_path(request.scope)
         if not path.startswith("/v1/") or _reviewer_gate_exempt(path):
             return await call_next(request)
         try:
@@ -59,7 +73,7 @@ def _reviewer_gate(config: Settings, sessions, now):
 
 def _web_service_gate(config: Settings):
     async def protect(request, call_next):
-        if config.development_protected and request.url.path.startswith("/v1/"):
+        if config.development_protected and _route_path(request.scope).startswith("/v1/"):
             supplied = request.headers.get("x-web-service-secret", "")
             if not hmac.compare_digest(supplied, config.web_service_secret):
                 return JSONResponse({"detail": {"code": "WEB_AUTH_REQUIRED"}}, status_code=401)

@@ -558,3 +558,39 @@ def test_stored_invitation_keeps_only_hash(tmp_path):
     _, token = seed_invitation(config, clock)
     assert token_hash(token) != token
     assert rows(config, "SELECT token_hash FROM reviewer_invitations") == [(token_hash(token),)]
+
+
+def test_root_path_prefix_does_not_bypass_the_reviewer_gate(tmp_path):
+    import app.main as main
+    from fastapi.responses import JSONResponse
+    from starlette.requests import Request
+
+    clock = Clock()
+    config = settings(tmp_path)
+
+    class Unavailable:
+        async def __aenter__(self):
+            raise RuntimeError("storage unavailable")
+
+        async def __aexit__(self, *exc):
+            return False
+
+    calls = []
+
+    async def call_next(request):
+        calls.append(request.url.path)
+        return JSONResponse({"ok": True})
+
+    gate = main._reviewer_gate(config, lambda: Unavailable(), lambda: clock.value)
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/proxy/v1/conversations",
+        "root_path": "/proxy",
+        "headers": [],
+        "query_string": b"",
+    }
+    assert main._route_path(scope) == "/v1/conversations"
+    response = run(gate(Request(scope), call_next))
+    assert response.status_code == 503
+    assert calls == []
