@@ -287,6 +287,76 @@ def test_lost_parser_keep_fails_closed_at_the_endpoint(tmp_path):
         assert "budget" in set(context["included_record_ids"])
 
 
+def test_budget_topic_substring_never_authorizes_endpoint_exclusion(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        seed(file, chat, (("budget", "Budget 500 USD for the trip"),))
+
+        body = preview(client, chat, query="forget the trip", exclude=("trip",))
+        assert body["diff"]["removed"] == []
+        assert body["requires_clarification"] is True
+        assert [item["id"] for item in body["ambiguous"]] == ["budget"]
+
+        exact = preview(client, chat, query="forget the trip", exclude=("Budget 500 USD for the trip",))
+        assert exact["diff"]["removed"] == ["budget"]
+        assert exact["requires_clarification"] is False
+
+
+def test_confirmation_reauthorizes_signed_budget_authority(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        seed(file, chat, (("budget", "Budget 500 USD for the trip"),))
+        with closing(sqlite3.connect(file)) as db:
+            owner = db.execute("SELECT owner_id FROM conversations WHERE id=?", (chat,)).fetchone()[0]
+        base = {"v": 1, "owner_id": owner, "conversation_id": chat, "revision": 0, "query": "forget"}
+
+        # keep authority and the removal set disagree in the signed token.
+        conflict = sign_proposal(
+            base | {"keep": ["budget"], "exclude": [], "excluded_ids": ["budget"], "kept_ids": []},
+            "proposal-secret",
+        )
+        response = client.post(
+            f"/v1/conversations/{chat}/context/confirm",
+            json={"proposal": conflict, "expected_revision": 0, "idempotency_key": "keep-conflict"},
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "PROPOSAL_INVALID"
+
+        # A signed token cannot smuggle budget removal through a topic substring.
+        substring = sign_proposal(
+            base | {"keep": [], "exclude": ["trip"], "excluded_ids": ["budget"], "kept_ids": []},
+            "proposal-secret",
+        )
+        response = client.post(
+            f"/v1/conversations/{chat}/context/confirm",
+            json={"proposal": substring, "expected_revision": 0, "idempotency_key": "substring"},
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "PROPOSAL_INVALID"
+
+        # Exact normalized full content is accepted authority.
+        authorized = sign_proposal(
+            base
+            | {
+                "keep": [],
+                "exclude": [" budget   500 usd FOR the trip "],
+                "excluded_ids": ["budget"],
+                "kept_ids": [],
+            },
+            "proposal-secret",
+        )
+        response = client.post(
+            f"/v1/conversations/{chat}/context/confirm",
+            json={"proposal": authorized, "expected_revision": 0, "idempotency_key": "full-content"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["excluded_ids"] == ["budget"]
+
+
 def test_duplicates_and_undo_preserve_exact_semantics_and_ledgers(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:

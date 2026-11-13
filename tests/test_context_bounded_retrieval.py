@@ -33,7 +33,9 @@ from app.services.context_assembly import (
     TOOL_RESULT_LIMIT,
     read_context_inputs,
 )
-from sqlalchemy import insert, text, update
+from app.services.context_operations import PREVIEW_SEARCH_ROW_LIMIT, keyword_search
+from app.services.memory import SEARCH_CANDIDATE_LIMIT, MemoryService
+from sqlalchemy import event, insert, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -285,6 +287,73 @@ def test_old_excluded_source_with_recent_derived_reply_and_tool_stays_blocked(tm
             assert "tool-derived" not in {candidate.id for candidate in inputs.tool_results}
             assert inputs.memories.excluded_ids == frozenset({"m-old"})
             assert max(counted.counts("turns")) <= HISTORY_LIMIT * HISTORY_WINDOW_MULTIPLIER + 10
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_in_window_reply_uses_out_of_window_intermediate_derivation(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "reply-closure.db")
+        try:
+            async with sessions() as db:
+                await seed_turns(db, "chat", 600)
+                await db.execute(
+                    insert(Turn),
+                    [
+                        {
+                            "id": "old-intermediate-derivation",
+                            "conversation_id": "chat",
+                            "request_id": "old-intermediate-derivation-request",
+                            "role": "assistant",
+                            "text": "Tripoli is warm",
+                            "status": "completed",
+                            "created_at": stamp(2),
+                            "snapshot": {
+                                "derivation": {"turn_id": "turn-00000", "record_ids": ["mem-excluded", "system"]}
+                            },
+                        },
+                        {
+                            "id": "recent-reply-via-intermediate",
+                            "conversation_id": "chat",
+                            "request_id": "recent-reply-via-intermediate-request",
+                            "role": "assistant",
+                            "text": "It is warm there",
+                            "status": "completed",
+                            "created_at": stamp(700),
+                            "snapshot": {
+                                "derivation": {
+                                    "turn_id": "turn-00599",
+                                    "record_ids": ["old-intermediate-derivation", "system"],
+                                }
+                            },
+                        },
+                    ],
+                )
+                await db.execute(
+                    insert(Memory),
+                    [
+                        {
+                            "id": "mem-excluded",
+                            "owner_id": "alice",
+                            "content": "I live in Tripoli",
+                            "embedding_model": "text-embedding-3-small",
+                            "source_conversation_id": "chat",
+                            "version": 1,
+                            "status": "active",
+                            "created_at": stamp(0),
+                            "updated_at": stamp(0),
+                        }
+                    ],
+                )
+                await add_exclusion(db, "mem-excluded", conversation_id="chat", owner_id="alice")
+                await db.commit()
+            async with sessions() as db:
+                inputs = await read_context_inputs(db, owner_id="alice", conversation_id="chat")
+            ids = {candidate.id for candidate in inputs.history}
+            assert "recent-reply-via-intermediate" not in ids
+            assert "recent-reply-via-intermediate" in inputs.blocked_ids
         finally:
             await engine.dispose()
 
@@ -594,6 +663,57 @@ def test_bounded_inputs_preserve_compiler_revision_and_hash_invariants(tmp_path)
     asyncio.run(run())
 
 
+def test_keyword_search_applies_sql_row_cap_before_scoring(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "keyword-cap.db")
+        try:
+            async with sessions() as db:
+                await seed_memories(db, "alice", "chat", 1000)
+                await db.commit()
+            async with sessions() as db:
+                counted = CountingSession(db)
+                hits = await keyword_search(counted, owner_id="alice", conversation_id="chat", query="memory", limit=20)
+            assert len(hits) == 20
+            assert max(counted.counts("memories")) <= PREVIEW_SEARCH_ROW_LIMIT
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_sqlite_semantic_search_applies_candidate_cap(tmp_path):
+    class ConstantEmbedder:
+        async def embed(self, db, text):
+            return (1.0,) + (0.0,) * 1535
+
+    async def run():
+        engine, sessions = await database(tmp_path / "semantic-cap.db")
+        statements: list[str] = []
+
+        def capture(connection, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        event.listen(engine.sync_engine, "before_cursor_execute", capture)
+        try:
+            async with sessions() as db:
+                await seed_memories(db, "alice", "chat", 1000)
+                await db.execute(
+                    update(Memory).where(Memory.owner_id == "alice").values(embedding=[1.0] + [0.0] * 1535)
+                )
+                await db.commit()
+            hits = await MemoryService(engine, ConstantEmbedder()).search_memories("alice", "chat", "memory", 5)
+            assert len(hits) == 5
+            assert any("FROM memories" in statement and "LIMIT" in statement.upper() for statement in statements), (
+                "SQLite semantic search must cap candidate rows in SQL"
+            )
+            assert SEARCH_CANDIDATE_LIMIT >= 5
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", capture)
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
 @pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not set (disposable PostgreSQL only)")
 def test_postgres_retrieval_plans_use_additive_indexes_with_bounded_rows():
     asyncio.run(_postgres_plan_and_bounds())
@@ -656,6 +776,7 @@ async def _postgres_plan_and_bounds():
             await db.rollback()
         assert "ix_turns_conversation_status_created" in indexes
         assert "ix_memories_owner_status_updated" in indexes
+        assert "ix_memories_supersedes_id" in indexes
         assert "ix_tool_calls_turn_state" in indexes
         assert "ix_turns_conversation_status_created" in str(turn_plan)
         assert "ix_memories_owner_status_updated" in str(memory_plan)

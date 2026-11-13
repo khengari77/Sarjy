@@ -12,6 +12,7 @@ down_revision = "0009_dispatcher_leases"
 INDEXES = (
     ("ix_turns_conversation_status_created", "turns", ["conversation_id", "status", "created_at"]),
     ("ix_memories_owner_status_updated", "memories", ["owner_id", "status", "updated_at", "id"]),
+    ("ix_memories_supersedes_id", "memories", ["supersedes_id"]),
     ("ix_tool_calls_turn_state", "tool_calls", ["turn_id", "state"]),
 )
 

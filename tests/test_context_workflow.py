@@ -49,6 +49,16 @@ def test_budget_content_is_ambiguous_without_explicit_budget_scope():
     assert selection.requires_clarification is True
 
 
+def test_budget_exclusion_requires_exact_id_or_full_content():
+    budget = candidate("m-budget", "Budget 500 USD for the trip")
+    assert select_candidates((budget,), exclude=("trip",)).excluded_ids == frozenset()
+    assert select_candidates((budget,), exclude=("budget",)).excluded_ids == frozenset()
+    assert select_candidates((budget,), exclude=("m-budget",)).excluded_ids == frozenset({"m-budget"})
+    normalized = select_candidates((budget,), exclude=("  budget   500 USD for the trip ",))
+    assert normalized.excluded_ids == frozenset({"m-budget"})
+    assert select_candidates((budget,), exclude=("trip",)).requires_clarification is True
+
+
 def test_budget_query_without_explicit_authority_is_ambiguous():
     records = (candidate("budget", "Budget 500 USD for the trip"),)
     unscoped = select_candidates(records)

@@ -143,6 +143,7 @@ async def _postgres_migration():
 RETRIEVAL_INDEXES = (
     "ix_turns_conversation_status_created",
     "ix_memories_owner_status_updated",
+    "ix_memories_supersedes_id",
     "ix_tool_calls_turn_state",
 )
 

@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from typing import Any
 
 # Budget-like content remains a display label and an ambiguity signal, never an
-# unconditional keep authority.  Explicit per-operation keep exceptions (or a
-# query that names budget/cost/price) decide whether a budget record survives.
+# unconditional keep authority.  Signed keep exceptions preserve a record, and
+# only exact record ids or exact normalized full-content equality can authorize
+# removal of a budget-classified record.
 BUDGET_PATTERN = re.compile(
     r"\b(budget|budgets|cost|costs|price|prices|spend|spending|sar|usd|dollars?)\b"
     r"|[$€£]"
@@ -79,12 +80,25 @@ def classify(content: str) -> str:
 
 
 def _term_authorizes_budget(term: str) -> bool:
-    """A term may authorize budget removal/keep only when it names money itself.
-
-    A generic word such as "trip" appears in "Budget 500 USD for the trip" and
-    must not become budget authority just because it is a substring.
-    """
+    """A keep term may name money itself without matching arbitrary topics."""
     return bool(BUDGET_PATTERN.search(term))
+
+
+def _normalized_authority(value: str) -> str:
+    """Casefold and collapse whitespace for full-content authority equality."""
+    return " ".join(value.split()).casefold()
+
+
+def budget_removal_authorized(candidate_id: str, content: str, authority: tuple[str, ...]) -> bool:
+    """Budget removal needs the exact id or the exact normalized full content.
+
+    Topic substrings (for example ``"trip"`` inside ``"Budget for the trip"``)
+    never authorize removing a budget-classified record.
+    """
+    if candidate_id in authority:
+        return True
+    normalized_content = _normalized_authority(content)
+    return any(term and _normalized_authority(term) == normalized_content for term in authority)
 
 
 def _keep_reason(candidate: MemoryCandidate, keep_terms: tuple[str, ...]) -> str | None:
@@ -102,17 +116,12 @@ def _keep_reason(candidate: MemoryCandidate, keep_terms: tuple[str, ...]) -> str
 
 
 def _explicitly_excluded(candidate: MemoryCandidate, exclude_terms: tuple[str, ...]) -> bool:
+    if candidate.is_budget:
+        return budget_removal_authorized(candidate.id, candidate.content, exclude_terms)
     if candidate.id in exclude_terms:
         return True
     lowered = candidate.content.casefold()
-    for term in exclude_terms:
-        if not term:
-            continue
-        if candidate.is_budget and not _term_authorizes_budget(term):
-            continue
-        if term.casefold() in lowered:
-            return True
-    return False
+    return any(term.casefold() in lowered for term in exclude_terms if term)
 
 
 def select_candidates(

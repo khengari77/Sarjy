@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.context_operations import (
     MemoryCandidate,
+    budget_removal_authorized,
     classify,
     exclusion_diff,
     restore_diff,
@@ -45,6 +46,9 @@ from app.services.memory_eligibility import blocked_memory_ids
 SCOPE = "conversation"
 EXCLUDE = "exclude"
 RESTORE = "restore"
+# Preview scoring is bounded at the database boundary.  This cap is larger than
+# the proposal result limit but prevents a lifetime owner-memory load.
+PREVIEW_SEARCH_ROW_LIMIT = 500
 STOPWORDS = frozenset(
     [
         "a",
@@ -142,7 +146,8 @@ async def keyword_search(
         await db.scalars(
             select(Memory)
             .where(Memory.owner_id == owner_id, Memory.status == "active")
-            .order_by(Memory.created_at.desc())
+            .order_by(Memory.created_at.desc(), Memory.id.desc())
+            .limit(PREVIEW_SEARCH_ROW_LIMIT)
         )
     ).all()
     wanted = _tokens(query)
@@ -284,8 +289,17 @@ async def confirm_proposal(
     if replayed is not None:
         return replayed
 
-    _validate_exclusion(payload, expected_revision, conversation, excluded_ids, kept_ids)
-    await _authorize_exclusion_rows(db, owner_id, excluded_ids, kept_ids)
+    keep_authority, exclude_authority = _validate_exclusion(
+        payload, expected_revision, conversation, excluded_ids, kept_ids
+    )
+    await _authorize_exclusion_rows(
+        db,
+        owner_id,
+        excluded_ids,
+        kept_ids,
+        keep=keep_authority,
+        exclude=exclude_authority,
+    )
 
     before = conversation.revision
     after = before + 1
@@ -370,7 +384,9 @@ def _exclusion_ids(payload: dict) -> tuple[frozenset[str], frozenset[str]]:
     return excluded, kept
 
 
-def _validate_exclusion(payload, expected_revision, conversation, excluded_ids, kept_ids) -> None:
+def _validate_exclusion(
+    payload, expected_revision, conversation, excluded_ids, kept_ids
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     if payload.get("v") != 1:
         raise ContextOperationError("PROPOSAL_INVALID", 400)
     keep_values = payload.get("keep")
@@ -388,9 +404,18 @@ def _validate_exclusion(payload, expected_revision, conversation, excluded_ids, 
     if excluded_ids & kept_ids:
         # Defence in depth: a keep-exception can never be smuggled away.
         raise ContextOperationError("PROPOSAL_INVALID", 400)
+    return tuple(keep_values), tuple(exclude_values)
 
 
-async def _authorize_exclusion_rows(db: AsyncSession, owner_id: str, excluded_ids, kept_ids) -> None:
+async def _authorize_exclusion_rows(
+    db: AsyncSession,
+    owner_id: str,
+    excluded_ids,
+    kept_ids,
+    *,
+    keep: tuple[str, ...],
+    exclude: tuple[str, ...],
+) -> None:
     rows = (
         await db.scalars(
             select(Memory).where(
@@ -402,8 +427,18 @@ async def _authorize_exclusion_rows(db: AsyncSession, owner_id: str, excluded_id
     ).all()
     if {row.id for row in rows} != excluded_ids:
         raise ContextOperationError("PROPOSAL_INVALID")
-    if any(row.id in kept_ids for row in rows):
+    if any(
+        row.id in kept_ids
+        or row.id in keep
+        or (classify(row.content) == "budget" and budget_removal_authorized(row.id, row.content, keep))
+        for row in rows
+    ):
         raise ContextOperationError("PROPOSAL_INVALID", 400)
+    # Re-authorize from the database, not from preview-time labels: a signed
+    # token cannot remove a budget record without exact id/full-content authority.
+    for row in rows:
+        if classify(row.content) == "budget" and not budget_removal_authorized(row.id, row.content, exclude):
+            raise ContextOperationError("PROPOSAL_INVALID", 400)
 
 
 async def _finish(
