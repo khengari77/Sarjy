@@ -61,6 +61,25 @@ test('voice picker search, pagination, saved preference and call payload', async
       },
     });
   });
+  let savedVoice: string | null = null;
+  let revision = 0;
+  const settings = () => ({
+    speaking_speed: 1,
+    captions_visible: true,
+    approved_voice_id: savedVoice,
+    response_preference: 'automatic',
+    revision,
+  });
+  await page.route('**/api/v1/settings', (route) => route.fulfill({ json: settings() }));
+  await page.route('**/api/v1/actions', async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.action.kind).toBe('SelectApprovedVoice');
+    savedVoice = body.action.voice_id;
+    revision += 1;
+    await route.fulfill({
+      json: { handled: true, result: { kind: 'SelectApprovedVoice', settings: settings(), changed: true } },
+    });
+  });
   let sentVoice: string | undefined;
   let sentLanguage: string | undefined;
   await page.route('**/api/v1/voice/sessions', async (route) => {

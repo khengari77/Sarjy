@@ -1,5 +1,7 @@
 <script lang="ts">
-  import type { SessionConfig, VoiceOption } from '../api';
+  import type { VoiceOption } from '../api';
+  import { friendlyVoiceError } from '../audio/livekitAdapter';
+  import { voiceStatusText, type VoiceStatus } from './voice-state';
 
   let {
     arabic,
@@ -9,8 +11,13 @@
     nextVoicePage,
     voiceLoading,
     voiceError,
+    voiceSaving,
+    settingsError,
     live,
-    activeVoiceName,
+    selectedVoice,
+    sessionVoice,
+    confirmedVoice,
+    status,
     captionsVisible,
     onsearch,
     onloadmore,
@@ -24,14 +31,23 @@
     nextVoicePage: string | null;
     voiceLoading: boolean;
     voiceError: string;
-    live: SessionConfig | null;
-    activeVoiceName: string;
+    voiceSaving: boolean;
+    settingsError: string;
+    live: boolean;
+    selectedVoice: VoiceOption | null;
+    sessionVoice: VoiceOption | null;
+    confirmedVoice: VoiceOption | null;
+    status: VoiceStatus;
     captionsVisible: boolean;
     onsearch: () => void;
     onloadmore: () => void;
     onremember: () => void;
     ontoggleCaptions: () => void;
   } = $props();
+
+  const statusText = $derived(
+    voiceStatusText({ selected: selectedVoice, session: sessionVoice, confirmed: confirmedVoice, live }, arabic),
+  );
 </script>
 
 <div class="sidebar-inner" dir={arabic ? 'rtl' : 'ltr'}>
@@ -46,6 +62,7 @@
 
   <section class="panel-block">
     <h2>{arabic ? 'الصوت' : 'Voice'}</h2>
+    <p class="voice-status" data-voice-status={status}>{statusText}</p>
     <form
       class="voice-search"
       onsubmit={(event) => {
@@ -64,8 +81,10 @@
       </button>
     </form>
     <label class="field-label" for="assistant-voice">{arabic ? 'اختر الصوت' : 'Choose voice'}</label>
-    <select id="assistant-voice" bind:value={voiceId} onchange={onremember}>
-      <option value="">{arabic ? 'اختر صوتًا قبل بدء المكالمة' : 'Select a voice before calling'}</option>
+    <select id="assistant-voice" bind:value={voiceId} disabled={voiceSaving} onchange={onremember}>
+      {#if !voiceId}
+        <option value="">{arabic ? 'الصوت الافتراضي من الخادم' : 'Server default voice'}</option>
+      {/if}
       {#if voiceId && !voices.some((voice) => voice.id === voiceId)}
         <option value={voiceId}>{arabic ? 'الصوت المحفوظ (أعد تحميل القائمة)' : 'Saved voice (reload list)'}</option>
       {/if}
@@ -79,24 +98,27 @@
         {arabic ? 'المزيد' : 'Load more'}
       </button>
     {/if}
+    {#if voiceSaving}
+      <small class="muted-text">{arabic ? 'جارٍ حفظ اختيار الصوت…' : 'Saving voice selection…'}</small>
+    {/if}
     {#if voiceError}
-      <p class="voice-error">{arabic ? 'تعذّر تحميل الأصوات' : 'Could not load voices'}: {voiceError}</p>
+      <p class="voice-error" role="status">{friendlyVoiceError(voiceError, arabic)}</p>
+    {/if}
+    {#if settingsError}
+      <p class="voice-error" role="alert">{friendlyVoiceError(settingsError, arabic)}</p>
     {/if}
     {#if voices.length === 0 && !voiceLoading && !voiceError}
       <small class="muted-text">
         {arabic
-          ? 'حمّل الأصوات المتاحة لاختيار صوت مناسب للعربية.'
-          : 'Load available voices to choose an English voice.'}
+          ? 'سيُستخدم الصوت الافتراضي. حمّل الأصوات لاختيار صوت آخر.'
+          : 'The default voice will be used. Load voices to choose a different one.'}
       </small>
     {/if}
     <small class="muted-text">
       {arabic
-        ? 'التغييرات تسري على المكالمة التالية. تسميات اللغة لا تضمن جودة النطق.'
-        : 'Changes apply to the next call. Language labels do not guarantee pronunciation quality.'}
+        ? 'تسري تغييرات الصوت على المكالمة التالية. تسميات اللغة لا تضمن جودة النطق.'
+        : 'Voice changes apply to the next call. Language labels do not guarantee pronunciation quality.'}
     </small>
-    {#if live}
-      <small class="muted-text">{arabic ? 'صوت المكالمة الحالية' : 'Current call voice'}: {activeVoiceName}</small>
-    {/if}
   </section>
 
   <section class="panel-block">
@@ -105,8 +127,12 @@
       <input type="checkbox" checked={captionsVisible} onchange={ontoggleCaptions} />
       <span>{arabic ? 'إظهار الترجمة' : 'Show captions'}</span>
     </label>
-    <p class="muted-text">
-      {arabic ? 'سيُضاف التحكم بسرعة الكلام هنا.' : 'Speaking-speed controls will live here.'}
-    </p>
+    {#if live}
+      <small class="muted-text">
+        {arabic
+          ? 'تغيير الصوت أثناء المكالمة يسري على المكالمة التالية.'
+          : 'Changing the voice mid-call applies to the next call.'}
+      </small>
+    {/if}
   </section>
 </div>

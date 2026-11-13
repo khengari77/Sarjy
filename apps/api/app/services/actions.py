@@ -23,6 +23,7 @@ from app.domain.contracts import (
 )
 from app.infrastructure.database import ContextOperation, Conversation, SessionGate, SettingRevision, UserSetting, now
 from app.infrastructure.upsert import insert_ignore
+from app.services.voices import VoiceCatalogError
 
 SETTING_ACTIONS = (AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed)
 PREPARATION_LEASE_SECONDS = 120
@@ -103,7 +104,9 @@ class EffectSession:
         raise HTTPException(503, detail={"code": "ACTION_TRANSACTION_OWNED"})
 
 
-async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected_revision, action, catalog, handlers):
+async def dispatch_action(
+    db, *, owner_id, conversation_id, request_id, expected_revision, action, catalog, handlers, approved_voice_ids=None
+):
     """Own a fresh short transaction, independent of authentication reads."""
     bind = db.bind
     factory = async_sessionmaker(bind.engine if isinstance(bind, AsyncConnection) else bind, expire_on_commit=False)
@@ -112,6 +115,8 @@ async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected
     handler = handlers.get(action.kind)
     prepare = getattr(handler, "prepare", None) if handler is not None else None
     if isinstance(action, SelectApprovedVoice):
+        if approved_voice_ids is not None and action.voice_id not in approved_voice_ids:
+            raise VoiceCatalogError("VOICE_NOT_APPROVED", 422)
         await catalog.require(action.voice_id)
 
     prepared = None

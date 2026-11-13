@@ -1,21 +1,39 @@
-import { request, type VoiceCatalog, type VoiceOption } from '../api';
-import { mergeVoices } from '../chat/session';
+import { request, type UserSettings, type VoiceCatalog, type VoiceOption } from '../api';
+import { fetchSettings, mergeVoices, saveVoiceSelection } from '../chat/session';
 
 export interface CatalogState {
+  /** Voice selected for the next call/session. */
   voiceId: string;
+  /** Last voice confirmed saved by the server. */
+  savedVoiceId: string;
+  revision: number;
   voices: VoiceOption[];
   search: string;
   loadedSearch: string;
   nextPage: string | null;
   loading: boolean;
+  saving: boolean;
   error: string;
+  settingsError: string;
 }
 
 export function initialCatalogState(voiceId = ''): CatalogState {
-  return { voiceId, voices: [], search: '', loadedSearch: '', nextPage: null, loading: false, error: '' };
+  return {
+    voiceId,
+    savedVoiceId: voiceId,
+    revision: 0,
+    voices: [],
+    search: '',
+    loadedSearch: '',
+    nextPage: null,
+    loading: false,
+    saving: false,
+    error: '',
+    settingsError: '',
+  };
 }
 
-export function createCatalogStore(state: CatalogState) {
+export function createCatalogStore(state: CatalogState, deps: { getConversationId(): string | null }) {
   async function load(more = false) {
     if (state.loading) return;
     state.loading = true;
@@ -35,9 +53,40 @@ export function createCatalogStore(state: CatalogState) {
     }
   }
 
-  function remember() {
-    localStorage.setItem('sarjy-voice-id', state.voiceId);
+  /** Load the authoritative server settings. Never fall back to localStorage. */
+  async function loadSettings() {
+    try {
+      applySettings(await fetchSettings());
+    } catch {
+      // The server still resolves its configured default when a call starts.
+    }
   }
 
-  return { load, remember };
+  function applySettings(settings: UserSettings) {
+    state.revision = settings.revision;
+    state.savedVoiceId = settings.approved_voice_id ?? '';
+    state.voiceId = state.savedVoiceId;
+    state.settingsError = '';
+  }
+
+  /** Persist the picker choice server-side; revert to the saved value on rejection. */
+  async function remember() {
+    if (state.saving) return;
+    const conversationId = deps.getConversationId();
+    const next = state.voiceId;
+    if (!conversationId || next === state.savedVoiceId) return;
+    const previous = state.savedVoiceId;
+    state.saving = true;
+    state.settingsError = '';
+    try {
+      applySettings(await saveVoiceSelection(conversationId, next, state.revision));
+    } catch (error) {
+      state.voiceId = previous;
+      state.settingsError = error instanceof Error ? error.message : 'VOICE_SETTING_REJECTED';
+    } finally {
+      state.saving = false;
+    }
+  }
+
+  return { load, loadSettings, remember };
 }

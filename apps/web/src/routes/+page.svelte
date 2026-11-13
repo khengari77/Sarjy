@@ -1,13 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { VoiceRuntime } from '../lib/audio/voice-runtime';
-  import {
-    friendlyVoiceError,
-    isFatalVoiceError,
-    phaseFromAgentState,
-    phaseFromTransportStatus,
-  } from '../lib/audio/livekitAdapter';
-  import { deriveOrbPresentation, INITIAL_STATE, type VoicePhase } from '../lib/orb/orbState';
   import AppShell from '../lib/ui/AppShell.svelte';
   import ConversationList from '../lib/chat/ConversationList.svelte';
   import VoiceStage from '../lib/chat/VoiceStage.svelte';
@@ -15,6 +8,7 @@
   import CallControls from '../lib/chat/CallControls.svelte';
   import Composer from '../lib/chat/Composer.svelte';
   import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
+  import { voiceStatus } from '../lib/chat/voice-state';
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
   import { errorCode } from '../lib/voice/errors';
@@ -22,6 +16,7 @@
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
   import { bootStudio } from '../lib/voice/studio';
   import { createSelectionController } from '../lib/voice/selection';
+  import { deriveStage } from '../lib/voice/stageView';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -52,27 +47,17 @@
     getConversations: () => conversations!,
   });
   const words = $derived(wordsFor(arabic));
-
-  const phase = $derived<VoicePhase>(
-    (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
-      phaseFromTransportStatus(voice.transportStatus) ??
-      'idle',
+  const selectedVoice = $derived(
+    catalog.voices.find((entry) => entry.id === catalog.voiceId) ??
+      (catalog.voiceId ? { id: catalog.voiceId, name: catalog.voiceId, languages: [] } : null),
   );
-  const canInterrupt = $derived(phase === 'thinking' || phase === 'speaking');
-  const fatalError = $derived(voice.voiceErrorCode !== '' && isFatalVoiceError(voice.voiceErrorCode));
-  const voiceErrorText = $derived(voice.voiceErrorCode ? friendlyVoiceError(voice.voiceErrorCode, arabic) : '');
-  const presentation = $derived(
-    deriveOrbPresentation({
-      ...INITIAL_STATE,
-      phase,
-      overlay: devOverlay !== 'none' ? devOverlay : fatalError ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
-      micActive: voice.live !== null && !voice.muted,
-      sessionId: voice.live?.id ?? null,
-      connectionReady: voice.live !== null && !voice.connectionLost,
-      micLevel: voice.micLevel,
-      outputLevel: voice.outputLevel,
-    }),
+  // The server resolves the voice for the running call; a worker ACK is still
+  // required before anything is labelled "active" (#112 owns that path).
+  const sessionVoice = $derived(voice.live?.voice ?? null);
+  const inputVoiceStatus = $derived(
+    voiceStatus({ selected: selectedVoice, session: sessionVoice, confirmed: null, live: voice.live !== null }),
   );
+  const view = $derived(deriveStage(voice, arabic, devOverlay));
 
   async function run(work: () => Promise<void>, onError?: (error: unknown) => void) {
     busy = true;
@@ -93,7 +78,7 @@
   function handleOrb() {
     if (voice.live) {
       if (voice.muted) void toggleMute();
-      else if (canInterrupt) void interrupt();
+      else if (view.canInterrupt) void interrupt();
       return;
     }
     if (!voice.connecting) startConnect();
@@ -108,7 +93,7 @@
   }
 
   async function interrupt() {
-    if (!voice.live || !canInterrupt) return;
+    if (!voice.live || !view.canInterrupt) return;
     await run(() => connection!.interrupt(), onVoiceError);
   }
 
@@ -140,7 +125,7 @@
   }
 
   $effect(() => {
-    const label = arabic ? presentation.statusLabel.ar : presentation.statusLabel.en;
+    const label = arabic ? view.presentation.statusLabel.ar : view.presentation.statusLabel.en;
     if (label === lastAnnounced) return;
     const timer = setTimeout(() => {
       lastAnnounced = label;
@@ -199,7 +184,7 @@
 
   {#snippet stage()}
     <VoiceStage
-      {presentation}
+      presentation={view.presentation}
       micLevel={voice.micLevel}
       outputLevel={voice.outputLevel}
       {arabic}
@@ -207,7 +192,7 @@
       connecting={voice.connecting}
       connectionLost={voice.connectionLost}
       voiceErrorCode={voice.voiceErrorCode}
-      {voiceErrorText}
+      voiceErrorText={view.errorText}
       audioBlocked={voice.audioBlocked}
       {pendingIntent}
       turns={conversation.turns}
@@ -230,7 +215,7 @@
       {busy}
       muted={voice.muted}
       connectionLost={voice.connectionLost}
-      {canInterrupt}
+      canInterrupt={view.canInterrupt}
       {words}
       onend={() => run(() => connection!.end(), onVoiceError)}
       oncancel={() => run(() => connection!.cancelConnect(), onVoiceError)}
@@ -251,12 +236,17 @@
       nextVoicePage={catalog.nextPage}
       voiceLoading={catalog.loading}
       voiceError={catalog.error}
-      live={voice.live}
-      activeVoiceName={voice.activeVoiceName}
+      voiceSaving={catalog.saving}
+      settingsError={catalog.settingsError}
+      live={voice.live !== null}
+      {selectedVoice}
+      {sessionVoice}
+      confirmedVoice={null}
+      status={inputVoiceStatus}
       {captionsVisible}
       onsearch={() => void catalogStore!.load()}
       onloadmore={() => void catalogStore!.load(true)}
-      onremember={() => catalogStore!.remember()}
+      onremember={() => void catalogStore!.remember()}
       ontoggleCaptions={toggleCaptions}
     />
   {/snippet}

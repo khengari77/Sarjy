@@ -1,9 +1,10 @@
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.domain.budget import DEEPSEEK_MINIMUM_REQUEST_MICRO_USD
+from app.domain.voices import parse_voice_ids
 
 
 class Settings(BaseSettings):
@@ -22,12 +23,22 @@ class Settings(BaseSettings):
     deepseek_daily_micro_usd: int = 250_000
     deepseek_request_micro_usd: int = 7_000
     eleven_api_key: str = ""
+    approved_voice_ids: str = ""
+    default_voice_id: str = Field(default="", pattern=r"^$|^[A-Za-z0-9_-]{1,100}$")
+    default_voice_language: Literal["ar", "en"] = "en"
     livekit_url: str = ""
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     agent_service_secret: str = ""
     demo_session_budget: int = 80
     demo_calls_per_identity: int = 3
+
+    @field_validator("approved_voice_ids")
+    @classmethod
+    def validate_approved_voice_ids(cls, value: str) -> str:
+        # Fail at startup rather than admitting a malformed allow-list later.
+        parse_voice_ids(value)
+        return value
 
     @model_validator(mode="after")
     def validate_deepseek_budget(self):

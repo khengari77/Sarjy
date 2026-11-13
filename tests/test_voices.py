@@ -7,11 +7,28 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from app.config import Settings
+from app.domain.voices import parse_voice_ids
 from app.main import create_app
 from app.services.voices import ElevenLabsVoices, public_catalog
 from fastapi.testclient import TestClient
 from hypothesis import given
 from hypothesis import strategies as st
+
+
+@given(st.lists(st.from_regex(r"[A-Za-z0-9_-]{1,20}", fullmatch=True), max_size=10))
+def test_parse_voice_ids_round_trips_valid_identifiers(identifiers):
+    assert parse_voice_ids(",".join(identifiers)) == tuple(dict.fromkeys(identifiers))
+
+
+@pytest.mark.parametrize("raw", ["bad id", "ok,has space", "ok,$bad"])
+def test_parse_voice_ids_rejects_malformed_identifiers(raw):
+    with pytest.raises(ValueError, match="VOICE_IDS_INVALID"):
+        parse_voice_ids(raw)
+
+
+def test_settings_reject_a_malformed_approved_voice_list():
+    with pytest.raises(ValueError, match="VOICE_IDS_INVALID"):
+        Settings(approved_voice_ids="good,bad id", _env_file=None)
 
 
 @given(st.lists(st.tuples(st.text(min_size=1), st.text()), max_size=20))
@@ -48,6 +65,7 @@ def configured(tmp_path):
         deepgram_api_key="stt-test",
         openai_api_key="llm-test",
         eleven_api_key="tts-test",
+        approved_voice_ids="arabic-voice,other-voice,gone-voice",
         _env_file=None,
     )
 
@@ -58,6 +76,8 @@ def catalog_transport(request):
     voices = [
         {"voice_id": "arabic-voice", "name": "Arabic voice", "verified_languages": [{"language": "ar"}]},
         {"voice_id": "other-voice", "name": "Another voice"},
+        # Provider-accessible but not on the server-approved list.
+        {"voice_id": "account-only-voice", "name": "Unapproved account voice"},
     ]
     id = request.url.params.get("voice_ids")
     if id:
@@ -96,12 +116,116 @@ def test_unavailable_voice_never_reserves_or_dispatches_a_call(tmp_path):
     with TestClient(create_app(settings, voice_catalog=service)) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
-        for selection, code in [(None, "VOICE_REQUIRED"), ("gone-voice", "VOICE_UNAVAILABLE")]:
+        for selection, status, code in [
+            (None, 503, "VOICE_DEFAULT_UNCONFIGURED"),
+            ("gone-voice", 422, "VOICE_UNAVAILABLE"),
+            ("account-only-voice", 422, "VOICE_NOT_APPROVED"),
+        ]:
             response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "voice_id": selection})
-            assert response.status_code == 422
+            assert response.status_code == status
             assert response.json()["detail"]["code"] == code
         with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
             assert db.execute("SELECT COUNT(*) FROM voice_sessions").fetchone()[0] == 0
+
+
+def configured_with_default(tmp_path, **overrides):
+    return configured(tmp_path).model_copy(
+        update={
+            "approved_voice_ids": "other-voice",
+            "default_voice_id": "arabic-voice",
+            "default_voice_language": "ar",
+            **overrides,
+        }
+    )
+
+
+def session_count(tmp_path):
+    with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
+        return db.execute("SELECT COUNT(*) FROM voice_sessions").fetchone()[0]
+
+
+def test_fresh_browser_starts_with_the_catalog_validated_default(tmp_path, livekit_control_plane):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
+    with TestClient(create_app(configured_with_default(tmp_path), voice_catalog=service)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201
+        body = response.json()
+        assert body["voice"] == {"id": "arabic-voice", "name": "Arabic voice", "languages": ["ar"]}
+        assert (body["voice_source"], body["voice_language"]) == ("default", "ar")
+        with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
+            pipeline = json.loads(
+                db.execute("SELECT pipeline FROM voice_sessions WHERE id=?", (body["id"],)).fetchone()[0]
+            )
+        assert pipeline["tts"] == {
+            "provider": "elevenlabs_direct",
+            "model": "eleven_flash_v2_5",
+            "voice_id": "arabic-voice",
+            "language": "ar",
+        }
+        assert pipeline["stt"]["language"] == "en"
+
+
+def test_saved_server_setting_outranks_the_default_and_is_catalog_validated(tmp_path, livekit_control_plane):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
+    settings = configured_with_default(
+        tmp_path, approved_voice_ids="other-voice,arabic-voice", default_voice_id="other-voice"
+    )
+    with TestClient(create_app(settings, voice_catalog=service)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        rejected = client.post(
+            "/v1/actions",
+            json={
+                "conversation_id": chat,
+                "request_id": "unapproved",
+                "expected_revision": 0,
+                "source": "ui",
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "account-only-voice"},
+            },
+        )
+        assert rejected.status_code == 422
+        assert rejected.json()["detail"]["code"] == "VOICE_NOT_APPROVED"
+        saved = client.post(
+            "/v1/actions",
+            json={
+                "conversation_id": chat,
+                "request_id": "approved",
+                "expected_revision": 0,
+                "source": "ui",
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["result"]["settings"]["approved_voice_id"] == "arabic-voice"
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201
+        body = response.json()
+        assert (body["voice"]["id"], body["voice_source"], body["voice_language"]) == (
+            "arabic-voice",
+            "saved",
+            "en",
+        )
+
+
+@pytest.mark.parametrize(
+    ("handler", "status", "code"),
+    [
+        (lambda request: httpx.Response(200, json={"voices": [], "has_more": False}), 422, "VOICE_DEFAULT_UNAVAILABLE"),
+        (lambda request: httpx.Response(500, text="upstream detail"), 503, "VOICE_CATALOG_UNAVAILABLE"),
+    ],
+)
+def test_default_failure_is_precise_and_never_creates_a_session(tmp_path, livekit_control_plane, handler, status, code):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(handler))
+    with TestClient(create_app(configured_with_default(tmp_path), voice_catalog=service)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat})
+        assert response.status_code == status
+        assert response.json()["detail"]["code"] == code
+        assert "upstream detail" not in response.text
+        assert session_count(tmp_path) == 0
 
 
 @pytest.fixture

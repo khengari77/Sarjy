@@ -17,7 +17,7 @@ from app.domain.secrets import secret_matches
 from app.infrastructure.database import Base, SessionGate
 from app.services.context_actions import build_context_action_handlers
 from app.services.memory import MemoryService, OpenAIEmbedder
-from app.services.voices import ElevenLabsVoices
+from app.services.voices import ElevenLabsVoices, approved_voice_ids
 
 
 def create_app(
@@ -81,7 +81,14 @@ def create_app(
 
     from app.routes.actions import register_action_routes
 
-    register_action_routes(app, database, identity, owned, catalog)
+    register_action_routes(
+        app,
+        database,
+        identity,
+        owned,
+        catalog,
+        approved_voice_ids=approved_voice_ids(config.approved_voice_ids, config.default_voice_id),
+    )
 
     embedder = embedding_adapter or OpenAIEmbedder(config.openai_api_key)
 

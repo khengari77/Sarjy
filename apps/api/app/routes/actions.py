@@ -65,7 +65,7 @@ class UnhandledAction(BaseModel):
 ActionResponse = Annotated[HandledAction | UnhandledAction, Field(discriminator="handled")]
 
 
-def register_action_routes(app, database, identity, owned, catalog):
+def register_action_routes(app, database, identity, owned, catalog, approved_voice_ids=None):
     app.state.action_handlers = {}
 
     @app.get("/v1/settings", response_model=UserSettings)
@@ -91,6 +91,7 @@ def register_action_routes(app, database, identity, owned, catalog):
                 action=action,
                 catalog=catalog,
                 handlers=app.state.action_handlers,
+                approved_voice_ids=approved_voice_ids,
             )
         except (VoiceCatalogError, ContextOperationError) as exc:
             raise HTTPException(exc.status, detail={"code": exc.code}) from exc

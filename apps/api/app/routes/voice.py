@@ -14,10 +14,16 @@ from app.config import Settings
 from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy
 from app.domain.pipeline import PipelineConfig, validate_pipeline
 from app.domain.sessions import admission_error
-from app.infrastructure.database import SessionGate, VoiceSession
+from app.infrastructure.database import SessionGate, UserSetting, VoiceSession
 from app.services.pipeline_settings import configured_keys, default_llm
 from app.services.session_cleanup import cleanup_room
-from app.services.voices import ElevenLabsVoices, VoiceCatalogError
+from app.services.voices import (
+    ElevenLabsVoices,
+    VoiceCatalogError,
+    approved_voice_ids,
+    require_approved,
+    resolve_voice,
+)
 
 
 class StartVoice(BaseModel):
@@ -53,12 +59,24 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
             raise HTTPException(
                 503, detail={"code": "PIPELINE_NOT_CONFIGURED", "missing": missing, "errors": configuration_errors}
             )
-        if not body.voice_id:
-            raise HTTPException(422, detail={"code": "VOICE_REQUIRED"})
+        settings_row = await db.get(UserSetting, user.id)
+        saved_voice_id = settings_row.approved_voice_id if settings_row else None
+        voice_source = ""
         try:
-            await catalog.require(body.voice_id)
+            voice_id, voice_source = resolve_voice(body.voice_id, saved_voice_id, config.default_voice_id)
+            require_approved(voice_id, approved_voice_ids(config.approved_voice_ids, config.default_voice_id))
+            selected_voice = await catalog.require(voice_id)
         except VoiceCatalogError as exc:
-            raise HTTPException(exc.status, detail={"code": exc.code}) from exc
+            code = (
+                "VOICE_DEFAULT_UNAVAILABLE"
+                if voice_source == "default" and exc.code == "VOICE_UNAVAILABLE"
+                else exc.code
+            )
+            raise HTTPException(exc.status, detail={"code": code}) from exc
+        voice_language = config.default_voice_language if voice_source == "default" else body.language
+        pipeline = pipeline.model_copy(
+            update={"tts": pipeline.tts.model_copy(update={"voice_id": voice_id, "language": voice_language})}
+        )
         # Serialize reservations across API processes on both SQLite and PostgreSQL.
         await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
         now = datetime.now(UTC)
@@ -120,7 +138,15 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
                 )
                 .to_jwt()
             )
-            return {"id": voice.id, "url": config.livekit_url, "token": token, "expires_at": voice.expires_at}
+            return {
+                "id": voice.id,
+                "url": config.livekit_url,
+                "token": token,
+                "expires_at": voice.expires_at,
+                "voice": selected_voice.model_dump(),
+                "voice_language": voice_language,
+                "voice_source": voice_source,
+            }
         except Exception:
             await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id).values(status="failed"))
             await db.commit()

@@ -37,7 +37,8 @@ export function bootStudio(options: StudioBoot) {
       options.setDevOverlay(overlay);
   }
   if (options.restoreLanguage) options.setArabic(localStorage.getItem('sarjy-language') === 'ar');
-  catalog.voiceId = localStorage.getItem('sarjy-voice-id') || '';
+  // Voice selection is server-owned; the retired local-only key is ignored.
+  localStorage.removeItem('sarjy-voice-id');
   options.setCaptions(localStorage.getItem('sarjy-captions') !== 'off');
 
   const runtime: VoiceRuntime = createVoiceRuntime();
@@ -47,7 +48,7 @@ export function bootStudio(options: StudioBoot) {
     () => voice.live !== null,
     () => voice.muted,
   );
-  const catalogStore = createCatalogStore(catalog);
+  const catalogStore = createCatalogStore(catalog, { getConversationId: () => conversation.current });
   const connection = createVoiceConnection(voice, {
     ensureConversation: () => conversations!.ensureConversation(),
     getConversationId: () => conversation.current,
@@ -70,6 +71,7 @@ export function bootStudio(options: StudioBoot) {
     bootstrap: () =>
       options.run(async () => {
         await request('demo-session', {});
+        await catalogStore.loadSettings();
         await conversations.reload();
         if (conversation.conversations.length) await conversations.select(conversation.conversations[0].id);
       }),
