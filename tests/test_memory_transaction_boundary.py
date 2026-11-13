@@ -107,3 +107,83 @@ def test_postgres_preserves_uncommitted_caller_title(tmp_path):
             await engine.dispose()
 
     __import__("asyncio").run(run())
+
+
+def test_in_memory_static_pool_is_rejected_before_create(tmp_path):
+    from app.infrastructure.database import Base, Identity, Memory, MemoryWriteRequest
+    from fastapi import HTTPException
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    async def run():
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            async with factory() as seed:
+                seed.add(Identity(id="owner", token_hash="h", expires_at="2030"))
+                seed.add(Conversation(id="chat", owner_id="owner", title="Original", revision=0))
+                await seed.commit()
+            async with factory() as caller:
+                chat = await caller.get(Conversation, "chat")
+                chat.title = "Edited"
+                await caller.flush()
+                with pytest.raises(HTTPException) as error:
+                    await MemoryService(caller, FakeEmbedder()).create_memory(
+                        "owner", "chat", None, "Tripoli", "shared-create"
+                    )
+                assert error.value.detail["code"] == "MEMORY_SHARED_CONNECTION_UNSUPPORTED"
+                await caller.rollback()
+            async with factory() as db:
+                assert (await db.get(Conversation, "chat")).title == "Original"
+                assert await db.scalar(select(Memory)) is None
+                assert await db.scalar(select(MemoryWriteRequest)) is None
+        finally:
+            await engine.dispose()
+
+    __import__("asyncio").run(run())
+
+
+def test_in_memory_static_pool_is_rejected_before_correction_read(tmp_path):
+    from app.infrastructure.database import Base, Identity, Memory
+    from fastapi import HTTPException
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    async def run():
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            async with factory() as seed:
+                seed.add(Identity(id="owner", token_hash="h", expires_at="2030"))
+                seed.add(Conversation(id="chat", owner_id="owner", title="Original", revision=0))
+                await seed.flush()
+                seed.add(
+                    Memory(
+                        id="memory",
+                        owner_id="owner",
+                        content="Tripoli",
+                        source_conversation_id="chat",
+                        version=1,
+                        status="active",
+                    )
+                )
+                await seed.commit()
+            async with factory() as caller:
+                chat = await caller.get(Conversation, "chat")
+                chat.title = "Edited"
+                await caller.flush()
+                with pytest.raises(HTTPException) as error:
+                    await MemoryService(caller, FakeEmbedder()).correct_memory(
+                        "owner", "memory", 1, "London", "shared-correct"
+                    )
+                assert error.value.detail["code"] == "MEMORY_SHARED_CONNECTION_UNSUPPORTED"
+                await caller.rollback()
+            async with factory() as db:
+                assert (await db.get(Conversation, "chat")).title == "Original"
+                assert (await db.get(Memory, "memory")).content == "Tripoli"
+        finally:
+            await engine.dispose()
+
+    __import__("asyncio").run(run())

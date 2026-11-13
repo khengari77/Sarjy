@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.pool import StaticPool
 
 EMBEDDING_TIMEOUT_SECONDS = 20
 CLAIM_TIMEOUT_SECONDS = 30
@@ -154,15 +155,21 @@ class MemoryService:
         self.embedder = embedder
         self.caller = db_or_factory if isinstance(db_or_factory, AsyncSession) else None
         self.caller_dialect = None
+        self.shared_connection = False
         if isinstance(db_or_factory, AsyncSession):
             bind = db_or_factory.bind
             engine = bind.engine if isinstance(bind, AsyncConnection) else bind
             self.caller_dialect = engine.dialect.name
+            self.shared_connection = isinstance(engine.pool, StaticPool)
             self.sessions = async_sessionmaker(engine, expire_on_commit=False)
         elif isinstance(db_or_factory, AsyncEngine):
             self.sessions = async_sessionmaker(db_or_factory, expire_on_commit=False)
         else:
             self.sessions = db_or_factory
+
+    def _require_isolated_writer(self) -> None:
+        if self.caller is not None and self.shared_connection:
+            raise HTTPException(503, detail={"code": "MEMORY_SHARED_CONNECTION_UNSUPPORTED"})
 
     async def get_memory(self, owner_id, memory_id):
         async with self.sessions() as db:
@@ -172,11 +179,13 @@ class MemoryService:
         return row
 
     async def create_memory(self, owner_id, conversation_id, source_turn_id, content, idempotency_key):
+        self._require_isolated_writer()
         return await self._write(owner_id, conversation_id, source_turn_id, content, idempotency_key, None, None)
 
     async def correct_memory(
         self, owner_id, memory_id, expected_version, content, idempotency_key, *, source_turn_id=None
     ):
+        self._require_isolated_writer()
         previous = await self.get_memory(owner_id, memory_id)
         conversation_id = previous.source_conversation_id
         return await self._write(
@@ -365,6 +374,7 @@ class MemoryService:
             return result
 
     async def _write(self, owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version):
+        self._require_isolated_writer()
         if (
             not isinstance(content, str)
             or not content.strip()
