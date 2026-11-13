@@ -145,6 +145,12 @@ def _sqlite_is_closed(connection: sqlite3.Connection) -> bool:
     return False
 
 
+def _aiosqlite_handle(connection: aiosqlite.Connection):
+    # Private but stable in aiosqlite 0.22. A missing attribute is treated as
+    # closed so an upgrade degrades to "no finding" rather than AttributeError.
+    return getattr(connection, "_connection", None)
+
+
 def unclosed_objects(objects: list[object]):
     """Yield the unclosed diagnostic resource objects, avoiding double counting.
 
@@ -152,10 +158,10 @@ def unclosed_objects(objects: list[object]):
     the aiosqlite wrapper is the object whose lifecycle the tests control.
     """
     aiosqlite_connections = [obj for obj in objects if isinstance(obj, aiosqlite.Connection)]
-    owned = {id(obj._connection) for obj in aiosqlite_connections if obj._connection is not None}
+    owned = {id(handle) for obj in aiosqlite_connections if (handle := _aiosqlite_handle(obj)) is not None}
     for obj in objects:
         if isinstance(obj, aiosqlite.Connection):
-            if obj._connection is not None:
+            if _aiosqlite_handle(obj) is not None:
                 yield obj, "aiosqlite.Connection"
         elif isinstance(obj, sqlite3.Connection):
             if id(obj) in owned or _sqlite_is_closed(obj):
@@ -202,7 +208,13 @@ class ResourceDiagnosticsPlugin:
                 finding.last_seen = nodeid
                 if finding.origin is None:
                     finding.origin = origin
-        if not self.findings:
+        # Only a finding first seen in an earlier test can still be awaiting
+        # collection. Collecting at every boundary would compound tracemalloc
+        # cost without finding anything new.
+        deferred = any(
+            finding.first_seen != nodeid and not finding.warning_during for finding in self.findings.values()
+        )
+        if not deferred:
             return
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", ResourceWarning)

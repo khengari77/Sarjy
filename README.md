@@ -57,7 +57,9 @@ uv run python scripts/diagnose_resources.py tests/test_session_lifecycle.py
 uv run --python 3.12 python scripts/diagnose_resources.py --self-test
 ```
 
-The helper starts `tracemalloc`, records unclosed SQLite/aiosqlite objects at test boundaries, maps each allocation frame to its originating test, and separates application defects, test defects and unattributed timing observations. `--depth` controls the retained frame count (default 15). This is diagnostic-only; do not add its forced collection to routine CI.
+The helper starts `tracemalloc`, records unclosed SQLite/aiosqlite objects at test boundaries, maps each allocation frame to its originating test, and separates application defects, test defects and unattributed timing observations. `--depth` controls the retained frame count (default 15).
+
+Outside `--self-test`, any observed unclosed resource makes the command exit `1`; that is the diagnostic signal, not a failing test run. This is diagnostic-only; do not add its forced collection to routine CI.
 
 ## Deployment
 

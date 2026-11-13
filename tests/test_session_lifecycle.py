@@ -334,6 +334,10 @@ def test_reconciliation_after_restart_and_expiry(tmp_path, monkeypatch):
         assert start(alice, conversation(alice)).status_code == 201
         assert session_row(db_path, first)["status"] == "ended"
         settings = app.state.settings
+    # Restart against the same database, then reconcile from a fresh engine.
+    restarted = create_app(settings, voice_catalog=FakeCatalog())
+    with TestClient(restarted):
+        pass
     assert reconcile_local(settings, apply=True)["completed"] == 1
     assert session_row(db_path, first)["room_cleanup_completed_at"] is not None
 
