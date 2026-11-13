@@ -182,6 +182,100 @@ def _dependency_ids(turn: Turn) -> set[str]:
     return references
 
 
+async def _discover_closure_candidates(
+    db: AsyncSession,
+    *,
+    conversation_id: str,
+    chunk: list[str],
+    remaining: int,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Discover candidate ids with scalar projections only, bounded by budget.
+
+    No ORM instance is built here: turns contribute their id, tools contribute
+    their id plus parent turn id (joined so a foreign-conversation tool can
+    never leak into this closure).
+    """
+    turn_ids = list(
+        (
+            await db.scalars(
+                select(Turn.id)
+                .where(
+                    Turn.conversation_id == conversation_id,
+                    Turn.status == "completed",
+                    Turn.id.in_(chunk),
+                )
+                .order_by(Turn.created_at, Turn.id)
+                .limit(remaining)
+            )
+        ).all()
+    )
+    tool_pairs = [
+        (tool_id, turn_id)
+        for tool_id, turn_id in (
+            await db.execute(
+                select(ToolCall.id, ToolCall.turn_id)
+                .join(Turn, ToolCall.turn_id == Turn.id)
+                .where(
+                    ToolCall.id.in_(chunk),
+                    Turn.conversation_id == conversation_id,
+                    Turn.status == "completed",
+                )
+                .order_by(ToolCall.id)
+                .limit(remaining)
+            )
+        ).all()
+    ]
+    return turn_ids, tool_pairs
+
+
+def _admit_closure_candidates(
+    turn_ids: list[str],
+    tool_pairs: list[tuple[str, str]],
+    *,
+    loaded: dict[str, Turn],
+    tools: dict[str, tuple[ToolCall, Turn]],
+    remaining: int,
+) -> tuple[list[str], list[str], list[str], int, bool]:
+    """Admit candidates in deterministic order while cost fits the budget.
+
+    Every distinct new turn and tool costs one.  A tool's parent turn costs one
+    only when it is neither already loaded nor admitted by an earlier tool in
+    this page, so shared parents are charged once regardless of tool count.
+    """
+    admitted_turns: list[str] = []
+    admitted_tools: list[str] = []
+    admitted_parents: list[str] = []
+    admitted_turn_set = set(loaded)
+    cost = 0
+    exceeded = False
+    for turn_id in turn_ids:
+        if turn_id in loaded:
+            continue
+        if cost + 1 > remaining:
+            exceeded = True
+            break
+        cost += 1
+        admitted_turns.append(turn_id)
+        admitted_turn_set.add(turn_id)
+    if not exceeded:
+        for tool_id, parent_id in tool_pairs:
+            if tool_id in tools:
+                continue
+            tool_cost = 1
+            parent_is_new = parent_id not in admitted_turn_set
+            if parent_is_new:
+                tool_cost += 1
+            if cost + tool_cost > remaining:
+                exceeded = True
+                break
+            cost += tool_cost
+            admitted_tools.append(tool_id)
+            if parent_is_new:
+                admitted_turn_set.add(parent_id)
+                admitted_parents.append(parent_id)
+    return admitted_turns, admitted_tools, admitted_parents, cost, exceeded
+
+
 async def _closure_page(
     db: AsyncSession,
     *,
@@ -196,73 +290,72 @@ async def _closure_page(
 ) -> tuple[bool, int]:
     """Resolve one id chunk of turns, tool provenance and memory references.
 
-    Turns and tool records share one closure budget: every distinct record that
-    is added is counted before it is materialized.  Queries are limited to the
-    remaining budget so an exhausted page cannot pull unbounded rows into memory;
-    any reference left unresolved because of that limit fails closed.
+    Candidate ids are discovered with scalar projections first so a large
+    frontier cannot materialize ORM rows before the budget is charged.  Turns
+    and tool provenance then share one closure budget: every distinct new turn
+    costs one, every distinct new tool costs one, and a tool's parent turn costs
+    one only when it is neither loaded nor already admitted in this page.  Cost
+    is charged before any full row is loaded, so unadmitted provenance is never
+    materialized; if the required references cannot fit, the page reports
+    ``exceeded`` and the caller fails closed.
     """
     if fetched >= budget:
         return True, fetched
-    rows = (
-        await db.scalars(
-            select(Turn)
-            .where(
-                Turn.conversation_id == conversation_id,
-                Turn.status == "completed",
-                Turn.id.in_(chunk),
-            )
-            .order_by(Turn.created_at, Turn.id)
-            .limit(budget - fetched)
-        )
-    ).all()
-    for row in rows:
-        if row.id in loaded:
-            continue
-        if fetched + 1 > budget:
-            return True, fetched
-        fetched += 1
-        loaded[row.id] = row
-        frontier.update(_dependency_ids(row))
     remaining = budget - fetched
-    tool_rows = (
-        (
-            await db.execute(
-                select(ToolCall, Turn)
-                .join(Turn, ToolCall.turn_id == Turn.id)
-                .where(
-                    ToolCall.id.in_(chunk),
-                    Turn.conversation_id == conversation_id,
-                    Turn.status == "completed",
-                )
-                .order_by(ToolCall.id)
-                .limit(remaining)
-            )
-        ).all()
-        if remaining > 0
-        else []
+    turn_ids, tool_pairs = await _discover_closure_candidates(
+        db, conversation_id=conversation_id, chunk=chunk, remaining=remaining
     )
-    for call, parent in tool_rows:
-        if call.id not in tools:
-            if fetched + 1 > budget:
-                return True, fetched
-            fetched += 1
-            tools[call.id] = (call, parent)
-        if parent.id not in loaded:
-            if fetched + 1 > budget:
-                return True, fetched
-            fetched += 1
-            loaded[parent.id] = parent
-            frontier.update(_dependency_ids(parent))
+    admitted_turns, admitted_tools, admitted_parents, cost, exceeded = _admit_closure_candidates(
+        turn_ids, tool_pairs, loaded=loaded, tools=tools, remaining=remaining
+    )
+
     # Referenced ids may legitimately be memory records or the synthetic
-    # instruction id. Anything else is unresolved provenance: fail closed.
-    unresolved = set(chunk) - {row.id for row in rows} - set(tools) - {"system"}
+    # instruction id. Anything else is unresolved provenance: fail closed.  This
+    # also catches ids omitted by the bounded discovery queries before any full
+    # row for them is loaded.
+    resolved = set(turn_ids) | {tool_id for tool_id, _ in tool_pairs} | set(tools) | {"system"}
+    unresolved = set(chunk) - resolved
     if unresolved:
         memory_ids = set(
             (await db.scalars(select(Memory.id).where(Memory.owner_id == owner_id, Memory.id.in_(unresolved)))).all()
         )
         if unresolved - memory_ids:
+            exceeded = True
+
+    if admitted_turns or admitted_parents:
+        load_ids = sorted(set(admitted_turns) | set(admitted_parents))
+        rows = (
+            await db.scalars(
+                select(Turn)
+                .where(
+                    Turn.conversation_id == conversation_id,
+                    Turn.status == "completed",
+                    Turn.id.in_(load_ids),
+                )
+                .order_by(Turn.created_at, Turn.id)
+            )
+        ).all()
+        by_id = {row.id: row for row in rows}
+        if len(by_id) != len(load_ids):
             return True, fetched
-    return False, fetched
+        for row in rows:
+            loaded[row.id] = row
+            frontier.update(_dependency_ids(row))
+
+    if admitted_tools:
+        call_rows = (
+            await db.scalars(select(ToolCall).where(ToolCall.id.in_(admitted_tools)).order_by(ToolCall.id))
+        ).all()
+        by_id = {call.id: call for call in call_rows}
+        if len(by_id) != len(admitted_tools):
+            return True, fetched
+        for call in call_rows:
+            parent = loaded.get(call.turn_id)
+            if parent is None:
+                return True, fetched
+            tools[call.id] = (call, parent)
+
+    return exceeded, fetched + cost
 
 
 async def _dependency_closure(

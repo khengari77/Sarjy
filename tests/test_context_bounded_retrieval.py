@@ -60,24 +60,49 @@ class Rows:
 
 
 class CountingSession:
-    """Materialize results and record how many rows every statement returned."""
+    """Materialize results and record how many rows every statement returned.
+
+    ``records`` counts every statement, including scalar id-discovery.  The
+    closure budget governs ORM materialization, so ``entity_records`` records the
+    same rows only for statements that build an ORM entity.
+    """
 
     def __init__(self, session):
         self._session = session
         self.records: list[tuple[str, int]] = []
+        self.entity_records: list[tuple[str, int]] = []
 
     async def scalars(self, statement):
         rows = (await self._session.scalars(statement)).all()
         self.records.append((str(statement), len(rows)))
+        for table in _entity_tables(statement):
+            self.entity_records.append((table, len(rows)))
         return Rows(rows)
 
     async def execute(self, statement):
         rows = (await self._session.execute(statement)).all()
         self.records.append((str(statement), len(rows)))
+        for table in _entity_tables(statement):
+            self.entity_records.append((table, len(rows)))
         return Rows(rows)
 
     def counts(self, table: str) -> list[int]:
         return [count for statement, count in self.records if f"FROM {table}" in statement]
+
+    def entity_counts(self, table: str) -> list[int]:
+        return [count for recorded, count in self.entity_records if recorded == table]
+
+
+def _entity_tables(statement) -> set[str]:
+    tables: set[str] = set()
+    for description in getattr(statement, "column_descriptions", ()):
+        entity = description.get("entity")
+        if entity is None or description.get("expr") is not entity:
+            continue
+        table = getattr(entity, "__tablename__", None)
+        if table:
+            tables.add(table)
+    return tables
 
 
 async def database(path):
@@ -132,6 +157,20 @@ async def seed_memories(
     ]
     await db.execute(insert(Memory), rows)
     return [row["id"] for row in rows]
+
+
+def seed_tools(turn_ids: list[str], *, prefix: str = "tool") -> list[ToolCall]:
+    return [
+        ToolCall(
+            id=f"{prefix}-{index:03d}",
+            turn_id=turn_id,
+            request_id=f"{prefix}-{index:03d}-request",
+            name="get_current_weather",
+            state="completed",
+            result={"city": "Tripoli"},
+        )
+        for index, turn_id in enumerate(turn_ids)
+    ]
 
 
 async def add_exclusion(db, memory_id: str, *, conversation_id: str, owner_id: str) -> None:
@@ -691,6 +730,198 @@ def test_tool_provenance_shares_the_dependency_closure_budget(tmp_path):
             assert "derived-from-tools" in inputs.blocked_ids
             assert inputs.tool_results == ()
             assert max(counted.counts("tool_calls")) <= DEPENDENCY_CLOSURE_LIMIT
+            assert sum(counted.entity_counts("tool_calls")) <= TOOL_RESULT_LIMIT + DEPENDENCY_CLOSURE_LIMIT
+            assert sum(counted.entity_counts("turns")) <= (
+                HISTORY_LIMIT * HISTORY_WINDOW_MULTIPLIER + DEPENDENCY_CLOSURE_LIMIT
+            )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_distinct_unloaded_tool_parents_fail_closed_within_the_closure_budget(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "distinct-tool-parents.db")
+        try:
+            async with sessions() as db:
+                parents = await seed_turns(db, "chat", 200, prefix="parent")
+                tools = seed_tools(parents, prefix="tool-distinct")
+                db.add_all(tools)
+                db.add(
+                    Turn(
+                        id="anchor-distinct",
+                        conversation_id="chat",
+                        request_id="anchor-distinct-request",
+                        role="assistant",
+                        text="Derived from many distinct tool parents",
+                        status="completed",
+                        created_at=stamp(500),
+                        snapshot={
+                            "derivation": {
+                                "turn_id": parents[0],
+                                "record_ids": [*[tool.id for tool in tools], "system"],
+                            }
+                        },
+                    )
+                )
+                await db.commit()
+
+            async with sessions() as db:
+                anchor = await db.get(Turn, "anchor-distinct")
+                counted = CountingSession(db)
+                loaded: dict[str, Turn] = {"anchor-distinct": anchor}
+                exceeded, closure_tools = await _dependency_closure(
+                    counted, owner_id="alice", conversation_id="chat", loaded=loaded
+                )
+            loaded_parents = {turn_id for turn_id in loaded if turn_id != "anchor-distinct"}
+            assert exceeded is True
+            assert len(closure_tools) + len(loaded_parents) <= DEPENDENCY_CLOSURE_LIMIT
+            assert loaded_parents == {call.turn_id for call, _ in closure_tools.values()}
+            materialized = sum(counted.entity_counts("turns")) + sum(counted.entity_counts("tool_calls"))
+            assert materialized == len(closure_tools) + len(loaded_parents)
+            assert materialized <= DEPENDENCY_CLOSURE_LIMIT
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_shared_tool_parent_is_charged_once_and_exact_budget_succeeds(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "shared-tool-parent.db")
+        try:
+            async with sessions() as db:
+                parent = (await seed_turns(db, "chat", 1, prefix="shared-parent"))[0]
+                tools = seed_tools([parent] * 200, prefix="tool-shared")
+                db.add_all(tools)
+                exact_ids = [tool.id for tool in tools[:199]]
+                over_ids = [tool.id for tool in tools]
+                db.add_all(
+                    [
+                        Turn(
+                            id="anchor-exact",
+                            conversation_id="chat",
+                            request_id="anchor-exact-request",
+                            role="assistant",
+                            text="Exactly the closure budget",
+                            status="completed",
+                            created_at=stamp(500),
+                            snapshot={"derivation": {"turn_id": parent, "record_ids": [*exact_ids, "system"]}},
+                        ),
+                        Turn(
+                            id="anchor-over",
+                            conversation_id="chat",
+                            request_id="anchor-over-request",
+                            role="assistant",
+                            text="One record over the closure budget",
+                            status="completed",
+                            created_at=stamp(501),
+                            snapshot={"derivation": {"turn_id": parent, "record_ids": [*over_ids, "system"]}},
+                        ),
+                    ]
+                )
+                await db.commit()
+
+            async with sessions() as db:
+                anchor = await db.get(Turn, "anchor-exact")
+                counted = CountingSession(db)
+                loaded: dict[str, Turn] = {"anchor-exact": anchor}
+                exceeded, closure_tools = await _dependency_closure(
+                    counted, owner_id="alice", conversation_id="chat", loaded=loaded
+                )
+            assert exceeded is False
+            assert len(closure_tools) == 199
+            assert parent in loaded, "the shared parent is materialized once"
+            materialized = sum(counted.entity_counts("turns")) + sum(counted.entity_counts("tool_calls"))
+            assert materialized == 200
+            assert materialized <= DEPENDENCY_CLOSURE_LIMIT
+
+            async with sessions() as db:
+                anchor = await db.get(Turn, "anchor-over")
+                counted = CountingSession(db)
+                loaded = {"anchor-over": anchor}
+                exceeded, closure_tools = await _dependency_closure(
+                    counted, owner_id="alice", conversation_id="chat", loaded=loaded
+                )
+            assert exceeded is True
+            materialized = sum(counted.entity_counts("turns")) + sum(counted.entity_counts("tool_calls"))
+            assert materialized <= DEPENDENCY_CLOSURE_LIMIT
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_mixed_turn_and_tool_references_share_one_exact_budget(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "mixed-budget.db")
+        try:
+            async with sessions() as db:
+                plain = await seed_turns(db, "chat", 101, prefix="plain")
+                parent = (await seed_turns(db, "chat", 1, prefix="mixed-parent"))[0]
+                tools = seed_tools([parent] * 99, prefix="tool-mixed")
+                db.add_all(tools)
+                tool_ids = [tool.id for tool in tools]
+                db.add_all(
+                    [
+                        Turn(
+                            id="anchor-mixed-exact",
+                            conversation_id="chat",
+                            request_id="anchor-mixed-exact-request",
+                            role="assistant",
+                            text="Mixed references at the exact budget",
+                            status="completed",
+                            created_at=stamp(500),
+                            snapshot={
+                                "derivation": {
+                                    "turn_id": plain[0],
+                                    "record_ids": [*plain[:100], *tool_ids, "system"],
+                                }
+                            },
+                        ),
+                        Turn(
+                            id="anchor-mixed-over",
+                            conversation_id="chat",
+                            request_id="anchor-mixed-over-request",
+                            role="assistant",
+                            text="Mixed references one over budget",
+                            status="completed",
+                            created_at=stamp(501),
+                            snapshot={
+                                "derivation": {
+                                    "turn_id": plain[0],
+                                    "record_ids": [*plain, *tool_ids, "system"],
+                                }
+                            },
+                        ),
+                    ]
+                )
+                await db.commit()
+
+            async with sessions() as db:
+                anchor = await db.get(Turn, "anchor-mixed-exact")
+                counted = CountingSession(db)
+                loaded: dict[str, Turn] = {"anchor-mixed-exact": anchor}
+                exceeded, closure_tools = await _dependency_closure(
+                    counted, owner_id="alice", conversation_id="chat", loaded=loaded
+                )
+            assert exceeded is False
+            assert len(closure_tools) == 99
+            materialized = sum(counted.entity_counts("turns")) + sum(counted.entity_counts("tool_calls"))
+            assert materialized == 200
+            assert materialized <= DEPENDENCY_CLOSURE_LIMIT
+
+            async with sessions() as db:
+                anchor = await db.get(Turn, "anchor-mixed-over")
+                counted = CountingSession(db)
+                loaded = {"anchor-mixed-over": anchor}
+                exceeded, closure_tools = await _dependency_closure(
+                    counted, owner_id="alice", conversation_id="chat", loaded=loaded
+                )
+            assert exceeded is True
+            materialized = sum(counted.entity_counts("turns")) + sum(counted.entity_counts("tool_calls"))
+            assert materialized <= DEPENDENCY_CLOSURE_LIMIT
         finally:
             await engine.dispose()
 
