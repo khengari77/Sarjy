@@ -42,7 +42,10 @@ vi.mock('livekit-client', () => {
     removeAllListeners() {
       this.listeners.clear();
     }
-    registerTextStreamHandler(topic: string, handler: (reader: unknown, participantInfo: { identity: string }) => void) {
+    registerTextStreamHandler(
+      topic: string,
+      handler: (reader: unknown, participantInfo: { identity: string }) => void,
+    ) {
       this.textHandlers.set(topic, handler);
     }
     emitTextStream(topic: string, reader: unknown, participantInfo: { identity: string }) {
