@@ -15,6 +15,7 @@ declare global {
       cancels: number;
       sent: string[];
       resolveConnect(id: string): void;
+      hasPending(id: string): boolean;
       stats(): { connects: string[]; disconnects: number; cancels: number; sent: string[] };
     };
     __permission?: { resolve(): void; reject(): void };
@@ -63,6 +64,9 @@ async function installRaceRuntime(page: Page, options: { autoConnect?: boolean; 
         pending: new Map<string, () => void>(),
         resolveConnect(id: string) {
           this.pending.get(id)?.();
+        },
+        hasPending(id: string) {
+          return this.pending.has(id);
         },
         stats() {
           return {
@@ -177,6 +181,7 @@ test('switching conversations while connecting cancels the attempt instead of bi
   await expect(page.getByRole('button', { name: 'Cancel connecting', exact: true })).toBeVisible();
   expect(posts).toHaveLength(1);
   expect(posts[0].body.conversation_id).toBe('c1');
+  await expect.poll(() => page.evaluate(() => window.__race?.hasPending('sess-1'))).toBe(true);
 
   await page.getByRole('button', { name: 'Chat B', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Chat B', exact: true })).toHaveAttribute('aria-current', 'page');
@@ -202,10 +207,12 @@ test('a cancelled attempt cannot disconnect its replacement', async ({ page }) =
   await ready(page);
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Cancel connecting', exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__race?.hasPending('sess-1'))).toBe(true);
   await page.getByRole('button', { name: 'Cancel connecting', exact: true }).click();
 
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect.poll(() => posts.length).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__race?.hasPending('sess-2'))).toBe(true);
   await page.evaluate(() => window.__race?.resolveConnect('sess-2'));
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'listening');
