@@ -25,13 +25,34 @@ class VoiceCatalogError(Exception):
 
 def public_catalog(payload: dict) -> VoiceCatalog:
     """Pure projection: never pass through samples, settings, or account metadata."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("voices"), list):
+        raise ValueError("INVALID_VOICE_CATALOG")
     voices = []
     for voice in payload.get("voices", []):
+        if not isinstance(voice, dict) or not all(isinstance(voice.get(key), str) for key in ("voice_id", "name")):
+            raise ValueError("INVALID_VOICE_CATALOG")
+        entries = voice.get("verified_languages", [])
+        labels = voice.get("labels")
+        if labels is None:
+            labels = {}
+        if (
+            not isinstance(entries, list)
+            or any(not isinstance(entry, dict) or not isinstance(entry.get("language", ""), str) for entry in entries)
+            or not isinstance(labels, dict)
+            or not isinstance(labels.get("language", ""), str)
+        ):
+            raise ValueError("INVALID_VOICE_CATALOG")
         languages = {entry["language"] for entry in voice.get("verified_languages", []) if entry.get("language")}
         label = (voice.get("labels") or {}).get("language")
         if label:
             languages.add(label)
         voices.append(VoiceOption(id=voice["voice_id"], name=voice["name"], languages=tuple(sorted(languages))))
+    if not isinstance(payload.get("has_more", False), bool) or (
+        payload.get("next_page_token") is not None and not isinstance(payload["next_page_token"], str)
+    ):
+        raise ValueError("INVALID_VOICE_CATALOG")
+    if payload.get("has_more") and not payload.get("next_page_token"):
+        raise ValueError("INVALID_VOICE_CATALOG")
     return VoiceCatalog(
         voices=tuple(voices), next_page_token=payload.get("next_page_token") if payload.get("has_more") else None
     )

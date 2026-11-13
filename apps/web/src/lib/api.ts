@@ -26,7 +26,15 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
     headers: body === undefined ? {} : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail?.code || `HTTP_${response.status}`);
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(response.ok ? 'API_RESPONSE_INVALID' : `HTTP_${response.status}`);
+  }
+  if (!response.ok) {
+    const code = data?.detail?.code;
+    throw new Error(typeof code === 'string' && code ? code : `HTTP_${response.status}`);
+  }
   return data;
 }
