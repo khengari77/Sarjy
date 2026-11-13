@@ -103,19 +103,13 @@ def _memory_decision(text: str) -> str | None:
 def _clarify_decision(text: str) -> str | None:
     lowered = " ".join(text.casefold().replace(",", " ").split()).strip(" .!?;:")
     if lowered in {
-        "yes",
-        "yeah",
-        "yep",
-        "sure",
-        "sure thing",
-        "go ahead",
-        "ok",
-        "okay",
-        "yes please",
         "yes replace it",
         "replace",
         "replace it",
         "use the new one",
+        "update it",
+        "change it",
+        "yes update it",
     }:
         return "replace"
     if lowered in {"no", "nope", "no thanks", "cancel", "don't", "do not", "discard", "keep the old one"}:
@@ -162,6 +156,20 @@ def _with_continuation(request: ModelRequest, continuation, schemas) -> ModelReq
             ],
         }
     )
+
+
+def _with_memory_note(request: ModelRequest, note: str) -> ModelRequest:
+    """Append an outcome note where the provider will actually see it.
+
+    ``instructions`` mirrors ``messages[0]``; adapters build the provider
+    request from ``messages``. Updating only ``instructions`` (and bypassing
+    validation with ``model_copy``) makes the note dead data.
+    """
+    payload = request.model_dump(mode="json")
+    messages = payload["messages"]
+    messages[0]["content"] = f"{messages[0]['content']}\n\n{note}"
+    payload["instructions"] = messages[0]["content"]
+    return ModelRequest.model_validate(payload)
 
 
 async def _playout_result(handle) -> tuple[str, str]:
@@ -317,7 +325,7 @@ class SarjyAgent(Agent):
                 "replace": "The pending memory was replaced; tell the user the earlier fact was updated.",
                 "not_saved": "The pending memory was not saved; do not claim it was saved.",
             }[outcome]
-            request = request.model_copy(update={"instructions": f"{request.instructions}\n\n{note}"})
+            request = _with_memory_note(request, note)
         async for chunk in self._stream_with_fallback(
             request, tools, model_settings.tool_choice if model_settings else None
         ):

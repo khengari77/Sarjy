@@ -72,7 +72,7 @@ def test_postgres_capture_creates_once_and_corrects_across_conversations():
                 )
                 await db.commit()
                 correction = propose_memory(
-                    "I prefer coffee",
+                    "I prefer coffee now",
                     owner_id=owner,
                     conversation_id=other_chat,
                     source_turn_id=(await db.scalar(select(Turn.id).where(Turn.conversation_id == other_chat))),

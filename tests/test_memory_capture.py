@@ -449,7 +449,7 @@ def test_worker_retains_a_clarifying_proposal_and_replaces_on_confirmation():
             agent.memory_proposal = {"token": "signed"}
             await agent.compile(SimpleNamespace(id="one", text_content="yes"))
             assert agent.memory_proposal is not None and agent.memory_clarify is True
-            await agent.compile(SimpleNamespace(id="two", text_content="yes"))
+            await agent.compile(SimpleNamespace(id="two", text_content="replace it"))
             assert agent.memory_proposal is None
 
     asyncio.run(run())
@@ -492,7 +492,10 @@ def test_worker_replies_after_a_successful_replacement(monkeypatch):
             seen = []
 
             async def stream(request, tools, tool_choice):
-                seen.append(request.instructions)
+                from generation import _build_context
+
+                context = _build_context(request)
+                seen.append("\n".join(str(item.content or "") for item in context.items if item.role == "system"))
                 yield llm.ChatChunk(id="r", delta=llm.ChoiceDelta(content="updated"))
 
             agent._stream_with_fallback = stream
@@ -503,3 +506,27 @@ def test_worker_replies_after_a_successful_replacement(monkeypatch):
             assert agent.memory_outcome is None
 
     asyncio.run(run())
+
+
+def test_explicit_remember_accepts_non_first_person_content(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        for index, text in enumerate(("Remember to renew the passport", "Remember buy oat milk")):
+            started = turn(client, headers, text, f"explicit-{index}").json()
+            proposal = started["memory_proposal"]
+            assert proposal is not None
+            saved = client.post(
+                "/internal/agent/memory/confirm",
+                headers=headers,
+                json={"token": proposal["token"], "decision": "save"},
+            )
+            assert saved.status_code == 200, saved.text
+            assert saved.json()["status"] == "saved"
+
+    contents = [row[0] for row in memory_rows(file)]
+    assert "to renew the passport" in contents
+    assert "buy oat milk" in contents

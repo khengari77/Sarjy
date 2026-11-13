@@ -58,6 +58,7 @@ def propose_memory(text: str, *, owner_id: str, conversation_id: str, source_tur
             "subject": capture.subject,
             "value": capture.value,
             "explicit": capture.explicit,
+            "replaces": capture.replaces,
             "exp": int((datetime.now(UTC) + timedelta(seconds=PROPOSAL_TTL_SECONDS)).timestamp()),
         },
         secret,
@@ -78,15 +79,22 @@ def _verified(token: str, secret: str, owner_id: str, conversation_id: str) -> M
         raise MemoryCaptureError("PROPOSAL_INVALID", 404)
     content = payload.get("content")
     value = payload.get("value")
+    subject = payload.get("subject")
+    explicit = payload.get("explicit", False)
+    replaces = payload.get("replaces", False)
     expires = payload.get("exp")
     if not isinstance(content, str) or not isinstance(value, str) or not content:
         raise MemoryCaptureError("PROPOSAL_INVALID", 400)
+    if subject is not None and not isinstance(subject, str):
+        raise MemoryCaptureError("PROPOSAL_INVALID", 400)
+    if not isinstance(explicit, bool) or not isinstance(replaces, bool):
+        raise MemoryCaptureError("PROPOSAL_INVALID", 400)
     if not isinstance(expires, int) or expires < int(datetime.now(UTC).timestamp()):
         raise MemoryCaptureError("PROPOSAL_EXPIRED", 409)
-    capture = parse_capture(content)
-    if capture is None or capture.value != value:
-        raise MemoryCaptureError("PROPOSAL_INVALID", 400)
-    return capture
+    # The signed payload is the authority. Re-parsing the canonical text here
+    # breaks explicit remembering whose payload is not itself a first-person
+    # sentence (for example ``Remember to buy milk`` or a quoted phrase).
+    return MemoryCapture(text=content, subject=subject, value=value, explicit=explicit, replaces=replaces)
 
 
 async def _exact_content(
@@ -216,6 +224,11 @@ async def _write_consented(
     conflicting = [
         row for row in previous if (parsed := parse_capture(row.content)) is not None and parsed.value != capture.value
     ]
+    if len(conflicting) > 1:
+        # More than one active row matches this slot. Picking one silently would
+        # leave contradictory active facts behind, so require an explicit human
+        # decision instead of guessing.
+        raise MemoryCaptureError("MEMORY_CLARIFICATION_REQUIRED", 409)
     if conflicting:
         corrective = (
             force_replace
