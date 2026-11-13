@@ -50,7 +50,6 @@ async def main():
                     "provider": "openai",
                     "model": "gpt-6-luna",
                     "status": response.status_code,
-                    "success": response.is_success,
                 }
             )
             if not response.is_success:
@@ -58,16 +57,16 @@ async def main():
                 return
             try:
                 payload = response.json()
-                usage = payload.get("usage", {}) if isinstance(payload, dict) else None
+                usage = payload.get("usage") if isinstance(payload, dict) else None
                 if not isinstance(usage, dict):
                     raise ValueError
                 values = {name: usage.get(name) for name in ("input_tokens", "output_tokens", "total_tokens")}
-                if any(value is not None and (type(value) is not int or value < 0) for value in values.values()):
+                if any(type(value) is not int or value < 0 for value in values.values()):
                     raise ValueError
             except ValueError:
                 print({"check": "stopped", "reason": "PROVIDER_RESPONSE_INVALID"})
                 return
-            print(values)
+            print({"check": "completed", "success": True, **values})
     except httpx.HTTPError:
         print({"check": "stopped", "reason": "PROVIDER_CONNECTION_FAILED"})
     finally:

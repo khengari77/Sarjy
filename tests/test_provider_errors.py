@@ -86,6 +86,16 @@ def test_malformed_forecast_is_typed(monkeypatch, forecast):
         ("connection", "PROVIDER_CONNECTION_FAILED"),
         ("denied", "DAILY_BUDGET_EXHAUSTED"),
         ("valid", None),
+        ("valid-zero", None),
+        ("empty", "PROVIDER_RESPONSE_INVALID"),
+        ("usage-null", "PROVIDER_RESPONSE_INVALID"),
+        ("usage-empty", "PROVIDER_RESPONSE_INVALID"),
+        ("missing-counter", "PROVIDER_RESPONSE_INVALID"),
+        ("null-counter", "PROVIDER_RESPONSE_INVALID"),
+        ("bool-counter", "PROVIDER_RESPONSE_INVALID"),
+        ("string-counter", "PROVIDER_RESPONSE_INVALID"),
+        ("negative-counter", "PROVIDER_RESPONSE_INVALID"),
+        ("invalid-json", "PROVIDER_RESPONSE_INVALID"),
     ],
 )
 def test_diagnostic_classifies_without_paid_calls(monkeypatch, capsys, mode, reason):
@@ -115,13 +125,7 @@ def test_diagnostic_classifies_without_paid_calls(monkeypatch, capsys, mode, rea
 
     def transport(request):
         events.append("send")
-        if mode == "connection":
-            raise httpx.ConnectError("PRIVATE", request=request)
-        if mode == "http":
-            return httpx.Response(502, text="PRIVATE HTML")
-        if mode == "invalid":
-            return httpx.Response(200, json=None)
-        return httpx.Response(200, json={"usage": {"input_tokens": 1}})
+        return _diagnostic_response(mode, request)
 
     client = httpx.AsyncClient
     monkeypatch.setattr(
@@ -138,8 +142,10 @@ def test_diagnostic_classifies_without_paid_calls(monkeypatch, capsys, mode, rea
     assert "PRIVATE" not in output
     if reason:
         assert reason in output
+        assert "'success': True" not in output
     else:
         assert "input_tokens" in output and "stopped" not in output
+        assert "'success': True" in output
     assert events[0] == "reserve" and events[-1] == "disposed"
     if mode == "denied":
         assert "send" not in events
@@ -173,3 +179,27 @@ def test_valid_weather_and_empty_search_keep_existing_semantics(monkeypatch):
     assert result["city"] == "Tripoli"
     with pytest.raises(weather.WeatherError, match="LOCATION_NOT_FOUND"):
         asyncio.run(weather.get_current_weather("missing"))
+
+
+def _diagnostic_response(mode, request):
+    if mode == "connection":
+        raise httpx.ConnectError("PRIVATE", request=request)
+    if mode == "http":
+        return httpx.Response(502, text="PRIVATE HTML")
+    if mode == "invalid":
+        return httpx.Response(200, json=None)
+    if mode == "invalid-json":
+        return httpx.Response(200, text="PRIVATE HTML")
+    valid_usage = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+    payloads = {
+        "empty": {},
+        "usage-null": {"usage": None},
+        "usage-empty": {"usage": {}},
+        "missing-counter": {"usage": {"input_tokens": 1, "total_tokens": 2}},
+        "null-counter": {"usage": {**valid_usage, "output_tokens": None}},
+        "bool-counter": {"usage": {**valid_usage, "output_tokens": True}},
+        "string-counter": {"usage": {**valid_usage, "output_tokens": "PRIVATE"}},
+        "negative-counter": {"usage": {**valid_usage, "output_tokens": -1}},
+        "valid-zero": {"usage": dict.fromkeys(valid_usage, 0)},
+    }
+    return httpx.Response(200, json=payloads.get(mode, {"usage": valid_usage}))
