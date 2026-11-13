@@ -517,6 +517,15 @@ export interface components {
              */
             characters: number;
         };
+        /** ContextAmbiguity */
+        ContextAmbiguity: {
+            /** Id */
+            id: string;
+            /** Content */
+            content: string;
+            /** Reason */
+            reason: string;
+        };
         /** ContextConfirmInput */
         ContextConfirmInput: {
             /** Proposal */
@@ -620,6 +629,10 @@ export interface components {
             matches: components["schemas"]["ContextMatch"][];
             /** Preserved */
             preserved: components["schemas"]["ContextPreserved"][];
+            /** Ambiguous */
+            ambiguous: components["schemas"]["ContextAmbiguity"][];
+            /** Requires Clarification */
+            requires_clarification: boolean;
             diff: components["schemas"]["ContextDiff"];
         };
         /** ContextProposalInput */
@@ -631,6 +644,11 @@ export interface components {
              * @default []
              */
             keep: string[];
+            /**
+             * Exclude
+             * @default []
+             */
+            exclude: string[];
             /**
              * Limit
              * @default 20
@@ -822,6 +840,11 @@ export interface components {
              * @default []
              */
             keep: string[];
+            /**
+             * Exclude
+             * @default []
+             */
+            exclude: string[];
         };
         /**
          * ResponsePreference

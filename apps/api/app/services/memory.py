@@ -26,6 +26,9 @@ from app.services.memory_eligibility import blocked_memory_ids
 
 EMBEDDING_TIMEOUT_SECONDS = 20
 CLAIM_TIMEOUT_SECONDS = 30
+# SQLite has no vector index, so cosine ranking reads a bounded deterministic
+# candidate set instead of every active owner memory.
+SEARCH_CANDIDATE_LIMIT = 500
 SQLITE_BUSY = 5
 SQLITE_LOCKED = 6
 
@@ -489,7 +492,7 @@ class MemoryService:
                     await db.execute(statement.add_columns(distance).order_by(distance, Memory.id).limit(limit))
                 ).all()
                 return tuple(memory_result(row, float(score)) for row, score in rows)
-            rows = (await db.scalars(statement)).all()
+            rows = (await db.scalars(statement.order_by(Memory.id).limit(SEARCH_CANDIDATE_LIMIT))).all()
             ranked = sorted(
                 ((cosine_distance(vector, validate_embedding(row.embedding)), row) for row in rows),
                 key=lambda pair: (pair[0], pair[1].id),

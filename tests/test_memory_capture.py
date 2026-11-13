@@ -759,6 +759,125 @@ def test_missing_confirmation_state_cannot_authorize_replacement(tmp_path):
         assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I prefer juice"]
 
 
+def test_clarification_question_names_the_existing_fact(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        first = turn(client, headers, "I prefer tea", "q-1").json()["memory_proposal"]
+        client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+        )
+        second = turn(client, headers, "I prefer coffee", "q-2").json()["memory_proposal"]
+        detail = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": second["token"], "decision": "save"},
+        ).json()["detail"]
+        assert detail["question"] == (
+            'You already have "I prefer tea". Should I replace it with "I prefer coffee"? '
+            'Say "replace it" to update, or "keep it" to keep the old fact.'
+        )
+
+
+def test_missing_confirmation_state_cannot_save_a_rev2_token(tmp_path):
+    file, settings = configured(tmp_path)
+    embedder = FakeEmbedder()
+    with TestClient(create_app(settings, embedding_adapter=embedder)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        first = turn(client, headers, "I prefer tea", "rev2-1").json()["memory_proposal"]
+        client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+        )
+        second = turn(client, headers, "I prefer coffee", "rev2-2").json()["memory_proposal"]
+        clarify = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": second["token"], "decision": "save"},
+        )
+        detail = clarify.json()["detail"]
+
+        # Lose the awaiting row and retire the target: the shape that used to
+        # fall through to a brand-new save through the clarification token.
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute(
+                "DELETE FROM memory_capture_decisions WHERE confirmation_id = ? AND revision = ?",
+                (detail["confirmation_id"], detail["confirmation_revision"]),
+            )
+            db.execute(
+                "UPDATE memories SET status = 'superseded', version = version + 1 WHERE id = ?",
+                (detail["target_id"],),
+            )
+            db.commit()
+
+        before_rows = memory_rows(file)
+        before_calls = list(embedder.calls)
+        blocked = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": detail["token"], "decision": "save"},
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "MEMORY_FRESH_CONFIRMATION_REQUIRED"
+        assert memory_rows(file) == before_rows
+        assert embedder.calls == before_calls, "a denied clarification must not embed"
+
+        # Revision 1 keeps the ordinary save path.
+        unrelated = turn(client, headers, "My name is Sam", "rev2-3").json()["memory_proposal"]
+        saved = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": unrelated["token"], "decision": "save"},
+        )
+        assert saved.status_code == 200 and saved.json()["status"] == "saved"
+        assert any(row[0] == "My name is Sam" and row[2] == "active" for row in memory_rows(file))
+
+
+def test_rev2_save_recovers_only_a_committed_effect(tmp_path):
+    file, settings = configured(tmp_path)
+    embedder = FakeEmbedder()
+    with TestClient(create_app(settings, embedding_adapter=embedder)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        first = turn(client, headers, "I prefer tea", "recsave-1").json()["memory_proposal"]
+        client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+        )
+        second = turn(client, headers, "I prefer coffee", "recsave-2").json()["memory_proposal"]
+        clarify = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": second["token"], "decision": "save"},
+        )
+        detail = clarify.json()["detail"]
+        replaced = confirm_replace(client, headers, detail)
+        assert replaced.status_code == 200 and replaced.json()["status"] == "corrected"
+
+        # A ``save`` replay of the clarification token must report the committed
+        # replacement rather than write again.
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("DELETE FROM memory_capture_decisions")
+            db.commit()
+        before_rows = memory_rows(file)
+        before_calls = list(embedder.calls)
+        retried = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": detail["token"], "decision": "save"},
+        )
+        assert retried.status_code == 200, retried.text
+        assert retried.json()["status"] == "corrected"
+        assert retried.json()["memory"]["version"] == 2
+        assert memory_rows(file) == before_rows
+        assert embedder.calls == before_calls
+
+
 def test_discard_clarification_is_terminal(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
@@ -919,12 +1038,16 @@ def test_replacement_recovers_after_a_lost_decision_receipt(tmp_path):
 
 
 class _FakeSpeech:
-    def __init__(self, *, interrupted=False, error=None):
+    def __init__(self, *, interrupted=False, error=None, text=""):
         self.id = "speech"
         self.interrupted = interrupted
         self._error = error
         self.waited = False
         self.chat_items = ()
+        if text:
+            from livekit.agents import llm
+
+            self.chat_items = (llm.ChatMessage(role="assistant", content=[text]),)
 
     async def wait_for_playout(self):
         self.waited = True
@@ -1097,6 +1220,140 @@ def test_worker_does_not_arm_consent_when_question_playout_is_not_clean(monkeypa
 
     asyncio.run(run())
     assert all(not path.endswith("/memory/confirm") for path, _ in paths)
+
+
+@pytest.mark.parametrize(
+    ("handle_kwargs", "expected_status"),
+    [
+        ({"text": "Should I remember this: I prefer tea?"}, "completed"),
+        ({"text": "Should I remember this: I prefer tea?", "interrupted": True}, "interrupted"),
+        ({"text": "Should I remember this: I prefer tea?", "error": RuntimeError("tts failed")}, "failed"),
+    ],
+)
+def test_worker_persists_the_deterministic_question_once(monkeypatch, handle_kwargs, expected_status):
+    import asyncio
+
+    import httpx
+    from livekit.agents import llm
+    from main import SarjyAgent
+
+    handle = _FakeSpeech(**handle_kwargs)
+    monkeypatch.setattr(SarjyAgent, "session", property(lambda self: _session_with(handle)))
+    finalizes = []
+    question = "Should I remember this: I prefer tea?"
+
+    async def run():
+        turn_id, context = _question_context()
+
+        def backend(request):
+            body = json.loads(request.content or b"{}")
+            if request.url.path.endswith("/turn/finalize"):
+                finalizes.append(body)
+            return httpx.Response(200, json={})
+
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
+            agent.prepared["m"] = {"turn_id": turn_id, "context": context, "memory_proposal": _question_proposal()}
+
+            async def stream(request, tools, tool_choice):
+                if False:
+                    yield None
+
+            agent._stream_with_fallback = stream
+            chat = llm.ChatContext()
+            chat.add_message(role="user", content="I prefer tea", id="m")
+            first = [chunk async for chunk in agent.llm_node(chat, [], None)]
+            assert question in "".join(chunk.delta.content or "" for chunk in first)
+            await asyncio.gather(*agent.pending)
+            assert finalizes == [{"turn_id": turn_id, "text": question, "status": expected_status}]
+
+            # Repeated inference for the same turn must not finalize twice.
+            second = [chunk async for chunk in agent.llm_node(chat, [], None)]
+            assert second == []
+            await asyncio.gather(*agent.pending)
+            assert len(finalizes) == 1
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(("reply", "expected_replaces"), [("replace it", 1), ("save it", 0)])
+def test_worker_speaks_the_replacement_question_and_needs_explicit_consent(monkeypatch, reply, expected_replaces):
+    import asyncio
+    from types import SimpleNamespace
+
+    import httpx
+    from livekit.agents import llm
+    from main import SarjyAgent
+
+    replacement_question = (
+        'You already have "I prefer tea". Should I replace it with "I prefer coffee now"? '
+        'Say "replace it" to update, or "keep it" to keep the old fact.'
+    )
+    confirmations = []
+    monkeypatch.setattr(SarjyAgent, "session", property(lambda self: _session_with(None)))
+
+    async def run():
+        def backend(request):
+            body = json.loads(request.content or b"{}")
+            if request.url.path.endswith("/memory/confirm"):
+                confirmations.append(body)
+                if len(confirmations) == 1:
+                    return httpx.Response(
+                        409,
+                        json={
+                            "detail": {
+                                "code": "MEMORY_CLARIFICATION_REQUIRED",
+                                "token": "clarified",
+                                "confirmation_id": "cid",
+                                "confirmation_revision": 2,
+                                "target_id": "target",
+                                "target_version": 1,
+                                "question": replacement_question,
+                            }
+                        },
+                    )
+                return httpx.Response(
+                    200, json={"status": "corrected" if body["decision"] == "replace" else "discarded"}
+                )
+            return httpx.Response(
+                200,
+                json={"turn_id": f"turn-{body.get('request_id')}", "context": {}, "memory_proposal": None},
+            )
+
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
+            agent.memory_proposal = {
+                "token": "signed",
+                "text": "I prefer coffee now",
+                "confirmation_id": "cid",
+                "confirmation_revision": 1,
+                "question": "Should I remember this: I prefer coffee now?",
+            }
+            agent.memory_prompted_key = ("cid", 1)
+
+            await agent.compile(SimpleNamespace(id="one", text_content="save it"))
+            assert agent.memory_clarify is True
+            assert agent.memory_proposal["confirmation_revision"] == 2
+            assert agent.memory_proposal["question"] == replacement_question
+            assert agent.memory_prompted_key is None and agent.memory_question_key is None
+
+            # The deterministic question names the existing fact and offers both replies.
+            chat = llm.ChatContext()
+            chat.add_message(role="user", content="save it", id="one")
+            chunks = [chunk async for chunk in agent.llm_node(chat, [], None)]
+            assert replacement_question in "".join(chunk.delta.content or "" for chunk in chunks)
+
+            # The question played out; only an explicit reply may now replace.
+            agent.memory_prompted_key = ("cid", 2)
+            await agent.compile(SimpleNamespace(id="two", text_content=reply))
+            assert agent.memory_proposal is None
+            if not expected_replaces:
+                assert agent.memory_outcome == "not_saved"
+
+    asyncio.run(run())
+    decisions = [body.get("decision") for body in confirmations]
+    assert decisions.count("save") == 1
+    assert decisions.count("replace") == expected_replaces
 
 
 def test_worker_refuses_consent_for_an_unprompted_revision():

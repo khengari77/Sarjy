@@ -50,6 +50,7 @@ jobs:
         env:
           CI: "true"
       - run: pnpm --dir apps/web test:browser
+      - run: pnpm --dir apps/web test:proxy
 
   postgres:
     # This PR is the top of the Day 2 stack: the pgvector gates exercise
@@ -110,7 +111,7 @@ jobs:
       - name: Real vector and integration checks
         run: |
           uv run python -c "import sys; sys.path.insert(0, 'apps/api'); import app.services.memory, app.services.context_operations, app.domain.weather_permissions"
-          uv run pytest -q tests/test_memory_postgres.py tests/test_memory_capture_postgres.py tests/test_day2_integration.py tests/test_memory_transaction_boundary.py tests/test_tool_operations_postgres.py
+          uv run pytest -q tests/test_memory_postgres.py tests/test_memory_capture_postgres.py tests/test_day2_integration.py tests/test_memory_transaction_boundary.py tests/test_tool_operations_postgres.py tests/test_context_bounded_retrieval.py
         env:
           REQUIRE_DAY2_INTEGRATION: '1'
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests

@@ -54,7 +54,10 @@ class Conversation(Base):
 
 class Turn(Base):
     __tablename__ = "turns"
-    __table_args__ = (UniqueConstraint("conversation_id", "request_id"),)
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "request_id"),
+        Index("ix_turns_conversation_status_created", "conversation_id", "status", "created_at"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
     request_id: Mapped[str] = mapped_column(String(100))
@@ -85,6 +88,7 @@ class SessionGate(Base):
 
 class ToolCall(Base):
     __tablename__ = "tool_calls"
+    __table_args__ = (Index("ix_tool_calls_turn_state", "turn_id", "state"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     turn_id: Mapped[str] = mapped_column(ForeignKey("turns.id"), index=True)
     # Stable operation identity: one model tool call maps to exactly one row.
@@ -108,8 +112,9 @@ class Memory(Base):
     __table_args__ = (
         UniqueConstraint("owner_id", "request_key"),
         Index("ix_memories_owner_subject_status", "owner_id", "subject", "status"),
+        Index("ix_memories_owner_status_updated", "owner_id", "status", "updated_at", "id"),
     )
-    supersedes_id: Mapped[str | None] = mapped_column(ForeignKey("memories.id"), nullable=True)
+    supersedes_id: Mapped[str | None] = mapped_column(ForeignKey("memories.id"), nullable=True, index=True)
     request_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)

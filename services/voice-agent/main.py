@@ -92,18 +92,37 @@ def _memory_decision(text: str) -> str | None:
 
 
 def _clarify_decision(text: str) -> str | None:
-    lowered = " ".join(text.casefold().replace(",", " ").split()).strip(" .!?;:")
+    lowered = " ".join(text.casefold().replace(",", " ").replace("\u2019", "'").split()).strip(" .!?;:")
     if lowered in {
         "yes replace it",
+        "yes replace",
         "replace",
         "replace it",
+        "replace the old one",
+        "replace the old fact",
         "use the new one",
         "update it",
-        "change it",
         "yes update it",
+        "change it",
     }:
         return "replace"
-    if lowered in {"no", "nope", "no thanks", "cancel", "don't", "do not", "discard", "keep the old one"}:
+    if lowered in {
+        "no",
+        "nope",
+        "no thanks",
+        "no thank you",
+        "cancel",
+        "don't",
+        "do not",
+        "discard",
+        "keep",
+        "keep it",
+        "keep the old one",
+        "keep the old fact",
+        "no keep it",
+        "no keep the old one",
+        "decline",
+    }:
         return "discard"
     return None
 
@@ -287,7 +306,8 @@ class SarjyAgent(Agent):
             self.memory_outcome = "replace" if status in {"corrected", "retracted"} else decision
         elif detail.get("code") == "MEMORY_CLARIFICATION_REQUIRED" and isinstance(detail.get("token"), str):
             # Adopt the server-issued clarification revision. The old token can
-            # never authorize a replacement.
+            # never authorize a replacement, and the replacement question must
+            # name the existing fact rather than asking the initial save question.
             self.memory_proposal = {
                 **proposal,
                 "token": detail["token"],
@@ -295,6 +315,7 @@ class SarjyAgent(Agent):
                 "confirmation_revision": detail.get("confirmation_revision"),
                 "target_id": detail.get("target_id"),
                 "target_version": detail.get("target_version"),
+                "question": detail.get("question") or proposal.get("question"),
             }
             self.memory_clarify = True
             self.memory_prompted_key = None
@@ -361,11 +382,12 @@ class SarjyAgent(Agent):
             handle = self.session.current_speech
             if handle is not None:
                 self._schedule_prompt_confirmation(key, handle)
+                # The deterministic question is the turn's spoken answer, so it
+                # must still be persisted like any other assistant turn.
+                self._schedule_persistence(user, handle)
             return
         handle = self.session.current_speech
-        if handle and handle.id not in self.speeches:
-            self.speeches.add(handle.id)
-            self._schedule_persistence(user, handle)
+        self._schedule_persistence(user, handle)
         request = snapshot_request(snapshot, self.current_turn)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
         request = _with_continuation(request, _continuation(chat_ctx, user), schemas)
@@ -405,6 +427,10 @@ class SarjyAgent(Agent):
         task.add_done_callback(self.pending.discard)
 
     def _schedule_persistence(self, user, handle):
+        if handle is None or handle.id in self.speeches:
+            # One finalize per spoken handle, even across repeated inference.
+            return
+        self.speeches.add(handle.id)
         turn_id = self.prepared[user.id]["turn_id"]
 
         async def persist_playout():

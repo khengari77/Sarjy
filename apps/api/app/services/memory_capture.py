@@ -85,6 +85,18 @@ def _confirmation_question(content: str) -> str:
     return f"Should I remember this: {content}?"
 
 
+def _replacement_question(old: str, new: str) -> str:
+    return (
+        f'You already have "{old}". Should I replace it with "{new}"? '
+        'Say "replace it" to update, or "keep it" to keep the old fact.'
+    )
+
+
+def _is_clarification(payload: dict) -> bool:
+    """A clarification revision is anything beyond the first proposal."""
+    return int(payload.get("revision", 1)) > 1 or payload.get("target_id") is not None
+
+
 def _verified(token: str, secret: str, owner_id: str, conversation_id: str) -> MemoryCapture:
     try:
         payload = verify_proposal(token, secret)
@@ -355,6 +367,26 @@ async def confirm_memory(
             revision=revision,
         )
 
+    if _is_clarification(payload):
+        # A clarification revision is consent for one exact replacement, never
+        # for a fresh save. Without a committed effect this must fail closed so
+        # a lost decision row cannot reopen a new write through ``save``.
+        target_id = payload.get("target_id")
+        target_version = payload.get("target_version")
+        if not isinstance(target_id, str) or not isinstance(target_version, int):
+            raise MemoryCaptureError("PROPOSAL_INVALID", 400)
+        return await _recover_clarification(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            capture=capture,
+            payload=payload,
+            token=token,
+            decision=decision,
+            target_id=target_id,
+            target_version=target_version,
+        )
+
     if existing is not None:
         # A clarification token must never be replayed as a plain save.
         raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=existing.outcome)
@@ -371,6 +403,51 @@ async def confirm_memory(
         token=token,
         secret=secret,
     )
+
+
+async def _recover_clarification(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    capture: MemoryCapture,
+    payload: dict,
+    token: str,
+    decision: str,
+    target_id: str,
+    target_version: int,
+) -> dict:
+    """Report a committed clarification effect, or refuse to write anew."""
+    applied = await _exact_content(db, owner_id=owner_id, capture=capture, status="active")
+    if applied is not None and applied.supersedes_id == target_id:
+        response = {"status": "corrected", "memory": asdict(memory_result(applied))}
+        await _record_decision(
+            db,
+            payload=payload,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            token=token,
+            decision=decision,
+            outcome=response["status"],
+            result=response,
+        )
+        return response
+    if capture.negated:
+        previous = await db.scalar(select(Memory).where(Memory.id == target_id, Memory.owner_id == owner_id))
+        if previous is not None and previous.status == "superseded" and previous.version == target_version + 1:
+            response = {"status": "retracted", "memory": None}
+            await _record_decision(
+                db,
+                payload=payload,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                token=token,
+                decision=decision,
+                outcome=response["status"],
+                result=response,
+            )
+            return response
+    raise MemoryCaptureError("MEMORY_FRESH_CONFIRMATION_REQUIRED", 409, target_id=target_id)
 
 
 async def _confirm_replace(
@@ -489,7 +566,7 @@ async def _clarify(
         confirmation_revision=revision,
         target_id=target.id,
         target_version=target.version,
-        question=_confirmation_question(capture.text),
+        question=_replacement_question(target.content, capture.text),
     )
 
 
