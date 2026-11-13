@@ -470,7 +470,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Acceptance criteria:**
 - Preview alone changes nothing.
-- confirmation excludes only authorized IDs while preserving explicitly kept budget records; budget matches from an unscoped query are surfaced as ambiguous instead of silently kept or removed.
+- confirmation excludes only authorized IDs while preserving explicitly kept budget records; budget matches without signed keep/exclude authority (including a lost parser keep argument) are surfaced as ambiguous instead of silently kept or removed.
 - stale/duplicate confirmation is safe.
 - Undo restores exact operation.
 

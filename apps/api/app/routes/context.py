@@ -19,6 +19,7 @@ class ContextProposalInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, max_length=200)
     keep: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
     limit: int = Field(default=20, ge=1, le=20)
 
 
@@ -156,6 +157,7 @@ def register_context_routes(app, *, config: Settings, database, identity, semant
                 conversation_id=conversation_id,
                 query=body.query,
                 keep=body.keep,
+                exclude=body.exclude,
                 limit=body.limit,
                 secret=proposal_secret(),
                 search=semantic_search,

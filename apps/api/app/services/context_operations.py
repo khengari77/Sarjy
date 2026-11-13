@@ -196,6 +196,7 @@ async def create_proposal(
     conversation_id: str,
     query: str,
     keep: tuple[str, ...] = (),
+    exclude: tuple[str, ...] = (),
     limit: int = 20,
     secret: str,
     search: MemorySearcher = keyword_search,
@@ -218,7 +219,7 @@ async def create_proposal(
     ).all()
     owned = {row.id for row in rows}
     candidates = tuple(candidate for candidate in candidates if candidate.id in owned)
-    selection = select_candidates(candidates, keep, query)
+    selection = select_candidates(candidates, keep, query, exclude)
     revision = conversation.revision
     token = sign_proposal(
         {
@@ -228,6 +229,7 @@ async def create_proposal(
             "revision": revision,
             "query": query,
             "keep": list(keep),
+            "exclude": list(exclude),
             "excluded_ids": sorted(selection.excluded_ids),
             "kept_ids": sorted(selection.kept_ids),
         },
@@ -374,6 +376,10 @@ def _validate_exclusion(payload, expected_revision, conversation, excluded_ids, 
     keep_values = payload.get("keep")
     if not isinstance(keep_values, list) or not all(isinstance(value, str) for value in keep_values):
         # A signed proposal must carry the keep authority used at preview time.
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
+    exclude_values = payload.get("exclude")
+    if not isinstance(exclude_values, list) or not all(isinstance(value, str) for value in exclude_values):
+        # Explicit budget exclusion authority must be signed too; losing it fails closed.
         raise ContextOperationError("PROPOSAL_INVALID", 400)
     if payload.get("revision") != expected_revision or conversation.revision != expected_revision:
         raise ContextOperationError("REVISION_CONFLICT")

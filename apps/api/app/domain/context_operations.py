@@ -78,11 +78,6 @@ def classify(content: str) -> str:
     return "budget" if BUDGET_PATTERN.search(content) else "memory"
 
 
-def query_names_budget(query: str) -> bool:
-    """Whether the owner's query itself refers to budget/cost/price."""
-    return bool(BUDGET_PATTERN.search(query))
-
-
 def _keep_reason(candidate: MemoryCandidate, keep_terms: tuple[str, ...]) -> str | None:
     if candidate.id in keep_terms:
         return KEEP_REASON_EXPLICIT_ID
@@ -92,21 +87,32 @@ def _keep_reason(candidate: MemoryCandidate, keep_terms: tuple[str, ...]) -> str
     return None
 
 
+def _explicitly_excluded(candidate: MemoryCandidate, exclude_terms: tuple[str, ...]) -> bool:
+    if candidate.id in exclude_terms:
+        return True
+    lowered = candidate.content.casefold()
+    return any(term.casefold() in lowered for term in exclude_terms if term)
+
+
 def select_candidates(
     candidates: tuple[MemoryCandidate, ...],
     keep: tuple[str, ...] = (),
     query: str = "",
+    exclude: tuple[str, ...] = (),
 ) -> Selection:
-    """Apply keep-exceptions exactly, without letting a keep id be dropped.
+    """Apply keep-exceptions and explicit exclusions exactly.
 
-    ``keep`` entries are record ids first (exact match) and otherwise literal
-    case-insensitive content filters.  Budget-classified records are only kept
-    by that explicit authority.  If the query does not itself name budget/cost/
-    price, a budget record is preserved as ambiguous rather than silently kept
-    or silently removed.  Duplicate ids are collapsed so diffs stay canonical.
+    ``keep`` and ``exclude`` entries are record ids first (exact match) and
+    otherwise literal case-insensitive content filters.  Keep authority wins
+    over exclusion authority.  A budget-classified record is never removed
+    merely because its content or the query mentions budget/cost/price: it is
+    removed only when ``exclude`` explicitly authorises it, and otherwise it is
+    preserved and surfaced as ambiguous so lost keep/parser state fails closed.
+    ``query`` is retained for display and caller context; it grants no removal
+    authority by itself.  Duplicate ids are collapsed so diffs stay canonical.
     """
     keep_terms = tuple(term.strip() for term in keep if term and term.strip())
-    explicit_budget_scope = query_names_budget(query)
+    exclude_terms = tuple(term.strip() for term in exclude if term and term.strip())
     preserved: dict[str, PreservedRecord] = {}
     ambiguous: dict[str, PreservedRecord] = {}
     excluded: set[str] = set()
@@ -120,7 +126,7 @@ def select_candidates(
         reason = _keep_reason(candidate, keep_terms)
         if reason is not None:
             preserved[candidate.id] = PreservedRecord(candidate.id, candidate.content, reason)
-        elif candidate.is_budget and not explicit_budget_scope:
+        elif candidate.is_budget and not _explicitly_excluded(candidate, exclude_terms):
             ambiguous[candidate.id] = PreservedRecord(candidate.id, candidate.content, KEEP_REASON_BUDGET_AMBIGUOUS)
             preserved[candidate.id] = ambiguous[candidate.id]
         else:

@@ -33,7 +33,7 @@ from app.services.context_assembly import (
     TOOL_RESULT_LIMIT,
     read_context_inputs,
 )
-from sqlalchemy import insert, text
+from sqlalchemy import insert, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -291,6 +291,132 @@ def test_old_excluded_source_with_recent_derived_reply_and_tool_stays_blocked(tm
     asyncio.run(run())
 
 
+def test_old_tool_parent_outside_window_still_propagates_transitive_derivation(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "tool-derived.db")
+        try:
+            async with sessions() as db:
+                await seed_turns(db, "chat", 600)
+                await db.execute(
+                    insert(Turn),
+                    [
+                        {
+                            "id": "old-tool-parent",
+                            "conversation_id": "chat",
+                            "request_id": "old-tool-parent-request",
+                            "role": "user",
+                            "text": "Take this action",
+                            "status": "completed",
+                            "created_at": stamp(1),
+                            "snapshot": {"included_record_ids": ["old-tool-derivation", "system"]},
+                        },
+                        {
+                            "id": "old-tool-derivation",
+                            "conversation_id": "chat",
+                            "request_id": "old-tool-derivation-request",
+                            "role": "assistant",
+                            "text": "Tripoli is warm",
+                            "status": "completed",
+                            "created_at": stamp(2),
+                            "snapshot": {
+                                "derivation": {"turn_id": "turn-00000", "record_ids": ["mem-excluded", "system"]}
+                            },
+                        },
+                    ],
+                )
+                await db.execute(update_turn_snapshot("turn-00599", {"included_record_ids": ["system"]}))
+                await db.execute(
+                    insert(Memory),
+                    [
+                        {
+                            "id": "mem-excluded",
+                            "owner_id": "alice",
+                            "content": "I live in Tripoli",
+                            "embedding_model": "text-embedding-3-small",
+                            "source_conversation_id": "chat",
+                            "version": 1,
+                            "status": "active",
+                            "created_at": stamp(0),
+                            "updated_at": stamp(0),
+                        }
+                    ],
+                )
+                await add_exclusion(db, "mem-excluded", conversation_id="chat", owner_id="alice")
+                db.add_all(
+                    [
+                        ToolCall(
+                            id="tool-old-transitive",
+                            turn_id="old-tool-parent",
+                            request_id="tool-old-transitive-request",
+                            name="get_current_weather",
+                            state="completed",
+                            result={"city": "Tripoli"},
+                        ),
+                        ToolCall(
+                            id="tool-recent-independent",
+                            turn_id="turn-00599",
+                            request_id="tool-recent-independent-request",
+                            name="get_current_weather",
+                            state="completed",
+                            result={"city": "Paris"},
+                        ),
+                    ]
+                )
+                await db.commit()
+            async with sessions() as db:
+                inputs = await read_context_inputs(db, owner_id="alice", conversation_id="chat")
+            tool_ids = {candidate.id for candidate in inputs.tool_results}
+            assert "tool-old-transitive" not in tool_ids
+            assert "tool-recent-independent" in tool_ids
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_old_tool_parent_with_unknown_provenance_is_blocked(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "tool-unknown.db")
+        try:
+            async with sessions() as db:
+                await seed_turns(db, "chat", 600)
+                await db.execute(
+                    insert(Turn),
+                    [
+                        {
+                            "id": "old-unknown-tool-parent",
+                            "conversation_id": "chat",
+                            "request_id": "old-unknown-tool-parent-request",
+                            "role": "user",
+                            "text": "Legacy action",
+                            "status": "completed",
+                            "created_at": stamp(1),
+                            "snapshot": None,
+                        }
+                    ],
+                )
+                await seed_memories(db, "alice", "chat", 1)
+                await add_exclusion(db, "mem-active-00000", conversation_id="chat", owner_id="alice")
+                db.add(
+                    ToolCall(
+                        id="tool-old-unknown",
+                        turn_id="old-unknown-tool-parent",
+                        request_id="tool-old-unknown-request",
+                        name="get_current_weather",
+                        state="completed",
+                        result={"city": "Tripoli"},
+                    )
+                )
+                await db.commit()
+            async with sessions() as db:
+                inputs = await read_context_inputs(db, owner_id="alice", conversation_id="chat")
+            assert "tool-old-unknown" not in {candidate.id for candidate in inputs.tool_results}
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
 def test_unknown_provenance_fails_closed_while_exclusions_exist(tmp_path):
     async def run():
         engine, sessions = await database(tmp_path / "unknown.db")
@@ -330,6 +456,32 @@ def test_unknown_provenance_fails_closed_while_exclusions_exist(tmp_path):
             ids = {candidate.id for candidate in inputs.history}
             assert "assistant-unknown" not in ids
             assert "tool-unknown" not in {candidate.id for candidate in inputs.tool_results}
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_equal_timestamp_ties_are_deterministic(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "ties.db")
+        try:
+            fixed = stamp(0)
+            async with sessions() as db:
+                await seed_memories(db, "alice", "chat", 300)
+                await db.execute(update(Memory).where(Memory.owner_id == "alice").values(updated_at=fixed))
+                await seed_turns(db, "chat", 50)
+                await db.execute(update(Turn).where(Turn.conversation_id == "chat").values(created_at=fixed))
+                await db.commit()
+            reads = []
+            for _ in range(2):
+                async with sessions() as db:
+                    inputs = await read_context_inputs(db, owner_id="alice", conversation_id="chat")
+                reads.append(({candidate.id for candidate in inputs.memories.included}, inputs.history))
+            memory_ids, history = reads[0]
+            assert memory_ids == reads[1][0]
+            assert memory_ids == {f"mem-active-{index:05d}" for index in range(100, 300)}
+            assert [candidate.id for candidate in history] == [f"turn-{index:05d}" for index in range(30, 50)]
         finally:
             await engine.dispose()
 
@@ -418,14 +570,15 @@ async def _postgres_plan_and_bounds():
     engine = create_async_engine(POSTGRES_URL)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     owner, chat = f"pg-{uuid4()}", str(uuid4())
+    run = uuid4().hex[:8]
     try:
         async with sessions() as db:
             db.add(Identity(id=owner, token_hash=owner, expires_at="2030"))
             await db.commit()
             db.add(Conversation(id=chat, owner_id=owner))
             await db.commit()
-            await seed_memories(db, owner, chat, 3000, prefix=f"m-{uuid4().hex[:8]}")
-            await seed_turns(db, chat, 3000)
+            await seed_memories(db, owner, chat, 3000, prefix=f"m-{run}")
+            await seed_turns(db, chat, 3000, prefix=f"t-{run}")
             await db.commit()
             await db.execute(text("ANALYZE turns"))
             await db.execute(text("ANALYZE memories"))
@@ -461,10 +614,10 @@ async def _postgres_plan_and_bounds():
         assert "ix_turns_conversation_status_created" in indexes
         assert "ix_memories_owner_status_updated" in indexes
         assert "ix_tool_calls_turn_state" in indexes
+        assert "ix_turns_conversation_status_created" in str(turn_plan)
+        assert "ix_memories_owner_status_updated" in str(memory_plan)
         for plan in (turn_plan, memory_plan):
-            rendered = str(plan)
-            assert "Index" in rendered or "index" in rendered
-            assert "Limit" in rendered
+            assert "Limit" in str(plan)
         async with sessions() as db:
             counted = CountingSession(db)
             inputs = await read_context_inputs(counted, owner_id=owner, conversation_id=chat)

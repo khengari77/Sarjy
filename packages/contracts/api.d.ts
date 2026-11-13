@@ -645,6 +645,11 @@ export interface components {
              */
             keep: string[];
             /**
+             * Exclude
+             * @default []
+             */
+            exclude: string[];
+            /**
              * Limit
              * @default 20
              */

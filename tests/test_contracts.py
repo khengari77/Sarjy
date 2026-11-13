@@ -402,3 +402,6 @@ def test_context_proposal_contract_surfaces_budget_ambiguity():
     assert properties["requires_clarification"]["type"] == "boolean"
     assert properties["ambiguous"]["items"]["$ref"].endswith("/ContextAmbiguity")
     assert {"id", "content", "reason"} <= set(spec["components"]["schemas"]["ContextAmbiguity"]["properties"])
+    input_properties = spec["components"]["schemas"]["ContextProposalInput"]["properties"]
+    assert "exclude" in input_properties
+    assert "keep" in input_properties

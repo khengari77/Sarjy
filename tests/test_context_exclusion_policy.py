@@ -1,8 +1,11 @@
 """Explicit keep/exclude semantics for budget-classified memory (#80).
 
 The policy correction is deliberate: currency words label a record but never
-confer permanent immunity.  Explicit keep authority wins, while an unscoped
-bulk request preserves and surfaces budget ambiguity instead of guessing.
+confer permanent immunity.  Explicit `keep` authority wins; explicit `exclude`
+authority is required to remove a budget-classified record.  A query that names
+budget/cost/price without either authority (for example because a parser lost
+its keep exception) surfaces the record as ambiguous instead of silently
+excluding it.
 """
 
 import json
@@ -91,8 +94,11 @@ def start_turn(client, headers, request_id="next", text="What do I remember?"):
     return response.json()["context"]
 
 
-def preview(client, chat, *, query, keep=()):
-    response = client.post(f"/v1/conversations/{chat}/context/proposals", json={"query": query, "keep": list(keep)})
+def preview(client, chat, *, query, keep=(), exclude=()):
+    response = client.post(
+        f"/v1/conversations/{chat}/context/proposals",
+        json={"query": query, "keep": list(keep), "exclude": list(exclude)},
+    )
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -194,7 +200,7 @@ def test_explicit_budget_exclusion_omits_ids_and_derivatives_without_touching_le
             db.commit()
         ledger_before = counts(file)[-1]
 
-        body = preview(client, chat, query="forget the budget and the hotel price")
+        body = preview(client, chat, query="forget the budget and the hotel price", exclude=("budget", "price"))
         assert body["requires_clarification"] is False
         assert body["ambiguous"] == []
         assert set(body["diff"]["removed"]) == {"budget", "price"}
@@ -218,13 +224,13 @@ def test_currency_words_alone_do_not_forbid_exclusion(tmp_path):
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
         seed(file, chat, (("price", "Hotel price is 300 USD"),))
-        body = preview(client, chat, query="forget the price")
+        body = preview(client, chat, query="forget the price", exclude=("price",))
         assert body["diff"]["removed"] == ["price"]
         assert body["ambiguous"] == []
         assert confirm(client, chat, body, "price-confirm").json()["excluded_ids"] == ["price"]
 
 
-def test_signed_proposals_reject_tampering_smuggling_and_lost_keep_arguments(tmp_path):
+def test_signed_proposals_reject_tampering_and_smuggling(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         client.post("/v1/demo-session")
@@ -245,7 +251,8 @@ def test_signed_proposals_reject_tampering_smuggling_and_lost_keep_arguments(tmp
 
         base = {"v": 1, "owner_id": owner, "conversation_id": chat, "revision": 0, "query": "forget"}
         smuggled = sign_proposal(
-            base | {"keep": ["trip"], "excluded_ids": ["trip"], "kept_ids": ["trip"]}, "proposal-secret"
+            base | {"keep": ["trip"], "exclude": [], "excluded_ids": ["trip"], "kept_ids": ["trip"]},
+            "proposal-secret",
         )
         response = client.post(
             f"/v1/conversations/{chat}/context/confirm",
@@ -253,15 +260,31 @@ def test_signed_proposals_reject_tampering_smuggling_and_lost_keep_arguments(tmp
         )
         assert response.status_code == 400
         assert response.json()["detail"]["code"] == "PROPOSAL_INVALID"
-
-        lost_keep = sign_proposal(base | {"excluded_ids": ["trip"], "kept_ids": []}, "proposal-secret")
-        response = client.post(
-            f"/v1/conversations/{chat}/context/confirm",
-            json={"proposal": lost_keep, "expected_revision": 0, "idempotency_key": "lost-keep"},
-        )
-        assert response.status_code == 400
-        assert response.json()["detail"]["code"] == "PROPOSAL_INVALID"
         assert counts(file)[:4] == (0, 0, 0, 0)
+
+
+def test_lost_parser_keep_fails_closed_at_the_endpoint(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        seed(file, chat, (("trip", "Trip to Tripoli from 1 to 5 May"), ("budget", "Budget 500 USD for the trip")))
+
+        # The parser named budget but lost its keep exception.  A budget-named
+        # query alone never authorizes removal: the record is preserved and the
+        # preview requests clarification instead of silently excluding it.
+        body = preview(client, chat, query="forget the trip but keep the budget")
+        assert body["requires_clarification"] is True
+        assert [item["id"] for item in body["ambiguous"]] == ["budget"]
+        assert body["diff"]["removed"] == ["trip"]
+        assert "budget" not in body["diff"]["removed"]
+
+        applied = confirm(client, chat, body, "lost-keep-confirm").json()
+        assert applied["excluded_ids"] == ["trip"]
+
+        headers = add_turn_session(file, chat)
+        context = start_turn(client, headers)
+        assert "budget" in set(context["included_record_ids"])
 
 
 def test_duplicates_and_undo_preserve_exact_semantics_and_ledgers(tmp_path):

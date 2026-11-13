@@ -1561,6 +1561,14 @@
             "title": "Keep",
             "default": []
           },
+          "exclude": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude",
+            "default": []
+          },
           "limit": {
             "type": "integer",
             "maximum": 20.0,

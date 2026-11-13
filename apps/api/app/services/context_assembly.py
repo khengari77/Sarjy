@@ -25,6 +25,9 @@ HISTORY_LIMIT = 20
 # dependency needs their provenance to propagate an exclusion.
 HISTORY_WINDOW_MULTIPLIER = 5
 DEPENDENCY_CLOSURE_LIMIT = 200
+# Bounded retrieval considers only the newest active memories for inclusion.
+# Older active memories are intentionally outside this revision's candidate
+# set; exclusions and correction lineage remain authoritative by exact id.
 MEMORY_CANDIDATE_LIMIT = 200
 TOOL_RESULT_LIMIT = 50
 _ID_CHUNK = 400
@@ -253,10 +256,30 @@ async def read_context_inputs(
     """Read everything the compiler may consider for the next turn."""
     reader = memory_reader or _OrmMemoryReader()
     memories = await reader.candidates(db, owner_id=owner_id, conversation_id=conversation_id)
+    policy_active = bool(memories.excluded_ids or memories.blocked_sources)
+    tool_rows = (
+        await db.execute(
+            select(ToolCall, Turn)
+            .join(Turn, ToolCall.turn_id == Turn.id)
+            .where(
+                Turn.conversation_id == conversation_id,
+                Turn.status == "completed",
+                ToolCall.state == "completed",
+            )
+            .order_by(Turn.created_at.desc(), ToolCall.id)
+            .limit(TOOL_RESULT_LIMIT)
+        )
+    ).all()
     window = await _recent_turns(db, conversation_id, limit=history_limit * HISTORY_WINDOW_MULTIPLIER)
     by_id = {turn.id: turn for turn in window}
-    closure_exceeded = await _dependency_closure(db, conversation_id=conversation_id, loaded=by_id)
-    policy_active = bool(memories.excluded_ids or memories.blocked_sources)
+    closure_exceeded = False
+    if policy_active:
+        # Tool rows are bounded by the tool-result limit, not the history window.
+        # Their parents must join the evaluated set so an exclusion can propagate
+        # through older derivations; no traversal happens with no active policy.
+        for _, parent in tool_rows:
+            by_id.setdefault(parent.id, parent)
+        closure_exceeded = await _dependency_closure(db, conversation_id=conversation_id, loaded=by_id)
     blocked = set(memories.excluded_ids | memories.blocked_sources)
 
     def dependencies(turn):
@@ -295,25 +318,13 @@ async def read_context_inputs(
         for turn in window[-history_limit:]
         if turn.id not in blocked
     )
-    tool_rows = (
-        await db.execute(
-            select(ToolCall, Turn)
-            .join(Turn, ToolCall.turn_id == Turn.id)
-            .where(
-                Turn.conversation_id == conversation_id,
-                Turn.status == "completed",
-                ToolCall.state == "completed",
-            )
-            .order_by(Turn.created_at.desc(), ToolCall.id)
-            .limit(TOOL_RESULT_LIMIT)
-        )
-    ).all()
     tool_results = []
     for call, turn in tool_rows:
         values = (turn.snapshot or {}).get("included_record_ids")
         known = isinstance(values, list) and all(isinstance(value, str) for value in values)
         deps = frozenset(values) if known else frozenset()
-        if fail_closed or turn.id in blocked or deps & blocked or (policy_active and not known):
+        # A tool parent missing from the evaluated set has unknown provenance.
+        if fail_closed or turn.id not in by_id or turn.id in blocked or deps & blocked or (policy_active and not known):
             blocked.add(call.id)
             continue
         tool_results.append(
