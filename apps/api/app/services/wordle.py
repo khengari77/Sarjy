@@ -465,7 +465,9 @@ async def submit_guess(
             .values(status=status, updated_at=now_iso)
         )
         await db.commit()
-        fresh = await db.get(WordleGame, game.id)
+        fresh = await db.scalar(
+            select(WordleGame).where(WordleGame.id == game.id).execution_options(populate_existing=True)
+        )
         if fresh is None:
             raise WordleServiceError("WORDLE_UNAVAILABLE", 503)
         return GuessOutcome(
