@@ -312,6 +312,31 @@ async def _delete_preparation(factory, preparation_id, lease_id):
         )
 
 
+async def dispatch_setting(db, *, owner_id, expected_revision, action, catalog, approved_voice_ids=None):
+    """Apply a settings action without requiring a conversation.
+
+    Preferences (voice, speed, captions) are owner-scoped. A fresh browser has no
+    conversation yet, and inventing one just to persist a preference would leak
+    into history, so this path deliberately has no conversation parameter.
+    """
+
+    if not isinstance(action, SETTING_ACTIONS):
+        raise HTTPException(422, detail={"code": "INVALID_SETTING_ACTION"})
+    if isinstance(action, SelectApprovedVoice):
+        if approved_voice_ids is not None and action.voice_id not in approved_voice_ids:
+            raise VoiceCatalogError("VOICE_NOT_APPROVED", 422)
+        await catalog.require(action.voice_id)
+    try:
+        # Serialize against conversation-scoped setting writes on the same gate.
+        await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
+        result = await _apply_setting(db, owner_id, expected_revision, action)
+        await db.commit()
+        return result
+    except BaseException:
+        await db.rollback()
+        raise
+
+
 async def _dispatch_transaction(
     db,
     *,

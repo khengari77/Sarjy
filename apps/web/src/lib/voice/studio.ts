@@ -48,7 +48,7 @@ export function bootStudio(options: StudioBoot) {
     () => voice.live !== null,
     () => voice.muted,
   );
-  const catalogStore = createCatalogStore(catalog, { getConversationId: () => conversation.current });
+  const catalogStore = createCatalogStore(catalog);
   const connection = createVoiceConnection(voice, {
     ensureConversation: () => conversations!.ensureConversation(),
     getConversationId: () => conversation.current,

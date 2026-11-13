@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 from app.domain.commands import parse_exact_command
 from app.domain.contracts import Action, UserSettings, parse_action
 from app.infrastructure.database import UserSetting
-from app.services.actions import dispatch_action, settings_value
+from app.services.actions import dispatch_action, dispatch_setting, settings_value
 from app.services.context_operations import ContextOperationError
 from app.services.voices import VoiceCatalogError
 
@@ -42,6 +42,22 @@ class ActionSubmission(BaseModel):
         return self
 
 
+class SettingsSubmission(BaseModel):
+    """Owner-scoped settings change; no conversation is needed or created."""
+
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(ge=0)
+    action: Action
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def validate_action(cls, value):
+        try:
+            return parse_action(value)
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise HTTPException(422, detail={"code": "INVALID_ACTION"}) from exc
+
+
 class SettingsActionResult(BaseModel):
     kind: Literal["AdjustSpeakingSpeed", "SetSpeakingSpeed", "SelectApprovedVoice", "SetCaptionsVisible"]
     settings: UserSettings
@@ -71,6 +87,20 @@ def register_action_routes(app, database, identity, owned, catalog, approved_voi
     @app.get("/v1/settings", response_model=UserSettings)
     async def get_settings(user=Depends(identity), db=Depends(database)):
         return settings_value(await db.get(UserSetting, user.id)).model_dump(mode="json")
+
+    @app.post("/v1/settings/actions", response_model=SettingsActionResult)
+    async def update_settings(body: SettingsSubmission, user=Depends(identity), db=Depends(database)):
+        try:
+            return await dispatch_setting(
+                db,
+                owner_id=user.id,
+                expected_revision=body.expected_revision,
+                action=body.action,
+                catalog=catalog,
+                approved_voice_ids=approved_voice_ids,
+            )
+        except VoiceCatalogError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code}) from exc
 
     @app.post("/v1/actions", response_model=ActionResponse)
     async def submit(body: ActionSubmission, user=Depends(identity), db=Depends(database)):

@@ -29,8 +29,6 @@ export interface SettingsActionResult {
   settings: UserSettings;
   changed: boolean;
 }
-export type ActionResponse =
-  { handled: true; result: SettingsActionResult | Record<string, unknown> } | { handled: false };
 export async function request<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch('/api/v1/' + path, {
     method: body === undefined ? 'GET' : 'POST',

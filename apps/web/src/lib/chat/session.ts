@@ -1,6 +1,5 @@
 import {
   request,
-  type ActionResponse,
   type Conversation,
   type SessionConfig,
   type SettingsActionResult,
@@ -48,20 +47,16 @@ export async function startVoiceSession(
   return request<SessionConfig>('voice/sessions', body);
 }
 
-export async function saveVoiceSelection(
-  conversationId: string,
-  voiceId: string,
-  expectedRevision: number,
-): Promise<UserSettings> {
-  const response = await request<ActionResponse>('actions', {
-    conversation_id: conversationId,
-    request_id: 'voice-' + crypto.randomUUID(),
+/**
+ * Persist the voice preference owner-side. No conversation is created: a fresh
+ * browser must be able to save a preference before its first call.
+ */
+export async function saveVoiceSelection(voiceId: string, expectedRevision: number): Promise<UserSettings> {
+  const result = await request<SettingsActionResult>('settings/actions', {
     expected_revision: expectedRevision,
-    source: 'ui',
     action: { kind: 'SelectApprovedVoice', voice_id: voiceId },
   });
-  if (!response.handled || !('settings' in response.result)) throw new Error('VOICE_SETTING_REJECTED');
-  return (response.result as SettingsActionResult).settings;
+  return result.settings;
 }
 
 export async function endVoiceSession(session: SessionConfig | null): Promise<void> {

@@ -71,13 +71,14 @@ test('voice picker search, pagination, saved preference and call payload', async
     revision,
   });
   await page.route('**/api/v1/settings', (route) => route.fulfill({ json: settings() }));
-  await page.route('**/api/v1/actions', async (route) => {
+  await page.route('**/api/v1/settings/actions', async (route) => {
     const body = route.request().postDataJSON();
     expect(body.action.kind).toBe('SelectApprovedVoice');
+    expect(body.conversation_id).toBeUndefined();
     savedVoice = body.action.voice_id;
     revision += 1;
     await route.fulfill({
-      json: { handled: true, result: { kind: 'SelectApprovedVoice', settings: settings(), changed: true } },
+      json: { kind: 'SelectApprovedVoice', settings: settings(), changed: true },
     });
   });
   let sentVoice: string | undefined;

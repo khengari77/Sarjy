@@ -209,6 +209,64 @@ def test_saved_server_setting_outranks_the_default_and_is_catalog_validated(tmp_
         )
 
 
+def test_owner_scoped_settings_save_a_voice_without_creating_a_conversation(tmp_path):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
+    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+        client.post("/v1/demo-session")
+        assert client.get("/v1/conversations").json() == []
+        response = client.post(
+            "/v1/settings/actions",
+            json={
+                "expected_revision": 0,
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["settings"]["approved_voice_id"] == "arabic-voice"
+        assert response.json()["settings"]["revision"] == 1
+        assert client.get("/v1/settings").json()["approved_voice_id"] == "arabic-voice"
+        # Persisting a preference must not add a chat row.
+        assert client.get("/v1/conversations").json() == []
+
+
+def test_owner_scoped_settings_enforce_approval_revision_and_action_kind(tmp_path):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
+    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+        client.post("/v1/demo-session")
+        unapproved = client.post(
+            "/v1/settings/actions",
+            json={
+                "expected_revision": 0,
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "account-only-voice"},
+            },
+        )
+        assert unapproved.status_code == 422
+        assert unapproved.json()["detail"]["code"] == "VOICE_NOT_APPROVED"
+        saved = client.post(
+            "/v1/settings/actions",
+            json={
+                "expected_revision": 0,
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "other-voice"},
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        stale = client.post(
+            "/v1/settings/actions",
+            json={
+                "expected_revision": 0,
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+            },
+        )
+        assert stale.status_code == 409
+        assert stale.json()["detail"]["code"] == "SETTINGS_REVISION_CONFLICT"
+        not_a_setting = client.post(
+            "/v1/settings/actions",
+            json={"expected_revision": 1, "action": {"kind": "OpenMemoryExplorer"}},
+        )
+        assert not_a_setting.status_code == 422
+        assert not_a_setting.json()["detail"]["code"] == "INVALID_SETTING_ACTION"
+
+
 @pytest.mark.parametrize(
     ("handler", "status", "code"),
     [

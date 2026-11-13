@@ -33,7 +33,7 @@ export function initialCatalogState(voiceId = ''): CatalogState {
   };
 }
 
-export function createCatalogStore(state: CatalogState, deps: { getConversationId(): string | null }) {
+export function createCatalogStore(state: CatalogState) {
   async function load(more = false) {
     if (state.loading) return;
     state.loading = true;
@@ -69,17 +69,16 @@ export function createCatalogStore(state: CatalogState, deps: { getConversationI
     state.settingsError = '';
   }
 
-  /** Persist the picker choice server-side; revert to the saved value on rejection. */
+  /** Persist the picker choice owner-side; revert to the saved value on rejection. */
   async function remember() {
     if (state.saving) return;
-    const conversationId = deps.getConversationId();
     const next = state.voiceId;
-    if (!conversationId || next === state.savedVoiceId) return;
+    if (next === state.savedVoiceId) return;
     const previous = state.savedVoiceId;
     state.saving = true;
     state.settingsError = '';
     try {
-      applySettings(await saveVoiceSelection(conversationId, next, state.revision));
+      applySettings(await saveVoiceSelection(next, state.revision));
     } catch (error) {
       state.voiceId = previous;
       state.settingsError = error instanceof Error ? error.message : 'VOICE_SETTING_REJECTED';
