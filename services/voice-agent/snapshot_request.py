@@ -5,6 +5,11 @@ messages. Replay never restores that privileged projection: a compatible
 legacy record is validated against its stored identity, order, text, revision
 and canonical hash, then re-rendered through the same lower-trust envelope the
 current compiler uses. The stored snapshot is never mutated.
+
+The top-level ``canonical_prompt_sha256`` is mandatory for ``model_request``
+replay. When ``manifest``/``pipeline_config`` are present the full assembly is
+validated too; a minimal snapshot without them is rejected only for missing
+identity/hash, not silently trusted beyond the top-level fields.
 """
 
 from collections.abc import Mapping, Sequence
@@ -49,11 +54,19 @@ def _model_request_replay(snapshot: Mapping, turn_id: str) -> ModelRequest:
     if [message.model_dump() for message in request.messages] != messages:
         raise ValueError("MODEL_SNAPSHOT_MISMATCH")
     _validate_hash(snapshot, messages)
+    _validate_manifest(snapshot)
     _validate_selection_identity(snapshot, request.selection)
     safe, converted = _safe_projection(request.selection.included, messages)
     if not converted:
         return request
-    return ModelRequest.model_validate({**request.model_dump(mode="json"), "messages": safe})
+    selection = _rebuilt_selection(request.selection, safe)
+    return ModelRequest.model_validate(
+        {
+            **request.model_dump(mode="json"),
+            "messages": safe,
+            "selection": selection.model_dump(mode="json"),
+        }
+    )
 
 
 def _metadata_replay(snapshot: Mapping, turn_id: str) -> ModelRequest:
@@ -113,9 +126,18 @@ def _message_list(messages) -> list[dict[str, str]]:
 
 def _validate_hash(snapshot: Mapping, messages: Sequence[Mapping[str, str]]) -> None:
     if "canonical_prompt_sha256" not in snapshot:
-        return
+        raise ValueError("MISSING_CANONICAL_HASH")
     if prompt_sha256(messages) != snapshot["canonical_prompt_sha256"]:
         raise ValueError("HASH_MISMATCH_SNAPSHOT")
+
+
+def _validate_manifest(snapshot: Mapping) -> None:
+    manifest, config = snapshot.get("manifest"), snapshot.get("pipeline_config")
+    if manifest is None and config is None:
+        return
+    if not isinstance(manifest, Mapping) or not isinstance(config, Mapping):
+        raise ValueError("INVALID_SNAPSHOT_METADATA")
+    validate_assembly(snapshot["revision"], manifest, snapshot)
 
 
 def _validate_selection_identity(snapshot: Mapping, selection: ContextSelection) -> None:
@@ -165,21 +187,30 @@ def _safe_projection(
             continue
         if entry.role not in LOWER_TRUST_ROLES or role != "system":
             raise ValueError("SELECTION_ROLE_MISMATCH")
+        text, source = _legacy_record(entry)
         safe.append(
             {
                 "role": "user",
-                "content": untrusted_data_message(entry.id, entry.role, _legacy_text(entry)),
+                "content": untrusted_data_message(entry.id, entry.role, text, source),
             }
         )
         converted = True
     return safe, converted
 
 
-def _legacy_text(entry: ContextEntry) -> str:
+def _rebuilt_selection(selection: ContextSelection, messages: Sequence[Mapping[str, str]]) -> ContextSelection:
+    entries = tuple(
+        ContextEntry(id=entry.id, role=message["role"], text=message["content"])
+        for entry, message in zip(selection.included, messages, strict=True)
+    )
+    return ContextSelection(revision=selection.revision, included=entries, excluded_ids=selection.excluded_ids)
+
+
+def _legacy_record(entry: ContextEntry) -> tuple[str, str | None]:
     if entry.role == "memory" and entry.text.startswith(MEMORY_PREFIX):
-        return entry.text[len(MEMORY_PREFIX) :]
+        return entry.text[len(MEMORY_PREFIX) :], None
     if entry.role == "tool" and entry.text.startswith(TOOL_PREFIX):
         end = entry.text.find(TOOL_SEPARATOR, len(TOOL_PREFIX))
         if end > len(TOOL_PREFIX):
-            return entry.text[end + len(TOOL_SEPARATOR) :]
+            return entry.text[end + len(TOOL_SEPARATOR) :], entry.text[len(TOOL_PREFIX) : end]
     raise ValueError("UNATTRIBUTED_SYSTEM_MESSAGE")

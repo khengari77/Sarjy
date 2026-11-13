@@ -86,15 +86,33 @@ def provider_role(role: CandidateRole) -> ProviderRole:
     return cast(ProviderRole, role) if role in PROVIDER_ROLES else "user"
 
 
-def untrusted_data_message(record_id: str, origin: Literal["memory", "tool"], text: str) -> str:
+def dialogue_role(role: CandidateRole) -> Literal["user", "assistant"]:
+    """Only the synthetic instructions may supply a privileged role.
+
+    Callers supply history and current-turn candidates. Any role other than
+    user or assistant is deterministically demoted to user, so a stray system
+    (or memory/tool) role can never become provider instructions.
+    """
+    if role in ("user", "assistant"):
+        return role
+    return "user"
+
+
+def untrusted_data_message(
+    record_id: str, origin: Literal["memory", "tool"], text: str, source: str | None = None
+) -> str:
     """Render one lower-trust record as an inert JSON envelope.
 
     JSON encoding the original text means nested quotes, delimiters and
     newlines cannot escape the data boundary. The short prefix keeps the
-    message readable while the envelope carries provenance and the source id.
+    message readable while the envelope carries provenance, the source id and,
+    for tool output, the tool name.
     """
     label = "Memory" if origin == "memory" else "Tool result"
-    envelope = canonical_json({"id": record_id, "origin": origin, "text": text, "trust": "untrusted"})
+    payload: dict[str, Any] = {"id": record_id, "origin": origin, "text": text, "trust": "untrusted"}
+    if source:
+        payload["source"] = source
+    envelope = canonical_json(payload)
     return f"{label} (untrusted {origin} data, id={record_id}): {envelope}"
 
 
@@ -149,7 +167,10 @@ def compile_turn_context(
     * memories and tool results are sorted by ID because their input order is
       not semantic, so a shuffled input yields byte-identical output;
     * history and the current turn keep caller order because turn order is
-      semantic.
+      semantic;
+    * only the synthetic instructions entry may be a provider system message:
+      history/current-turn roles other than user or assistant are demoted to
+      user.
     """
     if revision < 0:
         raise ValueError("REVISION_INVALID")
@@ -254,14 +275,16 @@ def _select_messages(
         for candidate in sorted(memories, key=lambda item: item.id)
         if eligible(candidate)
     )
-    selected.extend((candidate.id, candidate.role, candidate.text) for candidate in history if eligible(candidate))
     selected.extend(
-        (candidate.id, "tool", untrusted_data_message(candidate.id, "tool", candidate.text))
+        (candidate.id, dialogue_role(candidate.role), candidate.text) for candidate in history if eligible(candidate)
+    )
+    selected.extend(
+        (candidate.id, "tool", untrusted_data_message(candidate.id, "tool", candidate.text, candidate.source))
         for candidate in sorted(tool_results, key=lambda item: item.id)
         if eligible(candidate)
     )
     if current_turn is not None and current_turn.id not in excluded:
-        selected.append((current_turn.id, current_turn.role, current_turn.text))
+        selected.append((current_turn.id, dialogue_role(current_turn.role), current_turn.text))
     return selected
 
 
@@ -382,6 +405,7 @@ __all__ = [
     "canonical_json",
     "canonical_messages",
     "compile_turn_context",
+    "dialogue_role",
     "prompt_sha256",
     "provider_role",
     "untrusted_data_message",
