@@ -19,7 +19,12 @@ async def main():
     engine = create_async_engine(settings.database_url)
     try:
         async with async_sessionmaker(engine)() as db:
-            allowance = await reserve(db, "openai")
+            try:
+                allowance = await reserve(db, "openai")
+            except ValueError as exc:
+                reason = "DAILY_BUDGET_EXHAUSTED" if str(exc) == "DAILY_BUDGET_EXHAUSTED" else "BUDGET_SERVICE_FAILED"
+                print({"check": "stopped", "reason": reason})
+                return
         print(
             {
                 "reserved_usd": allowance["reserved_units"] / 1_000_000,
@@ -48,19 +53,23 @@ async def main():
                     "success": response.is_success,
                 }
             )
-            if response.is_success:
-                usage = response.json().get("usage", {})
-                print({name: usage.get(name) for name in ["input_tokens", "output_tokens", "total_tokens"]})
-            else:
-                error = response.json().get("error", {})
-                print({"error_code": error.get("code"), "error_type": error.get("type")})
-    except (httpx.HTTPError, ValueError) as exc:
-        print(
-            {
-                "check": "stopped",
-                "reason": "DAILY_BUDGET_EXHAUSTED" if isinstance(exc, ValueError) else "PROVIDER_CONNECTION_FAILED",
-            }
-        )
+            if not response.is_success:
+                print({"check": "stopped", "reason": "PROVIDER_HTTP_FAILED", "status": response.status_code})
+                return
+            try:
+                payload = response.json()
+                usage = payload.get("usage", {}) if isinstance(payload, dict) else None
+                if not isinstance(usage, dict):
+                    raise ValueError
+                values = {name: usage.get(name) for name in ("input_tokens", "output_tokens", "total_tokens")}
+                if any(value is not None and (type(value) is not int or value < 0) for value in values.values()):
+                    raise ValueError
+            except ValueError:
+                print({"check": "stopped", "reason": "PROVIDER_RESPONSE_INVALID"})
+                return
+            print(values)
+    except httpx.HTTPError:
+        print({"check": "stopped", "reason": "PROVIDER_CONNECTION_FAILED"})
     finally:
         await engine.dispose()
 
