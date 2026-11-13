@@ -245,6 +245,11 @@ async def _recent_turns(db: AsyncSession, conversation_id: str, *, limit: int) -
     return list(reversed(rows))
 
 
+def _known_tool_dependencies(turn: Turn) -> bool:
+    values = (turn.snapshot or {}).get("included_record_ids")
+    return isinstance(values, list) and all(isinstance(value, str) for value in values)
+
+
 async def read_context_inputs(
     db: AsyncSession,
     *,
@@ -299,53 +304,64 @@ async def read_context_inputs(
     # Unknown provenance or an exhausted closure fails closed while exclusions exist.
     fail_closed = closure_exceeded and policy_active
     turns = list(by_id.values())
+    blocked_tools: set[str] = set()
+    tool_dependencies: dict[str, frozenset[str]] = {}
+    for call, turn in tool_rows:
+        values = (turn.snapshot or {}).get("included_record_ids")
+        known = isinstance(values, list) and all(isinstance(value, str) for value in values)
+        tool_dependencies[call.id] = frozenset(values) if known else frozenset()
+    # Assistant replies and tool results must reach one joint fixpoint: blocking a
+    # tool result after the assistant loop has finished lets a reply derived from
+    # that tool result escape. Iterate both until neither set grows.
     while True:
+        active = blocked | blocked_tools
         more = {
             turn.id
             for turn in turns
             if turn.role == "assistant"
             and (
                 fail_closed
-                or (dependencies(turn) is not None and dependencies(turn) & blocked)
+                or (dependencies(turn) is not None and dependencies(turn) & active)
                 or (policy_active and dependencies(turn) is None)
             )
         }
-        if more <= blocked:
+        more_tools = {
+            call.id
+            for call, turn in tool_rows
+            if (
+                fail_closed
+                or (policy_active and turn.id not in by_id)
+                or turn.id in active
+                or tool_dependencies[call.id] & active
+                or (policy_active and not _known_tool_dependencies(turn))
+            )
+        }
+        if more <= blocked and more_tools <= blocked_tools:
             break
         blocked.update(more)
+        blocked_tools.update(more_tools)
     history = tuple(
         ContextCandidate(id=turn.id, role=turn.role, text=turn.text, origin="history")
         for turn in window[-history_limit:]
         if turn.id not in blocked
     )
-    tool_results = []
-    for call, turn in tool_rows:
-        values = (turn.snapshot or {}).get("included_record_ids")
-        known = isinstance(values, list) and all(isinstance(value, str) for value in values)
-        deps = frozenset(values) if known else frozenset()
-        # An out-of-window tool parent is unknown only while an exclusion policy
-        # is active; with no exclusions the base permitted it and must stay admitted.
-        if (
-            fail_closed
-            or (policy_active and turn.id not in by_id)
-            or turn.id in blocked
-            or deps & blocked
-            or (policy_active and not known)
-        ):
-            blocked.add(call.id)
-            continue
-        tool_results.append(
-            ContextCandidate(
-                id=call.id,
-                role="tool",
-                text=canonical_json(call.result),
-                origin="tool",
-                source=call.name,
-                dependencies=deps,
-            )
+    tool_results = tuple(
+        ContextCandidate(
+            id=call.id,
+            role="tool",
+            text=canonical_json(call.result),
+            origin="tool",
+            source=call.name,
+            dependencies=tool_dependencies[call.id],
         )
+        for call, _ in tool_rows
+        if call.id not in blocked_tools
+    )
     return ContextInputs(
-        history=history, memories=memories, tool_results=tuple(tool_results), blocked_ids=frozenset(blocked)
+        history=history,
+        memories=memories,
+        tool_results=tool_results,
+        blocked_ids=frozenset(blocked | blocked_tools),
     )
 
 

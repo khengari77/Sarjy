@@ -672,3 +672,95 @@ async def _postgres_plan_and_bounds():
         )
     finally:
         await engine.dispose()
+
+
+def test_reply_derived_from_a_blocked_tool_result_is_blocked(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "tool-reply.db")
+        try:
+            async with sessions() as db:
+                await seed_turns(db, "chat", 600)
+                await db.execute(
+                    insert(Turn),
+                    [
+                        {
+                            "id": "old-source",
+                            "conversation_id": "chat",
+                            "request_id": "old-source-request",
+                            "role": "user",
+                            "text": "I live in Tripoli",
+                            "status": "completed",
+                            "created_at": stamp(0),
+                            "snapshot": None,
+                        },
+                        {
+                            "id": "tool-parent",
+                            "conversation_id": "chat",
+                            "request_id": "tool-parent-request",
+                            "role": "user",
+                            "text": "What is the weather?",
+                            "status": "completed",
+                            "created_at": stamp(1),
+                            "snapshot": {"included_record_ids": ["m-old", "system"]},
+                        },
+                        {
+                            "id": "tool-consumer",
+                            "conversation_id": "chat",
+                            "request_id": "tool-consumer-request",
+                            "role": "user",
+                            "text": "And tomorrow?",
+                            "status": "completed",
+                            "created_at": stamp(700),
+                            "snapshot": {"included_record_ids": ["tool-derived", "system"]},
+                        },
+                        {
+                            "id": "derived-from-tool",
+                            "conversation_id": "chat",
+                            "request_id": "reply:tool-consumer",
+                            "role": "assistant",
+                            "text": "Tomorrow stays warm",
+                            "status": "completed",
+                            "created_at": stamp(701),
+                            "snapshot": {"derivation": {"record_ids": ["tool-derived", "system"]}},
+                        },
+                    ],
+                )
+                await db.execute(
+                    insert(Memory),
+                    [
+                        {
+                            "id": "m-old",
+                            "owner_id": "alice",
+                            "content": "I live in Tripoli",
+                            "embedding_model": "text-embedding-3-small",
+                            "source_turn_id": "old-source",
+                            "source_conversation_id": "chat",
+                            "version": 1,
+                            "status": "active",
+                            "created_at": stamp(0),
+                            "updated_at": stamp(0),
+                        }
+                    ],
+                )
+                await add_exclusion(db, "m-old", conversation_id="chat", owner_id="alice")
+                db.add(
+                    ToolCall(
+                        id="tool-derived",
+                        turn_id="tool-parent",
+                        request_id="tool-derived-request",
+                        name="get_current_weather",
+                        state="completed",
+                        result={"city": "Tripoli"},
+                    )
+                )
+                await db.commit()
+            async with sessions() as db:
+                inputs = await read_context_inputs(db, owner_id="alice", conversation_id="chat")
+            ids = {candidate.id for candidate in inputs.history}
+            assert "derived-from-tool" not in ids
+            assert "tool-consumer" in ids, "independent user history remains eligible"
+            assert "tool-derived" not in {candidate.id for candidate in inputs.tool_results}
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())

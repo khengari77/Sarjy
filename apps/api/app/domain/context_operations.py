@@ -78,12 +78,26 @@ def classify(content: str) -> str:
     return "budget" if BUDGET_PATTERN.search(content) else "memory"
 
 
+def _term_authorizes_budget(term: str) -> bool:
+    """A term may authorize budget removal/keep only when it names money itself.
+
+    A generic word such as "trip" appears in "Budget 500 USD for the trip" and
+    must not become budget authority just because it is a substring.
+    """
+    return bool(BUDGET_PATTERN.search(term))
+
+
 def _keep_reason(candidate: MemoryCandidate, keep_terms: tuple[str, ...]) -> str | None:
     if candidate.id in keep_terms:
         return KEEP_REASON_EXPLICIT_ID
     lowered = candidate.content.casefold()
-    if any(term.casefold() in lowered for term in keep_terms if term):
-        return KEEP_REASON_EXPLICIT_TERM
+    for term in keep_terms:
+        if not term:
+            continue
+        if candidate.is_budget and not _term_authorizes_budget(term):
+            continue
+        if term.casefold() in lowered:
+            return KEEP_REASON_EXPLICIT_TERM
     return None
 
 
@@ -91,7 +105,14 @@ def _explicitly_excluded(candidate: MemoryCandidate, exclude_terms: tuple[str, .
     if candidate.id in exclude_terms:
         return True
     lowered = candidate.content.casefold()
-    return any(term.casefold() in lowered for term in exclude_terms if term)
+    for term in exclude_terms:
+        if not term:
+            continue
+        if candidate.is_budget and not _term_authorizes_budget(term):
+            continue
+        if term.casefold() in lowered:
+            return True
+    return False
 
 
 def select_candidates(

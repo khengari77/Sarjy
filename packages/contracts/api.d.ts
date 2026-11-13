@@ -840,6 +840,11 @@ export interface components {
              * @default []
              */
             keep: string[];
+            /**
+             * Exclude
+             * @default []
+             */
+            exclude: string[];
         };
         /**
          * ResponsePreference

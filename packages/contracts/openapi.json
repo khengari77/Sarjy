@@ -2052,6 +2052,14 @@
             },
             "title": "Keep",
             "type": "array"
+          },
+          "exclude": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Exclude",
+            "type": "array"
           }
         },
         "required": [

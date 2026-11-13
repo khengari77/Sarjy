@@ -244,3 +244,15 @@ def test_registered_semantic_actions_find_nonlexical_match_and_replay(tmp_path):
         assert {row["id"] for row in response.json()["result"]["matches"]} == {"trip", "hotel", "budget"}
         assert client.post("/v1/actions", json=body).json() == response.json()
         assert counts(file)[:3] == (0, 0, 0)
+
+
+def test_unrelated_terms_do_not_authorize_budget_changes():
+    records = (candidate("budget", "Budget 500 USD for the trip"),)
+    excluded = select_candidates(records, exclude=("trip",))
+    assert excluded.excluded_ids == frozenset()
+    assert {record.id for record in excluded.ambiguous} == {"budget"}
+    assert excluded.requires_clarification is True
+
+    kept = select_candidates(records, keep=("trip",))
+    assert {record.id for record in kept.ambiguous} == {"budget"}
+    assert kept.requires_clarification is True
