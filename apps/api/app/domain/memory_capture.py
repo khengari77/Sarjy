@@ -16,7 +16,8 @@ _EXPLICIT = (
 )
 _HYPOTHETICAL = re.compile(r"\b(?:if|would|could|suppose|supposing|imagine|maybe|perhaps)\b", re.IGNORECASE)
 _REPLACEMENT = re.compile(
-    r"\b(?:now|instead|actually|no\s+longer|not\s+anymore|changed\s+my\s+mind|from\s+now\s+on)\b",
+    r"(?:\b(?:now|instead|actually)\s*[.!]?$)"
+    r"|\b(?:no\s+longer|not\s+anymore|changed\s+my\s+mind|from\s+now\s+on)\b",
     re.IGNORECASE,
 )
 _PRONOUN_VALUES = frozenset({"it", "this", "that", "them", "him", "her", "those", "these", "something", "anything"})
@@ -39,11 +40,39 @@ _ORDINARY = (
     (re.compile(r"^i\s+(?:really\s+)?(?:prefer|like|love|enjoy)\s+(?P<value>.+)$", re.IGNORECASE), "preference"),
     (re.compile(r"^i\s+(?:live|stay)\s+in\s+(?P<value>.+)$", re.IGNORECASE), "location"),
     (re.compile(r"^i\s+(?:work|am\s+working)\s+(?:at|for|in)\s+(?P<value>.+)$", re.IGNORECASE), "work"),
-    (re.compile(r"^i\s+am\s+(?:allergic\s+to|vegetarian|vegan)\b(?P<value>.*)$", re.IGNORECASE), "diet"),
+    (re.compile(r"^i\s+am\s+allergic\s+to\s+(?P<value>.+)$", re.IGNORECASE), "diet"),
+    (re.compile(r"^i\s+am\s+(?P<value>vegetarian|vegan)$", re.IGNORECASE), "diet"),
     (re.compile(r"^i\s+(?:am|'m)\s+from\s+(?P<value>.+)$", re.IGNORECASE), "origin"),
     (re.compile(r"^call\s+me\s+(?P<value>.+)$", re.IGNORECASE), "name"),
     (re.compile(r"^my\s+(?P<key>[a-z][a-z _-]{1,40}?)\s+(?:is|are)\s+(?P<value>.+)$", re.IGNORECASE), "attribute"),
 )
+
+
+_NEGATED = (
+    (
+        re.compile(r"^i\s+(?:no\s+longer|don'?t|do\s+not)\s+(?:live|stay)\s+in\s+(?P<value>.+)$", re.IGNORECASE),
+        "location",
+    ),
+    (
+        re.compile(r"^i\s+(?:am\s+)?(?:no\s+longer|not)\s+allergic\s+to\s+(?P<value>.+)$", re.IGNORECASE),
+        "diet",
+    ),
+    (
+        re.compile(
+            r"^i\s+(?:no\s+longer|don'?t|do\s+not)\s+(?:work|work\s+at|work\s+for|work\s+in)\s+(?P<value>.+)$",
+            re.IGNORECASE,
+        ),
+        "work",
+    ),
+    (
+        re.compile(
+            r"^i\s+(?:no\s+longer|don'?t|do\s+not)\s+(?:prefer|like|love|enjoy)\s+(?P<value>.+?)(?:\s+anymore)?$",
+            re.IGNORECASE,
+        ),
+        "preference",
+    ),
+)
+_NEGATION_PREFIX = re.compile(r"^i\s+(?:no\s+longer|don'?t|do\s+not|am\s+not|never)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -55,6 +84,7 @@ class MemoryCapture:
     value: str
     explicit: bool
     replaces: bool = False
+    negated: bool = False
 
 
 def _normalize(value: str) -> str:
@@ -93,6 +123,45 @@ def _ordinary(text: str) -> tuple[str, str] | None:
     return None
 
 
+def _negated(text: str) -> tuple[str, str] | None:
+    for pattern, subject in _NEGATED:
+        match = pattern.match(text)
+        if match is None:
+            continue
+        value = _normalize(match.group("value"))
+        if not value or value.casefold() in _PRONOUN_VALUES:
+            return None
+        if subject == "preference":
+            words = set(value.casefold().replace(",", " ").split())
+            topic = next((name for name, vocabulary in _PREFERENCE_TOPICS.items() if words & vocabulary), "")
+            return (f"preference:{topic}" if topic else f"preference:{_head_word(value)}"), value
+        if subject == "diet":
+            return f"diet:{value.casefold()}", value
+        return subject, value
+    return None
+
+
+def _capture_for(content: str, *, explicit: bool) -> MemoryCapture | None:
+    negated_slot = _negated(content)
+    slot = _ordinary(content) or negated_slot
+    replaces = bool(_REPLACEMENT.search(content)) or negated_slot is not None
+    if slot is None:
+        if _NEGATION_PREFIX.match(content):
+            return None
+        return MemoryCapture(
+            text=content, subject=None, value=content.casefold(), explicit=explicit, replaces=replaces, negated=False
+        )
+    subject, value = slot
+    return MemoryCapture(
+        text=content,
+        subject=subject,
+        value=value.casefold(),
+        explicit=explicit,
+        replaces=replaces,
+        negated=negated_slot is not None,
+    )
+
+
 def parse_capture(text: str) -> MemoryCapture | None:
     """Return a candidate for an explicit or ordinary first-person statement."""
     if text.strip().endswith("?"):
@@ -116,12 +185,7 @@ def parse_capture(text: str) -> MemoryCapture | None:
     if not explicit:
         if _QUOTED.match(content):
             return None
-        if _ordinary(content) is None:
+        if _ordinary(content) is None and _negated(content) is None:
             return None
 
-    replaces = bool(_REPLACEMENT.search(content))
-    slot = _ordinary(content)
-    if slot is None:
-        return MemoryCapture(text=content, subject=None, value=content.casefold(), explicit=explicit, replaces=replaces)
-    subject, value = slot
-    return MemoryCapture(text=content, subject=subject, value=value.casefold(), explicit=explicit, replaces=replaces)
+    return _capture_for(content, explicit=explicit)

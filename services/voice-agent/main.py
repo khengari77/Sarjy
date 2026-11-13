@@ -103,6 +103,13 @@ def _memory_decision(text: str) -> str | None:
 def _clarify_decision(text: str) -> str | None:
     lowered = " ".join(text.casefold().replace(",", " ").split()).strip(" .!?;:")
     if lowered in {
+        "yes",
+        "yeah",
+        "yep",
+        "sure",
+        "ok",
+        "okay",
+        "yes please",
         "yes replace it",
         "replace",
         "replace it",
@@ -197,6 +204,7 @@ class SarjyAgent(Agent):
         self.memory_outcome: str | None = None
         self.memory_message: str | None = None
         self.memory_clarify = False
+        self.memory_question_turn: str | None = None
 
     async def compile(self, message):
         if message.id not in self.prepared:
@@ -227,6 +235,7 @@ class SarjyAgent(Agent):
                     self.memory_outcome = "not_saved"
         if result.get("memory_proposal") is not None:
             self.memory_proposal = result["memory_proposal"]
+            self.memory_question_turn = result["turn_id"]
         return result["context"]
 
     async def _resolve_memory(self, decision: str) -> None:
@@ -239,6 +248,7 @@ class SarjyAgent(Agent):
         except httpx.HTTPError:
             self.memory_proposal = None
             self.memory_clarify = False
+            self.memory_question_turn = None
             self.memory_outcome = "failed"
             if self.notify:
                 await self.notify("MEMORY_SAVE_FAILED")
@@ -254,14 +264,20 @@ class SarjyAgent(Agent):
         if response.is_success:
             self.memory_proposal = None
             self.memory_clarify = False
-            self.memory_outcome = decision
-        elif code == "MEMORY_CLARIFICATION_REQUIRED":
+            self.memory_question_turn = None
+            try:
+                status = response.json().get("status", "")
+            except (ValueError, AttributeError):
+                status = ""
+            self.memory_outcome = "replace" if status == "corrected" else decision
+        elif code in {"MEMORY_CLARIFICATION_REQUIRED", "MEMORY_CONFLICT_RETRY"}:
             # Keep the signed proposal so the next turn can authorise an explicit replace.
             self.memory_clarify = True
             self.memory_outcome = "clarify"
         else:
             self.memory_proposal = None
             self.memory_clarify = False
+            self.memory_question_turn = None
             self.memory_outcome = "failed"
 
     async def reserve(self, provider: str, characters: int = 0):
@@ -305,6 +321,11 @@ class SarjyAgent(Agent):
         if user is None:
             return
         snapshot = await self.compile(user)
+        if self.memory_proposal is not None and self.current_turn == self.memory_question_turn:
+            text = self.memory_proposal.get("text", "")
+            question = f"Should I remember this: {text}?"
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=question))
+            return
         handle = self.session.current_speech
         if handle and handle.id not in self.speeches:
             self.speeches.add(handle.id)

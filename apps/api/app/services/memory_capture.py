@@ -4,17 +4,19 @@ import asyncio
 import hashlib
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
-from sqlalchemy import func, select, text
+from fastapi import HTTPException
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.context_operations import sign_proposal, verify_proposal
 from app.domain.memory_capture import MemoryCapture, parse_capture
-from app.infrastructure.database import Memory
+from app.infrastructure.database import Memory, MemoryWriteRequest, now
+from app.infrastructure.upsert import insert_ignore
 from app.services.memory import MemoryService, memory_result
 
 CAPTURE_KIND = "memory_capture"
-MAX_CONTRADICTION_SCAN = 200
 PROPOSAL_TTL_SECONDS = 600
 _SUBJECT_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
 
@@ -59,6 +61,7 @@ def propose_memory(text: str, *, owner_id: str, conversation_id: str, source_tur
             "value": capture.value,
             "explicit": capture.explicit,
             "replaces": capture.replaces,
+            "negated": capture.negated,
             "exp": int((datetime.now(UTC) + timedelta(seconds=PROPOSAL_TTL_SECONDS)).timestamp()),
         },
         secret,
@@ -82,19 +85,22 @@ def _verified(token: str, secret: str, owner_id: str, conversation_id: str) -> M
     subject = payload.get("subject")
     explicit = payload.get("explicit", False)
     replaces = payload.get("replaces", False)
+    negated = payload.get("negated", False)
     expires = payload.get("exp")
     if not isinstance(content, str) or not isinstance(value, str) or not content:
         raise MemoryCaptureError("PROPOSAL_INVALID", 400)
     if subject is not None and not isinstance(subject, str):
         raise MemoryCaptureError("PROPOSAL_INVALID", 400)
-    if not isinstance(explicit, bool) or not isinstance(replaces, bool):
+    if not isinstance(explicit, bool) or not isinstance(replaces, bool) or not isinstance(negated, bool):
         raise MemoryCaptureError("PROPOSAL_INVALID", 400)
     if not isinstance(expires, int) or expires < int(datetime.now(UTC).timestamp()):
         raise MemoryCaptureError("PROPOSAL_EXPIRED", 409)
     # The signed payload is the authority. Re-parsing the canonical text here
     # breaks explicit remembering whose payload is not itself a first-person
     # sentence (for example ``Remember to buy milk`` or a quoted phrase).
-    return MemoryCapture(text=content, subject=subject, value=value, explicit=explicit, replaces=replaces)
+    return MemoryCapture(
+        text=content, subject=subject, value=value, explicit=explicit, replaces=replaces, negated=negated
+    )
 
 
 async def _exact_content(
@@ -121,7 +127,6 @@ async def _contradictions(db: AsyncSession, *, owner_id: str, capture: MemoryCap
             select(Memory)
             .where(Memory.owner_id == owner_id, Memory.status == "active")
             .order_by(Memory.updated_at.desc(), Memory.id)
-            .limit(MAX_CONTRADICTION_SCAN)
         )
     ).all()
     matches: list[Memory] = []
@@ -155,6 +160,13 @@ async def confirm_memory(
     if not isinstance(proposed_turn, str) or not proposed_turn:
         raise MemoryCaptureError("PROPOSAL_INVALID", 400)
     if decision == "discard":
+        await _record_discard(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            proposed_turn=proposed_turn,
+            capture=capture,
+        )
         return {"status": "discarded", "memory": None}
     if decision not in {"save", "replace"}:
         raise MemoryCaptureError("INVALID_DECISION", 422)
@@ -222,7 +234,10 @@ async def _write_consented(
     superseded_same = await _exact_content(db, owner_id=owner_id, capture=capture, status="superseded")
     previous = await _contradictions(db, owner_id=owner_id, capture=capture)
     conflicting = [
-        row for row in previous if (parsed := parse_capture(row.content)) is not None and parsed.value != capture.value
+        row
+        for row in previous
+        if (parsed := parse_capture(row.content)) is not None
+        and (parsed.value != capture.value or parsed.negated != capture.negated)
     ]
     if len(conflicting) > 1:
         # More than one active row matches this slot. Picking one silently would
@@ -230,29 +245,71 @@ async def _write_consented(
         # decision instead of guessing.
         raise MemoryCaptureError("MEMORY_CLARIFICATION_REQUIRED", 409)
     if conflicting:
-        corrective = (
-            force_replace
-            or not capture.subject.startswith(("preference:", "diet:"))
-            or capture.replaces
-            or superseded_same is not None
-        )
+        corrective = force_replace or capture.replaces or superseded_same is not None
         if not corrective:
             raise MemoryCaptureError("MEMORY_CLARIFICATION_REQUIRED", 409)
         row = conflicting[0]
-        result = await memory_service.correct_memory(
-            owner_id,
-            row.id,
-            row.version,
-            capture.text,
-            key,
-            source_turn_id=source_turn_id or proposed_turn,
-            conversation_id=conversation_id,
-        )
+        try:
+            result = await memory_service.correct_memory(
+                owner_id,
+                row.id,
+                row.version,
+                capture.text,
+                key,
+                source_turn_id=source_turn_id or proposed_turn,
+                conversation_id=conversation_id,
+            )
+        except HTTPException as exc:
+            if (
+                exc.status_code == 409
+                and isinstance(exc.detail, dict)
+                and exc.detail.get("code") == "MEMORY_VERSION_CONFLICT"
+            ):
+                # Do not leave a terminal failed claim for a race; allow the
+                # signed proposal to be retried after clarification.
+                await db.execute(
+                    delete(MemoryWriteRequest).where(
+                        MemoryWriteRequest.owner_id == owner_id, MemoryWriteRequest.request_key == key
+                    )
+                )
+                await db.commit()
+                raise MemoryCaptureError("MEMORY_CONFLICT_RETRY", 409) from exc
+            raise
         return {"status": "corrected", "memory": asdict(result)}
     result = await memory_service.create_memory(
         owner_id, conversation_id, source_turn_id or proposed_turn, capture.text, key
     )
     return {"status": "saved", "memory": asdict(result)}
+
+
+async def _record_discard(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    proposed_turn: str,
+    capture: MemoryCapture,
+) -> None:
+    """Make a decline durable so a later save replay cannot write the fact."""
+    key = _request_key(owner_id, proposed_turn, capture.text)
+    fingerprint = hashlib.sha256(f"discard|{proposed_turn}|{capture.text.casefold()}".encode()).hexdigest()
+    await insert_ignore(
+        db,
+        MemoryWriteRequest,
+        {
+            "id": str(uuid4()),
+            "owner_id": owner_id,
+            "conversation_id": conversation_id,
+            "request_key": key,
+            "fingerprint": fingerprint,
+            "state": "completed",
+            "result": {"status": "discarded"},
+            "created_at": now(),
+            "updated_at": now(),
+        },
+        index_elements=["owner_id", "request_key"],
+    )
+    await db.commit()
 
 
 __all__ = [

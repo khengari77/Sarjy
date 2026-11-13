@@ -530,3 +530,123 @@ def test_explicit_remember_accepts_non_first_person_content(tmp_path):
     contents = [row[0] for row in memory_rows(file)]
     assert "to renew the passport" in contents
     assert "buy oat milk" in contents
+
+
+def test_non_preference_conflicts_require_explicit_replacement(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        def propose(text, request_id):
+            return turn(client, headers, text, request_id).json()["memory_proposal"]
+
+        first = propose("I live in Riyadh", "loc-1")
+        assert (
+            client.post(
+                "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+            ).json()["status"]
+            == "saved"
+        )
+
+        second = propose("I stay in Jeddah", "loc-2")
+        blocked = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "save"}
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "MEMORY_CLARIFICATION_REQUIRED"
+        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I live in Riyadh"]
+
+        replaced = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "replace"}
+        )
+        assert replaced.status_code == 200 and replaced.json()["status"] == "corrected"
+        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I stay in Jeddah"]
+
+
+def test_negated_corrections_and_vegetarian_are_captured(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        first = turn(client, headers, "I live in Riyadh", "neg-1").json()["memory_proposal"]
+        client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+        )
+
+        negated = turn(client, headers, "I no longer live in Riyadh", "neg-2").json()["memory_proposal"]
+        assert negated is not None
+        result = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": negated["token"], "decision": "save"}
+        )
+        assert result.status_code == 200 and result.json()["status"] == "corrected"
+        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I no longer live in Riyadh"]
+
+        vegetarian = turn(client, headers, "I am vegetarian", "neg-3").json()["memory_proposal"]
+        assert vegetarian is not None
+        assert parse_capture("I am vegetarian").subject == "diet:vegetarian"
+
+
+def test_discard_is_durable_and_replay_cannot_save(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        proposal = turn(client, headers, "I prefer tea", "discard-1").json()["memory_proposal"]
+        discarded = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "discard"}
+        )
+        assert discarded.status_code == 200 and discarded.json()["status"] == "discarded"
+        replay = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "save"}
+        )
+        assert replay.status_code == 409
+        assert memory_rows(file) == []
+
+
+def test_worker_asks_a_deterministic_question_for_a_new_proposal(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    import httpx
+    from livekit.agents import llm
+    from main import SarjyAgent
+    from test_generation import request
+
+    monkeypatch.setattr(SarjyAgent, "session", property(lambda self: SimpleNamespace(current_speech=None, llm=None)))
+
+    async def run():
+        written = request()
+        from app.domain.context import prompt_sha256
+
+        messages = [message.model_dump() for message in written.messages]
+        context = {
+            "revision": 7,
+            "messages": messages,
+            "canonical_prompt_sha256": prompt_sha256(messages),
+            "model_request": written.model_dump(mode="json"),
+        }
+
+        async def backend(request):
+            return httpx.Response(
+                200,
+                json={
+                    "turn_id": written.turn_id,
+                    "context": context,
+                    "memory_proposal": {"token": "signed", "text": "I prefer tea"},
+                },
+            )
+
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
+            chat = llm.ChatContext()
+            chat.add_message(role="user", content="I prefer tea", id="message")
+            chunks = [chunk async for chunk in agent.llm_node(chat, [], None)]
+            assert chunks and "Should I remember" in chunks[0].delta.content
+            assert agent.memory_question_turn == written.turn_id
+
+    asyncio.run(run())
