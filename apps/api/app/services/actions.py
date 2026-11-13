@@ -7,6 +7,10 @@ import time
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from fastapi import HTTPException
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker
+
 from app.domain.contracts import (
     AdjustSpeakingSpeed,
     OpenMemoryExplorer,
@@ -18,9 +22,7 @@ from app.domain.contracts import (
     apply_settings_action,
 )
 from app.infrastructure.database import ContextOperation, Conversation, SessionGate, SettingRevision, UserSetting, now
-from fastapi import HTTPException
-from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker
+from app.infrastructure.upsert import insert_ignore
 
 SETTING_ACTIONS = (AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed)
 PREPARATION_LEASE_SECONDS = 120
@@ -50,6 +52,13 @@ def settings_value(row):
         response_preference=row.response_preference,
         revision=row.revision,
     )
+
+
+def _replay_result(existing):
+    result = (existing.payload or {}).get("result")
+    if result is None:
+        raise HTTPException(503, detail={"code": "ACTION_REQUEST_UNKNOWN"})
+    return result
 
 
 class EffectSession:
@@ -94,28 +103,12 @@ class EffectSession:
         raise HTTPException(503, detail={"code": "ACTION_TRANSACTION_OWNED"})
 
 
-def _replay_result(existing):
-    result = (existing.payload or {}).get("result")
-    if result is None:
-        raise HTTPException(503, detail={"code": "ACTION_REQUEST_UNKNOWN"})
-    return result
-
-
 async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected_revision, action, catalog, handlers):
     """Own a fresh short transaction, independent of authentication reads."""
     bind = db.bind
     factory = async_sessionmaker(bind.engine if isinstance(bind, AsyncConnection) else bind, expire_on_commit=False)
-    key = hashlib.sha256(("dispatch:" + owner_id + ":" + request_id).encode()).hexdigest()
-    fingerprint = hashlib.sha256(
-        json.dumps(
-            {
-                "conversation_id": conversation_id,
-                "expected_revision": expected_revision,
-                "action": action.model_dump(mode="json"),
-            },
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()
+    key = _dispatch_key(owner_id, request_id)
+    fingerprint = _dispatch_fingerprint(conversation_id, expected_revision, action)
     handler = handlers.get(action.kind)
     prepare = getattr(handler, "prepare", None) if handler is not None else None
     if isinstance(action, SelectApprovedVoice):
@@ -170,97 +163,95 @@ async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected
         raise
 
 
+def _preparation_values(owner_id, conversation_id, key, fingerprint, identifier, lease_id):
+    return dict(
+        id=identifier,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        command_type="DispatchAction",
+        payload={"fingerprint": fingerprint},
+        revision_before=None,
+        revision_after=None,
+        idempotency_key=key,
+        outcome="preparing",
+        lease_id=lease_id,
+        lease_expires_at=_lease_expiry(),
+        created_at=now(),
+    )
+
+
+def _existing_claim_outcome(existing, owner_id, fingerprint):
+    if existing is None:
+        raise HTTPException(503, detail={"code": "ACTION_REQUEST_UNKNOWN"})
+    if existing.owner_id != owner_id or (existing.payload or {}).get("fingerprint") != fingerprint:
+        raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+    if existing.outcome == "completed":
+        return "replay", None, None, _replay_result(existing)
+    if existing.outcome == "preparing" and not _lease_expired(existing.lease_expires_at):
+        return "in_progress", existing.id, existing.lease_id, None
+    return None
+
+
+async def _recover_expired_claim(claim_db, existing, owner_id, conversation_id, key, fingerprint):
+    prepared = (existing.payload or {}).get("prepared")
+    if prepared is not None:
+        new_lease = str(uuid4())
+        changed = await claim_db.execute(
+            update(ContextOperation)
+            .where(
+                ContextOperation.id == existing.id,
+                ContextOperation.outcome == "preparing",
+                ContextOperation.lease_id == existing.lease_id,
+            )
+            .values(lease_id=new_lease, lease_expires_at=_lease_expiry())
+        )
+        if changed.rowcount == 1:
+            return "resume", existing.id, new_lease, prepared
+        return "in_progress", existing.id, existing.lease_id, None
+    removed = await claim_db.execute(
+        delete(ContextOperation).where(
+            ContextOperation.id == existing.id,
+            ContextOperation.outcome == "preparing",
+            ContextOperation.lease_id == existing.lease_id,
+        )
+    )
+    if removed.rowcount != 1:
+        return "in_progress", existing.id, existing.lease_id, None
+    identifier, lease_id = str(uuid4()), str(uuid4())
+    retry = await insert_ignore(
+        claim_db,
+        ContextOperation,
+        _preparation_values(owner_id, conversation_id, key, fingerprint, identifier, lease_id),
+        index_elements=["idempotency_key"],
+    )
+    if retry.rowcount == 1:
+        return "winner", identifier, lease_id, None
+    existing = await claim_db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
+    outcome = _existing_claim_outcome(existing, owner_id, fingerprint)
+    if outcome is not None:
+        return outcome
+    raise HTTPException(503, detail={"code": "ACTION_REQUEST_FAILED"})
+
+
 async def _claim_preparation(factory, *, owner_id, conversation_id, key, fingerprint):
     async with factory() as claim_db, claim_db.begin():
         conversation = await claim_db.get(Conversation, conversation_id)
         if not conversation or conversation.owner_id != owner_id:
             raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
-        if claim_db.bind.dialect.name == "sqlite":
-            from sqlalchemy.dialects.sqlite import insert
-        elif claim_db.bind.dialect.name == "postgresql":
-            from sqlalchemy.dialects.postgresql import insert
-        else:
-            raise ValueError("Unsupported dispatch database")
-
-        def values(identifier, lease_id):
-            return dict(
-                id=identifier,
-                owner_id=owner_id,
-                conversation_id=conversation_id,
-                command_type="DispatchAction",
-                payload={"fingerprint": fingerprint},
-                revision_before=None,
-                revision_after=None,
-                idempotency_key=key,
-                outcome="preparing",
-                lease_id=lease_id,
-                lease_expires_at=_lease_expiry(),
-                created_at=now(),
-            )
-
         identifier, lease_id = str(uuid4()), str(uuid4())
-        result = await claim_db.execute(
-            insert(ContextOperation)
-            .values(**values(identifier, lease_id))
-            .on_conflict_do_nothing(index_elements=["idempotency_key"])
+        result = await insert_ignore(
+            claim_db,
+            ContextOperation,
+            _preparation_values(owner_id, conversation_id, key, fingerprint, identifier, lease_id),
+            index_elements=["idempotency_key"],
         )
         if result.rowcount == 1:
             return "winner", identifier, lease_id, None
         existing = await claim_db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
-        if existing is None:
-            raise HTTPException(503, detail={"code": "ACTION_REQUEST_UNKNOWN"})
-        if existing.owner_id != owner_id or (existing.payload or {}).get("fingerprint") != fingerprint:
-            raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-        if existing.outcome == "completed":
-            return "replay", None, None, _replay_result(existing)
-        if existing.outcome == "preparing" and not _lease_expired(existing.lease_expires_at):
-            return "in_progress", existing.id, existing.lease_id, None
-        if existing.outcome == "preparing":
-            prepared = (existing.payload or {}).get("prepared")
-            if prepared is not None:
-                new_lease = str(uuid4())
-                changed = await claim_db.execute(
-                    update(ContextOperation)
-                    .where(
-                        ContextOperation.id == existing.id,
-                        ContextOperation.outcome == "preparing",
-                        ContextOperation.lease_id == existing.lease_id,
-                    )
-                    .values(lease_id=new_lease, lease_expires_at=_lease_expiry())
-                )
-                if changed.rowcount == 1:
-                    return "resume", existing.id, new_lease, prepared
-                return "in_progress", existing.id, existing.lease_id, None
-            removed = await claim_db.execute(
-                delete(ContextOperation).where(
-                    ContextOperation.id == existing.id,
-                    ContextOperation.outcome == "preparing",
-                    ContextOperation.lease_id == existing.lease_id,
-                )
-            )
-            if removed.rowcount != 1:
-                return "in_progress", existing.id, existing.lease_id, None
-        else:
-            await claim_db.delete(existing)
-            await claim_db.flush()
-        identifier, lease_id = str(uuid4()), str(uuid4())
-        retry = await claim_db.execute(
-            insert(ContextOperation)
-            .values(**values(identifier, lease_id))
-            .on_conflict_do_nothing(index_elements=["idempotency_key"])
-        )
-        if retry.rowcount == 1:
-            return "winner", identifier, lease_id, None
-        existing = await claim_db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
-        if existing is None:
-            raise HTTPException(503, detail={"code": "ACTION_REQUEST_UNKNOWN"})
-        if existing.owner_id != owner_id or (existing.payload or {}).get("fingerprint") != fingerprint:
-            raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-        if existing.outcome == "completed":
-            return "replay", None, None, _replay_result(existing)
-        if existing.outcome == "preparing":
-            return "in_progress", existing.id, existing.lease_id, None
-        raise HTTPException(503, detail={"code": "ACTION_REQUEST_FAILED"})
+        outcome = _existing_claim_outcome(existing, owner_id, fingerprint)
+        if outcome is not None:
+            return outcome
+        return await _recover_expired_claim(claim_db, existing, owner_id, conversation_id, key, fingerprint)
 
 
 async def _store_prepared(factory, preparation_id, lease_id, prepared):
@@ -296,7 +287,7 @@ async def _wait_for_preparation(factory, *, key, owner_id, fingerprint):
             existing = await db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
             if existing is None:
                 raise HTTPException(503, detail={"code": "ACTION_REQUEST_UNKNOWN"})
-            if existing.owner_id != owner_id or (existing.payload or {}).get("fingerprint") != fingerprint:
+            if existing.owner_id != owner_id or existing.payload.get("fingerprint") != fingerprint:
                 raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
             if existing.outcome == "completed":
                 return _replay_result(existing)
@@ -335,26 +326,12 @@ async def _dispatch_transaction(
     conversation = await db.get(Conversation, conversation_id)
     if not conversation or conversation.owner_id != owner_id:
         raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
-    key = hashlib.sha256(("dispatch:" + owner_id + ":" + request_id).encode()).hexdigest()
-    fingerprint = hashlib.sha256(
-        json.dumps(
-            {
-                "conversation_id": conversation_id,
-                "expected_revision": expected_revision,
-                "action": action.model_dump(mode="json"),
-            },
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()
+    key = _dispatch_key(owner_id, request_id)
+    fingerprint = _dispatch_fingerprint(conversation_id, expected_revision, action)
     existing = await db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
-    if existing:
-        if existing.owner_id != owner_id or (existing.payload or {}).get("fingerprint") != fingerprint:
-            raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-        if existing.outcome == "completed":
-            result = (existing.payload or {}).get("result")
-            if result is None:
-                raise HTTPException(503, detail={"code": "ACTION_REQUEST_UNKNOWN"})
-            return result
+    replayed = _replay(existing, owner_id, fingerprint)
+    if replayed is not None:
+        return replayed
     if prepared_operation_id is not None:
         claim = await db.get(ContextOperation, prepared_operation_id)
         if claim is None or claim.outcome != "preparing" or claim.lease_id != preparation_lease:
@@ -364,45 +341,109 @@ async def _dispatch_transaction(
             if prepared is None:
                 raise HTTPException(409, detail={"code": "ACTION_LEASE_LOST"})
     if isinstance(action, SETTING_ACTIONS):
-        row = await db.get(UserSetting, owner_id)
-        before = settings_value(row)
-        if before.revision != expected_revision:
-            raise HTTPException(409, detail={"code": "SETTINGS_REVISION_CONFLICT"})
-        after = apply_settings_action(before, action)
-        if after.revision != before.revision:
-            if row is None:
-                row = UserSetting(owner_id=owner_id)
-                db.add(row)
-            for field in ("speaking_speed", "captions_visible", "approved_voice_id", "revision"):
-                setattr(row, field, getattr(after, field))
-            row.response_preference = after.response_preference.value
-            row.updated_at = now()
-            db.add(
-                SettingRevision(
-                    id=str(uuid4()), owner_id=owner_id, revision=after.revision, settings=after.model_dump(mode="json")
-                )
-            )
-        result = {"kind": action.kind, "settings": after.model_dump(mode="json"), "changed": after != before}
+        result = await _apply_setting(db, owner_id, expected_revision, action)
     elif isinstance(action, (ShowConversationHistory, OpenMemoryExplorer)):
-        result = {
-            "kind": action.kind,
-            "navigation": "history" if isinstance(action, ShowConversationHistory) else "memory_explorer",
-        }
+        result = _navigation_result(action)
     else:
-        handler = handlers.get(action.kind)
-        if handler is None:
-            raise HTTPException(503, detail={"code": "ACTION_HANDLER_UNAVAILABLE"})
-        # Durable context/memory handlers must retain this transaction; the dispatcher commits once.
-        prepare_args = {"prepared": prepared} if getattr(handler, "prepare", None) is not None else {}
-        result = await handler(
-            db=EffectSession(db),
+        result = await _run_handler(
+            db,
             owner_id=owner_id,
             conversation_id=conversation_id,
             request_id=request_id,
             expected_revision=expected_revision,
             action=action,
-            **prepare_args,
+            handlers=handlers,
+            prepared=prepared,
         )
+    await _record_completion(
+        db,
+        prepared_operation_id=prepared_operation_id,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        key=key,
+        fingerprint=fingerprint,
+        result=result,
+        preparation_lease=preparation_lease,
+    )
+    return result
+
+
+def _dispatch_key(owner_id, request_id) -> str:
+    return hashlib.sha256(("dispatch:" + owner_id + ":" + request_id).encode()).hexdigest()
+
+
+def _dispatch_fingerprint(conversation_id, expected_revision, action) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "conversation_id": conversation_id,
+                "expected_revision": expected_revision,
+                "action": action.model_dump(mode="json"),
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+
+
+def _replay(existing, owner_id, fingerprint):
+    if not existing:
+        return None
+    if existing.owner_id != owner_id or existing.payload.get("fingerprint") != fingerprint:
+        raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+    if existing.outcome == "completed":
+        return existing.payload["result"]
+    return None
+
+
+async def _apply_setting(db, owner_id, expected_revision, action):
+    row = await db.get(UserSetting, owner_id)
+    before = settings_value(row)
+    if before.revision != expected_revision:
+        raise HTTPException(409, detail={"code": "SETTINGS_REVISION_CONFLICT"})
+    after = apply_settings_action(before, action)
+    if after.revision != before.revision:
+        if row is None:
+            row = UserSetting(owner_id=owner_id)
+            db.add(row)
+        for field in ("speaking_speed", "captions_visible", "approved_voice_id", "revision"):
+            setattr(row, field, getattr(after, field))
+        row.response_preference = after.response_preference.value
+        row.updated_at = now()
+        db.add(
+            SettingRevision(
+                id=str(uuid4()), owner_id=owner_id, revision=after.revision, settings=after.model_dump(mode="json")
+            )
+        )
+    return {"kind": action.kind, "settings": after.model_dump(mode="json"), "changed": after != before}
+
+
+def _navigation_result(action) -> dict:
+    return {
+        "kind": action.kind,
+        "navigation": "history" if isinstance(action, ShowConversationHistory) else "memory_explorer",
+    }
+
+
+async def _run_handler(db, *, owner_id, conversation_id, request_id, expected_revision, action, handlers, prepared):
+    handler = handlers.get(action.kind)
+    if handler is None:
+        raise HTTPException(503, detail={"code": "ACTION_HANDLER_UNAVAILABLE"})
+    # Durable context/memory handlers must retain this transaction; the dispatcher commits once.
+    prepare_args = {"prepared": prepared} if getattr(handler, "prepare", None) is not None else {}
+    return await handler(
+        db=EffectSession(db),
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        request_id=request_id,
+        expected_revision=expected_revision,
+        action=action,
+        **prepare_args,
+    )
+
+
+async def _record_completion(
+    db, *, prepared_operation_id, owner_id, conversation_id, key, fingerprint, result, preparation_lease=None
+) -> None:
     if prepared_operation_id is not None:
         changed = await db.execute(
             update(ContextOperation)
@@ -421,16 +462,15 @@ async def _dispatch_transaction(
         if changed.rowcount != 1:
             # A takeover fenced this worker; roll back its effects.
             raise HTTPException(409, detail={"code": "ACTION_LEASE_LOST"})
-    else:
-        db.add(
-            ContextOperation(
-                id=str(uuid4()),
-                owner_id=owner_id,
-                conversation_id=conversation_id,
-                command_type="DispatchAction",
-                idempotency_key=key,
-                outcome="completed",
-                payload={"fingerprint": fingerprint, "result": result},
-            )
+        return
+    db.add(
+        ContextOperation(
+            id=str(uuid4()),
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            command_type="DispatchAction",
+            idempotency_key=key,
+            outcome="completed",
+            payload={"fingerprint": fingerprint, "result": result},
         )
-    return result
+    )

@@ -18,27 +18,59 @@ dependencies = [
 [dependency-groups]
 dev = [
     "hypothesis>=6.170.15",
+    "import-linter>=2.1",
+    "mypy>=1.13",
     "pytest>=8",
     "ruff==0.17.5",
-    "mypy>=1.13",
+    "vulture>=2.14",
 ]
 [tool.pytest.ini_options]
 pythonpath = ["apps/api", "services/voice-agent"]
-
 testpaths = ["tests"]
 filterwarnings = ["error"]
-norecursedirs = [".*", ".hypothesis", "artifacts", "node_modules", "build", "dist", "venv"]
+norecursedirs = [".*", "*.egg", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}", "artifacts", ".hypothesis"]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-extend-exclude = ["artifacts", "*.md"]
 
 [tool.ruff.lint]
-select = ["E9", "F", "I", "UP", "SIM", "B"]
+select = ["E9", "F", "I", "UP", "SIM", "B", "C90"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
 "apps/api/app/**" = ["B008"]
+
+[tool.importlinter]
+root_packages = ["app"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "The domain is pure"
+type = "forbidden"
+source_modules = ["app.domain"]
+forbidden_modules = [
+    "app.services",
+    "app.infrastructure",
+    "app.routes",
+    "fastapi",
+    "sqlalchemy",
+    "httpx",
+    "livekit",
+]
+
+[[tool.importlinter.contracts]]
+name = "Services do not import routes"
+type = "forbidden"
+source_modules = ["app.services"]
+forbidden_modules = ["app.routes"]
+
+[[tool.importlinter.contracts]]
+name = "Layers"
+type = "layers"
+layers = ["app.routes", "app.services", "app.domain"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -49,7 +49,7 @@ def snapshot_request(snapshot, turn_id):
                 revision=snapshot["revision"],
                 included=tuple(
                     ContextEntry(id=identifier, role=message["role"], text=message["content"])
-                    for identifier, message in zip(identifiers, messages, strict=False)
+                    for identifier, message in zip(identifiers, messages, strict=True)
                 ),
                 excluded_ids=frozenset(snapshot["excluded_record_ids"]),
             ),

@@ -1,4 +1,4 @@
-import app.main as main_module
+import app.routes.worker as worker_module
 from app.services.weather import WeatherError
 from fastapi.testclient import TestClient
 from test_context_assembly import start_turn
@@ -13,7 +13,7 @@ def test_weather_operation_replays_without_second_external_call(tmp_path, monkey
         calls.append(city)
         return {"city": city, "temperature": 21}
 
-    monkeypatch.setattr(main_module, "get_current_weather", weather)
+    monkeypatch.setattr(worker_module, "get_current_weather", weather)
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
@@ -35,7 +35,7 @@ def test_weather_operation_replays_without_second_external_call(tmp_path, monkey
             calls.append("unknown")
             raise WeatherError("WEATHER_UNAVAILABLE")
 
-        monkeypatch.setattr(main_module, "get_current_weather", unavailable)
+        monkeypatch.setattr(worker_module, "get_current_weather", unavailable)
         unknown_payload = {"turn_id": first["turn_id"], "request_id": "turn:call-2", "city": "Tripoli"}
         first_unknown = client.post("/internal/agent/tool/weather", headers=headers, json=unknown_payload)
         replay_unknown = client.post("/internal/agent/tool/weather", headers=headers, json=unknown_payload)
@@ -54,7 +54,7 @@ def test_weather_operation_key_cannot_be_reused_for_another_turn(tmp_path, monke
         calls.append(city)
         return {"city": city}
 
-    monkeypatch.setattr(main_module, "get_current_weather", weather)
+    monkeypatch.setattr(worker_module, "get_current_weather", weather)
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]

@@ -20,6 +20,8 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Literal
 
+from pydantic import Field, ValidationError, field_validator, model_validator
+
 from app.domain.commands import parse_exact_command
 from app.domain.contracts import (
     Action,
@@ -33,7 +35,6 @@ from app.domain.routing import (
     ReservationRequest,
     UsageMetadata,
 )
-from pydantic import Field, ValidationError, field_validator, model_validator
 
 EXTRACTION_MODEL: Final = "deepseek-flash"
 MAX_INSTRUCTION_CHARS: Final = 500
@@ -318,6 +319,50 @@ async def extract_action(
     Both ``reserve`` and ``generate`` are required.  A missing dependency raises
     immediately instead of creating an unreserved live path.
     """
+    _validate_inputs(reserve, generate, generation, request_id)
+    instruction = text.strip() if isinstance(text, str) else ""
+    if not instruction:
+        return _clarification("EMPTY_INSTRUCTION")
+    if len(instruction) > MAX_INSTRUCTION_CHARS:
+        return _clarification("INSTRUCTION_TOO_LONG")
+
+    exact = _exact_outcome(
+        instruction,
+        allowed_kinds=allowed_kinds,
+        approved_voice_ids=approved_voice_ids,
+        allowed_operation_ids=allowed_operation_ids,
+    )
+    if exact is not None:
+        return exact
+
+    safety_reason = unsafe_utterance_reason(instruction)
+    if safety_reason is not None:
+        return _clarification(safety_reason)
+
+    prompt, error = _prompt(
+        instruction,
+        approved_voice_ids=approved_voice_ids,
+        allowed_operation_ids=allowed_operation_ids,
+        context=context,
+        allowed_kinds=allowed_kinds,
+    )
+    if error is not None:
+        return _clarification(error)
+
+    reservation = _reservation(request_id, prompt, generation)
+    payload, usage, error = await _generate_payload(reservation, prompt, generation, reserve, generate)
+    if error is not None:
+        return _clarification(error)
+    return _generated_outcome(
+        payload,
+        usage,
+        allowed_kinds=allowed_kinds,
+        approved_voice_ids=approved_voice_ids,
+        allowed_operation_ids=allowed_operation_ids,
+    )
+
+
+def _validate_inputs(reserve, generate, generation, request_id) -> None:
     if not callable(reserve):
         raise TypeError("reserve must be an injected async callback")
     if not callable(generate):
@@ -327,41 +372,63 @@ async def extract_action(
     if not isinstance(request_id, str) or not request_id.strip():
         raise ValueError("request_id is required")
 
-    instruction = text.strip() if isinstance(text, str) else ""
-    if not instruction:
-        return _clarification("EMPTY_INSTRUCTION")
-    if len(instruction) > MAX_INSTRUCTION_CHARS:
-        return _clarification("INSTRUCTION_TOO_LONG")
 
+def _exact_outcome(instruction, *, allowed_kinds, approved_voice_ids, allowed_operation_ids):
     exact = parse_exact_command(instruction)
-    if exact is not None:
-        reason = _restriction_reason(
-            exact,
-            allowed_kinds=allowed_kinds,
-            approved_voice_ids=approved_voice_ids,
-            allowed_operation_ids=allowed_operation_ids,
-        )
-        if reason is not None:
-            return _clarification(reason)
-        return ExtractionOutcome(kind="action", source="exact", action=exact)
+    if exact is None:
+        return None
+    reason = _restriction_reason(
+        exact,
+        allowed_kinds=allowed_kinds,
+        approved_voice_ids=approved_voice_ids,
+        allowed_operation_ids=allowed_operation_ids,
+    )
+    if reason is not None:
+        return _clarification(reason)
+    return ExtractionOutcome(kind="action", source="exact", action=exact)
 
-    safety_reason = unsafe_utterance_reason(instruction)
-    if safety_reason is not None:
-        return _clarification(safety_reason)
 
+def _prompt(instruction, *, approved_voice_ids, allowed_operation_ids, context, allowed_kinds):
     try:
-        prompt = build_extraction_prompt(
-            instruction,
-            approved_voice_ids=approved_voice_ids,
-            allowed_operation_ids=allowed_operation_ids,
-            context=context,
-            allowed_kinds=allowed_kinds,
+        return (
+            build_extraction_prompt(
+                instruction,
+                approved_voice_ids=approved_voice_ids,
+                allowed_operation_ids=allowed_operation_ids,
+                context=context,
+                allowed_kinds=allowed_kinds,
+            ),
+            None,
         )
     except InstructionTooLong:
-        return _clarification("INSTRUCTION_TOO_LONG")
+        return None, "INSTRUCTION_TOO_LONG"
     except ValueError:
-        return _clarification("INVALID_INSTRUCTION")
+        return None, "INVALID_INSTRUCTION"
 
+
+def _generated_outcome(payload, usage, *, allowed_kinds, approved_voice_ids, allowed_operation_ids):
+    if payload is None:
+        return _clarification("INVALID_JSON", usage=usage)
+    if payload.get("kind") == "NoAction":
+        return _clarification("NO_ACTION", usage=usage)
+    if allowed_kinds is not None and payload.get("kind") not in allowed_kinds:
+        return _clarification("UNSUPPORTED_ACTION", usage=usage)
+    try:
+        action = parse_action(payload)
+    except (ValueError, TypeError, OverflowError, ValidationError):
+        return _clarification("INVALID_ACTION", usage=usage)
+    reason = _restriction_reason(
+        action,
+        allowed_kinds=allowed_kinds,
+        approved_voice_ids=approved_voice_ids,
+        allowed_operation_ids=allowed_operation_ids,
+    )
+    if reason is not None:
+        return _clarification(reason, usage=usage)
+    return ExtractionOutcome(kind="action", source="generated", action=action, usage=usage)
+
+
+def _reservation(request_id: str, prompt: str, generation: GenerationConfig) -> ReservationRequest:
     estimated_input_tokens = max(1, math.ceil(len(prompt) / 4))
     estimated_output_tokens = generation.max_output_tokens
     estimated_cost_micro_usd = max(
@@ -371,7 +438,7 @@ async def extract_action(
             + estimated_output_tokens * generation.output_usd_per_million
         ),
     )
-    reservation = ReservationRequest(
+    return ReservationRequest(
         request_id=request_id,
         provider=generation.provider,
         model=generation.model,
@@ -380,13 +447,15 @@ async def extract_action(
         estimated_cost_micro_usd=estimated_cost_micro_usd,
         purpose="extraction",
     )
+
+
+async def _generate_payload(reservation, prompt, generation, reserve, generate):
     try:
         permitted = await reserve(reservation)
     except Exception:
         permitted = False
     if not permitted:
-        return _clarification("RESERVATION_DENIED")
-
+        return None, None, "RESERVATION_DENIED"
     try:
         raw = await generate(
             GenerationRequest(
@@ -396,32 +465,9 @@ async def extract_action(
             )
         )
     except Exception:
-        return _clarification("GENERATION_FAILED")
-
+        return None, None, "GENERATION_FAILED"
     payload, usage = _parse_generated_payload(raw)
-    if payload is None:
-        return _clarification("INVALID_JSON", usage=usage)
-    if payload.get("kind") == "NoAction":
-        return _clarification("NO_ACTION", usage=usage)
-
-    if allowed_kinds is not None and payload.get("kind") not in allowed_kinds:
-        return _clarification("UNSUPPORTED_ACTION", usage=usage)
-
-    try:
-        action = parse_action(payload)
-    except (ValueError, TypeError, OverflowError, ValidationError):
-        return _clarification("INVALID_ACTION", usage=usage)
-
-    reason = _restriction_reason(
-        action,
-        allowed_kinds=allowed_kinds,
-        approved_voice_ids=approved_voice_ids,
-        allowed_operation_ids=allowed_operation_ids,
-    )
-    if reason is not None:
-        return _clarification(reason, usage=usage)
-
-    return ExtractionOutcome(kind="action", source="generated", action=action, usage=usage)
+    return payload, usage, None
 
 
 __all__ = [

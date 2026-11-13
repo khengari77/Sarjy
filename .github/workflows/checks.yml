@@ -34,6 +34,16 @@ jobs:
         with:
           version: 10.32.1
       - run: pnpm --dir apps/web install --frozen-lockfile
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run vulture apps/api/app/domain --min-confidence 90
+      - run: uv run mypy
+      - run: uv run lint-imports
+        env:
+          PYTHONPATH: apps/api
+      - run: pnpm --dir apps/web lint
+      - run: pnpm --dir apps/web format:check
+      - run: pnpm --dir apps/web test:unit
       - run: pnpm --dir apps/web check
       - run: pnpm --dir apps/web build
       - run: uv run pytest -q
@@ -88,10 +98,19 @@ jobs:
           REQUIRE_DAY2_INTEGRATION: '1'
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
+      - name: Memory claim concurrency
+        # The write ledger's duplicate-request guarantee is only meaningful on a
+        # real PostgreSQL database; run it as its own required step so a failure
+        # is attributable. A skip fails the step via tests/conftest.py.
+        run: uv run pytest -q tests/test_memory_claims_postgres.py
+        env:
+          REQUIRE_DAY2_INTEGRATION: '1'
+          TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
+          TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
       - name: Real vector and integration checks
         run: |
           uv run python -c "import sys; sys.path.insert(0, 'apps/api'); import app.services.memory, app.services.context_operations, app.domain.weather_permissions"
-          uv run pytest -q tests/test_memory_postgres.py tests/test_day2_integration.py tests/test_tool_operations_postgres.py
+          uv run pytest -q tests/test_memory_postgres.py tests/test_day2_integration.py tests/test_memory_transaction_boundary.py tests/test_tool_operations_postgres.py
         env:
           REQUIRE_DAY2_INTEGRATION: '1'
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests

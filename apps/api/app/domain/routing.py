@@ -18,6 +18,8 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, Literal, cast
 
+from pydantic import Field, ValidationError, model_validator
+
 from app.domain.contracts import (
     PROBABILITY_MAX_TOLERANCE,
     PROBABILITY_TOLERANCE,
@@ -39,7 +41,6 @@ from app.domain.contracts import (
     ShowConversationHistory,
     resolve_response_policy,
 )
-from pydantic import Field, ValidationError, model_validator
 
 JEV_MODEL: Final = "jev-1.14.0"
 ROUTING_POLICY_VERSION: Final = "day2-jev-v1"
@@ -360,36 +361,42 @@ def _choice_answer(
     if not isinstance(choice, str) or choice not in expected_options:
         raise ClassificationError("UNKNOWN_OPTION")
 
+    confidence = _confidence(answer)
+    probabilities = _probabilities(answer, expected_options)
+    total = math.fsum(probabilities.values())
+    if abs(total - 1) > PROBABILITY_TOLERANCE:
+        raise ClassificationError("PROBABILITY_SUM")
+    top = max(probabilities.values())
+    if probabilities[choice] < top - PROBABILITY_MAX_TOLERANCE:
+        raise ClassificationError("SELECTED_OPTION_NOT_MAXIMUM")
+    return choice, probabilities, confidence
+
+
+def _confidence(answer: Mapping[str, Any]) -> float:
     confidence = answer.get("confidence")
     if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
         raise ClassificationError("INVALID_CONFIDENCE")
-    confidence = float(confidence)
-    if not math.isfinite(confidence) or not 0 <= confidence <= 1:
+    value = float(confidence)
+    if not math.isfinite(value) or not 0 <= value <= 1:
         raise ClassificationError("INVALID_CONFIDENCE")
+    return value
 
-    raw_probabilities = answer.get("probabilities")
-    if not isinstance(raw_probabilities, Mapping):
+
+def _probabilities(answer: Mapping[str, Any], expected_options: set[str]) -> dict[str, float]:
+    raw = answer.get("probabilities")
+    if not isinstance(raw, Mapping):
         raise ClassificationError("MISSING_PROBABILITIES")
-    if set(raw_probabilities) != expected_options:
+    if set(raw) != expected_options:
         raise ClassificationError("PROBABILITY_OPTIONS_MISMATCH")
-
     probabilities: dict[str, float] = {}
-    for option, value in raw_probabilities.items():
+    for option, value in raw.items():
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ClassificationError("INVALID_PROBABILITY")
         probability = float(value)
         if not math.isfinite(probability) or not 0 <= probability <= 1:
             raise ClassificationError("INVALID_PROBABILITY")
         probabilities[option] = probability
-
-    total = math.fsum(probabilities.values())
-    if abs(total - 1) > PROBABILITY_TOLERANCE:
-        raise ClassificationError("PROBABILITY_SUM")
-
-    top = max(probabilities.values())
-    if probabilities[choice] < top - PROBABILITY_MAX_TOLERANCE:
-        raise ClassificationError("SELECTED_OPTION_NOT_MAXIMUM")
-    return choice, probabilities, confidence
+    return probabilities
 
 
 def _usage(payload: Mapping[str, Any]) -> UsageMetadata | None:
