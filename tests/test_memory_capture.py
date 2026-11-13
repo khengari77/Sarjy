@@ -161,11 +161,42 @@ def test_preference_correction_targets_the_same_topic_and_can_be_restored(tmp_pa
         )
         assert conflict.status_code == 409
         assert conflict.json()["detail"]["code"] == "MEMORY_CLARIFICATION_REQUIRED"
+        replaced = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": without_marker["token"], "decision": "replace"},
+        )
+        assert replaced.status_code == 200, replaced.text
+        assert replaced.json()["status"] == "corrected" and replaced.json()["memory"]["version"] == 3
 
         restored = save("I prefer tea", "pref-5")
-        assert restored["status"] == "corrected" and restored["memory"]["version"] == 3
+        assert restored["status"] == "corrected" and restored["memory"]["version"] == 4
         active = {row[0]: row[1] for row in memory_rows(file) if row[2] == "active"}
-        assert active == {"I love jazz": 1, "I prefer tea": 3}
+        assert active == {"I love jazz": 1, "I prefer tea": 4}
+
+
+def test_replacement_marker_corrects_a_preference_without_a_topic_keyword(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        def save(text, request_id):
+            proposal = turn(client, headers, text, request_id).json()["memory_proposal"]
+            response = client.post(
+                "/internal/agent/memory/confirm",
+                headers=headers,
+                json={"token": proposal["token"], "decision": "save"},
+            )
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        assert save("I prefer the blue one", "fallback-1")["status"] == "saved"
+        changed = save("I prefer the red one now", "fallback-2")
+        assert changed["status"] == "corrected" and changed["memory"]["version"] == 2
+        active = {row[0]: row[1] for row in memory_rows(file) if row[2] == "active"}
+        assert active == {"I prefer the red one now": 2}
 
 
 def test_unrelated_preferences_and_allergies_are_not_destroyed(tmp_path):
@@ -390,3 +421,37 @@ def test_concurrent_confirms_never_leave_contradictory_active_rows(tmp_path):
             await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_worker_retains_a_clarifying_proposal_and_replaces_on_confirmation():
+    import asyncio
+    from types import SimpleNamespace
+
+    import httpx
+    from main import SarjyAgent
+
+    paths = []
+
+    async def run():
+        state = {"clarified": False}
+
+        def backend(request):
+            paths.append((request.url.path, json.loads(request.content or b"{}")))
+            if request.url.path.endswith("/memory/confirm"):
+                if not state["clarified"]:
+                    state["clarified"] = True
+                    return httpx.Response(409, json={"detail": {"code": "MEMORY_CLARIFICATION_REQUIRED"}})
+                return httpx.Response(200, json={"status": "corrected"})
+            return httpx.Response(200, json={"turn_id": "turn", "context": {}, "memory_proposal": None})
+
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
+            agent.memory_proposal = {"token": "signed"}
+            await agent.compile(SimpleNamespace(id="one", text_content="yes"))
+            assert agent.memory_proposal is not None and agent.memory_clarify is True
+            await agent.compile(SimpleNamespace(id="two", text_content="yes"))
+            assert agent.memory_proposal is None
+
+    asyncio.run(run())
+    confirmations = [body for path, body in paths if path.endswith("/memory/confirm")]
+    assert [body["decision"] for body in confirmations] == ["save", "replace"]

@@ -100,6 +100,15 @@ def _memory_decision(text: str) -> str | None:
     return None
 
 
+def _clarify_decision(text: str) -> str | None:
+    lowered = " ".join(text.casefold().replace(",", " ").split()).strip(" .!?;:")
+    if lowered in {"yes", "yeah", "yep", "sure", "ok", "okay", "yes please", "replace it", "use the new one"}:
+        return "replace"
+    if lowered in {"no", "nope", "no thanks", "cancel", "don't", "do not", "discard", "keep the old one"}:
+        return "discard"
+    return None
+
+
 def _user_message(chat_ctx):
     return next(
         (item for item in reversed(chat_ctx.items) if isinstance(item, llm.ChatMessage) and item.role == "user"),
@@ -165,6 +174,7 @@ class SarjyAgent(Agent):
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
         self.memory_message: str | None = None
+        self.memory_clarify = False
 
     async def compile(self, message):
         if message.id not in self.prepared:
@@ -180,26 +190,33 @@ class SarjyAgent(Agent):
             self.memory_message = message.id
             self.memory_outcome = None
             if self.memory_proposal is not None:
-                decision = _memory_decision(message.text_content)
+                decision = (
+                    _clarify_decision(message.text_content)
+                    if self.memory_clarify
+                    else _memory_decision(message.text_content)
+                )
                 if decision is not None:
                     await self._resolve_memory(decision)
                 else:
                     # A proposal is a one-shot for the next user turn; never stay armed
                     # across unrelated acknowledgements.
                     self.memory_proposal = None
+                    self.memory_clarify = False
                     self.memory_outcome = "not_saved"
         if result.get("memory_proposal") is not None:
             self.memory_proposal = result["memory_proposal"]
         return result["context"]
 
     async def _resolve_memory(self, decision: str) -> None:
-        proposal, self.memory_proposal = self.memory_proposal, None
+        proposal = self.memory_proposal
         try:
             response = await self.backend.post(
                 "/internal/agent/memory/confirm",
                 json={"token": proposal["token"], "decision": decision},
             )
         except httpx.HTTPError:
+            self.memory_proposal = None
+            self.memory_clarify = False
             self.memory_outcome = "failed"
             if self.notify:
                 await self.notify("MEMORY_SAVE_FAILED")
@@ -213,10 +230,16 @@ class SarjyAgent(Agent):
             if self.notify:
                 await self.notify(code or "MEMORY_SAVE_FAILED")
         if response.is_success:
+            self.memory_proposal = None
+            self.memory_clarify = False
             self.memory_outcome = decision
         elif code == "MEMORY_CLARIFICATION_REQUIRED":
+            # Keep the signed proposal so the next turn can authorise an explicit replace.
+            self.memory_clarify = True
             self.memory_outcome = "clarify"
         else:
+            self.memory_proposal = None
+            self.memory_clarify = False
             self.memory_outcome = "failed"
 
     async def reserve(self, provider: str, characters: int = 0):
@@ -274,8 +297,8 @@ class SarjyAgent(Agent):
                 "failed": "The memory save failed; apologise and do not claim it was saved.",
                 "discard": "The user declined the memory save; do not claim it was saved.",
                 "clarify": (
-                    "More than one saved fact matches this correction. Ask the user which one to update; "
-                    "do not claim it was saved."
+                    "An existing saved fact conflicts with this update. Ask the user to confirm replacing it; "
+                    "do not claim it was saved until they confirm."
                 ),
                 "not_saved": "The pending memory was not saved; do not claim it was saved.",
             }[outcome]

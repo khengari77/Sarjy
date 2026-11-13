@@ -105,6 +105,22 @@ async def _exact_content(
     return await db.scalar(query.order_by(Memory.updated_at.desc()).limit(1))
 
 
+async def _latest_active_preference(db: AsyncSession, *, owner_id: str) -> Memory | None:
+    rows = (
+        await db.scalars(
+            select(Memory)
+            .where(Memory.owner_id == owner_id, Memory.status == "active")
+            .order_by(Memory.updated_at.desc(), Memory.id)
+            .limit(MAX_CONTRADICTION_SCAN)
+        )
+    ).all()
+    for row in rows:
+        parsed = parse_capture(row.content)
+        if parsed is not None and parsed.subject.startswith("preference:"):
+            return row
+    return None
+
+
 async def _contradictions(db: AsyncSession, *, owner_id: str, capture: MemoryCapture) -> list[Memory]:
     if capture.subject is None:
         return []
@@ -148,7 +164,7 @@ async def confirm_memory(
         raise MemoryCaptureError("PROPOSAL_INVALID", 400)
     if decision == "discard":
         return {"status": "discarded", "memory": None}
-    if decision != "save":
+    if decision not in {"save", "replace"}:
         raise MemoryCaptureError("INVALID_DECISION", 422)
 
     return await _apply_consent(
@@ -159,6 +175,7 @@ async def confirm_memory(
         proposed_turn=proposed_turn,
         source_turn_id=source_turn_id,
         capture=capture,
+        force_replace=decision == "replace",
     )
 
 
@@ -171,6 +188,7 @@ async def _apply_consent(
     proposed_turn: str,
     source_turn_id: str | None,
     capture: MemoryCapture,
+    force_replace: bool,
 ) -> dict:
     async with _subject_lock(owner_id, capture.subject):
         if db.bind is not None and db.bind.dialect.name == "postgresql":
@@ -187,6 +205,7 @@ async def _apply_consent(
             proposed_turn=proposed_turn,
             source_turn_id=source_turn_id,
             capture=capture,
+            force_replace=force_replace,
         )
 
 
@@ -199,6 +218,7 @@ async def _write_consented(
     proposed_turn: str,
     source_turn_id: str | None,
     capture: MemoryCapture,
+    force_replace: bool,
 ) -> dict:
     key = _request_key(owner_id, proposed_turn, capture.text)
     active_same = await _exact_content(db, owner_id=owner_id, capture=capture, status="active")
@@ -212,9 +232,15 @@ async def _write_consented(
     conflicting = [
         row for row in previous if (parsed := parse_capture(row.content)) is not None and parsed.value != capture.value
     ]
+    if not conflicting and capture.subject.startswith("preference:") and (force_replace or capture.replaces):
+        latest = await _latest_active_preference(db, owner_id=owner_id)
+        conflicting = [latest] if latest is not None else []
     if conflicting:
         corrective = (
-            not capture.subject.startswith(("preference:", "diet:")) or capture.replaces or superseded_same is not None
+            force_replace
+            or not capture.subject.startswith(("preference:", "diet:"))
+            or capture.replaces
+            or superseded_same is not None
         )
         if not corrective:
             raise MemoryCaptureError("MEMORY_CLARIFICATION_REQUIRED", 409)

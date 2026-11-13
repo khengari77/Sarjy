@@ -50,7 +50,7 @@ class AgentInput(BaseModel):
 
 class MemoryConfirm(BaseModel):
     token: str = Field(min_length=1, max_length=20000)
-    decision: Literal["save", "discard"]
+    decision: Literal["save", "discard", "replace"]
 
 
 class AgentOutput(BaseModel):
