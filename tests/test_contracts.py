@@ -387,3 +387,10 @@ def test_generated_contract_components_match_models_and_checked_in_schema():
     assert expected <= set(spec["components"]["schemas"])
     for name in expected:
         assert spec["components"]["schemas"][name] == components[name]
+
+
+def test_checked_in_budget_reservation_matches_runtime_schema():
+    from app.routes.worker import BudgetReservation
+
+    spec = json.loads((ROOT / "packages/contracts/openapi.json").read_text())
+    assert spec["components"]["schemas"]["BudgetReservation"] == BudgetReservation.model_json_schema()
