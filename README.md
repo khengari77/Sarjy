@@ -9,7 +9,7 @@ Install uv, Node 22, and pnpm 10.32.1. From the repository root:
 ```sh
 uv sync --locked
 pnpm --dir apps/web install --frozen-lockfile
-uv run uvicorn app.main:app --app-dir apps/api --reload
+uv run uvicorn app.main:create_app --factory --app-dir apps/api --reload
 ```
 
 Fill the existing root `.env` with the names in `.env.example` (do not overwrite existing secrets). SQLite defaults to `sarjy.db` and bootstraps locally. In another terminal:
@@ -24,7 +24,7 @@ For real speech, configure `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET
 
 ```sh
 uv run -m livekit.agents download-files
-uv run services/voice-agent/main.py dev
+PYTHONPATH=apps/api uv run services/voice-agent/main.py dev
 ```
 
 The temporary default is Nova-3 English → OpenAI GPT-6 Luna → ElevenLabs Flash v2.5. DeepSeek Flash direct remains available for an explicit switch after funding. No fallback is silently selected. Arabic voice quality and live provider entitlement still require manual validation.
@@ -41,21 +41,41 @@ pnpm --dir apps/web test:browser
 
 Pure tests use immutable records and Hypothesis invariants. Database/API tests cover real persistence and authorization.
 
+Optional PostgreSQL migration parity against a disposable database (never a hosted one):
+
+```sh
+TEST_POSTGRES_URL='postgresql+asyncpg://postgres:test@127.0.0.1:55432/sarjy' uv run pytest -q tests/test_migrations.py
+```
+
+### Delayed resource-warning attribution (opt-in)
+
+The normal suite keeps `filterwarnings = ["error"]` and never forces garbage collection. To trace a delayed `ResourceWarning` back to the test that allocated the resource:
+
+```sh
+uv run python scripts/diagnose_resources.py --self-test
+uv run python scripts/diagnose_resources.py tests/test_session_lifecycle.py
+uv run --python 3.12 python scripts/diagnose_resources.py --self-test
+```
+
+The helper starts `tracemalloc`, records unclosed SQLite/aiosqlite objects at test boundaries, maps each allocation frame to its originating test, and separates application defects, test defects and unattributed timing observations. `--depth` controls the retained frame count (default 15).
+
+Outside `--self-test`, any observed unclosed resource makes the command exit `1`; that is the diagnostic signal, not a failing test run. This is diagnostic-only; do not add its forced collection to routine CI.
+
 ## Deployment
 
 Build images from repository root with `infra/api.Dockerfile`, `infra/web.Dockerfile`, and `infra/agent.Dockerfile`. Use CranL for frontend/API, LiveKit Build for the worker, and Supabase PostgreSQL. Set `DATABASE_URL` to an asyncpg SQLAlchemy URL, run `uv run alembic upgrade head` before API startup, and set `COOKIE_SECURE=true` in production. Never expose provider secrets to the frontend. Configure SvelteKit's trusted public origin for the deployed proxy; retain CSRF checks.
 
 LiveKit Build quotas must be checked in the account before testing. Hosted agent minutes and direct provider charges are separate. Calls are capped at ten minutes, one active per identity and two globally. Each identity can reserve three calls; the application can reserve 80 calls per calendar month (at most 800 agent minutes), including failed dispatch reservations. This conservative cap does not account for other LiveKit projects; check the account dashboard. Agent cold starts may take 10–20 seconds. Preserve 200 agent minutes for reviewers. The worker stops after 60 seconds without a browser participant. Raw agent recording is disabled.
 
-**Public URL:** not deployed yet; hosting credentials and provider setup remain required.
+**Development URL:** https://sarjy-web-dev-otbaod.cranl.net (development login required). API and frontend release `4a80697` are deployed; database migration `0004_voice_cleanup` is applied. See [hosted verification](docs/day1-hosted-verification.md) and the [human acceptance runbook](docs/day1-acceptance-runbook.md).
 
 ## Current limits
 
 - Real provider replies and prerecorded English STT are verified; live English conversation acceptance remains pending.
 - Day 1 snapshots capture initial context assembly; tool continuations are retained in the worker but do not yet receive separate request snapshots.
-- Persistent history is implemented; extracted memory and context exclusion/Undo are Day 2 work.
+- Persistent history, extracted memory, context exclusion/Undo and typed action dispatch are implemented and covered by the test suite.
 - Managed DeepSeek/Cartesia fallback candidates are not enabled.
-- Disposable PostgreSQL migration parity passed; Supabase account connectivity remains unverified.
+- Disposable PostgreSQL migration parity and hosted Supabase connectivity/persistence passed; cleanup migration is deployed.
 - Public identity creation needs further abuse controls before unrestricted public exposure.
 - Open-Meteo weather is called server-side, with clarification for ambiguous cities. Weather data: https://open-meteo.com/ . Use is subject to its attribution and service terms.
 
@@ -90,7 +110,9 @@ Conversational personalization is planned next: “I want to speak to a British 
 
 OpenAI is the temporary default (`openai_direct`, `gpt-6-luna`, Responses API, reasoning disabled). DeepSeek remains supported; switch `DEFAULT_LLM_PROVIDER=deepseek_direct` only after the user confirms a top-up. Set `OPENAI_API_KEY` server-side.
 
-OpenAI has a separate **$1/day development ceiling**, enforced with durable conservative reservations of **$0.02 before each LLM request** (50 requests/day, including tool continuations). This deliberately stops earlier than token billing would require. The bounded text-only request uses at most 64KB canonical context, the one fixed weather tool, 800 output tokens (96 by default), Standard tier, no provider built-in tools, and no SDK/LiveKit retries. The allowance is based on the checked 11 November 2026 Luna rates ($0.10/M input, $0.50/M output); recheck pricing before changing models or request bounds. Reservations are not invoices and are not refunded after errors, interruptions, or uncertain delivery.
+OpenAI has a separate **$1/day development ceiling**, enforced with durable conservative reservations of **$0.02 before each LLM request** (50 requests/day, including tool continuations). This deliberately stops earlier than token billing would require. The bounded text-only request uses at most 64KB canonical context, the one fixed weather tool, at most 1024 output tokens (tier 5; tier 2 by default), Standard tier, no provider built-in tools, and no SDK/LiveKit retries. The allowance is based on the checked 11 November 2026 Luna rates ($0.10/M input, $0.50/M output); recheck pricing before changing models or request bounds. Reservations are not invoices and are not refunded after errors, interruptions, or uncertain delivery.
+
+Response length is one of five tiers with hard provider caps of **64/128/256/512/1024** output tokens. The session resolves a tier from the saved preference and any explicit request (for automatic/classified requests, `brief` caps at tier 2, `balanced` at tier 3, `detailed` at tier 5; a valid explicit current-turn tier overrides these preference limits), and the tier is stored with the session. The model additionally receives a plain-language word target well below its cap (for example "about 40 words or fewer" for tier 2) so ordinary replies do not approach truncation. Instructions never contain token counts, and complexity never changes reasoning: reasoning stays disabled for every tier. Arabic has separately authored targets because it needs roughly 1.5–2x the tokens per word.
 
 ElevenLabs is more conservative: **500 characters/day**, reserved before text is forwarded for synthesis. No unattended audio simulations, repeated synthesis benchmarks, paid top-ups, or quota-triggered provider switching. Prefer text-only development. Partial/failed synthesis reservations also remain charged to this local allowance.
 
@@ -104,11 +126,11 @@ For a minimal OpenAI-only access check after migrations, run `uv run python scri
 
 Set `DEVELOPMENT_PROTECTED=true` on both web and API. Web requires `DEVELOPMENT_USER`, a strong `DEVELOPMENT_PASSWORD`, and `WEB_SERVICE_SECRET`; API requires the same `WEB_SERVICE_SECRET`. The web server challenges every request with HTTP Basic authentication; the proxy injects the independent backend secret. Worker routes retain worker authentication. Missing required protection secrets fail startup. Deploy only over HTTPS. Keep these values in hosting secrets. Arabic speech validation is deferred to Day 3.
 
-Hosting is not configured yet. Connect CranL with `codex mcp add cranl --url https://app.cranl.com/api/mcp` and `codex mcp login cranl`. Supabase setup and LiveKit eu-central deployment remain pending. Preserve the existing daily budget ledger before switching databases; do not run two independent spending ledgers.
+CranL frontend/API, Supabase persistence, and the LiveKit eu-central worker are configured and verified. Development remains protected. Never create a second spending ledger when running coordinator tools; inject the hosted database URL into the process without overwriting the local .env.
 
-## Hosted development attempt (11 November 2026)
+## Historical failed deployment attempt (superseded)
 
-CranL apps `sarjy-api` and `sarjy-web` were created in Netherlands with protection secrets configured before deployment. Deployment is **not working**: API source deployment returned platform internal errors through inline and signed uploads; the web build reports a missing source directory on CranL's build server and its URL returns 502. Details are in ignored `artifacts/deployment/status.json`; access credentials are in ignored `artifacts/deployment/access.json` (mode 0600). Never publish these artifacts. LiveKit worker deployment and hosted acceptance remain pending. No inference was used during this deployment attempt.
+CranL apps `sarjy-api` and `sarjy-web` were created in Netherlands with protection secrets configured before deployment. That earlier deployment attempt failed: API source deployment returned platform internal errors through inline and signed uploads; the web build reports a missing source directory on CranL's build server and its URL returns 502. Details are in ignored `artifacts/deployment/status.json`; access credentials are in ignored `artifacts/deployment/access.json` (mode 0600). Never publish these artifacts. This historical attempt used no inference. The working releases and remaining human acceptance are recorded in the hosted verification document.
 
 ## GitHub release workflow
 
@@ -120,7 +142,7 @@ Frontend: https://sarjy-web-dev-otbaod.cranl.net (password required). API: https
 
 Deployment branches add the appropriate root `Dockerfile` to the same tested source revision; CranL's nested Dockerfile build did not include repository-root files. The API and frontend root-Dockerfile branch checks passed.
 
-Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source and the worker Dockerfile. Inject secrets separately through LiveKit. Worker deployment and live English voice acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.
+Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source, shared domain Python source and the worker Dockerfile. Preparation stages a fresh context before replacing the helper-owned output, so stale files are removed and missing sources leave the previous context intact. Build from the generated context; inject secrets separately through LiveKit. Worker deployment, hosted typed-input speech/weather and cleanup are verified. Human microphone, interruption and reconnect/refresh acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.
 
 ## Retryable voice-session cleanup
 
@@ -143,3 +165,8 @@ Each remote deletion is bounded to 10 seconds. Results report selected/completed
 ## Agent contributions
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before claiming work. Use a separate worktree and branch per issue; open a PR and await coordinator review. Authors must not merge.
+
+
+### Response-policy deployment order
+
+Deploy the API before the worker: the new worker requires authoritative `instructions` in bootstrap. Verify the API returns those instructions before updating the worker. Keep the existing worker until that check succeeds; roll back the worker before rolling back the API. This PR does not authorize deployment.

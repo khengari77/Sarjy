@@ -9,6 +9,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev
 COPY services/voice-agent ./services/voice-agent
+COPY apps/api/app/domain ./shared/app/domain
+ENV PYTHONPATH=/app/shared
 RUN uv run --no-dev --no-sync -m livekit.agents download-files
 RUN chown -R agent:agent /home/agent
 USER agent
