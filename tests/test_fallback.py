@@ -4,6 +4,10 @@ from fallback import fallback_decision, fallback_eligible, next_attempt
 from generation import GenerationEvent, GenerationFailure
 
 
+async def allow_bounds(*_):
+    return None
+
+
 def failure(code="timeout", *, status=None, partial=False):
     return GenerationEvent(
         "error",
@@ -110,8 +114,8 @@ def run_fallback(
     agent.pipeline = {"llm": {"provider": "deepseek_direct"}}
     agent.session = type("Session", (), {"llm": "primary"})()
     agent.fallback_llm = "fallback" if fallback else None
-    agent._require_openai_bounds = lambda request, tools: None
-    agent._require_deepseek_bounds = lambda request: None
+    agent._require_openai_bounds = allow_bounds
+    agent._require_deepseek_bounds = allow_bounds
     agent._stream_attempt = worker.SarjyAgent._stream_attempt.__get__(agent)
     agent._stream_with_fallback = worker.SarjyAgent._stream_with_fallback.__get__(agent)
 

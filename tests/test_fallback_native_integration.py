@@ -13,6 +13,10 @@ from stream_completion import ObservedTransport
 from test_generation import events, request
 
 
+async def allow_bounds(*_):
+    return None
+
+
 @pytest.mark.parametrize("partial", [False, True])
 def test_native_stream_failure_respects_output_boundary(partial):
     async def run():
@@ -54,8 +58,8 @@ def test_native_stream_failure_respects_output_boundary(partial):
                 session=SimpleNamespace(llm=primary),
                 fallback_llm=fallback,
                 reserve=reserve,
-                _require_openai_bounds=lambda req, tools: None,
-                _require_deepseek_bounds=lambda req: None,
+                _require_openai_bounds=allow_bounds,
+                _require_deepseek_bounds=allow_bounds,
             )
             agent._stream_attempt = worker.SarjyAgent._stream_attempt.__get__(agent)
             agent._stream_with_fallback = worker.SarjyAgent._stream_with_fallback.__get__(agent)

@@ -11,6 +11,7 @@ from uuid import uuid4
 import httpx
 from app.domain.budget import DEEPSEEK_MAX_REQUEST_BYTES
 from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolItem, ToolSpec
+from app.domain.provider_bounds import ProviderRequestTooLarge, provider_request_bytes
 from app.domain.tool_operations import operation_key
 from config import provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
@@ -25,6 +26,7 @@ from livekit.agents import (
     JobContext,
     RunContext,
     SessionConnectOptions,
+    StopResponse,
     cli,
     function_tool,
     llm,
@@ -54,6 +56,14 @@ def openai_request_within_bounds(serialized: bytes, tools: list, max_output_toke
     return (
         len(serialized) <= MAX_CONTEXT_BYTES and len(tools) <= MAX_TOOLS and max_output_tokens <= MAX_TIER_OUTPUT_TOKENS
     )
+
+
+class RequestRefused(Exception):
+    """A request rejected before any provider call; carried to the UI as a code."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 def _user_message(chat_ctx):
@@ -118,12 +128,25 @@ class SarjyAgent(Agent):
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
+        self.refused_turns: set[str] = set()
+
+    async def _notify(self, code: str) -> None:
+        if not self.notify:
+            return
+        try:
+            await self.notify(code)
+        except Exception:
+            logging.warning("Error notification failed")
 
     async def compile(self, message):
         if message.id not in self.prepared:
             response = await self.backend.post(
                 "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
             )
+            if response.status_code == 413:
+                self.current_turn = None
+                await self._notify("CONTEXT_BUDGET_EXCEEDED")
+                raise RequestRefused("CONTEXT_BUDGET_EXCEEDED")
             response.raise_for_status()
             self.prepared[message.id] = response.json()
         result = self.prepared[message.id]
@@ -132,17 +155,15 @@ class SarjyAgent(Agent):
 
     async def reserve(self, provider: str, characters: int = 0):
         if provider == "elevenlabs" and characters > 500:
-            if self.notify:
-                await self.notify("DAILY_BUDGET_EXHAUSTED")
+            await self._notify("DAILY_BUDGET_EXHAUSTED")
             raise ValueError("DAILY_BUDGET_EXHAUSTED")
         response = await self.backend.post(
             "/internal/development/reserve", json={"provider": provider, "characters": characters}
         )
         if not response.is_success:
-            if self.notify:
-                await self.notify(
-                    "DAILY_BUDGET_EXHAUSTED" if response.status_code == 429 else "BUDGET_SERVICE_UNAVAILABLE"
-                )
+            await self._notify(
+                "DAILY_BUDGET_EXHAUSTED" if response.status_code == 429 else "BUDGET_SERVICE_UNAVAILABLE"
+            )
             response.raise_for_status()
 
     async def tts_node(self, text, model_settings):
@@ -163,7 +184,10 @@ class SarjyAgent(Agent):
             yield frame
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
-        await self.compile(new_message)
+        try:
+            await self.compile(new_message)
+        except RequestRefused:
+            raise StopResponse() from None
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         # Also covers typed input and repeated inference after tool calls.
@@ -188,6 +212,11 @@ class SarjyAgent(Agent):
 
         async def persist_playout():
             text, status = await _playout_result(handle)
+            if turn_id in self.refused_turns:
+                return
+            if not text.strip():
+                logging.warning("Skipping persistence for an empty reply")
+                return
             for attempt in range(3):
                 try:
                     response = await self.backend.post(
@@ -205,29 +234,25 @@ class SarjyAgent(Agent):
         self.pending.add(task)
         task.add_done_callback(self.pending.discard)
 
-    def _require_deepseek_bounds(self, request: ModelRequest) -> None:
-        serialized = json.dumps(
-            {
-                key: value
-                for key, value in request.model_dump(mode="json").items()
-                if key in {"messages", "tool_history", "tools"}
-            },
-            ensure_ascii=False,
-        ).encode()
-        if not deepseek_request_within_bounds(serialized):
-            raise ValueError("DEEPSEEK_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS")
+    async def _require_deepseek_bounds(self, request: ModelRequest) -> None:
+        payload = request.model_dump(mode="json")
+        size = provider_request_bytes(payload["messages"], payload.get("tool_history", ()), payload.get("tools", ()))
+        if size > DEEPSEEK_MAX_REQUEST_BYTES:
+            self.refused_turns.add(request.turn_id)
+            await self._notify("PROVIDER_REQUEST_TOO_LARGE")
+            raise ProviderRequestTooLarge("PROVIDER_REQUEST_TOO_LARGE")
 
-    def _require_openai_bounds(self, request: ModelRequest, tools) -> None:
-        serialized = json.dumps(
-            {
-                key: value
-                for key, value in request.model_dump(mode="json").items()
-                if key in {"messages", "tool_history", "tools"}
-            },
-            ensure_ascii=False,
-        ).encode()
-        if not openai_request_within_bounds(serialized, tools, request.response_policy.max_output_tokens):
-            raise ValueError("OPENAI_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS")
+    async def _require_openai_bounds(self, request: ModelRequest, tools) -> None:
+        payload = request.model_dump(mode="json")
+        size = provider_request_bytes(payload["messages"], payload.get("tool_history", ()), payload.get("tools", ()))
+        if (
+            size > MAX_CONTEXT_BYTES
+            or len(tools) > MAX_TOOLS
+            or request.response_policy.max_output_tokens > MAX_TIER_OUTPUT_TOKENS
+        ):
+            self.refused_turns.add(request.turn_id)
+            await self._notify("PROVIDER_REQUEST_TOO_LARGE")
+            raise ProviderRequestTooLarge("PROVIDER_REQUEST_TOO_LARGE")
 
     async def _stream_attempt(self, provider, provider_kind, request, tools, tool_choice):
         """Stream one attempt; buffer usage so a failed attempt cannot leak it."""
@@ -260,10 +285,10 @@ class SarjyAgent(Agent):
         primary_kind = self.pipeline["llm"]["provider"]
         emitted = False
         if primary_kind == "openai_direct":
-            self._require_openai_bounds(request, tools)
+            await self._require_openai_bounds(request, tools)
             await self.reserve("openai")
         elif primary_kind == "deepseek_direct":
-            self._require_deepseek_bounds(request)
+            await self._require_deepseek_bounds(request)
             await self.reserve("deepseek")
         else:
             raise ValueError("UNSUPPORTED_GENERATION_PROVIDER")
@@ -284,7 +309,7 @@ class SarjyAgent(Agent):
             if not decision.allowed:
                 raise
             fallback_request = next_attempt(request, str(uuid4()))
-            self._require_openai_bounds(fallback_request, tools)
+            await self._require_openai_bounds(fallback_request, tools)
             # Reserve before delivery. A denial forwards nothing.
             await self.reserve("openai")
             async for event in self._stream_attempt(

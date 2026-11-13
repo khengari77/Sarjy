@@ -105,6 +105,7 @@ def test_oversized_deepseek_continuation_stops_before_reservation_or_provider():
     from test_generation import request
 
     calls = []
+    notifications = []
 
     async def reserve(provider):
         calls.append("reserve")
@@ -113,19 +114,77 @@ def test_oversized_deepseek_continuation_stops_before_reservation_or_provider():
         calls.append("provider")
         yield None
 
+    async def notify(code):
+        notifications.append(code)
+
     agent = SimpleNamespace(
         pipeline={"llm": {"provider": "deepseek_direct"}},
         reserve=reserve,
         _stream_attempt=stream,
+        notify=notify,
+        refused_turns=set(),
+        fallback_llm=object(),
     )
+    agent._notify = SarjyAgent._notify.__get__(agent)
     agent._require_deepseek_bounds = SarjyAgent._require_deepseek_bounds.__get__(agent)
     data = request().model_dump(mode="json")
     data["tool_history"] = [{"kind": "assistant", "content": "x" * (16 * 1024 + 1)}]
     oversized = type(request()).model_validate(data)
 
     async def run():
-        with pytest.raises(ValueError, match="DEEPSEEK_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS"):
+        with pytest.raises(ValueError, match="PROVIDER_REQUEST_TOO_LARGE"):
             _ = [chunk async for chunk in SarjyAgent._stream_with_fallback(agent, oversized, [], None)]
 
     asyncio.run(run())
     assert calls == []
+    assert notifications == ["PROVIDER_REQUEST_TOO_LARGE"]
+
+
+def test_deepseek_admission_measures_utf8_bytes_not_characters():
+    from types import SimpleNamespace
+
+    from app.domain.provider_bounds import ProviderRequestTooLarge
+    from test_generation import request
+
+    notifications = []
+
+    async def notify(code):
+        notifications.append(code)
+
+    agent = SimpleNamespace(notify=notify, refused_turns=set())
+    agent._notify = SarjyAgent._notify.__get__(agent)
+    agent._require_deepseek_bounds = SarjyAgent._require_deepseek_bounds.__get__(agent)
+    data = request().model_dump(mode="json")
+    data["messages"] = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "ا" * 7000},
+    ]
+    data["instructions"] = "rules"
+    fitting = type(request()).model_validate(data)
+    asyncio.run(agent._require_deepseek_bounds(fitting))
+    assert notifications == []
+
+    data["messages"] = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "ا" * 9000},
+    ]
+    oversized = type(request()).model_validate(data)
+    with pytest.raises(ProviderRequestTooLarge):
+        asyncio.run(agent._require_deepseek_bounds(oversized))
+    assert notifications == ["PROVIDER_REQUEST_TOO_LARGE"]
+    assert oversized.turn_id in agent.refused_turns
+
+
+def test_shared_accounting_matches_worker_envelope():
+    import json as json_module
+
+    from app.domain.provider_bounds import provider_request_bytes
+    from test_generation import request
+
+    payload = request().model_dump(mode="json")
+    expected = len(
+        json_module.dumps(
+            {key: payload[key] for key in ("messages", "tool_history", "tools")}, ensure_ascii=False
+        ).encode()
+    )
+    assert provider_request_bytes(payload["messages"], payload["tool_history"], payload["tools"]) == expected

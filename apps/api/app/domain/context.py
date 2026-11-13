@@ -17,9 +17,11 @@ from types import MappingProxyType
 from typing import Any, Literal, cast
 
 from app.domain.contracts import ContextEntry, ContextSelection
+from app.domain.provider_bounds import DEEPSEEK_MAX_REQUEST_BYTES, admission_reserve_bytes, provider_request_bytes
 
 PROVIDER_CAPTURE = "canonical_pre_adapter"
-DEFAULT_MAX_CHARS = 16000
+DEFAULT_MAX_PROVIDER_BYTES = DEEPSEEK_MAX_REQUEST_BYTES
+DEFAULT_RESERVE_BYTES = admission_reserve_bytes(1024)
 DEFAULT_ALLOWED_ORIGINS: frozenset[str] = frozenset({"system", "history", "memory", "tool"})
 DEFAULT_PERMITTED_TOOLS: frozenset[str] = frozenset({"get_current_weather"})
 PROVIDER_ROLES = frozenset({"system", "user", "assistant"})
@@ -155,7 +157,8 @@ def compile_turn_context(
     pipeline: Mapping[str, Any] | None = None,
     allowed_origins: frozenset[str] = DEFAULT_ALLOWED_ORIGINS,
     permitted_tools: frozenset[str] = DEFAULT_PERMITTED_TOOLS,
-    max_chars: int = DEFAULT_MAX_CHARS,
+    max_provider_bytes: int = DEFAULT_MAX_PROVIDER_BYTES,
+    reserve_bytes: int = DEFAULT_RESERVE_BYTES,
 ) -> CompiledContext:
     """Compile one revision's provider-bound messages.
 
@@ -191,10 +194,14 @@ def compile_turn_context(
     )
     kept = _truncate(
         _dedupe(selected),
-        max_chars,
+        max_provider_bytes,
+        reserve_bytes,
         current_turn_id=current_turn.id if current_turn is not None and current_turn.id not in excluded else None,
     )
     messages, included_ids, selection_entries = _render(kept)
+    if provider_request_bytes(messages) + reserve_bytes > max_provider_bytes:
+        # Defensive: _truncate is authoritative, so this should be unreachable.
+        raise ValueError("CONTEXT_BUDGET_EXCEEDED")
 
     prompt = canonical_messages(messages)
     digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -303,32 +310,44 @@ def _dedupe(selected: Sequence[tuple[str, CandidateRole, str]]) -> list[tuple[st
     return deduped
 
 
+def _provider_messages(
+    items: Sequence[tuple[str, CandidateRole, str]],
+) -> list[dict[str, str]]:
+    return [{"role": provider_role(role), "content": text} for _, role, text in items]
+
+
 def _truncate(
     selected: Sequence[tuple[str, CandidateRole, str]],
-    max_chars: int,
+    max_provider_bytes: int,
+    reserve_bytes: int,
     *,
     current_turn_id: str | None = None,
 ) -> list[tuple[str, CandidateRole, str]]:
-    protected = [item for item in selected if item[1] == "system"]
-    remaining = max(0, max_chars - sum(len(item[2]) for item in protected))
-    retained: list[tuple[str, CandidateRole, str]] = []
+    def fits(items: Sequence[tuple[str, CandidateRole, str]]) -> bool:
+        return provider_request_bytes(_provider_messages(items)) + reserve_bytes <= max_provider_bytes
+
+    system = [item for item in selected if item[1] == "system"]
+    if any(len(item[2]) > 16000 for item in system):
+        raise ValueError("CONTEXT_ENTRY_TOO_LONG")
+    if not fits(system):
+        raise ValueError("CONTEXT_BUDGET_EXCEEDED")
+    retained = list(system)
     if current_turn_id is not None:
         current_item = next((item for item in selected if item[0] == current_turn_id), None)
         if current_item is not None:
+            if len(current_item[2]) > 16000:
+                raise ValueError("CONTEXT_ENTRY_TOO_LONG")
             # The latest user turn is never silently replaced by older context.
-            if len(current_item[2]) > remaining:
+            if not fits([*retained, current_item]):
                 raise ValueError("CONTEXT_BUDGET_EXCEEDED")
             retained.append(current_item)
-            remaining -= len(current_item[2])
     for item in reversed(selected):
-        if item[0] == current_turn_id:
+        if item[0] == current_turn_id or item[1] == "system":
             continue
-        if item[1] == "system":
+        if fits([*retained, item]):
             retained.append(item)
-        elif len(item[2]) <= remaining:
-            retained.append(item)
-            remaining -= len(item[2])
-    return list(reversed(retained))
+    retained_ids = {item[0] for item in retained}
+    return [item for item in selected if item[0] in retained_ids]
 
 
 def _render(
@@ -406,8 +425,9 @@ __all__ = [
     "CompiledContext",
     "ContextCandidate",
     "DEFAULT_ALLOWED_ORIGINS",
-    "DEFAULT_MAX_CHARS",
+    "DEFAULT_MAX_PROVIDER_BYTES",
     "DEFAULT_PERMITTED_TOOLS",
+    "DEFAULT_RESERVE_BYTES",
     "LOWER_TRUST_ROLES",
     "PROVIDER_CAPTURE",
     "canonical_json",
