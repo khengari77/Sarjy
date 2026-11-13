@@ -31,6 +31,7 @@ from app.domain.context_operations import (
     budget_removal_authorized,
     classify,
     exclusion_diff,
+    keep_authorized,
     restore_diff,
     select_candidates,
     sign_proposal,
@@ -424,6 +425,18 @@ async def _authorize_exclusion_rows(
     keep: tuple[str, ...],
     exclude: tuple[str, ...],
 ) -> None:
+    if kept_ids:
+        kept_rows = (
+            await db.scalars(
+                select(Memory).where(
+                    Memory.id.in_(list(kept_ids)),
+                    Memory.owner_id == owner_id,
+                    Memory.status == "active",
+                )
+            )
+        ).all()
+        if {row.id for row in kept_rows} != kept_ids:
+            raise ContextOperationError("PROPOSAL_INVALID", 400)
     rows = (
         await db.scalars(
             select(Memory).where(
@@ -437,8 +450,12 @@ async def _authorize_exclusion_rows(
         raise ContextOperationError("PROPOSAL_INVALID")
     if any(
         row.id in kept_ids
-        or row.id in keep
-        or (classify(row.content) == "budget" and budget_removal_authorized(row.id, row.content, keep))
+        or keep_authorized(
+            row.id,
+            row.content,
+            is_budget=classify(row.content) == "budget",
+            authority=keep,
+        )
         for row in rows
     ):
         raise ContextOperationError("PROPOSAL_INVALID", 400)

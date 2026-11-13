@@ -101,6 +101,27 @@ def budget_removal_authorized(candidate_id: str, content: str, authority: tuple[
     return any(term and _normalized_authority(term) == normalized_content for term in authority)
 
 
+def keep_authorized(candidate_id: str, content: str, *, is_budget: bool, authority: tuple[str, ...]) -> bool:
+    """Whether signed keep authority protects this exact record.
+
+    Mirrors preview semantics: an exact id always protects; a budget record is
+    protected by a money-naming term; any other record by a literal content
+    term. Confirmation must not evaluate keep with the stricter removal
+    predicate, or preview-valid keeps on UUID records are silently lost.
+    """
+    if candidate_id in authority:
+        return True
+    lowered = content.casefold()
+    for term in authority:
+        if not term:
+            continue
+        if is_budget and not _term_authorizes_budget(term):
+            continue
+        if term.casefold() in lowered:
+            return True
+    return False
+
+
 def _keep_reason(candidate: MemoryCandidate, keep_terms: tuple[str, ...]) -> str | None:
     if candidate.id in keep_terms:
         return KEEP_REASON_EXPLICIT_ID

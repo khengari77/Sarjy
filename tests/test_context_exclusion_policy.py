@@ -391,3 +391,41 @@ def test_duplicates_and_undo_preserve_exact_semantics_and_ledgers(tmp_path):
         )
         assert stale.status_code == 409
         assert stale.json()["detail"]["code"] == "REVISION_CONFLICT"
+
+
+def test_confirmation_rejects_a_keep_term_on_a_uuid_record(tmp_path):
+    file, settings = configured(tmp_path)
+    record_id = "0b6f3e1a-6d64-4f2b-9a1e-6f0b6f3e1a11"
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        seed(file, chat, ((record_id, "Passport number X123"),))
+        with closing(sqlite3.connect(file)) as db, db:
+            owner = db.execute("SELECT owner_id FROM conversations WHERE id=?", (chat,)).fetchone()[0]
+
+        preview_body = preview(client, chat, query="forget the passport", keep=("passport",))
+        assert record_id in {item["id"] for item in preview_body["preserved"]}
+
+        # A signed proposal that contradicts its own keep authority must be
+        # rejected at confirmation, not applied because the id is a UUID.
+        forged = sign_proposal(
+            {
+                "v": 1,
+                "owner_id": owner,
+                "conversation_id": chat,
+                "revision": 0,
+                "query": "forget the passport",
+                "keep": ["passport"],
+                "exclude": [],
+                "excluded_ids": [record_id],
+                "kept_ids": [],
+            },
+            "proposal-secret",
+        )
+        response = client.post(
+            f"/v1/conversations/{chat}/context/confirm",
+            json={"proposal": forged, "expected_revision": 0, "idempotency_key": "keep-forged"},
+        )
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"]["code"] == "PROPOSAL_INVALID"
+        assert client.get(f"/v1/conversations/{chat}/context").json()["excluded_ids"] == []
