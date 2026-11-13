@@ -1,0 +1,235 @@
+<script lang="ts">
+  import { onMount, tick } from 'svelte';
+  import { selectRendererTier, type OrbPresentation, type RendererTier } from './orbState';
+  import { startOrbRenderer } from './render/renderer';
+  import type { OrbRenderState } from './render/types';
+
+  interface Props {
+    presentation: OrbPresentation;
+    micLevel?: number;
+    outputLevel?: number;
+    label: string;
+    statusLabel?: string;
+    disabled?: boolean;
+    onactivate?: () => void;
+  }
+
+  let {
+    presentation,
+    micLevel = 0,
+    outputLevel = 0,
+    label,
+    statusLabel = '',
+    disabled = false,
+    onactivate,
+  }: Props = $props();
+
+  let canvas: HTMLCanvasElement | undefined = $state();
+  let tier: RendererTier = $state('static');
+  let failed = $state(false);
+
+  // Plain mutable bridge read by the animation loop; updated by the effect below.
+  const renderState: OrbRenderState = {
+    color: '#4cc9b6',
+    accent: null,
+    motion: {
+      breath: 0.2,
+      flowRate: 0.18,
+      turbulence: 0.18,
+      edgeGlow: 0.3,
+      particleActivity: 0.2,
+      radialPulse: 0,
+      hueMix: 0,
+      opacity: 1,
+    },
+  };
+
+  const isListening = $derived(presentation.effectivePhase === 'listening');
+  const isSpeaking = $derived(presentation.effectivePhase === 'speaking');
+  const pulse = $derived(isListening ? micLevel : isSpeaking ? outputLevel : 0);
+
+  onMount(() => {
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const probe = document.createElement('canvas');
+    tier = selectRendererTier({ reducedMotion: reduced.matches, webglAvailable: Boolean(probe.getContext('webgl2')) });
+    let stop: (() => void) | undefined;
+    void tick().then(() => {
+      if (!canvas) return;
+      stop = startOrbRenderer(canvas, renderState, {
+        getPulse: () => pulse,
+        onTier: (value) => (tier = value),
+        onFailed: () => (failed = true),
+      });
+    });
+    return () => stop?.();
+  });
+
+  $effect(() => {
+    // Keep the renderer in sync with the derived presentation without
+    // re-registering handlers or recreating the canvas.
+    renderState.color = presentation.primaryColor;
+    renderState.accent = presentation.accent;
+    renderState.motion = presentation.motionPreset;
+    if (canvas) {
+      canvas.dataset.phase = presentation.effectivePhase;
+      canvas.dataset.color = presentation.primaryColor;
+      canvas.dataset.accent = presentation.accent ?? '';
+    }
+  });
+
+  function staticGlyph(phase: string): string {
+    switch (phase) {
+      case 'connecting':
+        return '◌';
+      case 'listening':
+        return '◉';
+      case 'thinking':
+        return '✦';
+      case 'speaking':
+        return '◍';
+      case 'disconnected':
+        return '⊘';
+      case 'error':
+        return '!';
+      default:
+        return '●';
+    }
+  }
+</script>
+
+<button
+  class="orb-button"
+  type="button"
+  aria-label={label}
+  {disabled}
+  data-renderer={failed ? 'static' : tier}
+  data-phase={presentation.effectivePhase}
+  data-mic-level={micLevel.toFixed(2)}
+  data-output-level={outputLevel.toFixed(2)}
+  onclick={() => onactivate?.()}
+>
+  {#if tier === 'static' || failed}
+    <span
+      class="orb-static"
+      style:--orb-color={presentation.primaryColor}
+      style:--orb-accent={presentation.accent ?? presentation.primaryColor}
+      aria-hidden="true"
+    ></span>
+    <span class="orb-static-state" aria-hidden="true">
+      <span class="orb-glyph">{staticGlyph(presentation.effectivePhase)}</span>
+      {#if statusLabel}<span class="orb-state-text">{statusLabel}</span>{/if}
+    </span>
+  {:else}
+    <canvas bind:this={canvas} class="orb-canvas" style:opacity={presentation.motionPreset.opacity} aria-hidden="true"
+    ></canvas>
+  {/if}
+  {#if presentation.showMicSlash}
+    <span class="mic-slash" aria-hidden="true">🎙̸</span>
+  {/if}
+</button>
+
+<style>
+  .orb-button {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: clamp(190px, 27vw, 340px);
+    aspect-ratio: 1;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  .orb-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+
+  .orb-button:hover .orb-canvas,
+  .orb-button:focus-visible .orb-canvas {
+    filter: brightness(1.12);
+  }
+
+  .orb-button:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 6px;
+  }
+
+  .orb-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    transition: opacity var(--transition-state);
+  }
+
+  .orb-static {
+    width: 82%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background:
+      radial-gradient(
+        circle at 50% 50%,
+        transparent 54%,
+        color-mix(in srgb, var(--orb-color) 26%, transparent) 60%,
+        transparent 68%
+      ),
+      radial-gradient(
+        circle at 50% 50%,
+        transparent 64%,
+        color-mix(in srgb, var(--orb-accent) 12%, transparent) 74%,
+        transparent 82%
+      );
+    border: 2px solid color-mix(in srgb, var(--orb-color) 40%, transparent);
+    box-shadow: 0 0 48px color-mix(in srgb, var(--orb-color) 22%, transparent);
+  }
+
+  .orb-static-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: color-mix(in srgb, var(--orb-color) 75%, white);
+    pointer-events: none;
+    text-align: center;
+    padding: 18%;
+  }
+
+  .orb-glyph {
+    font-size: clamp(22px, 5vw, 30px);
+    line-height: 1;
+    opacity: 0.9;
+  }
+
+  .orb-state-text {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    line-height: 1.3;
+  }
+
+  .mic-slash {
+    position: absolute;
+    inset: auto 50% 18% auto;
+    transform: translateX(50%);
+    font-size: 22px;
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--bg-app) 70%, transparent);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    padding: 4px 8px;
+  }
+
+  @media (max-width: 767px) {
+    .orb-button {
+      width: clamp(190px, 62vw, 260px);
+    }
+  }
+</style>

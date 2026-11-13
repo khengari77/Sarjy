@@ -1,153 +1,137 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import type { VoiceRuntime } from '../lib/audio/voice-runtime';
   import {
-    request,
-    type Conversation,
-    type Turn,
-    type SessionConfig,
-    type VoiceOption,
-    type VoiceCatalog,
-  } from '../lib/api';
-  import { LiveKitVoiceRuntime } from '../lib/audio/voice-runtime';
+    friendlyVoiceError,
+    isFatalVoiceError,
+    phaseFromAgentState,
+    phaseFromTransportStatus,
+  } from '../lib/audio/livekitAdapter';
+  import { deriveOrbPresentation, INITIAL_STATE, type VoicePhase } from '../lib/orb/orbState';
+  import AppShell from '../lib/ui/AppShell.svelte';
+  import ConversationList from '../lib/chat/ConversationList.svelte';
+  import VoiceStage from '../lib/chat/VoiceStage.svelte';
+  import type { PendingIntent } from '../lib/chat/intent';
   import CallControls from '../lib/chat/CallControls.svelte';
   import Composer from '../lib/chat/Composer.svelte';
-  import ConversationList from '../lib/chat/ConversationList.svelte';
-  import Transcript from '../lib/chat/Transcript.svelte';
   import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
-  import {
-    bootstrapConversations,
-    createConversation,
-    endVoiceSession,
-    fetchConversation,
-    mergeVoices,
-    startVoiceSession,
-    type ToolCall,
-  } from '../lib/chat/session';
   import { wordsFor } from '../lib/chat/words';
+  import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
+  import { errorCode } from '../lib/voice/errors';
+  import { createCatalogStore, initialCatalogState } from '../lib/voice/catalog';
+  import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
+  import { bootStudio } from '../lib/voice/studio';
+  import { createSelectionController } from '../lib/voice/selection';
   import '../lib/chat/chat.css';
 
+  // English-first release: Arabic copy and provider plumbing stay in place but
+  // the reviewer-facing interface is fixed to English.
+  const LANGUAGE_SWITCH_ENABLED = false;
   let arabic = $state(false);
-  let voiceId = $state('');
-  let voices = $state<VoiceOption[]>([]);
-  let voiceSearch = $state('');
-  let loadedVoiceSearch = '';
-  let nextVoicePage = $state<string | null>(null);
-  let voiceLoading = $state(false);
-  let voiceError = $state('');
-  let activeVoiceName = $state('');
-  let conversations = $state<Conversation[]>([]);
-  let toolCalls = $state<ToolCall[]>([]);
-  let current = $state<string | null>(null);
-  let turns = $state<Turn[]>([]);
+  let catalog = $state(initialCatalogState());
+  let conversation = $state(initialConversationState());
   let draft = $state('');
-  let status = $state('idle');
-  let error = $state('');
+  let pendingIntent = $state<PendingIntent>(null);
+  let announcement = $state('');
+  let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none');
+  let lastAnnounced = '';
   let busy = $state(false);
-  let muted = $state(true);
-  let audioBlocked = $state(false);
-  let live = $state<SessionConfig | null>(null);
-  let runtime: LiveKitVoiceRuntime;
+  let captionsVisible = $state(true);
+  let voice = $state(initialVoiceState());
+  let runtime: VoiceRuntime | undefined;
+  let connection: VoiceConnection | undefined;
+  let conversations: ConversationStore | undefined;
+  let catalogStore: ReturnType<typeof createCatalogStore> | undefined;
+  const selection = createSelectionController({
+    voice,
+    getPending: () => pendingIntent,
+    setPending: (intent) => (pendingIntent = intent),
+    run: (work) => run(work),
+    cancelConnect: () => connection!.cancelConnect(),
+    endVoice: () => connection!.end(),
+    getConversations: () => conversations!,
+  });
   const words = $derived(wordsFor(arabic));
 
-  async function loadVoices(more = false) {
-    if (voiceLoading) return;
-    voiceLoading = true;
-    voiceError = '';
-    try {
-      const search = more ? loadedVoiceSearch : voiceSearch;
-      const query = new URLSearchParams({ search });
-      if (more && nextVoicePage) query.set('next_page_token', nextVoicePage);
-      const result = await request<VoiceCatalog>('voices?' + query);
-      voices = more ? mergeVoices(voices, result.voices) : result.voices;
-      nextVoicePage = result.next_page_token ?? null;
-      loadedVoiceSearch = search;
-    } catch (e) {
-      voiceError = e instanceof Error ? e.message : 'VOICE_CATALOG_UNAVAILABLE';
-    } finally {
-      voiceLoading = false;
-    }
-  }
+  const phase = $derived<VoicePhase>(
+    (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
+      phaseFromTransportStatus(voice.transportStatus) ??
+      'idle',
+  );
+  const canInterrupt = $derived(phase === 'thinking' || phase === 'speaking');
+  const fatalError = $derived(voice.voiceErrorCode !== '' && isFatalVoiceError(voice.voiceErrorCode));
+  const voiceErrorText = $derived(voice.voiceErrorCode ? friendlyVoiceError(voice.voiceErrorCode, arabic) : '');
+  const presentation = $derived(
+    deriveOrbPresentation({
+      ...INITIAL_STATE,
+      phase,
+      overlay: devOverlay !== 'none' ? devOverlay : fatalError ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
+      micActive: voice.live !== null && !voice.muted,
+      sessionId: voice.live?.id ?? null,
+      connectionReady: voice.live !== null && !voice.connectionLost,
+      micLevel: voice.micLevel,
+      outputLevel: voice.outputLevel,
+    }),
+  );
 
-  function rememberVoice() {
-    localStorage.setItem('sarjy-voice-id', voiceId);
-  }
-
-  async function refresh() {
-    const id = current;
-    if (id) {
-      const history = await fetchConversation(id);
-      if (current === id) {
-        turns = history.turns;
-        toolCalls = history.toolCalls;
-      }
-    }
-  }
-
-  async function run(work: () => Promise<void>) {
+  async function run(work: () => Promise<void>, onError?: (error: unknown) => void) {
     busy = true;
-    error = '';
     try {
       await work();
-    } catch (e) {
-      error = e instanceof Error ? e.message : 'UNAVAILABLE';
+    } catch (error) {
+      if (onError) onError(error);
+      else conversation.listError = errorCode(error);
     } finally {
       busy = false;
     }
   }
 
-  async function end() {
-    const session = live;
-    live = null;
-    muted = true;
-    await runtime?.disconnect();
-    await endVoiceSession(session);
-    status = 'idle';
-    await refresh();
+  function onVoiceError(error: unknown) {
+    voice.voiceErrorCode = errorCode(error);
   }
 
-  async function select(id: string) {
-    if (live) await end();
-    current = id;
-    await refresh();
-  }
-
-  async function create() {
-    await run(async () => {
-      const chat = await createConversation();
-      conversations = [chat, ...conversations];
-      await select(chat.id);
-    });
-  }
-
-  async function connect(microphone: boolean) {
-    if (!current) throw new Error('CONVERSATION_REQUIRED');
-    if (!live) {
-      const requestedVoiceId = voiceId;
-      const requestedVoiceName = voices.find((voice) => voice.id === requestedVoiceId)?.name || requestedVoiceId;
-      const config = await startVoiceSession(current, arabic ? 'ar' : 'en', requestedVoiceId);
-      try {
-        await runtime.connect(config);
-        live = config;
-        activeVoiceName = requestedVoiceName;
-      } catch (e) {
-        await runtime.disconnect();
-        await request('voice/sessions/' + config.id + '/end', {});
-        throw e;
-      }
+  function handleOrb() {
+    if (voice.live) {
+      if (voice.muted) void toggleMute();
+      else if (canInterrupt) void interrupt();
+      return;
     }
-    if (microphone) {
-      await runtime.startMicrophone();
-      muted = false;
-    }
+    if (!voice.connecting) startConnect();
+  }
+
+  function startConnect() {
+    void connection!.connect(true).catch(onVoiceError);
+  }
+
+  async function toggleMute() {
+    await run(() => connection!.toggleMute(), onVoiceError);
+  }
+
+  async function interrupt() {
+    if (!voice.live || !canInterrupt) return;
+    await run(() => connection!.interrupt(), onVoiceError);
   }
 
   async function send() {
     if (!draft.trim()) return;
     await run(async () => {
-      await connect(false);
-      await runtime.sendText(draft.trim());
+      if (!voice.live) await connection!.connect(false);
+      if (!voice.live) return;
+      await connection!.sendText(draft.trim());
       draft = '';
-    });
+    }, onVoiceError);
+  }
+
+  async function enableAudio() {
+    await run(async () => {
+      await runtime?.resumeAudio?.();
+      voice.audioBlocked = false;
+    }, onVoiceError);
+  }
+
+  function toggleCaptions() {
+    captionsVisible = !captionsVisible;
+    localStorage.setItem('sarjy-captions', captionsVisible ? 'on' : 'off');
   }
 
   function toggleLanguage() {
@@ -155,104 +139,127 @@
     localStorage.setItem('sarjy-language', arabic ? 'ar' : 'en');
   }
 
-  async function toggleMute() {
-    if (muted) await runtime.startMicrophone();
-    else await runtime.stopMicrophone();
-    muted = !muted;
-  }
+  $effect(() => {
+    const label = arabic ? presentation.statusLabel.ar : presentation.statusLabel.en;
+    if (label === lastAnnounced) return;
+    const timer = setTimeout(() => {
+      lastAnnounced = label;
+      announcement = label;
+    }, 300);
+    return () => clearTimeout(timer);
+  });
 
   onMount(() => {
-    arabic = localStorage.getItem('sarjy-language') === 'ar';
-    voiceId = localStorage.getItem('sarjy-voice-id') || '';
-    runtime = new LiveKitVoiceRuntime();
-    const unsubscribe = runtime.subscribe((event) => {
-      if (event.type === 'status') {
-        status = event.text;
-        if (event.text === 'disconnected' && live) void run(end);
-      }
-      if (event.type === 'error') error = event.text;
-      if (event.type === 'audio-blocked') audioBlocked = true;
-      if (event.type === 'transcript') void refresh().catch(() => {});
+    const boot = bootStudio({
+      voice,
+      catalog,
+      conversation,
+      restoreLanguage: LANGUAGE_SWITCH_ENABLED,
+      setArabic: (value) => (arabic = value),
+      setCaptions: (value) => (captionsVisible = value),
+      setDevOverlay: (value) => (devOverlay = value),
+      getLanguage: () => (arabic ? 'ar' : 'en'),
+      run: (work, onError) => run(work, onError),
+      onVoiceError,
     });
-    void run(async () => {
-      conversations = await bootstrapConversations();
-      await select(conversations[0].id);
-    });
-    const poll = setInterval(() => {
-      if (live && Date.parse(live.expires_at) <= Date.now()) void run(end);
-      else if (live) void refresh().catch(() => {});
-    }, 2500);
-    return () => {
-      clearInterval(poll);
-      unsubscribe();
-      void runtime.disconnect();
-      if (live) void endVoiceSession(live).catch(() => {});
-    };
+    runtime = boot.runtime;
+    connection = boot.connection;
+    conversations = boot.conversations;
+    catalogStore = boot.catalogStore;
+    return boot.cleanup;
   });
 </script>
 
 <svelte:head>
   <title>Sarjy — Voice Context Studio</title>
-  <meta name="description" content="A bilingual voice assistant with transparent context." />
+  <meta name="description" content="An English-first voice assistant with transparent context." />
 </svelte:head>
 
-<div class="shell" dir={arabic ? 'rtl' : 'ltr'}>
-  <ConversationList
-    {conversations}
-    {current}
-    {busy}
-    labelNew={words.new}
-    oncreate={() => void create()}
-    onselect={(id) => void run(() => select(id))}
-  />
-  <main>
-    <header>
-      <span>● {status}</span>
-      <button onclick={toggleLanguage}>{arabic ? 'English' : 'العربية'}</button>
-    </header>
-    {#if error}<p role="alert">{error}</p>{/if}
-    {#if audioBlocked}
-      <button
-        onclick={() =>
-          run(async () => {
-            await runtime.resumeAudio();
-            audioBlocked = false;
-          })}>Enable audio / تشغيل الصوت</button
-      >
-    {/if}
-    <Transcript {turns} {toolCalls} title={words.title} intro={words.intro} />
-    <VoiceSettings
+<AppShell
+  dir={arabic ? 'rtl' : 'ltr'}
+  modeLabel={arabic ? 'بسيط' : 'Simple'}
+  languageLabel={arabic ? 'English' : 'العربية'}
+  onLanguage={LANGUAGE_SWITCH_ENABLED ? toggleLanguage : undefined}
+  leftLabel={arabic ? 'المحادثات' : 'Conversations'}
+  rightLabel={arabic ? 'الذاكرة والإعدادات' : 'Memory and settings'}
+>
+  {#snippet left()}
+    <ConversationList
+      conversations={conversation.conversations}
+      current={conversation.current}
       {arabic}
-      {voices}
-      bind:voiceId
-      bind:voiceSearch
-      {nextVoicePage}
-      {voiceLoading}
-      {voiceError}
-      {live}
-      {activeVoiceName}
-      onsearch={() => void loadVoices()}
-      onloadmore={() => void loadVoices(true)}
-      onremember={rememberVoice}
+      {busy}
+      loading={conversation.loading}
+      error={conversation.listError}
+      onselect={selection.requestSelect}
+      oncreate={selection.create}
+      onretry={() => run(() => conversations!.reload())}
+    />
+  {/snippet}
+
+  {#snippet stage()}
+    <VoiceStage
+      {presentation}
+      micLevel={voice.micLevel}
+      outputLevel={voice.outputLevel}
+      {arabic}
+      live={voice.live !== null}
+      connecting={voice.connecting}
+      connectionLost={voice.connectionLost}
+      voiceErrorCode={voice.voiceErrorCode}
+      {voiceErrorText}
+      audioBlocked={voice.audioBlocked}
+      {pendingIntent}
+      turns={conversation.turns}
+      provisional={voice.provisional}
+      tools={conversation.toolCalls}
+      {captionsVisible}
+      {busy}
+      {words}
+      onretrymic={startConnect}
+      onreconnect={() => run(() => connection!.reconnect(), onVoiceError)}
+      onend={() => run(() => connection!.end(), onVoiceError)}
+      onenableaudio={enableAudio}
+      onorb={handleOrb}
+      oncancelintent={() => (pendingIntent = null)}
+      onconfirmintent={() => selection.confirmSwitch()}
     />
     <CallControls
-      {live}
+      live={voice.live}
+      connecting={voice.connecting}
       {busy}
-      {muted}
-      canConnect={Boolean(current)}
+      muted={voice.muted}
+      connectionLost={voice.connectionLost}
+      {canInterrupt}
       {words}
-      onend={() => void run(end)}
-      ontoggle={() => void run(toggleMute)}
-      oninterrupt={() => void run(() => runtime.interrupt())}
-      onconnect={() => void run(() => connect(true))}
+      onend={() => run(() => connection!.end(), onVoiceError)}
+      oncancel={() => run(() => connection!.cancelConnect(), onVoiceError)}
+      ontoggle={toggleMute}
+      oninterrupt={interrupt}
+      onconnect={startConnect}
     />
-    <Composer
-      bind:draft
-      placeholder={words.placeholder}
-      sendLabel={words.send}
-      disabled={busy || !current}
-      onsend={() => void send()}
+    <Composer bind:draft placeholder={words.placeholder} sendLabel={words.send} disabled={busy} onsend={send} />
+    <small class="attribution"><a href="https://open-meteo.com/">Weather data: Open-Meteo</a></small>
+  {/snippet}
+
+  {#snippet right()}
+    <VoiceSettings
+      {arabic}
+      voices={catalog.voices}
+      bind:voiceId={catalog.voiceId}
+      bind:voiceSearch={catalog.search}
+      nextVoicePage={catalog.nextPage}
+      voiceLoading={catalog.loading}
+      voiceError={catalog.error}
+      live={voice.live}
+      activeVoiceName={voice.activeVoiceName}
+      {captionsVisible}
+      onsearch={() => void catalogStore!.load()}
+      onloadmore={() => void catalogStore!.load(true)}
+      onremember={() => catalogStore!.remember()}
+      ontoggleCaptions={toggleCaptions}
     />
-    <small><a href="https://open-meteo.com/">Weather data: Open-Meteo</a></small>
-  </main>
-</div>
+  {/snippet}
+</AppShell>
+
+<p class="sr-only" aria-live="polite" aria-atomic="true">{announcement}</p>
