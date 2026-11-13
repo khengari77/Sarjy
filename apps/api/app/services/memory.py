@@ -205,13 +205,26 @@ class MemoryService:
         return await self._write(owner_id, conversation_id, source_turn_id, content, idempotency_key, None, None)
 
     async def correct_memory(
-        self, owner_id, memory_id, expected_version, content, idempotency_key, *, source_turn_id=None
+        self,
+        owner_id,
+        memory_id,
+        expected_version,
+        content,
+        idempotency_key,
+        *,
+        source_turn_id=None,
+        conversation_id=None,
     ):
         self._require_isolated_caller()
         previous = await self.get_memory(owner_id, memory_id)
-        conversation_id = previous.source_conversation_id
         return await self._write(
-            owner_id, conversation_id, source_turn_id, content, idempotency_key, memory_id, expected_version
+            owner_id,
+            conversation_id or previous.source_conversation_id,
+            source_turn_id,
+            content,
+            idempotency_key,
+            memory_id,
+            expected_version,
         )
 
     async def _claim(
