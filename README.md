@@ -142,7 +142,7 @@ Frontend: https://sarjy-web-dev-otbaod.cranl.net (password required). API: https
 
 Deployment branches add the appropriate root `Dockerfile` to the same tested source revision; CranL's nested Dockerfile build did not include repository-root files. The API and frontend root-Dockerfile branch checks passed.
 
-Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source and the worker Dockerfile. Inject secrets separately through LiveKit. Worker deployment, hosted typed-input speech/weather and cleanup are verified. Human microphone, interruption and reconnect/refresh acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.
+Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source, shared domain Python source and the worker Dockerfile. Preparation stages a fresh context before replacing the helper-owned output, so stale files are removed and missing sources leave the previous context intact. Build from the generated context; inject secrets separately through LiveKit. Worker deployment, hosted typed-input speech/weather and cleanup are verified. Human microphone, interruption and reconnect/refresh acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.
 
 ## Retryable voice-session cleanup
 
