@@ -98,6 +98,11 @@ jobs:
           REQUIRE_DAY2_INTEGRATION: '1'
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
+      - name: Reviewer admission concurrency
+        run: uv run pytest -q tests/test_reviewer_access_postgres.py
+        env:
+          REQUIRE_DAY2_INTEGRATION: '1'
+          TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
       - name: Memory claim concurrency
         # The write ledger's duplicate-request guarantee is only meaningful on a
         # real PostgreSQL database; run it as its own required step so a failure

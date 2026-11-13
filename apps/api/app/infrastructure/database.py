@@ -18,11 +18,38 @@ class Base(DeclarativeBase):
     pass
 
 
+class ReviewerInvitation(Base):
+    __tablename__ = "reviewer_invitations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[str] = mapped_column(String(40))
+    expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    revoked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class ReviewerAttemptWindow(Base):
+    """Global admission-attempt counter for one UTC fixed minute."""
+
+    __tablename__ = "reviewer_attempt_windows"
+    minute: Mapped[str] = mapped_column(String(40), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ReviewerCreationWindow(Base):
+    """Per-invitation identity-creation counter for one UTC fixed hour."""
+
+    __tablename__ = "reviewer_creation_windows"
+    invitation_id: Mapped[str] = mapped_column(ForeignKey("reviewer_invitations.id"), primary_key=True)
+    hour: Mapped[str] = mapped_column(String(40), primary_key=True)
+    created: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Identity(Base):
     __tablename__ = "identities"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     expires_at: Mapped[str] = mapped_column(String(40))
+    invitation_id: Mapped[str | None] = mapped_column(ForeignKey("reviewer_invitations.id"), nullable=True, index=True)
 
 
 class Conversation(Base):

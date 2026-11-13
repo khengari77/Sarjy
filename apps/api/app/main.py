@@ -5,29 +5,86 @@ persistence, providers and middleware together.
 """
 
 import hmac
+import re
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import Settings
-from app.dependencies import build_dependencies
+from app.dependencies import COOKIE, build_dependencies
 from app.domain.context_operations import MemoryCandidate, classify
 from app.infrastructure.database import Base, SessionGate
 from app.services.context_actions import build_context_action_handlers
 from app.services.memory import MemoryService, OpenAIEmbedder
+from app.services.reviewer_access import (
+    ReviewerAccessDenied,
+    ReviewerSessionRequired,
+    authorize,
+)
 from app.services.voices import ElevenLabsVoices
+
+REVIEWER_CLEANUP_PATH = re.compile(r"^/v1/voice/sessions/[^/]+/end$")
+REVIEWER_PUBLIC_PATHS = {"/v1/reviewer/session", "/v1/demo-session"}
+
+
+def _reviewer_gate_exempt(path: str) -> bool:
+    return path in REVIEWER_PUBLIC_PATHS or REVIEWER_CLEANUP_PATH.fullmatch(path) is not None
+
+
+def _reviewer_gate(config: Settings, sessions, now):
+    async def gate(request, call_next):
+        # Only reviewer mode gates routes; development behavior is unchanged.
+        if not config.reviewer_access_enabled:
+            return await call_next(request)
+        path = request.url.path
+        if not path.startswith("/v1/") or _reviewer_gate_exempt(path):
+            return await call_next(request)
+        try:
+            async with sessions() as db:
+                await authorize(db, request.cookies.get(COOKIE, ""), now())
+        except ReviewerSessionRequired:
+            return JSONResponse({"detail": {"code": "REVIEWER_SESSION_REQUIRED"}}, status_code=401)
+        except ReviewerAccessDenied:
+            return JSONResponse({"detail": {"code": "REVIEWER_ACCESS_DENIED"}}, status_code=403)
+        except Exception:
+            return JSONResponse({"detail": {"code": "REVIEWER_UNAVAILABLE"}}, status_code=503)
+        return await call_next(request)
+
+    return gate
+
+
+def _web_service_gate(config: Settings):
+    async def protect(request, call_next):
+        if config.development_protected and request.url.path.startswith("/v1/"):
+            supplied = request.headers.get("x-web-service-secret", "")
+            if not hmac.compare_digest(supplied, config.web_service_secret):
+                return JSONResponse({"detail": {"code": "WEB_AUTH_REQUIRED"}}, status_code=401)
+        return await call_next(request)
+
+    return protect
 
 
 def create_app(
-    settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None, embedding_adapter=None
+    settings: Settings | None = None,
+    *,
+    voice_catalog: ElevenLabsVoices | None = None,
+    embedding_adapter=None,
+    clock=None,
 ):
     config = settings or Settings()
+    now = clock or (lambda: datetime.now(UTC))
     # Reject invalid configuration before allocating the engine so a failed
     # create_app never leaves a connection pool behind.
     if config.development_protected and not config.web_service_secret:
         raise ValueError("WEB_SERVICE_SECRET_REQUIRED")
+    if config.reviewer_access_enabled and not (
+        config.cookie_secure and config.development_protected and config.web_service_secret
+    ):
+        raise ValueError("REVIEWER_ACCESS_CONFIGURATION_INVALID")
     catalog = voice_catalog or ElevenLabsVoices(config.eleven_api_key)
     engine = create_async_engine(config.database_url)
     if config.database_url.startswith("sqlite"):
@@ -66,18 +123,13 @@ def create_app(
         openapi_url=None if config.development_protected else "/openapi.json",
     )
 
-    @app.middleware("http")
-    async def protect_web_api(request, call_next):
-        if config.development_protected and request.url.path.startswith("/v1/"):
-            supplied = request.headers.get("x-web-service-secret", "")
-            if not hmac.compare_digest(supplied, config.web_service_secret):
-                from fastapi.responses import JSONResponse
-
-                return JSONResponse({"detail": {"code": "WEB_AUTH_REQUIRED"}}, status_code=401)
-        return await call_next(request)
+    # The reviewer gate is added first so the web-service-secret middleware
+    # stays outermost and the proxy boundary is checked before admission.
+    app.middleware("http")(_reviewer_gate(config, sessions, now))
+    app.middleware("http")(_web_service_gate(config))
 
     app.state.settings = config
-    database, identity, owned = build_dependencies(sessions)
+    database, identity, cleanup_user, owned = build_dependencies(sessions, settings=config, clock=now)
 
     from app.routes.actions import register_action_routes
 
@@ -118,9 +170,23 @@ def create_app(
     from app.routes.voice import register_voice_routes
     from app.routes.worker import register_worker_routes
 
-    register_system_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
-    register_voice_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
+    register_system_routes(
+        app, config=config, catalog=catalog, database=database, identity=identity, owned=owned, clock=now
+    )
+    register_voice_routes(
+        app,
+        config=config,
+        catalog=catalog,
+        database=database,
+        identity=identity,
+        cleanup_identity=cleanup_user,
+        owned=owned,
+    )
     register_worker_routes(app, config=config, database=database)
     register_context_routes(app, config=config, database=database, identity=identity, semantic_search=semantic_search)
+    if config.reviewer_access_enabled:
+        from app.routes.reviewer import register_reviewer_routes
+
+        register_reviewer_routes(app, config=config, database=database, clock=now)
 
     return app

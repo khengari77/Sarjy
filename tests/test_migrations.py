@@ -41,6 +41,32 @@ def test_initial_migration_matches_models(tmp_path):
     alembic(f"sqlite+aiosqlite:///{tmp_path}/migration.db", "check")
 
 
+def test_reviewer_migration_is_additive_and_has_one_head(tmp_path):
+    url = f"sqlite+aiosqlite:///{tmp_path}/reviewer.db"
+    heads = subprocess.run([".venv/bin/alembic", "heads"], env=os.environ, capture_output=True, text=True, timeout=30)
+    assert heads.returncode == 0, heads.stdout + heads.stderr
+    assert len(heads.stdout.strip().splitlines()) == 1
+    alembic(url, "upgrade", "0009_dispatcher_leases")
+    with closing(sqlite3.connect(tmp_path / "reviewer.db")) as connection, connection:
+        seed(connection)
+        before = snapshot(connection)
+    alembic(url, "upgrade", "head")
+    with closing(sqlite3.connect(tmp_path / "reviewer.db")) as connection, connection:
+        assert snapshot(connection) == before
+        assert connection.execute("SELECT invitation_id FROM identities").fetchall() == [(None,)]
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(reviewer_invitations)")}
+        assert columns == {"id", "token_hash", "created_at", "expires_at", "revoked_at"}
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"reviewer_invitations", "reviewer_attempt_windows", "reviewer_creation_windows"} <= tables
+    alembic(url, "check")
+    alembic(url, "downgrade", "0009_dispatcher_leases")
+    with closing(sqlite3.connect(tmp_path / "reviewer.db")) as connection, connection:
+        assert snapshot(connection) == before
+        assert "invitation_id" not in {row[1] for row in connection.execute("PRAGMA table_info(identities)")}
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "reviewer_invitations" not in tables
+
+
 def test_day2_migration_is_additive_on_existing_sqlite_database(tmp_path):
     url = f"sqlite+aiosqlite:///{tmp_path}/migration.db"
     alembic(url, "upgrade", "0003")
@@ -125,6 +151,9 @@ async def _postgres_migration():
             "user_settings",
             "setting_revisions",
             "memory_write_requests",
+            "reviewer_invitations",
+            "reviewer_attempt_windows",
+            "reviewer_creation_windows",
         ):
             rls = await connection.fetchval("SELECT relrowsecurity FROM pg_class WHERE relname=$1", table)
             assert rls is True, table
@@ -135,6 +164,23 @@ async def _postgres_migration():
                     ), (role, table, privilege)
     finally:
         await connection.close()
+    connection = await asyncpg.connect(plain)
+    try:
+        invitation_column = await connection.fetchrow(
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_name='identities' AND column_name='invitation_id'"
+        )
+        invitation_links = await connection.fetch("SELECT invitation_id FROM identities")
+        reviewer_tables = await connection.fetch("SELECT tablename FROM pg_tables WHERE tablename LIKE 'reviewer_%'")
+    finally:
+        await connection.close()
+    assert invitation_column["is_nullable"] == "YES"
+    assert [row["invitation_id"] for row in invitation_links] == [None]
+    assert {row["tablename"] for row in reviewer_tables} == {
+        "reviewer_invitations",
+        "reviewer_attempt_windows",
+        "reviewer_creation_windows",
+    }
     assert embedding == "vector(1536)"
     assert extension
     assert after == before

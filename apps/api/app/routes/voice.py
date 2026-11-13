@@ -28,7 +28,9 @@ class StartVoice(BaseModel):
     response_preference: ResponsePreference = ResponsePreference.AUTOMATIC
 
 
-def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, owned):
+def register_voice_routes(
+    app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, cleanup_identity, owned
+):
     @app.post("/v1/voice/sessions", status_code=201)
     async def start_voice(body: StartVoice, user=Depends(identity), db: AsyncSession = Depends(database)):
         await owned(body.conversation_id, user, db)
@@ -132,7 +134,7 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
             raise HTTPException(503, detail={"code": "VOICE_DISPATCH_FAILED"}) from None
 
     @app.post("/v1/voice/sessions/{session_id}/end")
-    async def end_voice(session_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
+    async def end_voice(session_id: str, user=Depends(cleanup_identity), db: AsyncSession = Depends(database)):
         voice = await db.get(VoiceSession, session_id)
         if not voice or voice.owner_id != user.id:
             raise HTTPException(404)

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     agent_service_secret: str = ""
     demo_session_budget: int = 80
     demo_calls_per_identity: int = 3
+    reviewer_access_enabled: bool = False
 
     @model_validator(mode="after")
     def validate_deepseek_budget(self):
@@ -35,4 +36,16 @@ class Settings(BaseSettings):
             DEEPSEEK_MINIMUM_REQUEST_MICRO_USD <= self.deepseek_request_micro_usd <= self.deepseek_daily_micro_usd
         ):
             raise ValueError("DEEPSEEK_BUDGET_CONFIGURATION_INVALID")
+        return self
+
+    @model_validator(mode="after")
+    def validate_reviewer_access(self):
+        if not self.reviewer_access_enabled:
+            return self
+        if not self.cookie_secure:
+            raise ValueError("REVIEWER_ACCESS_REQUIRES_SECURE_COOKIES")
+        if not self.development_protected:
+            raise ValueError("REVIEWER_ACCESS_REQUIRES_API_PROTECTION")
+        if not self.web_service_secret:
+            raise ValueError("REVIEWER_ACCESS_REQUIRES_WEB_SERVICE_SECRET")
         return self
