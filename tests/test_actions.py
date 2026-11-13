@@ -117,12 +117,14 @@ def test_owner_checks_and_approved_voice_validation(tmp_path):
     app, path = setup(tmp_path)
     with TestClient(app) as alice:
         conversation = chat(alice)
-        bob = TestClient(app)
-        chat(bob)
-        assert (
-            submit(bob, conversation, source="ui", action={"kind": "SetCaptionsVisible", "visible": False}).status_code
-            == 404
-        )
+        with closing(TestClient(app)) as bob:
+            chat(bob)
+            assert (
+                submit(
+                    bob, conversation, source="ui", action={"kind": "SetCaptionsVisible", "visible": False}
+                ).status_code
+                == 404
+            )
         assert (
             submit(
                 alice, conversation, source="ui", action={"kind": "SelectApprovedVoice", "voice_id": "missing"}
