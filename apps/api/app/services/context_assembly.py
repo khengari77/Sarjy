@@ -20,7 +20,14 @@ from app.infrastructure.database import Memory, ToolCall, Turn
 from app.services.memory_eligibility import blocked_memory_ids, blocked_source_turn_ids
 
 HISTORY_LIMIT = 20
+# The model still receives at most ``HISTORY_LIMIT`` turns, but retrieval reads
+# a small, deterministic recent window.  Older turns are loaded only when a
+# dependency needs their provenance to propagate an exclusion.
+HISTORY_WINDOW_MULTIPLIER = 5
+DEPENDENCY_CLOSURE_LIMIT = 200
+MEMORY_CANDIDATE_LIMIT = 200
 TOOL_RESULT_LIMIT = 50
+_ID_CHUNK = 400
 DENIED_STATUSES = frozenset({"superseded", "inactive", "excluded"})
 
 
@@ -91,29 +98,148 @@ async def orm_memory_candidates(
     owner_id: str,
     conversation_id: str,
 ) -> MemoryCandidates:
-    """Default reader: owner-scoped memories with active conversation exclusions."""
+    """Default reader: owner-scoped memories with active conversation exclusions.
+
+    Only the deterministic candidate bound is materialized for inclusion.  Rows
+    for excluded ids are fetched by id because their content is policy evidence
+    (notably excluded locations for the weather boundary), never as a lifetime
+    owner-memory scan.  Inactive rows play no part in this revision and are not
+    loaded.
+    """
     excluded_ids = await blocked_memory_ids(db, owner_id, conversation_id)
     sources = await blocked_source_turn_ids(db, owner_id, conversation_id)
-    rows = (await db.scalars(select(Memory).where(Memory.owner_id == owner_id).order_by(Memory.id))).all()
-    included: list[ContextCandidate] = []
-    denied: list[ContextCandidate] = []
-    inactive: list[ContextCandidate] = []
-    for row in rows:
-        candidate = ContextCandidate(
+    rows = (
+        await db.scalars(
+            select(Memory)
+            .where(Memory.owner_id == owner_id, Memory.status == "active")
+            .order_by(Memory.updated_at.desc(), Memory.id.desc())
+            .limit(MEMORY_CANDIDATE_LIMIT)
+        )
+    ).all()
+    active_by_id = {row.id: row for row in rows}
+    denied_by_id = {row.id: row for row in await _memory_rows_for_ids(db, owner_id, excluded_ids - set(active_by_id))}
+    included: list[ContextCandidate] = [
+        ContextCandidate(
             id=row.id,
             role="memory",
             text=row.content,
             origin="memory",
             source=row.source_turn_id,
-            status="active" if row.status == "active" and row.id not in excluded_ids else "superseded",
+            status="active",
         )
-        if candidate.status == "active":
-            included.append(candidate)
-        elif row.id in excluded_ids:
-            denied.append(candidate)
-        else:
-            inactive.append(candidate)
-    return MemoryCandidates(tuple(included), tuple(denied), tuple(inactive), sources)
+        for row in sorted(rows, key=lambda item: item.id)
+        if row.id not in excluded_ids
+    ]
+    denied: list[ContextCandidate] = []
+    for memory_id in sorted(excluded_ids):
+        row = active_by_id.get(memory_id) or denied_by_id.get(memory_id)
+        if row is None:
+            continue
+        denied.append(
+            ContextCandidate(
+                id=row.id,
+                role="memory",
+                text=row.content,
+                origin="memory",
+                source=row.source_turn_id,
+                status="superseded",
+            )
+        )
+    return MemoryCandidates(tuple(included), tuple(denied), (), sources)
+
+
+async def _memory_rows_for_ids(db: AsyncSession, owner_id: str, ids) -> list[Memory]:
+    """Fetch policy rows by exact owner-scoped id without a lifetime scan."""
+    wanted = sorted(str(identifier) for identifier in ids)
+    rows: list[Memory] = []
+    for start in range(0, len(wanted), _ID_CHUNK):
+        chunk = wanted[start : start + _ID_CHUNK]
+        rows.extend(
+            (
+                await db.scalars(
+                    select(Memory)
+                    .where(Memory.owner_id == owner_id, Memory.id.in_(chunk))
+                    .order_by(Memory.updated_at.desc(), Memory.id.desc())
+                )
+            ).all()
+        )
+    return rows
+
+
+def _dependency_ids(turn: Turn) -> set[str]:
+    """Record ids one turn can inherit dependencies from."""
+    references: set[str] = set()
+    if turn.request_id.startswith("reply:"):
+        references.add(turn.request_id.removeprefix("reply:"))
+    snapshot = turn.snapshot or {}
+    derivation = snapshot.get("derivation")
+    values = derivation.get("record_ids") if isinstance(derivation, dict) else snapshot.get("included_record_ids")
+    if isinstance(values, list):
+        references.update(value for value in values if isinstance(value, str))
+    return references
+
+
+async def _dependency_closure(
+    db: AsyncSession,
+    *,
+    conversation_id: str,
+    loaded: dict[str, Turn],
+    budget: int = DEPENDENCY_CLOSURE_LIMIT,
+) -> bool:
+    """Load only referenced turn ids needed to propagate exclusions.
+
+    Returns ``True`` when the budget cannot cover every referenced turn.  The
+    caller must then fail closed for derived content while exclusions exist.
+    """
+    attempted = set(loaded)
+    frontier: set[str] = set()
+    for turn in loaded.values():
+        frontier.update(_dependency_ids(turn))
+    fetched = 0
+    while True:
+        missing = sorted(frontier - attempted)
+        if not missing:
+            return False
+        for start in range(0, len(missing), _ID_CHUNK):
+            chunk = missing[start : start + _ID_CHUNK]
+            attempted.update(chunk)
+            remaining = budget - fetched
+            if remaining <= 0:
+                return True
+            rows = (
+                await db.scalars(
+                    select(Turn)
+                    .where(
+                        Turn.conversation_id == conversation_id,
+                        Turn.status == "completed",
+                        Turn.id.in_(chunk),
+                    )
+                    .order_by(Turn.created_at, Turn.id)
+                )
+            ).all()
+            if len(rows) > remaining:
+                rows = rows[:remaining]
+                for row in rows:
+                    loaded[row.id] = row
+                return True
+            for row in rows:
+                if row.id not in loaded:
+                    loaded[row.id] = row
+                    fetched += 1
+                    frontier.update(_dependency_ids(row))
+
+
+async def _recent_turns(db: AsyncSession, conversation_id: str, *, limit: int) -> list[Turn]:
+    """Deterministic recent window, returned in chronological model order."""
+    rows = (
+        await db.scalars(
+            select(Turn)
+            .where(Turn.conversation_id == conversation_id, Turn.status == "completed")
+            .order_by(Turn.created_at.desc(), Turn.id.desc())
+            .limit(limit)
+        )
+    ).all()
+    return list(reversed(rows))
 
 
 async def read_context_inputs(
@@ -127,14 +253,10 @@ async def read_context_inputs(
     """Read everything the compiler may consider for the next turn."""
     reader = memory_reader or _OrmMemoryReader()
     memories = await reader.candidates(db, owner_id=owner_id, conversation_id=conversation_id)
-    turns = (
-        await db.scalars(
-            select(Turn)
-            .where(Turn.conversation_id == conversation_id, Turn.status == "completed")
-            .order_by(Turn.created_at, Turn.id)
-        )
-    ).all()
-    by_id = {turn.id: turn for turn in turns}
+    window = await _recent_turns(db, conversation_id, limit=history_limit * HISTORY_WINDOW_MULTIPLIER)
+    by_id = {turn.id: turn for turn in window}
+    closure_exceeded = await _dependency_closure(db, conversation_id=conversation_id, loaded=by_id)
+    policy_active = bool(memories.excluded_ids or memories.blocked_sources)
     blocked = set(memories.excluded_ids | memories.blocked_sources)
 
     def dependencies(turn):
@@ -151,14 +273,18 @@ async def read_context_inputs(
 
     # Only generated assistant content inherits model-input dependencies. Independent
     # user history is retained unless it is the explicitly tracked source of a memory.
+    # Unknown provenance or an exhausted closure fails closed while exclusions exist.
+    fail_closed = closure_exceeded and policy_active
+    turns = list(by_id.values())
     while True:
         more = {
             turn.id
             for turn in turns
             if turn.role == "assistant"
             and (
-                (dependencies(turn) is not None and dependencies(turn) & blocked)
-                or (memories.excluded_ids and dependencies(turn) is None)
+                fail_closed
+                or (dependencies(turn) is not None and dependencies(turn) & blocked)
+                or (policy_active and dependencies(turn) is None)
             )
         }
         if more <= blocked:
@@ -166,7 +292,7 @@ async def read_context_inputs(
         blocked.update(more)
     history = tuple(
         ContextCandidate(id=turn.id, role=turn.role, text=turn.text, origin="history")
-        for turn in turns[-history_limit:]
+        for turn in window[-history_limit:]
         if turn.id not in blocked
     )
     tool_rows = (
@@ -187,7 +313,7 @@ async def read_context_inputs(
         values = (turn.snapshot or {}).get("included_record_ids")
         known = isinstance(values, list) and all(isinstance(value, str) for value in values)
         deps = frozenset(values) if known else frozenset()
-        if turn.id in blocked or deps & blocked or (memories.excluded_ids and not known):
+        if fail_closed or turn.id in blocked or deps & blocked or (policy_active and not known):
             blocked.add(call.id)
             continue
         tool_results.append(
@@ -221,7 +347,10 @@ def location_evidence(entries: Sequence[dict]) -> tuple[LocationEvidence, ...]:
 
 __all__ = [
     "ContextInputs",
+    "DEPENDENCY_CLOSURE_LIMIT",
     "HISTORY_LIMIT",
+    "HISTORY_WINDOW_MULTIPLIER",
+    "MEMORY_CANDIDATE_LIMIT",
     "MemoryCandidates",
     "MemoryReader",
     "TOOL_RESULT_LIMIT",
