@@ -13,10 +13,12 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
 
-from app.domain.tool_operations import ToolReplayKind, arguments_fingerprint, replay_kind
-from app.infrastructure.database import ToolCall
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.tool_operations import ToolReplayKind, arguments_fingerprint, replay_kind
+from app.infrastructure.database import ToolCall
+from app.infrastructure.upsert import insert_ignore
 
 
 class ToolOperationError(ValueError):
@@ -47,27 +49,20 @@ async def claim_tool_operation(
     different request is a conflict even when the turn matches.
     """
     fingerprint = arguments_fingerprint(arguments)
-    dialect = db.bind.dialect.name if db.bind is not None else ""
-    if dialect == "sqlite":
-        from sqlalchemy.dialects.sqlite import insert
-    elif dialect == "postgresql":
-        from sqlalchemy.dialects.postgresql import insert
-    else:
-        raise ToolOperationError("TOOL_OPERATION_DATABASE_UNSUPPORTED", 503)
-
-    result = await db.execute(
-        insert(ToolCall)
-        .values(
-            id=str(uuid4()),
-            turn_id=turn_id,
-            request_id=operation_key,
-            name=name,
-            state="pending",
-            result=None,
-            error_code=None,
-            arguments_hash=fingerprint,
-        )
-        .on_conflict_do_nothing(index_elements=["request_id"])
+    result = await insert_ignore(
+        db,
+        ToolCall,
+        {
+            "id": str(uuid4()),
+            "turn_id": turn_id,
+            "request_id": operation_key,
+            "name": name,
+            "state": "pending",
+            "result": None,
+            "error_code": None,
+            "arguments_hash": fingerprint,
+        },
+        index_elements=["request_id"],
     )
     if result.rowcount == 1:
         return ToolOperationClaim("claimed")

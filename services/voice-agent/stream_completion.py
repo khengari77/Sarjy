@@ -21,7 +21,7 @@ completion_state: ContextVar[CompletionState | None] = ContextVar("completion_st
 class ObservedStream(httpx.AsyncByteStream):
     def __init__(self, stream: httpx.AsyncByteStream, state: CompletionState) -> None:
         self.stream, self.state = stream, state
-        self.buffer = b""
+        self.buffer: bytes = b""
         self.data: list[bytes] = []
 
     def event(self) -> None:
