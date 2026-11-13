@@ -1,3 +1,5 @@
+from contextlib import closing
+
 from app.config import Settings
 from app.main import create_app
 from fastapi.testclient import TestClient
@@ -27,16 +29,17 @@ def test_memory_routes_authenticate_persist_and_reject_forged_ownership(tmp_path
         assert (
             client.post(f"/v1/conversations/{chat}/memories", json=payload | {"owner_id": "forged"}).status_code == 422
         )
-        other = TestClient(client.app)
-        other.post("/v1/demo-session")
-        before = len(embedder.calls)
-        assert other.post(f"/v1/conversations/{chat}/memories", json=payload).status_code == 404
-        assert other.post("/v1/memories/search", json={"conversation_id": chat, "query": "city"}).status_code == 404
-        assert (
-            other.post(
-                f"/v1/memories/{memory['id']}/correct",
-                json={"content": "Paris", "expected_version": 1, "idempotency_key": "other"},
-            ).status_code
-            == 404
-        )
-        assert len(embedder.calls) == before
+        # A bare client reuses the running lifespan and must still be closed explicitly.
+        with closing(TestClient(client.app)) as other:
+            other.post("/v1/demo-session")
+            before = len(embedder.calls)
+            assert other.post(f"/v1/conversations/{chat}/memories", json=payload).status_code == 404
+            assert other.post("/v1/memories/search", json={"conversation_id": chat, "query": "city"}).status_code == 404
+            assert (
+                other.post(
+                    f"/v1/memories/{memory['id']}/correct",
+                    json={"content": "Paris", "expected_version": 1, "idempotency_key": "other"},
+                ).status_code
+                == 404
+            )
+            assert len(embedder.calls) == before
