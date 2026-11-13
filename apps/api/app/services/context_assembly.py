@@ -194,9 +194,14 @@ async def _closure_page(
     budget: int,
     fetched: int,
 ) -> tuple[bool, int]:
-    """Resolve one id chunk of turns, tool provenance and memory references."""
-    remaining = budget - fetched
-    if remaining <= 0:
+    """Resolve one id chunk of turns, tool provenance and memory references.
+
+    Turns and tool records share one closure budget: every distinct record that
+    is added is counted before it is materialized.  Queries are limited to the
+    remaining budget so an exhausted page cannot pull unbounded rows into memory;
+    any reference left unresolved because of that limit fails closed.
+    """
+    if fetched >= budget:
         return True, fetched
     rows = (
         await db.scalars(
@@ -207,35 +212,46 @@ async def _closure_page(
                 Turn.id.in_(chunk),
             )
             .order_by(Turn.created_at, Turn.id)
+            .limit(budget - fetched)
         )
     ).all()
-    if len(rows) > remaining:
-        for row in rows[:remaining]:
-            loaded[row.id] = row
-        return True, fetched
     for row in rows:
-        if row.id not in loaded:
-            loaded[row.id] = row
-            fetched += 1
-            frontier.update(_dependency_ids(row))
+        if row.id in loaded:
+            continue
+        if fetched + 1 > budget:
+            return True, fetched
+        fetched += 1
+        loaded[row.id] = row
+        frontier.update(_dependency_ids(row))
+    remaining = budget - fetched
     tool_rows = (
-        await db.execute(
-            select(ToolCall, Turn)
-            .join(Turn, ToolCall.turn_id == Turn.id)
-            .where(
-                ToolCall.id.in_(chunk),
-                Turn.conversation_id == conversation_id,
-                Turn.status == "completed",
+        (
+            await db.execute(
+                select(ToolCall, Turn)
+                .join(Turn, ToolCall.turn_id == Turn.id)
+                .where(
+                    ToolCall.id.in_(chunk),
+                    Turn.conversation_id == conversation_id,
+                    Turn.status == "completed",
+                )
+                .order_by(ToolCall.id)
+                .limit(remaining)
             )
-        )
-    ).all()
+        ).all()
+        if remaining > 0
+        else []
+    )
     for call, parent in tool_rows:
-        tools.setdefault(call.id, (call, parent))
-        if parent.id not in loaded:
-            if fetched >= budget:
+        if call.id not in tools:
+            if fetched + 1 > budget:
                 return True, fetched
-            loaded[parent.id] = parent
             fetched += 1
+            tools[call.id] = (call, parent)
+        if parent.id not in loaded:
+            if fetched + 1 > budget:
+                return True, fetched
+            fetched += 1
+            loaded[parent.id] = parent
             frontier.update(_dependency_ids(parent))
     # Referenced ids may legitimately be memory records or the synthetic
     # instruction id. Anything else is unresolved provenance: fail closed.

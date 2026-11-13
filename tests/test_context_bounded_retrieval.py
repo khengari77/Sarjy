@@ -31,11 +31,12 @@ from app.services.context_assembly import (
     HISTORY_WINDOW_MULTIPLIER,
     MEMORY_CANDIDATE_LIMIT,
     TOOL_RESULT_LIMIT,
+    _dependency_closure,
     read_context_inputs,
 )
 from app.services.context_operations import PREVIEW_SEARCH_ROW_LIMIT, keyword_search
 from app.services.memory import SEARCH_CANDIDATE_LIMIT, MemoryService
-from sqlalchemy import event, insert, text, update
+from sqlalchemy import event, insert, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -628,6 +629,68 @@ def test_exhausted_dependency_closure_fails_closed(tmp_path):
                 inputs = await read_context_inputs(db, owner_id="alice", conversation_id="chat")
             assert "assistant-closure" not in {candidate.id for candidate in inputs.history}
             assert inputs.tool_results == ()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_tool_provenance_shares_the_dependency_closure_budget(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "tool-budget.db")
+        try:
+            async with sessions() as db:
+                parents = await seed_turns(db, "chat", 5)
+                tool_ids: list[str] = []
+                for parent, index in zip(parents, range(5), strict=True):
+                    turn_tool_ids = [f"tool-{index:02d}-{offset:02d}" for offset in range(50)]
+                    db.add_all(
+                        [
+                            ToolCall(
+                                id=tool_id,
+                                turn_id=parent,
+                                request_id=f"{tool_id}-request",
+                                name="get_current_weather",
+                                state="completed",
+                                result={"city": "Tripoli"},
+                            )
+                            for tool_id in turn_tool_ids
+                        ]
+                    )
+                    tool_ids.extend(turn_tool_ids)
+                    await db.execute(update_turn_snapshot(parent, {"included_record_ids": [*turn_tool_ids, "system"]}))
+                await seed_memories(db, "alice", "chat", 1)
+                await add_exclusion(db, "mem-active-00000", conversation_id="chat", owner_id="alice")
+                db.add(
+                    Turn(
+                        id="derived-from-tools",
+                        conversation_id="chat",
+                        request_id="reply:turn-00000",
+                        role="assistant",
+                        text="Derived from too many tool results",
+                        status="completed",
+                        created_at=stamp(100),
+                        snapshot={"derivation": {"turn_id": "turn-00000", "record_ids": ["tool-00-00", "system"]}},
+                    )
+                )
+                await db.commit()
+
+            # All five tool parents are already loaded; only tool provenance is new.
+            async with sessions() as db:
+                loaded = {turn.id: turn for turn in (await db.scalars(select(Turn).where(Turn.id.in_(parents)))).all()}
+                exceeded, tools = await _dependency_closure(db, owner_id="alice", conversation_id="chat", loaded=loaded)
+            assert exceeded is True
+            assert len(tools) == DEPENDENCY_CLOSURE_LIMIT
+            assert len(set(tools) & set(tool_ids)) == DEPENDENCY_CLOSURE_LIMIT
+            assert len(loaded) == len(parents), "tool provenance must not grow the loaded turn set"
+
+            async with sessions() as db:
+                counted = CountingSession(db)
+                inputs = await read_context_inputs(counted, owner_id="alice", conversation_id="chat")
+            assert "derived-from-tools" not in {candidate.id for candidate in inputs.history}
+            assert "derived-from-tools" in inputs.blocked_ids
+            assert inputs.tool_results == ()
+            assert max(counted.counts("tool_calls")) <= DEPENDENCY_CLOSURE_LIMIT
         finally:
             await engine.dispose()
 
