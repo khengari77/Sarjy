@@ -189,7 +189,7 @@ def _action_examples(allowed_kinds: Collection[str] | None) -> list[str]:
         "OpenMemoryExplorer": '{"kind":"OpenMemoryExplorer"}',
         "SetCaptionsVisible": '{"kind":"SetCaptionsVisible","visible":true}',
         "SearchMemory": '{"kind":"SearchMemory","query":"...","limit":20}',
-        "ProposeContextExclusion": '{"kind":"ProposeContextExclusion","query":"...","keep":["..."]}',
+        "ProposeContextExclusion": '{"kind":"ProposeContextExclusion","query":"...","keep":["..."],"exclude":["..."]}',
         "RestoreContextOperation": '{"kind":"RestoreContextOperation","operation_id":"<allowed id>"}',
     }
     kinds = allowed_kinds if allowed_kinds is not None else examples
