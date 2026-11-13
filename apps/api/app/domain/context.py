@@ -271,7 +271,11 @@ def _select_messages(
 
     selected: list[tuple[str, CandidateRole, str]] = [("system", "system", instructions)]
     selected.extend(
-        (candidate.id, "memory", untrusted_data_message(candidate.id, "memory", candidate.text))
+        (
+            candidate.id,
+            "memory",
+            untrusted_data_message(candidate.id, "memory", candidate.text, candidate.source),
+        )
         for candidate in sorted(memories, key=lambda item: item.id)
         if eligible(candidate)
     )

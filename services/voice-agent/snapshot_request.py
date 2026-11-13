@@ -177,11 +177,17 @@ def _safe_projection(
         raise ValueError("INSTRUCTIONS_NOT_SYSTEM")
     safe: list[dict[str, str]] = []
     converted = False
-    for entry, message in zip(entries, messages, strict=True):
+    for index, (entry, message) in enumerate(zip(entries, messages, strict=True)):
         if entry.text != message["content"]:
             raise ValueError("SELECTION_TEXT_MISMATCH")
-        expected = provider_role(entry.role)
         role = message["role"]
+        if index > 0 and entry.role == "system":
+            # Only the synthetic instructions entry may be privileged. Stored
+            # snapshots are untrusted input for replay; never restore a second
+            # system message even when the selection claims it was one. A
+            # lower-trust entry that was promoted to system is converted below.
+            raise ValueError("UNEXPECTED_SYSTEM_MESSAGE")
+        expected = provider_role(entry.role)
         if role == expected:
             safe.append({"role": role, "content": message["content"]})
             continue
