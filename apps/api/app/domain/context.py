@@ -144,7 +144,11 @@ def compile_turn_context(
         allowed_origins=allowed_origins,
         permitted_tools=permitted_tools,
     )
-    kept = _truncate(_dedupe(selected), max_chars)
+    kept = _truncate(
+        _dedupe(selected),
+        max_chars,
+        current_turn_id=current_turn.id if current_turn is not None and current_turn.id not in excluded else None,
+    )
     messages, included_ids, selection_entries = _render(kept)
 
     prompt = canonical_messages(messages)
@@ -249,12 +253,25 @@ def _dedupe(selected: Sequence[tuple[str, CandidateRole, str]]) -> list[tuple[st
 
 
 def _truncate(
-    selected: Sequence[tuple[str, CandidateRole, str]], max_chars: int
+    selected: Sequence[tuple[str, CandidateRole, str]],
+    max_chars: int,
+    *,
+    current_turn_id: str | None = None,
 ) -> list[tuple[str, CandidateRole, str]]:
     protected = [item for item in selected if item[1] == "system"]
     remaining = max(0, max_chars - sum(len(item[2]) for item in protected))
     retained: list[tuple[str, CandidateRole, str]] = []
+    if current_turn_id is not None:
+        current_item = next((item for item in selected if item[0] == current_turn_id), None)
+        if current_item is not None:
+            # The latest user turn is never silently replaced by older context.
+            if len(current_item[2]) > remaining:
+                raise ValueError("CONTEXT_BUDGET_EXCEEDED")
+            retained.append(current_item)
+            remaining -= len(current_item[2])
     for item in reversed(selected):
+        if item[0] == current_turn_id:
+            continue
         if item[1] == "system":
             retained.append(item)
         elif len(item[2]) <= remaining:

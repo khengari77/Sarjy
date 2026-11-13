@@ -40,6 +40,7 @@ from app.infrastructure.database import (
     now,
 )
 from app.services.authorization import owned_conversation
+from app.services.memory_eligibility import blocked_memory_ids
 
 SCOPE = "conversation"
 EXCLUDE = "exclude"
@@ -132,11 +133,10 @@ async def keyword_search(
     query: str,
     limit: int,
 ) -> Sequence[MemoryCandidate]:
-    """Deterministic owner-scoped keyword retrieval against persisted memories.
+    """Deterministic fallback retrieval against the shared memory table.
 
-    This is the local fallback for preview and confirmation. Semantic/pgvector
-    retrieval is provided by ``MemoryService.search_memories`` and injected by
-    the composition root.
+    Applies the same owner-scoped correction-lineage exclusions as semantic
+    retrieval so injected/test adapters cannot drift from production policy.
     """
     rows = (
         await db.scalars(
@@ -162,15 +162,7 @@ async def keyword_search(
                 )
             )
     scored.sort(key=lambda candidate: (-candidate.score, candidate.id))
-    excluded = set(
-        await db.scalars(
-            select(ContextExclusion.memory_id).where(
-                ContextExclusion.owner_id == owner_id,
-                ContextExclusion.conversation_id == conversation_id,
-                ContextExclusion.active.is_(True),
-            )
-        )
-    )
+    excluded = await blocked_memory_ids(db, owner_id, conversation_id)
     return tuple(item for item in scored if item.id not in excluded)[:limit]
 
 
@@ -538,7 +530,11 @@ async def list_operations(db: AsyncSession, *, owner_id: str, conversation_id: s
     rows = (
         await db.scalars(
             select(ContextOperation)
-            .where(ContextOperation.owner_id == owner_id, ContextOperation.conversation_id == conversation_id)
+            .where(
+                ContextOperation.owner_id == owner_id,
+                ContextOperation.conversation_id == conversation_id,
+                ContextOperation.command_type.in_((EXCLUDE, RESTORE)),
+            )
             .order_by(ContextOperation.created_at.desc(), ContextOperation.id)
         )
     ).all()
