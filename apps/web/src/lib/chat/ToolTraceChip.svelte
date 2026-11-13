@@ -11,7 +11,7 @@
     get_weather: { en: 'Checked weather', ar: 'تحقّق من الطقس' },
     weather: { en: 'Checked weather', ar: 'تحقّق من الطقس' },
     search_memory: { en: 'Searched memory', ar: 'بحث في الذاكرة' },
-    propose_context_exclusion: { en: 'Prepared a context change', ar: 'جهّز تغييرًا في السياق' }
+    propose_context_exclusion: { en: 'Prepared a context change', ar: 'جهّز تغييرًا في السياق' },
   };
 
   function location(value: unknown): string | null {

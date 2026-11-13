@@ -232,52 +232,58 @@ def validate_fixture(fixture: Fixture) -> None:
     if not {tag for case in cases for tag in case.tags} >= REQUIRED_TAGS:
         raise ValueError("ambiguity, negation, quotation and compound tags must be covered")
     for case in cases:
-        if case.split not in {"tuning", "holdout"}:
-            raise ValueError(f"{case.id}: invalid split")
-        if case.expected_intent not in ALL_INTENTS:
-            raise ValueError(f"{case.id}: invalid intent")
-        if case.expected_tier not in ALL_TIERS:
-            raise ValueError(f"{case.id}: invalid tier")
-        if case.expected_complexity not in {"simple", "complex"}:
-            raise ValueError(f"{case.id}: invalid complexity")
-        if case.expected_action_kind is not None and case.expected_action_kind not in ACTION_NAMES:
-            raise ValueError(f"{case.id}: unknown action kind")
-        if case.expected_clarification and case.expected_action_kind is not None:
-            raise ValueError(f"{case.id}: clarification cases cannot label an action")
-        if (case.expected_action_kind is None) != (case.expected_effect is None):
-            raise ValueError(f"{case.id}: action kind and expected effect must appear together")
-        if case.expected_effect is not None:
-            if not isinstance(case.expected_effect, dict) or not case.expected_effect:
-                raise ValueError(f"{case.id}: expected effect must be a non-empty object")
-            unknown = set(case.expected_effect) - {
-                "settings",
-                "navigation",
-                "memory_query_terms",
-                "proposal_terms",
-                "restored_operation_id",
-            }
-            if unknown:
-                raise ValueError(f"{case.id}: unsupported expected effect keys {sorted(unknown)}")
-            if (
-                case.expected_action_kind
-                in {"AdjustSpeakingSpeed", "SetSpeakingSpeed", "SelectApprovedVoice", "SetCaptionsVisible"}
-                and "settings" not in case.expected_effect
-            ):
-                raise ValueError(f"{case.id}: settings action requires expected settings")
-            if (
-                case.expected_action_kind in {"ShowConversationHistory", "OpenMemoryExplorer"}
-                and "navigation" not in case.expected_effect
-            ):
-                raise ValueError(f"{case.id}: navigation action requires expected navigation")
-            if case.expected_action_kind == "SearchMemory" and "memory_query_terms" not in case.expected_effect:
-                raise ValueError(f"{case.id}: search action requires expected query terms")
-            if case.expected_action_kind == "ProposeContextExclusion" and "proposal_terms" not in case.expected_effect:
-                raise ValueError(f"{case.id}: proposal action requires expected proposal terms")
-        if not case.text.strip():
-            raise ValueError(f"{case.id}: empty text")
+        _validate_case(case)
     digest = holdout_digest(cases)
     if digest != fixture.holdout_sha256:
         raise ValueError(f"holdout split changed: expected {fixture.holdout_sha256}, found {digest}")
+
+
+def _validate_case(case) -> None:
+    if case.split not in {"tuning", "holdout"}:
+        raise ValueError(f"{case.id}: invalid split")
+    if case.expected_intent not in ALL_INTENTS:
+        raise ValueError(f"{case.id}: invalid intent")
+    if case.expected_tier not in ALL_TIERS:
+        raise ValueError(f"{case.id}: invalid tier")
+    if case.expected_complexity not in {"simple", "complex"}:
+        raise ValueError(f"{case.id}: invalid complexity")
+    if case.expected_action_kind is not None and case.expected_action_kind not in ACTION_NAMES:
+        raise ValueError(f"{case.id}: unknown action kind")
+    if case.expected_clarification and case.expected_action_kind is not None:
+        raise ValueError(f"{case.id}: clarification cases cannot label an action")
+    if (case.expected_action_kind is None) != (case.expected_effect is None):
+        raise ValueError(f"{case.id}: action kind and expected effect must appear together")
+    if case.expected_effect is not None:
+        _validate_effect(case)
+    if not case.text.strip():
+        raise ValueError(f"{case.id}: empty text")
+
+
+def _validate_effect(case) -> None:
+    effect = case.expected_effect
+    if not isinstance(effect, dict) or not effect:
+        raise ValueError(f"{case.id}: expected effect must be a non-empty object")
+    unknown = set(effect) - {
+        "settings",
+        "navigation",
+        "memory_query_terms",
+        "proposal_terms",
+        "restored_operation_id",
+    }
+    if unknown:
+        raise ValueError(f"{case.id}: unsupported expected effect keys {sorted(unknown)}")
+    if (
+        case.expected_action_kind
+        in {"AdjustSpeakingSpeed", "SetSpeakingSpeed", "SelectApprovedVoice", "SetCaptionsVisible"}
+        and "settings" not in effect
+    ):
+        raise ValueError(f"{case.id}: settings action requires expected settings")
+    if case.expected_action_kind in {"ShowConversationHistory", "OpenMemoryExplorer"} and "navigation" not in effect:
+        raise ValueError(f"{case.id}: navigation action requires expected navigation")
+    if case.expected_action_kind == "SearchMemory" and "memory_query_terms" not in effect:
+        raise ValueError(f"{case.id}: search action requires expected query terms")
+    if case.expected_action_kind == "ProposeContextExclusion" and "proposal_terms" not in effect:
+        raise ValueError(f"{case.id}: proposal action requires expected proposal terms")
 
 
 def _prompt_hash(text: str) -> str:
@@ -680,35 +686,37 @@ class IsolatedActionState:
 def _effect_matches(expected: Mapping[str, Any] | None, actual: Mapping[str, Any] | None) -> bool:
     if not isinstance(expected, Mapping) or not isinstance(actual, Mapping):
         return False
-    if "settings" in expected:
-        expected_settings = expected["settings"]
-        actual_settings = actual.get("settings")
-        if not isinstance(expected_settings, Mapping) or not isinstance(actual_settings, Mapping):
-            return False
-        if any(actual_settings.get(key) != value for key, value in expected_settings.items()):
-            return False
+    if "settings" in expected and not _settings_match(expected["settings"], actual.get("settings")):
+        return False
     if "navigation" in expected and actual.get("navigation") != expected["navigation"]:
         return False
-    if "memory_query_terms" in expected:
-        query = str(actual.get("query", "")).casefold()
-        terms = expected["memory_query_terms"]
-        if not isinstance(terms, Sequence) or isinstance(terms, str):
-            return False
-        if not all(str(term).casefold() in query for term in terms):
-            return False
-    if "proposal_terms" in expected:
-        proposal = actual.get("proposal")
-        if not isinstance(proposal, Mapping):
-            return False
-        proposal_text = " ".join(
-            [str(proposal.get("query", ""))] + [str(value) for value in proposal.get("keep", ())]
-        ).casefold()
-        terms = expected["proposal_terms"]
-        if not isinstance(terms, Sequence) or isinstance(terms, str):
-            return False
-        if not all(str(term).casefold() in proposal_text for term in terms):
-            return False
-    return not ("restored_operation_id" in expected and actual.get("operation_id") != expected["restored_operation_id"])
+    if "memory_query_terms" in expected and not _terms_match(expected["memory_query_terms"], actual.get("query", "")):
+        return False
+    if "proposal_terms" in expected and not _proposal_match(expected["proposal_terms"], actual.get("proposal")):
+        return False
+    return "restored_operation_id" not in expected or actual.get("operation_id") == expected["restored_operation_id"]
+
+
+def _settings_match(expected, actual) -> bool:
+    if not isinstance(expected, Mapping) or not isinstance(actual, Mapping):
+        return False
+    return all(actual.get(key) == value for key, value in expected.items())
+
+
+def _terms_match(terms, text) -> bool:
+    if not isinstance(terms, Sequence) or isinstance(terms, str):
+        return False
+    folded = str(text).casefold()
+    return all(str(term).casefold() in folded for term in terms)
+
+
+def _proposal_match(terms, proposal) -> bool:
+    if not isinstance(proposal, Mapping):
+        return False
+    proposal_text = " ".join(
+        [str(proposal.get("query", ""))] + [str(value) for value in proposal.get("keep", ())]
+    ).casefold()
+    return _terms_match(terms, proposal_text)
 
 
 def evaluate_result(case: Case, result: CaseResult) -> dict[str, Any]:

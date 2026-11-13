@@ -58,6 +58,6 @@ export function createEnvelopeMeter(stream: MediaStream, options: MeterOptions =
       } catch {
         /* the context may already be closed during teardown */
       }
-    }
+    },
   };
 }

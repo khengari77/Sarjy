@@ -30,7 +30,13 @@
   <div class="drawer" role="dialog" aria-modal="false" aria-label={arabic ? 'سجل المحادثة' : 'Conversation transcript'}>
     <header class="drawer-head">
       <h2>{arabic ? 'المحادثة' : 'Transcript'}</h2>
-      <button class="close" bind:this={closeButton} type="button" onclick={onclose} aria-label={arabic ? 'إغلاق السجل' : 'Close transcript'}>
+      <button
+        class="close"
+        bind:this={closeButton}
+        type="button"
+        onclick={onclose}
+        aria-label={arabic ? 'إغلاق السجل' : 'Close transcript'}
+      >
         ✕
       </button>
     </header>
@@ -38,7 +44,7 @@
       {#if turns.length === 0}
         <p class="empty">{arabic ? 'لا توجد رسائل بعد.' : 'No messages yet.'}</p>
       {:else}
-        {#each turns as turn}
+        {#each turns as turn (turn.id)}
           <article class="turn" class:assistant={turn.role === 'assistant'} dir="auto">
             <small>{turn.role} · {turn.status}</small>
             <p>{turn.text}</p>
@@ -53,7 +59,7 @@
       {/if}
       {#if tools.length}
         <div class="traces">
-          {#each tools as tool}
+          {#each tools as tool (tool.id)}
             <ToolTraceChip name={tool.name} result={tool.result} {arabic} />
           {/each}
         </div>

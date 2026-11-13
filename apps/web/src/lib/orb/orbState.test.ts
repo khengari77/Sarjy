@@ -7,7 +7,7 @@ import {
   nextRendererTier,
   resolveEffectivePhase,
   selectRendererTier,
-  type VoiceUiState
+  type VoiceUiState,
 } from './orbState';
 
 function state(patch: Partial<VoiceUiState>): VoiceUiState {

@@ -3,10 +3,14 @@ import { expect, test, type Page } from '@playwright/test';
 const CHAT = { id: 'c1', title: 'Riyadh weather', revision: 0 };
 const TURNS = [
   { id: 't1', role: 'user', text: 'What is the weather in Riyadh?', status: 'completed' },
-  { id: 't2', role: 'assistant', text: 'It is 31°C and sunny.', status: 'completed' }
+  { id: 't2', role: 'assistant', text: 'It is 31°C and sunny.', status: 'completed' },
 ];
 
-async function mockData(page: Page, turns = TURNS, tools = [{ id: 'tc1', name: 'get_weather', result: { city: 'Riyadh' } }]) {
+async function mockData(
+  page: Page,
+  turns = TURNS,
+  tools = [{ id: 'tc1', name: 'get_weather', result: { city: 'Riyadh' } }],
+) {
   await page.route('**/api/v1/demo-session', (route) => route.fulfill({ json: { id: 'owner' } }));
   await page.route('**/api/v1/conversations', (route) => route.fulfill({ json: [CHAT] }));
   await page.route('**/api/v1/conversations/*/turns', (route) => route.fulfill({ json: turns }));
@@ -16,7 +20,10 @@ async function mockData(page: Page, turns = TURNS, tools = [{ id: 'tc1', name: '
 async function allowMicrophone(page: Page) {
   await page.addInitScript(() => {
     const stream = { getTracks: () => [] } as unknown as MediaStream;
-    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: async () => stream } });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => stream },
+    });
   });
 }
 
@@ -64,8 +71,13 @@ async function waitForReady(page: Page) {
 async function startCall(page: Page) {
   await page.route('**/api/v1/voice/sessions', (route) =>
     route.fulfill({
-      json: { id: 'sess-1', url: 'ws://fake.invalid', token: 'fake', expires_at: new Date(Date.now() + 600_000).toISOString() }
-    })
+      json: {
+        id: 'sess-1',
+        url: 'ws://fake.invalid',
+        token: 'fake',
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+      },
+    }),
   );
   await page.route('**/api/v1/voice/sessions/*/end', (route) => route.fulfill({ json: {} }));
   await waitForReady(page);
@@ -115,8 +127,8 @@ test('provisional transcript replaces the final line and clears without commands
       text: 'It is thirty',
       final: false,
       segmentId: 'seg-1',
-      speaker: 'assistant'
-    })
+      speaker: 'assistant',
+    }),
   );
   const provisional = page.locator('.caption.provisional');
   await expect(provisional).toContainText('It is thirty');
@@ -128,8 +140,8 @@ test('provisional transcript replaces the final line and clears without commands
       text: 'It is thirty one degrees.',
       final: true,
       segmentId: 'seg-1',
-      speaker: 'assistant'
-    })
+      speaker: 'assistant',
+    }),
   );
   await expect(page.locator('.caption.provisional')).toHaveCount(0);
 });
@@ -169,7 +181,9 @@ test('a voice-catalog failure stays in the settings panel and leaves the orb liv
   await mockData(page);
   await allowMicrophone(page);
   await installFakeRuntime(page);
-  await page.route('**/api/v1/voices?*', (route) => route.fulfill({ status: 503, json: { detail: { code: 'API_UNAVAILABLE' } } }));
+  await page.route('**/api/v1/voices?*', (route) =>
+    route.fulfill({ status: 503, json: { detail: { code: 'API_UNAVAILABLE' } } }),
+  );
   await page.goto('/');
   await startCall(page);
 

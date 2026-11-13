@@ -28,7 +28,10 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   private room: Room | null = null;
   private audio = new Set<HTMLMediaElement>();
   private audioContext: AudioContext | null = null;
-  private analysers = new Map<HTMLMediaElement, { source: MediaElementAudioSourceNode; analyser: AnalyserNode; data: Float32Array }>();
+  private analysers = new Map<
+    HTMLMediaElement,
+    { source: MediaElementAudioSourceNode; analyser: AnalyserNode; data: Float32Array }
+  >();
   private handlers = new Set<(event: VoiceEvent) => void>();
   private sessionEpoch = 0;
   private sawTranscriptionSegments = false;
@@ -77,7 +80,8 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
       }
     });
     room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
-      if (this.active(room, epoch) && !room.canPlaybackAudio) this.emit({ type: 'audio-blocked', code: 'AUDIO_PLAYBACK_BLOCKED' });
+      if (this.active(room, epoch) && !room.canPlaybackAudio)
+        this.emit({ type: 'audio-blocked', code: 'AUDIO_PLAYBACK_BLOCKED' });
     });
     room.on(RoomEvent.Reconnecting, () => {
       if (this.active(room, epoch)) this.emit({ type: 'status', source: 'transport', text: 'reconnecting' });
@@ -118,7 +122,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
           text: segment.text,
           final: segment.final,
           segmentId: segment.id,
-          speaker: participant?.isAgent ? 'assistant' : 'user'
+          speaker: participant?.isAgent ? 'assistant' : 'user',
         });
       }
     });
@@ -174,7 +178,8 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
 
   private attachAnalyser(element: HTMLMediaElement) {
     try {
-      const AudioCtor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      const AudioCtor =
+        window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtor) return;
       this.audioContext ??= new AudioCtor();
       const source = this.audioContext.createMediaElementSource(element);
@@ -221,7 +226,11 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   async interrupt() {
     const agent = [...(this.room?.remoteParticipants.values() || [])].find((participant) => participant.isAgent);
     if (agent && this.room) {
-      await this.room.localParticipant.performRpc({ destinationIdentity: agent.identity, method: 'sarjy.interrupt', payload: '' });
+      await this.room.localParticipant.performRpc({
+        destinationIdentity: agent.identity,
+        method: 'sarjy.interrupt',
+        payload: '',
+      });
     }
   }
 

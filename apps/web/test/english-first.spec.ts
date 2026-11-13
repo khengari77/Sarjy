@@ -8,14 +8,19 @@ async function mockApp(page: Page) {
   await page.route('**/api/v1/conversations', (route) =>
     route.request().method() === 'GET'
       ? route.fulfill({ json: [CHAT] })
-      : route.fulfill({ json: { id: 'c-new', title: 'New conversation', revision: 0 } })
+      : route.fulfill({ json: { id: 'c-new', title: 'New conversation', revision: 0 } }),
   );
   await page.route('**/api/v1/conversations/*/turns', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/v1/conversations/*/tool-calls', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/v1/voice/sessions', async (route) => {
     sessionBodies.push(route.request().postDataJSON() as Record<string, unknown>);
     await route.fulfill({
-      json: { id: 'sess-1', url: 'ws://fake.invalid', token: 'fake', expires_at: new Date(Date.now() + 600_000).toISOString() }
+      json: {
+        id: 'sess-1',
+        url: 'ws://fake.invalid',
+        token: 'fake',
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+      },
     });
   });
   await page.route('**/api/v1/voice/sessions/*/end', (route) => route.fulfill({ json: {} }));
@@ -27,7 +32,7 @@ async function allowMicrophone(page: Page) {
     const stream = { getTracks: () => [] } as unknown as MediaStream;
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
-      value: { getUserMedia: async () => stream }
+      value: { getUserMedia: async () => stream },
     });
   });
 }

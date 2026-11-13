@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  friendlyVoiceError,
-  isFatalVoiceError,
-  phaseFromAgentState,
-  phaseFromTransportStatus
-} from './livekitAdapter';
+import { friendlyVoiceError, isFatalVoiceError, phaseFromAgentState, phaseFromTransportStatus } from './livekitAdapter';
 
 describe('transport status mapping', () => {
   it('maps connection lifecycle to stable phases', () => {

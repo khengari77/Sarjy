@@ -24,7 +24,7 @@ async function allowMicrophone(page: Page) {
     const stream = { getTracks: () => [] } as unknown as MediaStream;
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
-      value: { getUserMedia: async () => stream }
+      value: { getUserMedia: async () => stream },
     });
   });
 }
@@ -76,13 +76,13 @@ async function installFakeRuntime(page: Page, connectDelay = 0) {
         },
         remoteAudioLevel() {
           return window.__fakeOutputLevel ?? 0;
-        }
+        },
       };
       window.__fakeState = state;
       window.__fakeRuntime = runtime;
       window.__SARJY_VOICE_RUNTIME_FACTORY__ = () => runtime;
     },
-    { delay: connectDelay }
+    { delay: connectDelay },
   );
 }
 
@@ -93,7 +93,7 @@ async function mockSessions(page: Page) {
     const id = `sess-${sessions.length + 1}`;
     sessions.push(id);
     await route.fulfill({
-      json: { id, url: 'ws://fake.invalid', token: 'fake', expires_at: new Date(Date.now() + 600_000).toISOString() }
+      json: { id, url: 'ws://fake.invalid', token: 'fake', expires_at: new Date(Date.now() + 600_000).toISOString() },
     });
   });
   await page.route('**/api/v1/voice/sessions/*/end', async (route) => {
@@ -117,7 +117,9 @@ test('denied microphone shows retry copy, creates no session and leaves text usa
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
-      value: { getUserMedia: async () => Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' })) }
+      value: {
+        getUserMedia: async () => Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' })),
+      },
     });
   });
 
@@ -177,7 +179,7 @@ test('transport loss offers an explicit reconnect and never loops', async ({ pag
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
   await page.evaluate(() =>
-    window.__fakeRuntime?.simulate({ type: 'status', source: 'transport', text: 'disconnected' })
+    window.__fakeRuntime?.simulate({ type: 'status', source: 'transport', text: 'disconnected' }),
   );
   await expect(page.locator('[data-code="CONNECTION_LOST"]')).toContainText('Connection lost');
   expect(sessions).toHaveLength(1);
@@ -196,9 +198,7 @@ test('orb interrupts only while the agent is speaking or thinking', async ({ pag
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
-  await page.evaluate(() =>
-    window.__fakeRuntime?.simulate({ type: 'status', source: 'agent', text: 'speaking' })
-  );
+  await page.evaluate(() => window.__fakeRuntime?.simulate({ type: 'status', source: 'agent', text: 'speaking' }));
   await page.getByRole('button', { name: 'Speaking. Interrupt Sarjy' }).click();
   await expect.poll(() => page.evaluate(() => window.__fakeState?.interrupts)).toBe(1);
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'listening');
@@ -221,9 +221,7 @@ test('muting the microphone keeps the assistant envelope and speaking state live
   const orb = page.locator('.orb-button');
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'speaking');
   await expect(page.locator('.status-line')).toContainText('Speaking');
-  await expect
-    .poll(async () => Number(await orb.getAttribute('data-output-level')))
-    .toBeGreaterThan(0.5);
+  await expect.poll(async () => Number(await orb.getAttribute('data-output-level'))).toBeGreaterThan(0.5);
 
   await page.getByRole('button', { name: 'Mute', exact: true }).click();
   await page.evaluate(() => {
@@ -232,9 +230,7 @@ test('muting the microphone keeps the assistant envelope and speaking state live
 
   // The microphone is off, but the assistant is still talking: both the
   // envelope and the live phase label must keep updating.
-  await expect
-    .poll(async () => Number(await orb.getAttribute('data-output-level')))
-    .toBeCloseTo(0.2, 2);
+  await expect.poll(async () => Number(await orb.getAttribute('data-output-level'))).toBeCloseTo(0.2, 2);
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'speaking');
   await expect(page.locator('.status-line')).toContainText('Speaking');
   await expect(page.locator('.mic-slash')).toBeVisible();
@@ -251,9 +247,7 @@ test('events from a replaced session epoch are ignored', async ({ page }) => {
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
-  await page.evaluate(() =>
-    window.__fakeRuntime?.simulateStale({ type: 'error', code: 'DAILY_BUDGET_EXHAUSTED' })
-  );
+  await page.evaluate(() => window.__fakeRuntime?.simulateStale({ type: 'error', code: 'DAILY_BUDGET_EXHAUSTED' }));
   await expect(page.locator('[data-code="DAILY_BUDGET_EXHAUSTED"]')).toHaveCount(0);
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'listening');
 });

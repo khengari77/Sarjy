@@ -50,7 +50,7 @@ const FATAL = new Set([
   'API_UNAVAILABLE',
   'CALL_LIMIT_REACHED',
   'DAILY_BUDGET_EXHAUSTED',
-  'BUDGET_SERVICE_UNAVAILABLE'
+  'BUDGET_SERVICE_UNAVAILABLE',
 ]);
 
 export function isFatalVoiceError(code: string): boolean {
@@ -60,52 +60,52 @@ export function isFatalVoiceError(code: string): boolean {
 const FRIENDLY: Record<string, { en: string; ar: string }> = {
   MICROPHONE_UNAVAILABLE: {
     en: 'Microphone unavailable. Allow microphone access in your browser settings, then try again.',
-    ar: 'الميكروفون غير متاح. اسمح بالوصول إلى الميكروفون من إعدادات المتصفح ثم أعد المحاولة.'
+    ar: 'الميكروفون غير متاح. اسمح بالوصول إلى الميكروفون من إعدادات المتصفح ثم أعد المحاولة.',
   },
   MICROPHONE_PERMISSION_DENIED: {
     en: 'Microphone access is blocked. Allow it in your browser’s site settings, then retry. You can keep typing meanwhile.',
-    ar: 'الوصول إلى الميكروفون محظور. اسمح به من إعدادات الموقع في المتصفح ثم أعد المحاولة. يمكنك متابعة الكتابة الآن.'
+    ar: 'الوصول إلى الميكروفون محظور. اسمح به من إعدادات الموقع في المتصفح ثم أعد المحاولة. يمكنك متابعة الكتابة الآن.',
   },
   MICROPHONE_NOT_FOUND: {
     en: 'No microphone was found. Connect one or choose another input, then retry.',
-    ar: 'لم يُعثر على ميكروفون. وصّل ميكروفونًا أو اختر إدخالًا آخر ثم أعد المحاولة.'
+    ar: 'لم يُعثر على ميكروفون. وصّل ميكروفونًا أو اختر إدخالًا آخر ثم أعد المحاولة.',
   },
   AUDIO_PLAYBACK_BLOCKED: {
     en: 'The browser blocked audio playback. Select “Enable audio” to continue.',
-    ar: 'منع المتصفح تشغيل الصوت. اختر «تشغيل الصوت» للمتابعة.'
+    ar: 'منع المتصفح تشغيل الصوت. اختر «تشغيل الصوت» للمتابعة.',
   },
   TRANSCRIPT_UNAVAILABLE: {
     en: 'The transcript could not be read. The voice session is still active.',
-    ar: 'تعذّرت قراءة النص. جلسة الصوت ما زالت نشطة.'
+    ar: 'تعذّرت قراءة النص. جلسة الصوت ما زالت نشطة.',
   },
   CONVERSATION_REQUIRED: {
     en: 'Choose or create a conversation before starting voice.',
-    ar: 'اختر محادثة أو أنشئ واحدة قبل بدء الصوت.'
+    ar: 'اختر محادثة أو أنشئ واحدة قبل بدء الصوت.',
   },
   PIPELINE_NOT_CONFIGURED: {
     en: 'Voice is not configured on this deployment.',
-    ar: 'الصوت غير مُهيّأ في هذا النشر.'
+    ar: 'الصوت غير مُهيّأ في هذا النشر.',
   },
   AGENT_START_TIMEOUT: {
     en: 'The voice agent did not start in time. Try connecting again.',
-    ar: 'لم يبدأ وكيل الصوت في الوقت المتوقع. حاول الاتصال مجددًا.'
+    ar: 'لم يبدأ وكيل الصوت في الوقت المتوقع. حاول الاتصال مجددًا.',
   },
   API_UNAVAILABLE: {
     en: 'The service is temporarily unreachable. Try again shortly.',
-    ar: 'الخدمة غير متاحة مؤقتًا. أعد المحاولة بعد قليل.'
+    ar: 'الخدمة غير متاحة مؤقتًا. أعد المحاولة بعد قليل.',
   },
   CALL_LIMIT_REACHED: {
     en: 'You have reached the voice-chat limit for now. End or try later.',
-    ar: 'بلغت حد محادثات الصوت حاليًا. أنهِ الجلسة أو أعد المحاولة لاحقًا.'
+    ar: 'بلغت حد محادثات الصوت حاليًا. أنهِ الجلسة أو أعد المحاولة لاحقًا.',
   },
   DAILY_BUDGET_EXHAUSTED: {
     en: 'The daily voice budget is exhausted. Voice will be available again later.',
-    ar: 'نفدت ميزانية الصوت اليومية. سيتوفر الصوت مرة أخرى لاحقًا.'
+    ar: 'نفدت ميزانية الصوت اليومية. سيتوفر الصوت مرة أخرى لاحقًا.',
   },
   BUDGET_SERVICE_UNAVAILABLE: {
     en: 'The usage guard is unavailable, so voice is paused to protect the budget.',
-    ar: 'خدمة حد الاستخدام غير متاحة، لذا أُوقف الصوت حمايةً للميزانية.'
-  }
+    ar: 'خدمة حد الاستخدام غير متاحة، لذا أُوقف الصوت حمايةً للميزانية.',
+  },
 };
 
 /** Plain-language copy; never leaks keys, provider names or billing details. */

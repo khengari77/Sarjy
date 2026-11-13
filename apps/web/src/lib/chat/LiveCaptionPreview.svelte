@@ -17,14 +17,18 @@
   // A provisional segment takes the place of the final line for its speaker
   // so the preview never grows past two lines.
   const previewUser = $derived(
-    provisional?.speaker === 'user' ? { text: provisional.text, provisional: true } : lastUser ? { text: line(lastUser), provisional: false } : null
+    provisional?.speaker === 'user'
+      ? { text: provisional.text, provisional: true }
+      : lastUser
+        ? { text: line(lastUser), provisional: false }
+        : null,
   );
   const previewAssistant = $derived(
     provisional?.speaker === 'assistant'
       ? { text: provisional.text, provisional: true }
       : lastAssistant
         ? { text: line(lastAssistant), provisional: false }
-        : null
+        : null,
   );
 
   function line(turn: Turn | undefined): string {
@@ -39,12 +43,18 @@
   <div class="captions">
     {#if previewUser}
       <p class="caption user" class:provisional={previewUser.provisional} dir="auto">
-        <span>{arabic ? 'أنت' : 'You'}</span>{previewUser.text}{#if previewUser.provisional}<span class="pending" aria-hidden="true">…</span>{/if}
+        <span>{arabic ? 'أنت' : 'You'}</span>{previewUser.text}{#if previewUser.provisional}<span
+            class="pending"
+            aria-hidden="true">…</span
+          >{/if}
       </p>
     {/if}
     {#if previewAssistant}
       <p class="caption assistant" class:provisional={previewAssistant.provisional} dir="auto">
-        <span>{arabic ? 'سَرْجي' : 'Sarjy'}</span>{previewAssistant.text}{#if previewAssistant.provisional}<span class="pending" aria-hidden="true">…</span>{/if}
+        <span>{arabic ? 'سَرْجي' : 'Sarjy'}</span>{previewAssistant.text}{#if previewAssistant.provisional}<span
+            class="pending"
+            aria-hidden="true">…</span
+          >{/if}
       </p>
     {/if}
     {#if !expanded}

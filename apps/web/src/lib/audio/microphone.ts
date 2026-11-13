@@ -22,10 +22,7 @@ export class MicrophoneError extends Error {
   }
 }
 
-export type MicrophoneErrorCode =
-  | 'MICROPHONE_PERMISSION_DENIED'
-  | 'MICROPHONE_NOT_FOUND'
-  | 'MICROPHONE_UNAVAILABLE';
+export type MicrophoneErrorCode = 'MICROPHONE_PERMISSION_DENIED' | 'MICROPHONE_NOT_FOUND' | 'MICROPHONE_UNAVAILABLE';
 
 export function microphoneErrorCode(error: unknown): MicrophoneErrorCode {
   const name = (error as { name?: string } | null)?.name;

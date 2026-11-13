@@ -18,6 +18,10 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import uuid4
 
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.domain.context_operations import (
     MemoryCandidate,
     classify,
@@ -31,14 +35,11 @@ from app.infrastructure.database import (
     ContextExclusion,
     ContextOperation,
     ContextRevision,
-    Conversation,
     Memory,
     SessionGate,
     now,
 )
-from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.authorization import owned_conversation
 
 SCOPE = "conversation"
 EXCLUDE = "exclude"
@@ -131,12 +132,11 @@ async def keyword_search(
     query: str,
     limit: int,
 ) -> Sequence[MemoryCandidate]:
-    """Local fallback retrieval against the shared memory table.
+    """Deterministic owner-scoped keyword retrieval against persisted memories.
 
-    #5 owns semantic/pgvector retrieval.  Until that service is merged this
-    adapter provides deterministic owner-scoped keyword matching so preview and
-    confirmation are exercised against real persisted rows.  Integration with
-    the semantic service remains unverified.
+    This is the local fallback for preview and confirmation. Semantic/pgvector
+    retrieval is provided by ``MemoryService.search_memories`` and injected by
+    the composition root.
     """
     rows = (
         await db.scalars(
@@ -182,18 +182,6 @@ def _operation_key(owner_id: str, conversation_id: str, kind: str, idempotency_k
     return _digest("context-operation", owner_id, conversation_id, kind, idempotency_key)
 
 
-async def _owned_conversation(
-    db: AsyncSession, owner_id: str, conversation_id: str, *, lock: bool = False
-) -> Conversation:
-    statement = select(Conversation).where(Conversation.id == conversation_id, Conversation.owner_id == owner_id)
-    if lock:
-        statement = statement.with_for_update()
-    conversation = await db.scalar(statement)
-    if conversation is None:
-        raise ContextOperationError("CONVERSATION_NOT_FOUND", 404)
-    return conversation
-
-
 async def _replay(db: AsyncSession, key: str, owner_id: str, conversation_id: str, request_hash: str) -> dict | None:
     existing = await db.scalar(select(ContextOperation).where(ContextOperation.idempotency_key == key))
     if existing is None:
@@ -223,7 +211,7 @@ async def create_proposal(
     """Build a preview without writing anything. Read-only by construction."""
     if not secret:
         raise ContextOperationError("CONTEXT_PROPOSALS_NOT_CONFIGURED", 503)
-    conversation = await _owned_conversation(db, owner_id, conversation_id)
+    conversation = await owned_conversation(db, owner_id, conversation_id)
     candidates = tuple(await search(db, owner_id=owner_id, conversation_id=conversation_id, query=query, limit=limit))
     # The owner filter is re-applied defensively for adapters that might return
     # foreign rows; preview must never surface another tenant's memory.
@@ -289,45 +277,17 @@ async def confirm_proposal(
     if not secret:
         raise ContextOperationError("CONTEXT_PROPOSALS_NOT_CONFIGURED", 503)
     await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
-    conversation = await _owned_conversation(db, owner_id, conversation_id, lock=True)
-    try:
-        payload = verify_proposal(proposal, secret)
-    except ValueError as exc:
-        raise ContextOperationError("PROPOSAL_INVALID", 400) from exc
-    if payload.get("owner_id") != owner_id or payload.get("conversation_id") != conversation_id:
-        raise ContextOperationError("PROPOSAL_INVALID", 404)
-
-    excluded_ids = frozenset(str(value) for value in payload.get("excluded_ids", ()))
-    kept_ids = frozenset(str(value) for value in payload.get("kept_ids", ()))
+    conversation = await owned_conversation(db, owner_id, conversation_id, lock=True)
+    payload = _verified_payload(proposal, secret, owner_id, conversation_id)
+    excluded_ids, kept_ids = _exclusion_ids(payload)
     request_hash = _digest(EXCLUDE, proposal, str(expected_revision))
     key = _operation_key(owner_id, conversation_id, EXCLUDE, idempotency_key)
     replayed = await _replay(db, key, owner_id, conversation_id, request_hash)
     if replayed is not None:
         return replayed
 
-    proposal_revision = payload.get("revision")
-    if proposal_revision != expected_revision or conversation.revision != expected_revision:
-        raise ContextOperationError("REVISION_CONFLICT")
-    if not excluded_ids:
-        raise ContextOperationError("NO_CONTEXT_CHANGE")
-    if excluded_ids & kept_ids:
-        # Defence in depth: a keep-exception can never be smuggled away.
-        raise ContextOperationError("PROPOSAL_INVALID", 400)
-
-    rows = (
-        await db.scalars(
-            select(Memory).where(
-                Memory.id.in_(list(excluded_ids) or ["-"]),
-                Memory.owner_id == owner_id,
-                Memory.status == "active",
-            )
-        )
-    ).all()
-    authorized = {row.id for row in rows}
-    if authorized != excluded_ids:
-        raise ContextOperationError("PROPOSAL_INVALID")
-    if any(classify(row.content) == "budget" or row.id in kept_ids for row in rows):
-        raise ContextOperationError("PROPOSAL_INVALID", 400)
+    _validate_exclusion(payload, expected_revision, conversation, excluded_ids, kept_ids)
+    await _authorize_exclusion_rows(db, owner_id, excluded_ids, kept_ids)
 
     before = conversation.revision
     after = before + 1
@@ -385,6 +345,62 @@ async def confirm_proposal(
                 created_at=now(),
             )
         )
+    return await _finish(
+        db,
+        commit=commit,
+        key=key,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        request_hash=request_hash,
+        response=response,
+    )
+
+
+def _verified_payload(proposal: str, secret: str, owner_id: str, conversation_id: str) -> dict:
+    try:
+        payload = verify_proposal(proposal, secret)
+    except ValueError as exc:
+        raise ContextOperationError("PROPOSAL_INVALID", 400) from exc
+    if payload.get("owner_id") != owner_id or payload.get("conversation_id") != conversation_id:
+        raise ContextOperationError("PROPOSAL_INVALID", 404)
+    return payload
+
+
+def _exclusion_ids(payload: dict) -> tuple[frozenset[str], frozenset[str]]:
+    excluded = frozenset(str(value) for value in payload.get("excluded_ids", ()))
+    kept = frozenset(str(value) for value in payload.get("kept_ids", ()))
+    return excluded, kept
+
+
+def _validate_exclusion(payload, expected_revision, conversation, excluded_ids, kept_ids) -> None:
+    if payload.get("revision") != expected_revision or conversation.revision != expected_revision:
+        raise ContextOperationError("REVISION_CONFLICT")
+    if not excluded_ids:
+        raise ContextOperationError("NO_CONTEXT_CHANGE")
+    if excluded_ids & kept_ids:
+        # Defence in depth: a keep-exception can never be smuggled away.
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
+
+
+async def _authorize_exclusion_rows(db: AsyncSession, owner_id: str, excluded_ids, kept_ids) -> None:
+    rows = (
+        await db.scalars(
+            select(Memory).where(
+                Memory.id.in_(list(excluded_ids) or ["-"]),
+                Memory.owner_id == owner_id,
+                Memory.status == "active",
+            )
+        )
+    ).all()
+    if {row.id for row in rows} != excluded_ids:
+        raise ContextOperationError("PROPOSAL_INVALID")
+    if any(classify(row.content) == "budget" or row.id in kept_ids for row in rows):
+        raise ContextOperationError("PROPOSAL_INVALID", 400)
+
+
+async def _finish(
+    db: AsyncSession, *, commit: bool, key: str, owner_id: str, conversation_id: str, request_hash: str, response: dict
+) -> dict:
     try:
         await db.flush()
         if commit:
@@ -411,7 +427,7 @@ async def _undo_operation(
     commit: bool = True,
 ) -> dict:
     await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
-    conversation = await _owned_conversation(db, owner_id, conversation_id, lock=True)
+    conversation = await owned_conversation(db, owner_id, conversation_id, lock=True)
     original = await db.scalar(
         select(ContextOperation).where(
             ContextOperation.id == operation_id,
@@ -518,7 +534,7 @@ async def _undo_operation(
 
 
 async def list_operations(db: AsyncSession, *, owner_id: str, conversation_id: str) -> dict:
-    conversation = await _owned_conversation(db, owner_id, conversation_id)
+    conversation = await owned_conversation(db, owner_id, conversation_id)
     rows = (
         await db.scalars(
             select(ContextOperation)
@@ -546,7 +562,7 @@ async def list_operations(db: AsyncSession, *, owner_id: str, conversation_id: s
 
 
 async def context_state(db: AsyncSession, *, owner_id: str, conversation_id: str) -> dict:
-    conversation = await _owned_conversation(db, owner_id, conversation_id)
+    conversation = await owned_conversation(db, owner_id, conversation_id)
     excluded_ids = (
         await db.scalars(
             select(ContextExclusion.memory_id).where(

@@ -6,7 +6,7 @@ test.beforeEach(async ({ page }) => {
     const stream = { getTracks: () => [] } as unknown as MediaStream;
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
-      value: { getUserMedia: async () => stream }
+      value: { getUserMedia: async () => stream },
     });
   });
 });
@@ -123,7 +123,7 @@ test('a lost WebGL context falls back without breaking the session', async ({ pa
     const stream = { getTracks: () => [] } as unknown as MediaStream;
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
-      value: { getUserMedia: async () => stream }
+      value: { getUserMedia: async () => stream },
     });
     class FakeRuntime {
       __epoch = 1;
@@ -157,14 +157,19 @@ test('a lost WebGL context falls back without breaking the session', async ({ pa
   });
   await page.route('**/api/v1/voice/sessions', (route) =>
     route.fulfill({
-      json: { id: 'sess-1', url: 'ws://fake.invalid', token: 'fake', expires_at: new Date(Date.now() + 600_000).toISOString() }
-    })
+      json: {
+        id: 'sess-1',
+        url: 'ws://fake.invalid',
+        token: 'fake',
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+      },
+    }),
   );
   await page.route('**/api/v1/voice/sessions/*/end', (route) => route.fulfill({ json: {} }));
   await page.route('**/api/v1/conversations', (route) =>
     route.request().method() === 'GET'
       ? route.fulfill({ json: [] })
-      : route.fulfill({ json: { id: 'c-live', title: 'Live', revision: 0 } })
+      : route.fulfill({ json: { id: 'c-live', title: 'Live', revision: 0 } }),
   );
   await page.route('**/api/v1/conversations/*/turns', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/v1/conversations/*/tool-calls', (route) => route.fulfill({ json: [] }));

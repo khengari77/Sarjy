@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 const CHATS = [
   { id: 'c1', title: 'Trip to Paris', revision: 0 },
   { id: 'c2', title: 'ميزانية Tripoli', revision: 0 },
-  { id: 'c3', title: 'Work ideas', revision: 0 }
+  { id: 'c3', title: 'Work ideas', revision: 0 },
 ];
 
 async function mockHistory(page: Page, chats = CHATS) {
@@ -37,7 +37,7 @@ async function allowMicrophone(page: Page) {
     const stream = { getTracks: () => [] } as unknown as MediaStream;
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
-      value: { getUserMedia: async () => stream }
+      value: { getUserMedia: async () => stream },
     });
   });
 }
@@ -83,7 +83,12 @@ async function mockSessions(page: Page) {
   const ends: string[] = [];
   await page.route('**/api/v1/voice/sessions', async (route) => {
     await route.fulfill({
-      json: { id: 'sess-1', url: 'ws://fake.invalid', token: 'fake', expires_at: new Date(Date.now() + 600_000).toISOString() }
+      json: {
+        id: 'sess-1',
+        url: 'ws://fake.invalid',
+        token: 'fake',
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+      },
     });
   });
   await page.route('**/api/v1/voice/sessions/*/end', async (route) => {
@@ -156,10 +161,7 @@ test('conversation menus dismiss on Escape or outside interaction and restore fo
 
   // After dismissal the rows are interactive again.
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Work ideas', exact: true })).toHaveAttribute(
-    'aria-current',
-    'page'
-  );
+  await expect(page.getByRole('button', { name: 'Work ideas', exact: true })).toHaveAttribute('aria-current', 'page');
 });
 
 test('resuming a conversation loads turns without starting a microphone session', async ({ page }) => {
