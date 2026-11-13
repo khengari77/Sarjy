@@ -117,6 +117,23 @@ test('tablet and mobile start with both drawers closed and keep the triggers rea
   }
 });
 
+test('tablet drawers overlay without squeezing the orb', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 720 });
+  await page.goto('/');
+  await waitForOrb(page);
+  const orbWidth = () => page.locator('.orb-button').evaluate((el) => el.getBoundingClientRect().width);
+  const before = await orbWidth();
+
+  await page.getByRole('button', { name: 'Show conversations' }).click();
+  await expect(page.locator('#shell-left')).toBeVisible();
+  await expect(page.locator('.scrim')).toBeVisible();
+  expect(await orbWidth()).toBe(before);
+  expect(before).toBeGreaterThanOrEqual(220);
+
+  await page.locator('.scrim').click({ position: { x: 880, y: 700 } });
+  await expect(page.getByRole('button', { name: 'Show conversations' })).toHaveAttribute('aria-expanded', 'false');
+});
+
 test('desktop docks toggle independently', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/');
