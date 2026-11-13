@@ -120,6 +120,26 @@ def _register_session_routes(app, *, database, guard):
         return {"pipeline": pipeline, "instructions": pipeline_instructions(pipeline), "expires_at": voice.expires_at}
 
 
+def _compile_turn_context(
+    *, revision, instructions, history, memories, tool_results, current_turn, excluded_ids, pipeline
+):
+    try:
+        return compile_turn_context(
+            revision=revision,
+            instructions=instructions,
+            history=history,
+            memories=memories,
+            tool_results=tool_results,
+            current_turn=current_turn,
+            excluded_ids=excluded_ids,
+            pipeline=pipeline,
+        )
+    except ValueError as exc:
+        if str(exc) == "CONTEXT_BUDGET_EXCEEDED":
+            raise HTTPException(413, detail={"code": "CONTEXT_BUDGET_EXCEEDED"}) from exc
+        raise
+
+
 def _register_turn_routes(app, *, database, guard):
     @app.post("/internal/agent/turn/start")
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
@@ -143,7 +163,7 @@ def _register_turn_routes(app, *, database, guard):
         )
         pipeline = normalize_pipeline(voice.pipeline)
         inputs = await read_context_inputs(db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id)
-        compiled = compile_turn_context(
+        compiled = _compile_turn_context(
             revision=conversation.revision,
             instructions=pipeline_instructions(pipeline),
             history=inputs.history,
