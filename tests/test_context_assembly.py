@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
-import app.main as main_module
+import app.routes.worker as worker_module
 import pytest
 from app.config import Settings
 from app.domain.context import (
@@ -190,7 +190,7 @@ def test_weather_boundary_is_denied_for_excluded_and_allowed_for_explicit_or_inc
         calls.append((city, country))
         return {"city": city, "temperature": 31}
 
-    monkeypatch.setattr(main_module, "get_current_weather", fake_weather)
+    monkeypatch.setattr(worker_module, "get_current_weather", fake_weather)
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
@@ -229,7 +229,7 @@ def test_explicit_current_turn_city_overrides_an_excluded_memory(tmp_path, monke
         calls.append(city)
         return {"city": city}
 
-    monkeypatch.setattr(main_module, "get_current_weather", fake_weather)
+    monkeypatch.setattr(worker_module, "get_current_weather", fake_weather)
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
@@ -260,7 +260,7 @@ def test_city_in_both_included_and_excluded_allowed_by_inclusion(tmp_path, monke
         calls.append((city, country))
         return {"city": city, "temperature": 31}
 
-    monkeypatch.setattr(main_module, "get_current_weather", fake_weather)
+    monkeypatch.setattr(worker_module, "get_current_weather", fake_weather)
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
@@ -308,3 +308,70 @@ def test_city_in_both_included_and_excluded_allowed_by_inclusion(tmp_path, monke
         denied = weather("Tripoli", "w1", "")
         assert denied.json() == {"error": "LOCATION_EXCLUDED"}
         assert calls == []
+
+
+def test_current_turn_is_mandatory_at_the_budget_boundary():
+    current = history("u1", "x" * 12000)
+    with pytest.raises(ValueError, match="CONTEXT_BUDGET_EXCEEDED"):
+        compile_turn_context(revision=1, instructions="i" * 5000, current_turn=current, max_chars=16000)
+    compiled = compile_turn_context(revision=1, instructions="i" * 502, current_turn=current, max_chars=16000)
+    assert compiled.included_ids[-1] == "u1"
+
+
+@given(
+    st.integers(min_value=0, max_value=6000),
+    st.integers(min_value=0, max_value=12000),
+    st.lists(st.text(min_size=1, max_size=120), max_size=8),
+)
+def test_current_turn_is_included_or_explicitly_rejected(instructions, current_size, older):
+    kwargs = dict(
+        revision=1,
+        instructions="i" * instructions,
+        history=tuple(history(f"h{index}", text) for index, text in enumerate(older)),
+        current_turn=history("current", "u" * current_size),
+        max_chars=16000,
+    )
+    if "i" * instructions == "" or current_size == 0:
+        return
+    try:
+        compiled = compile_turn_context(**kwargs)
+    except ValueError as error:
+        assert str(error) == "CONTEXT_BUDGET_EXCEEDED"
+    else:
+        assert "current" in compiled.included_ids
+
+
+def test_turn_start_maps_budget_failure_to_typed_413(tmp_path, monkeypatch):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute(
+                "INSERT INTO voice_sessions (id,conversation_id,owner_id,room_name,status,expires_at,pipeline) VALUES (?,?,?,?,?,?,?)",
+                (
+                    "session",
+                    chat,
+                    owner,
+                    "room",
+                    "active",
+                    (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+                    json.dumps({}),
+                ),
+            )
+            db.commit()
+        monkeypatch.setattr(
+            worker_module,
+            "compile_turn_context",
+            lambda **_: (_ for _ in ()).throw(ValueError("CONTEXT_BUDGET_EXCEEDED")),
+        )
+        response = client.post(
+            "/internal/agent/turn/start",
+            headers={"x-agent-secret": "test-service-secret", "x-session-id": "session", "x-room-name": "room"},
+            json={"request_id": "budget", "text": "hello"},
+        )
+        assert response.status_code == 413
+        assert response.json()["detail"]["code"] == "CONTEXT_BUDGET_EXCEEDED"
+        with closing(sqlite3.connect(file)) as db, db:
+            assert db.execute("SELECT COUNT(*) FROM turns").fetchone()[0] == 0
+            assert db.execute("SELECT COUNT(*) FROM context_snapshots").fetchone()[0] == 0

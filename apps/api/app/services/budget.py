@@ -1,5 +1,8 @@
 from datetime import UTC, datetime
 
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
+
 from app.domain.budget import (
     DEEPSEEK_DAILY_MICRO_USD,
     DEEPSEEK_REQUEST_MICRO_USD,
@@ -9,8 +12,7 @@ from app.domain.budget import (
     budget_day,
 )
 from app.infrastructure.database import DevelopmentBudget
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
+from app.infrastructure.upsert import insert_ignore
 
 REQUEST_UNITS = {"openai": OPENAI_REQUEST_MICRO_USD, "deepseek": DEEPSEEK_REQUEST_MICRO_USD}
 DAILY_LIMITS = {
@@ -38,15 +40,7 @@ async def reserve_in_transaction(
     if units <= 0 or units > limit:
         raise ValueError("DAILY_BUDGET_EXHAUSTED")
     day = budget_day(now or datetime.now(UTC))
-    if db.bind.dialect.name == "sqlite":
-        from sqlalchemy.dialects.sqlite import insert
-    elif db.bind.dialect.name == "postgresql":
-        from sqlalchemy.dialects.postgresql import insert
-    else:
-        raise ValueError("Unsupported budget database")
-    await db.execute(
-        insert(DevelopmentBudget).values(day=day, provider=provider, reserved_units=0).on_conflict_do_nothing()
-    )
+    await insert_ignore(db, DevelopmentBudget, {"day": day, "provider": provider, "reserved_units": 0})
     changed = await db.execute(
         update(DevelopmentBudget)
         .where(
