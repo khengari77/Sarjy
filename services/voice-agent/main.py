@@ -306,7 +306,7 @@ class SarjyAgent(Agent):
         call_id = getattr(ctx.function_call, "call_id", "")
         # Bind to the turn that generated this call, not to whichever turn most
         # recently compiled when the SDK finally starts the invocation.
-        turn_id = self.tool_turns.get(call_id)
+        turn_id = self.tool_turns.pop(call_id, None)
         if not turn_id:
             raise ValueError("TOOL_TURN_REQUIRED")
         key = operation_key(turn_id, call_id)

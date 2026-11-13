@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -133,10 +133,21 @@ async def begin_admission(
 async def _replay(db: AsyncSession, admission: VoiceAdmission, owner_id: str, config: Settings) -> dict:
     state = admission.state
     if state == "in_progress":
-        age = (datetime.now(UTC) - datetime.fromisoformat(admission.created_at)).total_seconds()
+        age = await _claim_age_seconds(db, admission.created_at)
         if age < CLAIM_TIMEOUT_SECONDS:
             raise HTTPException(409, detail={"code": "VOICE_ADMISSION_IN_PROGRESS"})
-        await _set_state(db, admission.id, "uncertain", "VOICE_ADMISSION_UNCERTAIN", 503)
+        changed = await _set_state(
+            db,
+            admission.id,
+            "uncertain",
+            "VOICE_ADMISSION_UNCERTAIN",
+            503,
+            from_states=("in_progress",),
+        )
+        if not changed:
+            refreshed = await db.get(VoiceAdmission, admission.id)
+            if refreshed is not None and refreshed.state == "dispatched":
+                return await _replay_dispatched(db, refreshed, owner_id, config)
         raise HTTPException(503, detail={"code": "VOICE_ADMISSION_UNCERTAIN"})
     if state in {"failed", "uncertain"}:
         code = admission.error_code or "VOICE_ADMISSION_FAILED"
@@ -169,19 +180,41 @@ async def _replay_dispatched(db: AsyncSession, admission: VoiceAdmission, owner_
     )
 
 
+async def _claim_age_seconds(db: AsyncSession, created_at: str) -> float:
+    """Use the database clock so retries on another host do not race clock skew."""
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    try:
+        if dialect == "sqlite":
+            value = await db.scalar(
+                text("SELECT (julianday('now') - julianday(:created)) * 86400"), {"created": created_at}
+            )
+        else:
+            value = await db.scalar(
+                text("SELECT EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - CAST(:created AS timestamptz)))"),
+                {"created": created_at},
+            )
+        return max(0.0, float(value or 0))
+    except (TypeError, ValueError):
+        return (datetime.now(UTC) - datetime.fromisoformat(created_at)).total_seconds()
+
+
 async def _set_state(
     db: AsyncSession,
     admission_id: str,
     state: str,
     error_code: str | None = None,
     error_status: int | None = None,
-) -> None:
-    await db.execute(
-        update(VoiceAdmission)
-        .where(VoiceAdmission.id == admission_id)
-        .values(state=state, error_code=error_code, error_status=error_status, updated_at=now())
+    *,
+    from_states: tuple[str, ...] | None = None,
+) -> bool:
+    query = update(VoiceAdmission).where(VoiceAdmission.id == admission_id)
+    if from_states is not None:
+        query = query.where(VoiceAdmission.state.in_(from_states))
+    changed = await db.execute(
+        query.values(state=state, error_code=error_code, error_status=error_status, updated_at=now())
     )
     await db.commit()
+    return changed.rowcount == 1
 
 
 async def bind_session(db: AsyncSession, admission_id: str, session_id: str) -> None:
@@ -191,12 +224,19 @@ async def bind_session(db: AsyncSession, admission_id: str, session_id: str) -> 
     )
 
 
-async def mark_dispatched(db: AsyncSession, admission_id: str) -> None:
-    await _set_state(db, admission_id, "dispatched")
+async def mark_dispatched(db: AsyncSession, admission_id: str) -> bool:
+    return await _set_state(db, admission_id, "dispatched", from_states=("in_progress", "uncertain"))
 
 
-async def mark_failed(db: AsyncSession, admission_id: str, *, code: str, status: int, uncertain: bool = False) -> None:
-    await _set_state(db, admission_id, "uncertain" if uncertain else "failed", code, status)
+async def mark_failed(db: AsyncSession, admission_id: str, *, code: str, status: int, uncertain: bool = False) -> bool:
+    return await _set_state(
+        db,
+        admission_id,
+        "uncertain" if uncertain else "failed",
+        code,
+        status,
+        from_states=("in_progress", "uncertain"),
+    )
 
 
 async def mark_session_outcome(db: AsyncSession, session_id: str, state: str) -> None:

@@ -106,14 +106,14 @@ def test_failed_dispatch_replay_cannot_replace_or_refund(tmp_path, monkeypatch):
         state["dispatch_fails"] = True
         first = start_keyed(alice, chat)
         assert first.status_code == 503
-        assert first.json()["detail"]["code"] == "VOICE_DISPATCH_FAILED"
-        assert admissions(db_path)[0]["state"] == "failed"
+        assert first.json()["detail"]["code"] == "VOICE_DISPATCH_UNCERTAIN"
+        assert admissions(db_path)[0]["state"] == "uncertain"
         assert len(sessions_with_status(db_path, "failed")) == 1
 
         state["dispatch_fails"] = False
         retried = start_keyed(alice, chat)
         assert retried.status_code == 503
-        assert retried.json()["detail"]["code"] == "VOICE_DISPATCH_FAILED"
+        assert retried.json()["detail"]["code"] == "VOICE_DISPATCH_UNCERTAIN"
         assert len(state["dispatched"]) == 1
         assert len(sessions_for(db_path, admissions(db_path)[0]["owner_id"])) == 1
         assert ledger(db_path) == before

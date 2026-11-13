@@ -184,19 +184,14 @@ async def start_voice_impl(body: StartVoice, user, db: AsyncSession, *, config, 
 
     try:
         await dispatch_voice(voice, config=config)
-    except Exception as exc:
-        uncertain = isinstance(exc, (TimeoutError, ConnectionError))
+    except Exception:
+        # Without a definitive provider response, delivery is unknown. Never
+        # claim the dispatch failed and never delete a room that may be live.
         if admission_id is not None:
-            code = "VOICE_DISPATCH_UNCERTAIN" if uncertain else "VOICE_DISPATCH_FAILED"
-            await mark_failed(db, admission_id, code=code, status=503, uncertain=uncertain)
+            await mark_failed(db, admission_id, code="VOICE_DISPATCH_UNCERTAIN", status=503, uncertain=True)
         await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id).values(status="failed"))
         await db.commit()
-        await db.refresh(voice)
-        try:
-            await cleanup_room(db, voice, config)
-        except ValueError:
-            await db.rollback()
-        raise HTTPException(503, detail={"code": "VOICE_DISPATCH_FAILED"}) from None
+        raise HTTPException(503, detail={"code": "VOICE_DISPATCH_UNCERTAIN"}) from None
 
     if admission_id is not None:
         await mark_dispatched(db, admission_id)
