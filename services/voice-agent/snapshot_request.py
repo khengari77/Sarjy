@@ -16,7 +16,6 @@ from collections.abc import Mapping, Sequence
 from uuid import uuid4
 
 from app.domain.context import (
-    LOWER_TRUST_ROLES,
     prompt_sha256,
     provider_role,
     untrusted_data_message,
@@ -54,7 +53,7 @@ def _model_request_replay(snapshot: Mapping, turn_id: str) -> ModelRequest:
     if [message.model_dump() for message in request.messages] != messages:
         raise ValueError("MODEL_SNAPSHOT_MISMATCH")
     _validate_hash(snapshot, messages)
-    _validate_manifest(snapshot)
+    _validate_manifest(snapshot, request.selection)
     _validate_selection_identity(snapshot, request.selection)
     safe, converted = _safe_projection(request.selection.included, messages)
     if not converted:
@@ -98,15 +97,11 @@ def _metadata_replay(snapshot: Mapping, turn_id: str) -> ModelRequest:
         attempt_id=str(uuid4()),
         instructions=messages[0]["content"],
         messages=safe,
-        selection=ContextSelection(
-            revision=snapshot["revision"],
-            included=entries,
-            excluded_ids=frozenset(snapshot["excluded_record_ids"]),
-        ),
+        selection=_metadata_selection(snapshot["revision"], entries, safe, frozenset(snapshot["excluded_record_ids"])),
         response_policy=pipeline_policy(pipeline),
         settings=None,
         settings_revision=None,
-        language=pipeline.get("llm", {}).get("language", "en"),
+        language=_pipeline_language(pipeline),
     )
 
 
@@ -131,13 +126,19 @@ def _validate_hash(snapshot: Mapping, messages: Sequence[Mapping[str, str]]) -> 
         raise ValueError("HASH_MISMATCH_SNAPSHOT")
 
 
-def _validate_manifest(snapshot: Mapping) -> None:
+def _validate_manifest(snapshot: Mapping, selection: ContextSelection) -> None:
     manifest, config = snapshot.get("manifest"), snapshot.get("pipeline_config")
     if manifest is None and config is None:
         return
     if not isinstance(manifest, Mapping) or not isinstance(config, Mapping):
         raise ValueError("INVALID_SNAPSHOT_METADATA")
     validate_assembly(snapshot["revision"], manifest, snapshot)
+    if "included_record_ids" in manifest and list(manifest["included_record_ids"]) != [
+        entry.id for entry in selection.included
+    ]:
+        raise ValueError("MANIFEST_SELECTION_MISMATCH")
+    if "excluded_record_ids" in manifest and set(manifest["excluded_record_ids"]) != set(selection.excluded_ids):
+        raise ValueError("MANIFEST_EXCLUSION_MISMATCH")
 
 
 def _validate_selection_identity(snapshot: Mapping, selection: ContextSelection) -> None:
@@ -181,26 +182,29 @@ def _safe_projection(
         if entry.text != message["content"]:
             raise ValueError("SELECTION_TEXT_MISMATCH")
         role = message["role"]
-        if index > 0 and entry.role == "system":
-            # Only the synthetic instructions entry may be privileged. Stored
-            # snapshots are untrusted input for replay; never restore a second
-            # system message even when the selection claims it was one. A
-            # lower-trust entry that was promoted to system is converted below.
-            raise ValueError("UNEXPECTED_SYSTEM_MESSAGE")
-        expected = provider_role(entry.role)
-        if role == expected:
+        if index == 0:
+            safe.append({"role": "system", "content": message["content"]})
+            continue
+        if role == "system":
+            # Only the synthetic instructions entry may stay privileged. For
+            # every later system message, content decides the provenance, just
+            # as on the metadata path; stored selection roles are not trusted.
+            derived = _legacy_role(index, message)
+            if entry.role != derived:
+                raise ValueError("SELECTION_ROLE_MISMATCH")
+            text, source = _legacy_record(entry)
+            safe.append(
+                {
+                    "role": "user",
+                    "content": untrusted_data_message(entry.id, entry.role, text, source),
+                }
+            )
+            converted = True
+            continue
+        if role == provider_role(entry.role):
             safe.append({"role": role, "content": message["content"]})
             continue
-        if entry.role not in LOWER_TRUST_ROLES or role != "system":
-            raise ValueError("SELECTION_ROLE_MISMATCH")
-        text, source = _legacy_record(entry)
-        safe.append(
-            {
-                "role": "user",
-                "content": untrusted_data_message(entry.id, entry.role, text, source),
-            }
-        )
-        converted = True
+        raise ValueError("SELECTION_ROLE_MISMATCH")
     return safe, converted
 
 
@@ -210,6 +214,27 @@ def _rebuilt_selection(selection: ContextSelection, messages: Sequence[Mapping[s
         for entry, message in zip(selection.included, messages, strict=True)
     )
     return ContextSelection(revision=selection.revision, included=entries, excluded_ids=selection.excluded_ids)
+
+
+def _metadata_selection(
+    revision: int,
+    entries: Sequence[ContextEntry],
+    messages: Sequence[Mapping[str, str]],
+    excluded_ids: frozenset[str],
+) -> ContextSelection:
+    rebuilt = tuple(
+        ContextEntry(id=entry.id, role=entry.role, text=message["content"])
+        for entry, message in zip(entries, messages, strict=True)
+    )
+    return ContextSelection(revision=revision, included=rebuilt, excluded_ids=excluded_ids)
+
+
+def _pipeline_language(pipeline: Mapping) -> str:
+    llm = pipeline.get("llm", {})
+    if not isinstance(llm, Mapping):
+        raise ValueError("INVALID_PIPELINE_LLM")
+    language = llm.get("language", "en")
+    return language if language in ("ar", "en") else "en"
 
 
 def _legacy_record(entry: ContextEntry) -> tuple[str, str | None]:
