@@ -3,6 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      // Apply the saved theme before first paint. This is the only place the
+      // boot path touches storage; SSR never reads localStorage.
+      (function () {
+        try {
+          var stored = window.localStorage.getItem('sarjy-theme');
+          var preference = stored === 'light' || stored === 'dark' ? stored : 'system';
+          var systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var resolved = preference === 'system' ? (systemDark ? 'dark' : 'light') : preference;
+          var root = document.documentElement;
+          root.setAttribute('data-theme', resolved);
+          root.setAttribute('data-theme-preference', preference);
+        } catch (error) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

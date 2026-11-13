@@ -15,6 +15,7 @@
   import CallControls from '../lib/chat/CallControls.svelte';
   import Composer from '../lib/chat/Composer.svelte';
   import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
+  import RightDrawer from '../lib/ui/RightDrawer.svelte';
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
   import { errorCode } from '../lib/voice/errors';
@@ -177,7 +178,6 @@
 
 <AppShell
   dir={arabic ? 'rtl' : 'ltr'}
-  modeLabel={arabic ? 'بسيط' : 'Simple'}
   languageLabel={arabic ? 'English' : 'العربية'}
   onLanguage={LANGUAGE_SWITCH_ENABLED ? toggleLanguage : undefined}
   leftLabel={arabic ? 'المحادثات' : 'Conversations'}
@@ -243,22 +243,26 @@
   {/snippet}
 
   {#snippet right()}
-    <VoiceSettings
-      {arabic}
-      voices={catalog.voices}
-      bind:voiceId={catalog.voiceId}
-      bind:voiceSearch={catalog.search}
-      nextVoicePage={catalog.nextPage}
-      voiceLoading={catalog.loading}
-      voiceError={catalog.error}
-      live={voice.live}
-      activeVoiceName={voice.activeVoiceName}
-      {captionsVisible}
-      onsearch={() => void catalogStore!.load()}
-      onloadmore={() => void catalogStore!.load(true)}
-      onremember={() => catalogStore!.remember()}
-      ontoggleCaptions={toggleCaptions}
-    />
+    <RightDrawer {arabic}>
+      {#snippet voicePanel()}
+        <VoiceSettings
+          {arabic}
+          voices={catalog.voices}
+          bind:voiceId={catalog.voiceId}
+          bind:voiceSearch={catalog.search}
+          nextVoicePage={catalog.nextPage}
+          voiceLoading={catalog.loading}
+          voiceError={catalog.error}
+          live={voice.live}
+          activeVoiceName={voice.activeVoiceName}
+          {captionsVisible}
+          onsearch={() => void catalogStore!.load()}
+          onloadmore={() => void catalogStore!.load(true)}
+          onremember={() => catalogStore!.remember()}
+          ontoggleCaptions={toggleCaptions}
+        />
+      {/snippet}
+    </RightDrawer>
   {/snippet}
 </AppShell>
 
