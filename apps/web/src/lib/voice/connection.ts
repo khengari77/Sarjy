@@ -1,9 +1,9 @@
 import type { SessionConfig } from '../api';
-import { endVoiceSession } from '../chat/session';
 import { ensureMicrophoneAccess } from '../audio/microphone';
 import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
 import { errorCode } from './errors';
 import { startSessionAttempt } from './sessionAttempt';
+import { createSessionReleaser } from './sessionRelease';
 import { interruptVoice, sendVoiceText, toggleVoiceMute } from './voiceControls';
 import type { MeterController } from './meters';
 
@@ -82,30 +82,24 @@ function handleVoiceEvent(state: VoiceState, deps: ConnectionDeps, event: VoiceE
   }
 }
 
+function ownsLive(state: VoiceState, sessionId: string) {
+  return state.live?.id === sessionId;
+}
+
+function clearOwnedLive(state: VoiceState, deps: ConnectionDeps, sessionId: string) {
+  if (!ownsLive(state, sessionId)) return;
+  deps.meters.teardownMeters();
+  state.live = null;
+  state.muted = true;
+  state.activeVoiceName = '';
+  state.connectionLost = false;
+  state.provisional = null;
+}
+
 export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   let attemptCounter = 0;
   let ending = false;
-  const released = new Set<string>();
-
-  async function releaseSession(session: SessionConfig | null) {
-    if (!session || released.has(session.id)) return;
-    released.add(session.id);
-    await endVoiceSession(session).catch(() => {});
-  }
-
-  function ownsLive(sessionId: string) {
-    return state.live?.id === sessionId;
-  }
-
-  function clearOwnedLive(sessionId: string) {
-    if (!ownsLive(sessionId)) return;
-    deps.meters.teardownMeters();
-    state.live = null;
-    state.muted = true;
-    state.activeVoiceName = '';
-    state.connectionLost = false;
-    state.provisional = null;
-  }
+  const releaseSession = createSessionReleaser();
 
   async function connect(microphone: boolean) {
     if (state.live) {
@@ -141,7 +135,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         conversationId,
         isCurrent: () => attempt === attemptCounter && deps.getConversationId() === conversationId,
         releaseSession,
-        clearOwnedLive,
+        clearOwnedLive: (sessionId) => clearOwnedLive(state, deps, sessionId),
       });
     } catch (error) {
       if (attempt === attemptCounter) {
@@ -162,8 +156,15 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     state.agentState = null;
     if (wasConnecting && state.live) {
       const session = state.live;
-      clearOwnedLive(session.id);
-      void releaseSession(session);
+      clearOwnedLive(state, deps, session.id);
+      const releasedOk = await releaseSession(session);
+      if (!releasedOk) {
+        // Keep the server session retryable; it may still hold admission.
+        state.live = session;
+        state.muted = true;
+        state.voiceErrorCode = 'SESSION_RELEASE_FAILED';
+        state.transportStatus = 'disconnected';
+      }
     }
     await deps
       .getRuntime()
@@ -183,12 +184,22 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     state.provisional = null;
     state.transportStatus = 'idle';
     state.agentState = null;
+    state.activeVoiceName = '';
+    state.voiceErrorCode = '';
     try {
       await deps
         .getRuntime()
         .disconnect()
         .catch(() => {});
-      await releaseSession(session);
+      const releasedOk = await releaseSession(session);
+      if (!releasedOk && session) {
+        // Do not report a clean idle state while the backend session may
+        // still be admitted. Keeping it live makes a second End retry it.
+        state.live = session;
+        state.muted = true;
+        state.voiceErrorCode = 'SESSION_RELEASE_FAILED';
+        state.transportStatus = 'disconnected';
+      }
       await deps.refresh().catch(() => {});
     } finally {
       ending = false;

@@ -10,7 +10,7 @@ export async function startSessionAttempt(
     microphone: boolean;
     conversationId: string;
     isCurrent(): boolean;
-    releaseSession(session: SessionConfig | null): Promise<void>;
+    releaseSession(session: SessionConfig | null): Promise<boolean>;
     clearOwnedLive(sessionId: string): void;
   },
 ) {

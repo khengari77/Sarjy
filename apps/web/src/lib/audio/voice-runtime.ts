@@ -1,6 +1,7 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
 import { waitForAgent, type StartupSignal } from './agentStartup';
+import { disposeAudioElements, releaseMicrophone } from './teardown';
 
 type VoiceEventBody =
   | { type: 'status'; source: 'transport' | 'agent'; text: string }
@@ -136,11 +137,17 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
         });
       }
     });
-    room.registerTextStreamHandler('lk.transcription', async (reader) => {
+    room.registerTextStreamHandler('lk.transcription', async (reader, participantInfo) => {
       try {
         const text = await reader.readAll();
         if (!this.active(room, epoch) || this.sawTranscriptionSegments) return;
-        this.emit({ type: 'transcript', text, final: true, segmentId: 'stream', speaker: 'assistant' });
+        const attributes = reader.info.attributes ?? {};
+        // Older publishers omit the final flag; treat an omitted flag as final
+        // but never force a provisional stream into a final assistant turn.
+        const final = attributes['lk.transcription_final'] !== 'false';
+        const segmentId = attributes['lk.segment_id'] || reader.info.id;
+        const speaker = participantInfo.identity === room.localParticipant.identity ? 'user' : 'assistant';
+        this.emit({ type: 'transcript', text, final, segmentId, speaker });
       } catch {
         if (this.active(room, epoch)) this.emit({ type: 'error', code: 'TRANSCRIPT_UNAVAILABLE' });
       }
@@ -254,24 +261,29 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   }
 
   private async disconnectRoom() {
-    this.startup?.wake?.();
-    this.startup = null;
+    // Capture the generation being torn down and detach it synchronously.
+    // `room.disconnect()` is asynchronous: a replacement connect() can start
+    // while it is pending. If this method kept using the shared fields after
+    // the await, it would remove the replacement room's audio elements and
+    // close its AudioContext while leaving the replacement session active.
     const room = this.room;
+    const audio = this.audio;
+    const audioContext = this.audioContext;
+    const startup = this.startup;
     this.room = null;
+    this.audio = new Set();
+    this.audioContext = null;
+    this.startup = null;
+
+    startup?.wake?.();
     if (room) {
+      // Release the old microphone before the potentially slow disconnect so
+      // a replacement call cannot overlap with live capture from this room.
+      await releaseMicrophone(room);
       await room.disconnect();
       room.removeAllListeners();
     }
-    for (const element of this.audio) {
-      this.detachAnalyser(element);
-      element.pause();
-      element.srcObject = null;
-      element.remove();
-    }
-    this.audio.clear();
-    if (this.audioContext) {
-      void this.audioContext.close().catch(() => {});
-      this.audioContext = null;
-    }
+    disposeAudioElements(audio, (element) => this.detachAnalyser(element));
+    if (audioContext) void audioContext.close().catch(() => {});
   }
 }
