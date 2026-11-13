@@ -180,16 +180,16 @@ The main design goal is **configuration-driven composition**, not a god-class th
 from typing import Literal
 from pydantic import BaseModel, Field
 
-SpeechBackend = Literal[
-    "livekit_inference", "deepgram_direct", "elevenlabs_direct", "browser_local"
-]
+SpeechBackend = Literal["livekit_inference", "deepgram_direct", "elevenlabs_direct", "browser_local"]
 LLMBackend = Literal["deepseek_direct", "openai_direct", "livekit_inference"]
+
 
 class ModelChoice(BaseModel):
     provider: str
     model: str
     voice_id: str | None = None
     language: str = "en"
+
 
 class PipelineConfig(BaseModel):
     runtime: Literal["livekit_remote", "browser_local"] = "livekit_remote"
@@ -412,10 +412,7 @@ class ContextState:
 
 
 def exclude_ids(state: ContextState, ids: frozenset[str]) -> ContextState:
-    allowed = {
-        item.id for item in state.items
-        if item.id in ids and not item.protected
-    }
+    allowed = {item.id for item in state.items if item.id in ids and not item.protected}
     return replace(
         state,
         revision=state.revision + 1,

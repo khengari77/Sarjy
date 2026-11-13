@@ -1,4 +1,4 @@
-import app.main as main_module
+import app.routes.worker as worker_module
 from fastapi.testclient import TestClient
 from test_context_assembly import start_turn
 from test_context_workflow import configured, create_app, seed
@@ -12,7 +12,7 @@ def test_weather_eligibility_returns_after_signed_exclusion_and_undo(tmp_path, m
         calls.append(city)
         return {"city": city}
 
-    monkeypatch.setattr(main_module, "get_current_weather", weather)
+    monkeypatch.setattr(worker_module, "get_current_weather", weather)
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]

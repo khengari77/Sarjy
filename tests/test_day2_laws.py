@@ -1,20 +1,26 @@
-from app.domain.context import ContextRecord, compile_context
+from app.domain.context import ContextCandidate, compile_turn_context
 from app.domain.context_operations import MemoryCandidate, exclusion_diff, restore_diff, select_candidates
 from hypothesis import given
 from hypothesis import strategies as st
 
 
+def _history(ids):
+    return tuple(ContextCandidate(key, "user", "Fact", "history") for key in sorted(ids))
+
+
 @given(st.sets(st.uuids().map(str), max_size=20), st.integers(min_value=0, max_value=1000))
 def test_exclusion_is_idempotent_and_undo_restores_visible_set(ids, revision):
-    records = tuple(ContextRecord(key, "user", "Fact") for key in sorted(ids))
-    before = compile_context(records, revision)
+    history = _history(ids)
+    before = compile_turn_context(revision=revision, instructions="Rules", history=history)
     excluded = frozenset(ids)
-    hidden = compile_context(records, revision + 1, excluded)
-    repeated = compile_context(records, revision + 1, excluded | excluded)
+    hidden = compile_turn_context(revision=revision + 1, instructions="Rules", history=history, excluded_ids=excluded)
+    repeated = compile_turn_context(
+        revision=revision + 1, instructions="Rules", history=history, excluded_ids=excluded | excluded
+    )
     assert hidden == repeated
-    assert not hidden["included_record_ids"]
-    restored = compile_context(records, revision + 2)
-    assert restored["messages"] == before["messages"]
+    assert hidden.included_ids == ("system",)
+    restored = compile_turn_context(revision=revision + 2, instructions="Rules", history=history)
+    assert restored.messages == before.messages
     removed = exclusion_diff(excluded, frozenset(), revision, revision + 1)
     added = restore_diff(excluded, frozenset(), revision + 1, revision + 2)
     assert removed["removed"] == added["added"] == sorted(ids)

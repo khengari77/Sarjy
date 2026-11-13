@@ -9,14 +9,15 @@ identity, so another component can own caching/claims.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import suppress
 from typing import Final
 
 import httpx
+
 from app.domain.routing import (
     JEV_MODEL,
     ROUTING_POLICY_VERSION,
@@ -90,6 +91,15 @@ class JevCircuitBreaker:
         self._open_until = None
 
 
+def _classification_state(instruction: str, context: Sequence[str]):
+    try:
+        return build_classification_state(instruction, context), None
+    except InstructionTooLong:
+        return None, "INSTRUCTION_TOO_LONG"
+    except ValueError:
+        return None, "INVALID_INSTRUCTION"
+
+
 class JevClient:
     """One-request, zero-retry classifier for a single turn.
 
@@ -138,17 +148,12 @@ class JevClient:
         """Classify one finalized turn within the total decision deadline."""
         started = self._clock()
 
-        if not self._api_key.strip():
-            return self._bypass(request_id, turn_id, "MISSING_CREDENTIALS", started)
-        if self._circuit.is_open():
-            return self._bypass(request_id, turn_id, "CIRCUIT_OPEN", started)
-
-        try:
-            state = build_classification_state(instruction, context)
-        except InstructionTooLong:
-            return self._bypass(request_id, turn_id, "INSTRUCTION_TOO_LONG", started)
-        except ValueError:
-            return self._bypass(request_id, turn_id, "INVALID_INSTRUCTION", started)
+        guard = self._guard(request_id, turn_id, started)
+        if guard is not None:
+            return guard
+        state, error = _classification_state(instruction, context)
+        if error is not None:
+            return self._bypass(request_id, turn_id, error, started)
 
         payload = build_systemone_request(state)
         serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -204,6 +209,13 @@ class JevClient:
         self._circuit.record_success()
         return outcome.model_copy(update={"elapsed_ms": self._elapsed(started)})
 
+    def _guard(self, request_id: str, turn_id: str, started: float) -> RoutingOutcome | None:
+        if not self._api_key.strip():
+            return self._bypass(request_id, turn_id, "MISSING_CREDENTIALS", started)
+        if self._circuit.is_open():
+            return self._bypass(request_id, turn_id, "CIRCUIT_OPEN", started)
+        return None
+
     async def _post(self, payload: Mapping[str, object]) -> httpx.Response:
         transport = self._transport
         client_transport = transport if transport is not None else httpx.AsyncHTTPTransport()
@@ -228,7 +240,7 @@ class JevClient:
         if status == 200:
             return None
         text = ""
-        with suppress(Exception):
+        with contextlib.suppress(Exception):
             text = response.text.casefold()
         if status == 402 or any(
             marker in text
