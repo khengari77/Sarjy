@@ -199,6 +199,92 @@ async def _replay(db: AsyncSession, key: str, owner_id: str, conversation_id: st
     return response
 
 
+async def create_exclusion_proposal(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    memory_ids: tuple[str, ...],
+    secret: str,
+) -> dict:
+    """Preview exclusion of exact stored-fact ids without any mutation.
+
+    The explorer already knows which stored fact the user selected, so it does
+    not need semantic retrieval to find it. The server still signs the exact
+    ids and the revision: confirmation trusts only that token, re-authorizes
+    every id against the owner's active memories, and Undo remains the existing
+    operation-scoped restore.
+    """
+    if not secret:
+        raise ContextOperationError("CONTEXT_PROPOSALS_NOT_CONFIGURED", 503)
+    ids = tuple(dict.fromkeys(memory_ids))
+    if not ids or len(ids) > 20 or any(not isinstance(value, str) or not value for value in ids):
+        raise ContextOperationError("INVALID_MEMORY_SELECTION", 422)
+    conversation = await owned_conversation(db, owner_id, conversation_id)
+    rows = (
+        await db.scalars(
+            select(Memory)
+            .where(Memory.id.in_(ids), Memory.owner_id == owner_id, Memory.status == "active")
+            .order_by(Memory.id)
+        )
+    ).all()
+    by_id = {row.id: row for row in rows}
+    if set(by_id) != set(ids):
+        raise ContextOperationError("MEMORY_NOT_FOUND", 404)
+    candidates = tuple(
+        MemoryCandidate(
+            id=row.id,
+            content=row.content,
+            source_turn_id=row.source_turn_id,
+            score=0.0,
+            kind=classify(row.content),
+        )
+        for row in rows
+    )
+    # Exact ids are the user's explicit exclusion authority, including for
+    # budget-classified records. No keep authority is implied or invented.
+    selection = select_candidates(candidates, keep=(), exclude=ids)
+    revision = conversation.revision
+    token = sign_proposal(
+        {
+            "v": 1,
+            "owner_id": owner_id,
+            "conversation_id": conversation_id,
+            "revision": revision,
+            "query": "",
+            "keep": [],
+            "exclude": list(ids),
+            "excluded_ids": sorted(selection.excluded_ids),
+            "kept_ids": sorted(selection.kept_ids),
+        },
+        secret,
+    )
+    return {
+        "conversation_id": conversation_id,
+        "query": "",
+        "revision": revision,
+        "proposal": token,
+        "matches": [
+            {
+                "id": candidate.id,
+                "content": candidate.content,
+                "source_turn_id": candidate.source_turn_id,
+                "score": candidate.score,
+                "kind": "budget" if candidate.is_budget else candidate.kind,
+            }
+            for candidate in selection.matches
+        ],
+        "preserved": [
+            {"id": record.id, "content": record.content, "reason": record.reason} for record in selection.preserved
+        ],
+        "ambiguous": [
+            {"id": record.id, "content": record.content, "reason": record.reason} for record in selection.ambiguous
+        ],
+        "requires_clarification": selection.requires_clarification,
+        "diff": selection.diff(revision, revision),
+    }
+
+
 async def create_proposal(
     db: AsyncSession,
     *,

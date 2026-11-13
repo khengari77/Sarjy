@@ -1,6 +1,6 @@
 """Authenticated memory HTTP adapter; dependency providers are supplied by the app."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.memory import MemoryResult, MemoryService
@@ -28,8 +28,45 @@ class MemoryQuery(BaseModel):
     limit: int = Field(default=5, ge=1, le=20)
 
 
+class MemoryListItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    content: str
+    kind: str
+    version: int = Field(ge=1)
+    status: str
+    source_conversation_id: str
+    source_turn_id: str | None
+    supersedes_id: str | None
+    created_at: str
+    updated_at: str
+    # Present only when the caller supplies a conversation scope. ``None``
+    # means "not evaluated", never "stored but unused".
+    excluded_in_conversation: bool | None = None
+    included_in_conversation: bool | None = None
+
+
+class MemoryList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[MemoryListItem]
+    total: int = Field(ge=0)
+    next_offset: int | None
+
+
 def memory_router(database, identity, embedder):
     router = APIRouter()
+
+    @router.get("/v1/memories", response_model=MemoryList)
+    async def list_memories(
+        conversation_id: str | None = Query(default=None, min_length=1, max_length=100),
+        limit: int = Query(default=50, ge=1, le=100),
+        offset: int = Query(default=0, ge=0, le=1_000_000),
+        user=Depends(identity),
+        db=Depends(database),
+    ):
+        return await MemoryService(db, embedder).list_memories(
+            user.id, limit=limit, offset=offset, conversation_id=conversation_id
+        )
 
     @router.post("/v1/conversations/{conversation_id}/memories", response_model=MemoryResult, status_code=201)
     async def create(conversation_id: str, body: MemoryWrite, user=Depends(identity), db=Depends(database)):

@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Memories */
+        get: operations["list_memories_v1_memories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/conversations/{conversation_id}/memories": {
         parameters: {
             query?: never;
@@ -447,6 +464,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations/{conversation_id}/context/exclusions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Propose Exclusion */
+        post: operations["propose_exclusion_v1_conversations__conversation_id__context_exclusions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -565,6 +599,11 @@ export interface components {
             revision_before: number;
             /** Revision After */
             revision_after: number;
+        };
+        /** ContextExclusionProposalInput */
+        ContextExclusionProposalInput: {
+            /** Memory Ids */
+            memory_ids: string[];
         };
         /** ContextMatch */
         ContextMatch: {
@@ -719,6 +758,42 @@ export interface components {
             source_turn_id?: string | null;
             /** Idempotency Key */
             idempotency_key: string;
+        };
+        /** MemoryList */
+        MemoryList: {
+            /** Items */
+            items: components["schemas"]["MemoryListItem"][];
+            /** Total */
+            total: number;
+            /** Next Offset */
+            next_offset: number | null;
+        };
+        /** MemoryListItem */
+        MemoryListItem: {
+            /** Id */
+            id: string;
+            /** Content */
+            content: string;
+            /** Kind */
+            kind: string;
+            /** Version */
+            version: number;
+            /** Status */
+            status: string;
+            /** Source Conversation Id */
+            source_conversation_id: string;
+            /** Source Turn Id */
+            source_turn_id: string | null;
+            /** Supersedes Id */
+            supersedes_id: string | null;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+            /** Excluded In Conversation */
+            excluded_in_conversation?: boolean | null;
+            /** Included In Conversation */
+            included_in_conversation?: boolean | null;
         };
         /** MemoryQuery */
         MemoryQuery: {
@@ -1290,6 +1365,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HandledAction"] | components["schemas"]["UnhandledAction"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_memories_v1_memories_get: {
+        parameters: {
+            query?: {
+                conversation_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryList"];
                 };
             };
             /** @description Validation Error */
@@ -2035,6 +2143,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContextUndoResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    propose_exclusion_v1_conversations__conversation_id__context_exclusions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContextExclusionProposalInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextProposal"];
                 };
             };
             /** @description Validation Error */
