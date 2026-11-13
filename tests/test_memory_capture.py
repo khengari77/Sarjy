@@ -97,7 +97,8 @@ def test_finalized_fact_requires_confirmation_then_recalls_corrects_and_isolates
         recalled_headers = add_turn_session(file, recalled_chat, owner, identifier="session-2")
         recalled = turn(client, recalled_headers, "What do I prefer?", "recall-1").json()
         messages = recalled["context"]["model_request"]["messages"]
-        assert any("tea with mint" in message["content"] for message in messages)
+        recalled_memory = [message for message in messages if "tea with mint" in message["content"]]
+        assert recalled_memory and all(message["role"] != "system" for message in recalled_memory)
 
         corrected = turn(client, recalled_headers, "I prefer coffee now", "fact-2").json()["memory_proposal"]
         result = client.post(
