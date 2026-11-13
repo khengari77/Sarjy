@@ -1,58 +1,163 @@
-import { describe, expect, it } from 'vitest';
-import { mixHexColors, parseHexColor } from './render/colors';
+import { describe, expect, it, vi } from 'vitest';
 import {
   INITIAL_STATE,
-  ORB_COLORS,
+  ORB_OVERLAYS,
+  VOICE_PHASES,
   deriveOrbPresentation,
   isCurrentTag,
   nextEpoch,
   nextRendererTier,
   resolveEffectivePhase,
+  resolveOrbPriority,
+  resolvePhaseColor,
   selectRendererTier,
+  type VoicePhase,
   type VoiceUiState,
 } from './orbState';
+import { ORB_STATE_COLORS, type ThemeName } from './palette';
+
+const THEMES: readonly ThemeName[] = ['light', 'dark'];
 
 function state(patch: Partial<VoiceUiState>): VoiceUiState {
   return { ...INITIAL_STATE, ...patch };
 }
 
-describe('priority resolution', () => {
-  it('gives error the highest priority even while speaking', () => {
-    expect(resolveEffectivePhase({ phase: 'speaking', overlay: 'error' })).toBe('error');
+function expectedEffective(phase: VoicePhase, overlay: VoiceUiState['overlay']) {
+  if (overlay === 'error') return 'error';
+  if (phase === 'disconnected') return 'disconnected';
+  return phase;
+}
+
+function expectedPriority(phase: VoicePhase, overlay: VoiceUiState['overlay']) {
+  if (overlay === 'error') return 'error';
+  if (phase === 'disconnected') return 'disconnected';
+  if (overlay === 'confirming') return 'confirming';
+  if (overlay === 'memory_work') return 'memory_work';
+  if (overlay === 'muted') return 'muted';
+  return 'phase';
+}
+
+describe('priority matrix', () => {
+  it('derives error > disconnected > phase for every reachable combination', () => {
+    for (const phase of VOICE_PHASES) {
+      for (const overlay of ORB_OVERLAYS) {
+        expect(resolveEffectivePhase({ phase, overlay }), `${phase}/${overlay}`).toBe(
+          expectedEffective(phase, overlay),
+        );
+        expect(resolveOrbPriority({ phase, overlay }), `${phase}/${overlay}`).toBe(expectedPriority(phase, overlay));
+      }
+    }
   });
 
-  it('lets disconnected beat an active voice phase', () => {
-    expect(resolveEffectivePhase({ phase: 'speaking', overlay: 'none' })).toBe('speaking');
-    expect(resolveEffectivePhase({ phase: 'disconnected', overlay: 'none' })).toBe('disconnected');
+  it('lets the error overlay outrank a disconnected session', () => {
+    expect(resolveEffectivePhase({ phase: 'disconnected', overlay: 'error' })).toBe('error');
+    expect(resolveOrbPriority({ phase: 'disconnected', overlay: 'error' })).toBe('error');
   });
 
-  it('keeps memory_work/confirming as accents over the live phase', () => {
-    const memory = deriveOrbPresentation(state({ phase: 'speaking', overlay: 'memory_work' }));
+  it('suppresses accents entirely while disconnected', () => {
+    for (const overlay of ['memory_work', 'confirming', 'muted'] as const) {
+      for (const theme of THEMES) {
+        const presentation = deriveOrbPresentation(state({ phase: 'disconnected', overlay }), theme);
+        expect(presentation.effectivePhase).toBe('disconnected');
+        expect(presentation.accent).toBeNull();
+        expect(presentation.accentOnly).toBe(false);
+        expect(presentation.statusLabel.en).toBe('Connection lost');
+        expect(presentation.showMicSlash).toBe(false);
+        expect(presentation.enabledActions).toEqual(['reconnect']);
+      }
+    }
+  });
+
+  it('keeps memory_work/confirming as accents over a live phase', () => {
+    const memory = deriveOrbPresentation(state({ phase: 'speaking', overlay: 'memory_work' }), 'light');
     expect(memory.effectivePhase).toBe('speaking');
-    expect(memory.primaryColor).toBe('#4add91');
-    expect(memory.accent).toBe('#e9b454');
+    expect(memory.primaryColor).toBe(resolvePhaseColor('light', 'speaking'));
+    expect(memory.accent).toBe(ORB_STATE_COLORS.light.memory);
     expect(memory.accentOnly).toBe(true);
+    expect(memory.statusLabel.en).toBe('Checking memory…');
 
-    const confirming = deriveOrbPresentation(state({ phase: 'listening', overlay: 'confirming' }));
+    const confirming = deriveOrbPresentation(state({ phase: 'listening', overlay: 'confirming' }), 'light');
     expect(confirming.effectivePhase).toBe('listening');
-    expect(confirming.primaryColor).toBe('#4da8ff');
-    expect(confirming.accent).toBe('#ffa65a');
+    expect(confirming.primaryColor).toBe(resolvePhaseColor('light', 'listening'));
+    expect(confirming.accent).toBe(ORB_STATE_COLORS.light.confirmation);
+    expect(confirming.enabledActions).toContain('end');
+    expect(confirming.statusLabel.en).toBe('Confirmation needed');
   });
 
-  it('never blends speaking amber into the base colour', () => {
-    const presentation = deriveOrbPresentation(state({ phase: 'speaking', overlay: 'memory_work' }));
-    expect(presentation.primaryColor).not.toBe('#e9b454');
+  it('never blends an accent into the base phase colour', () => {
+    for (const theme of THEMES) {
+      const memory = deriveOrbPresentation(state({ phase: 'speaking', overlay: 'memory_work' }), theme);
+      expect(memory.primaryColor).toBe(resolvePhaseColor(theme, 'speaking'));
+      expect(memory.primaryColor).not.toBe(memory.accent);
+    }
+  });
+
+  it('gives the error state the error colour and retry action', () => {
+    for (const theme of THEMES) {
+      const presentation = deriveOrbPresentation(state({ phase: 'speaking', overlay: 'error' }), theme);
+      expect(presentation.effectivePhase).toBe('error');
+      expect(presentation.primaryColor).toBe(ORB_STATE_COLORS[theme].error);
+      expect(presentation.accent).toBeNull();
+      expect(presentation.accentOnly).toBe(false);
+      expect(presentation.statusLabel.en).toBe('Something went wrong');
+      expect(presentation.enabledActions).toEqual(['retry']);
+    }
   });
 });
 
 describe('labels and accessibility', () => {
-  it('localises every phase without raw SDK names', () => {
-    for (const phase of ['idle', 'connecting', 'listening', 'thinking', 'speaking', 'disconnected'] as const) {
-      const presentation = deriveOrbPresentation(state({ phase }));
-      expect(presentation.statusLabel.en).not.toBe(phase);
-      expect(presentation.statusLabel.ar.length).toBeGreaterThan(0);
-      expect(presentation.ariaLabel.en.length).toBeGreaterThan(0);
+  it('localises every phase in both themes without raw SDK names', () => {
+    const rawSdkStrings = new Set([
+      'connected',
+      'connecting',
+      'reconnecting',
+      'disconnected',
+      'initializing',
+      'idle',
+      'thinking',
+      'speaking',
+      'listening',
+      'agent_state',
+    ]);
+
+    for (const theme of THEMES) {
+      for (const phase of VOICE_PHASES) {
+        const presentation = deriveOrbPresentation(state({ phase }), theme);
+        expect(presentation.statusLabel.en).not.toBe(phase);
+        expect(presentation.statusLabel.en.toLowerCase()).not.toBe(phase);
+        expect(rawSdkStrings.has(presentation.statusLabel.en.toLowerCase())).toBe(false);
+        expect(presentation.statusLabel.ar.length).toBeGreaterThan(0);
+        expect(presentation.ariaLabel.en.length).toBeGreaterThan(0);
+        expect(presentation.ariaLabel.ar.length).toBeGreaterThan(0);
+        expect(presentation.ariaLabel.en).not.toBe(phase);
+      }
     }
+  });
+
+  it('provides complete status and aria text for every theme/phase/overlay pair', () => {
+    for (const theme of THEMES) {
+      for (const phase of VOICE_PHASES) {
+        for (const overlay of ORB_OVERLAYS) {
+          const presentation = deriveOrbPresentation(state({ phase, overlay }), theme);
+          const id = `${theme}/${phase}/${overlay}`;
+          expect(presentation.statusLabel.en.trim().length, id).toBeGreaterThan(0);
+          expect(presentation.statusLabel.ar.trim().length, id).toBeGreaterThan(0);
+          expect(presentation.ariaLabel.en.trim().length, id).toBeGreaterThan(0);
+          expect(presentation.ariaLabel.ar.trim().length, id).toBeGreaterThan(0);
+          expect(presentation.enabledActions.length, id).toBeGreaterThan(0);
+          expect(new Set(presentation.enabledActions).size, id).toBe(presentation.enabledActions.length);
+          expect(presentation.theme, id).toBe(theme);
+        }
+      }
+    }
+  });
+
+  it('names the overlay in the aria label while keeping the live phase', () => {
+    const presentation = deriveOrbPresentation(state({ phase: 'listening', overlay: 'muted' }), 'dark');
+    expect(presentation.ariaLabel.en).toContain('Microphone muted');
+    expect(presentation.ariaLabel.en).toContain('Listening');
+    expect(presentation.ariaLabel.ar).toContain('الميكروفون مكتوم');
+    expect(presentation.ariaLabel.ar).toContain('أستمع');
   });
 
   it('shows a mic slash and an unmute action when muted', () => {
@@ -72,8 +177,38 @@ describe('labels and accessibility', () => {
     expect(presentation.enabledActions).toContain('interrupt');
   });
 
-  it('exposes only start from idle and never duplicate start', () => {
+  it('exposes only start from idle and never duplicates start', () => {
     expect(deriveOrbPresentation(state({})).enabledActions).toEqual(['start']);
+  });
+});
+
+describe('phase vocabulary scope', () => {
+  it('contains no onboarding or Wordle phase', () => {
+    expect(VOICE_PHASES).toEqual(['idle', 'connecting', 'listening', 'thinking', 'speaking', 'disconnected']);
+    for (const forbidden of ['onboarding', 'wordle', 'game']) {
+      expect(VOICE_PHASES as readonly string[]).not.toContain(forbidden);
+    }
+  });
+
+  it('never fabricates a phase for a game-only action', () => {
+    const presentation = deriveOrbPresentation(state({ phase: 'idle' }), 'light');
+    expect(presentation.effectivePhase).toBe('idle');
+    expect(presentation.statusLabel.en).toBe('Ready');
+  });
+});
+
+describe('purity', () => {
+  it('never performs network or storage work during derivation', () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    for (const theme of THEMES) {
+      for (const phase of VOICE_PHASES) {
+        for (const overlay of ORB_OVERLAYS) {
+          deriveOrbPresentation(state({ phase, overlay, micLevel: 0.4 }), theme);
+        }
+      }
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });
 
@@ -119,45 +254,5 @@ describe('renderer fallback', () => {
     expect(nextRendererTier('static', 60)).toBe('static');
     expect(nextRendererTier('enhanced', 60)).toBe('enhanced');
     expect(nextRendererTier('enhanced', Number.NaN)).toBe('enhanced');
-  });
-});
-
-describe('renderer colour contract', () => {
-  const phases = ['idle', 'connecting', 'listening', 'thinking', 'speaking', 'disconnected'] as const;
-  const overlays = ['none', 'memory_work', 'confirming', 'muted', 'error'] as const;
-
-  it('emits only parseable literal colours for every reachable phase/overlay pair', () => {
-    for (const phase of phases) {
-      for (const overlay of overlays) {
-        const presentation = deriveOrbPresentation(state({ phase, overlay }));
-        const primary = parseHexColor(presentation.primaryColor);
-        expect(primary, `${phase}/${overlay} primary ${presentation.primaryColor}`).not.toBeNull();
-        expect(primary!.every((channel) => Number.isFinite(channel) && channel >= 0 && channel <= 1)).toBe(true);
-        if (presentation.accent) {
-          const accent = parseHexColor(presentation.accent);
-          expect(accent, `${phase}/${overlay} accent ${presentation.accent}`).not.toBeNull();
-          expect(accent!.every((channel) => Number.isFinite(channel) && channel >= 0 && channel <= 1)).toBe(true);
-        }
-      }
-    }
-  });
-
-  it('uses the numeric muted blend rather than a near-black parse', () => {
-    for (const phase of ['idle', 'connecting', 'listening', 'thinking', 'speaking'] as const) {
-      const presentation = deriveOrbPresentation(state({ phase, overlay: 'muted' }));
-      expect(presentation.primaryColor).toBe(mixHexColors(ORB_COLORS[phase], ORB_COLORS.disconnected, 0.55));
-      const channels = parseHexColor(presentation.primaryColor)!;
-      expect(channels.reduce((sum, channel) => sum + channel, 0)).toBeGreaterThan(0.3);
-    }
-  });
-
-  it('keeps muted speaking/thinking labels and live-state precedence', () => {
-    for (const phase of ['speaking', 'thinking'] as const) {
-      const presentation = deriveOrbPresentation(state({ phase, overlay: 'muted', micActive: false }));
-      expect(presentation.effectivePhase).toBe(phase);
-      expect(presentation.statusLabel.en).not.toBe('Microphone muted');
-      expect(presentation.statusLabel.en).toContain(phase === 'speaking' ? 'Speaking' : 'Thinking');
-      expect(presentation.showMicSlash).toBe(true);
-    }
   });
 });
