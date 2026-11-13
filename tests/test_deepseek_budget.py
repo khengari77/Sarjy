@@ -67,6 +67,9 @@ def test_reservation_covers_the_peak_token_bound():
     from app.domain.budget import DEEPSEEK_MINIMUM_REQUEST_MICRO_USD, deepseek_reservation_micro_usd
 
     assert deepseek_reservation_micro_usd() == 6_144
+    assert deepseek_reservation_micro_usd(1_000_000, 0) == 300_000
+    assert deepseek_reservation_micro_usd(0, 1_000_000) == 1_200_000
+    assert deepseek_reservation_micro_usd(1_000, 1_000) == 1_500
     assert DEEPSEEK_MINIMUM_REQUEST_MICRO_USD == 6_144
 
 
