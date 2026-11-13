@@ -189,6 +189,7 @@ class SarjyAgent(Agent):
         self.memory_message: str | None = None
         self.memory_clarify = False
         self.memory_question_turn: str | None = None
+        self.memory_prompted_revision: int | None = None
 
     async def compile(self, message):
         if message.id not in self.prepared:
@@ -204,22 +205,32 @@ class SarjyAgent(Agent):
             self.memory_message = message.id
             self.memory_outcome = None
             if self.memory_proposal is not None:
-                decision = (
-                    _clarify_decision(message.text_content)
-                    if self.memory_clarify
-                    else _memory_decision(message.text_content)
-                )
-                if decision is not None:
-                    await self._resolve_memory(decision)
-                else:
-                    # A proposal is a one-shot for the next user turn; never stay armed
-                    # across unrelated acknowledgements.
+                revision = self.memory_proposal.get("confirmation_revision")
+                if self.memory_prompted_revision != revision:
+                    # The specific question for this revision was never
+                    # delivered; the utterance cannot be consent for it.
                     self.memory_proposal = None
                     self.memory_clarify = False
                     self.memory_outcome = "not_saved"
+                else:
+                    decision = (
+                        _clarify_decision(message.text_content)
+                        if self.memory_clarify
+                        else _memory_decision(message.text_content)
+                    )
+                    if decision is not None:
+                        await self._resolve_memory(decision)
+                    else:
+                        # A proposal is a one-shot for the next user turn; never stay armed
+                        # across unrelated acknowledgements.
+                        self.memory_proposal = None
+                        self.memory_clarify = False
+                        self.memory_prompted_revision = None
+                        self.memory_outcome = "not_saved"
         if result.get("memory_proposal") is not None:
             self.memory_proposal = result["memory_proposal"]
             self.memory_question_turn = result["turn_id"]
+            self.memory_prompted_revision = None
         return result["context"]
 
     async def _resolve_memory(self, decision: str) -> None:
@@ -267,6 +278,7 @@ class SarjyAgent(Agent):
                 "target_version": detail.get("target_version"),
             }
             self.memory_clarify = True
+            self.memory_prompted_revision = None
             self.memory_outcome = "clarify"
         else:
             self.memory_proposal = None
@@ -315,6 +327,14 @@ class SarjyAgent(Agent):
         if user is None:
             return
         snapshot = await self.compile(user)
+        proposal = self.memory_proposal
+        if proposal is not None and self.memory_prompted_revision != proposal.get("confirmation_revision"):
+            # Deliver the exact confirmation question deterministically; consent
+            # for this revision cannot exist until it has been spoken.
+            question = proposal.get("question") or f"Should I remember this: {proposal.get('text', '')}?"
+            self.memory_prompted_revision = proposal.get("confirmation_revision")
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=question))
+            return
         handle = self.session.current_speech
         if handle and handle.id not in self.speeches:
             self.speeches.add(handle.id)

@@ -18,6 +18,7 @@ from app.services.memory import MemoryService, memory_result
 CAPTURE_KIND = "memory_capture"
 PROPOSAL_TTL_SECONDS = 600
 LEGACY_SUBJECT_SCAN = 500
+LEGACY_SUBJECT_SCAN_MAX = 5000
 _SUBJECT_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
 
 
@@ -151,6 +152,7 @@ async def _record_decision(
     outcome: str,
     result: dict | None = None,
     target: Memory | None = None,
+    commit: bool = True,
 ) -> dict:
     from app.infrastructure.database import MemoryCaptureDecision
 
@@ -175,7 +177,8 @@ async def _record_decision(
     else:
         for key, value in values.items():
             setattr(row, key, value)
-    await db.commit()
+    if commit:
+        await db.commit()
     return result or {"status": outcome}
 
 
@@ -209,22 +212,84 @@ async def _contradictions(db: AsyncSession, *, owner_id: str, capture: MemoryCap
             .order_by(Memory.updated_at.desc(), Memory.id)
         )
     ).all()
-    # Legacy rows created before the subject column are NULL. A bounded
-    # fallback keeps them detectable without scanning the owner's lifetime.
-    legacy = (
-        await db.scalars(
-            select(Memory)
-            .where(Memory.owner_id == owner_id, Memory.status == "active", Memory.subject.is_(None))
-            .order_by(Memory.updated_at.desc(), Memory.id)
-            .limit(LEGACY_SUBJECT_SCAN)
-        )
-    ).all()
+    # Legacy rows created before the subject column are NULL. Page them
+    # deterministically so an old contradiction cannot hide behind newer
+    # unrelated rows; if the hard cap is reached without exhaustion, fail
+    # closed instead of silently saving a contradictory fact.
+    legacy: list[Memory] = []
+    last_id = ""
+    while True:
+        page = (
+            await db.scalars(
+                select(Memory)
+                .where(
+                    Memory.owner_id == owner_id,
+                    Memory.status == "active",
+                    Memory.subject.is_(None),
+                    Memory.id > last_id,
+                )
+                .order_by(Memory.id)
+                .limit(LEGACY_SUBJECT_SCAN)
+            )
+        ).all()
+        legacy.extend(page)
+        if len(page) < LEGACY_SUBJECT_SCAN:
+            break
+        last_id = page[-1].id
+        if len(legacy) >= LEGACY_SUBJECT_SCAN_MAX:
+            raise MemoryCaptureError("MEMORY_CONTRADICTION_SCAN_INCOMPLETE", 409)
     matches: list[Memory] = []
     for row in [*rows, *legacy]:
         existing = parse_capture(row.content)
         if existing is not None and existing.subject == capture.subject:
             matches.append(row)
     return matches
+
+
+async def _discard(
+    db: AsyncSession,
+    existing,
+    *,
+    confirmation_id: str,
+    revision: int,
+    payload: dict,
+    owner_id: str,
+    conversation_id: str,
+    token: str,
+) -> dict:
+    from sqlalchemy import update as sql_update
+
+    from app.infrastructure.database import MemoryCaptureDecision
+
+    response = {"status": "discarded", "memory": None}
+    if existing is not None:
+        # A clarification revision is still consent-free; declining it must be
+        # recorded and must close replacement authority atomically.
+        changed = await db.execute(
+            sql_update(MemoryCaptureDecision)
+            .where(
+                MemoryCaptureDecision.confirmation_id == confirmation_id,
+                MemoryCaptureDecision.revision == revision,
+                MemoryCaptureDecision.outcome == "awaiting_confirmation",
+            )
+            .values(decision="discard", outcome="discarded", result=response, created_at=now())
+        )
+        if changed.rowcount != 1:
+            await db.rollback()
+            raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome="discarded")
+        await db.commit()
+        return response
+    await _record_decision(
+        db,
+        payload=payload,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        token=token,
+        decision="discard",
+        outcome="discarded",
+        result=response,
+    )
+    return response
 
 
 async def confirm_memory(
@@ -262,20 +327,16 @@ async def confirm_memory(
         raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=existing.outcome)
 
     if decision == "discard":
-        if existing is not None:
-            raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=existing.outcome)
-        response = {"status": "discarded", "memory": None}
-        await _record_decision(
+        return await _discard(
             db,
+            existing,
+            confirmation_id=confirmation_id,
+            revision=revision,
             payload=payload,
             owner_id=owner_id,
             conversation_id=conversation_id,
             token=token,
-            decision="discard",
-            outcome="discarded",
-            result=response,
         )
-        return response
     if decision not in {"save", "replace"}:
         raise MemoryCaptureError("INVALID_DECISION", 422)
 
@@ -284,7 +345,7 @@ async def confirm_memory(
         target_version = payload.get("target_version")
         if not isinstance(target_id, str) or not isinstance(target_version, int):
             raise MemoryCaptureError("CONFIRMATION_STALE", 409, revision=revision)
-        if existing is None or existing.target_id != target_id or existing.target_version != target_version:
+        if existing is not None and (existing.target_id != target_id or existing.target_version != target_version):
             raise MemoryCaptureError("CONFIRMATION_STALE", 409, revision=revision)
         return await _replace_target(
             db,
@@ -374,6 +435,9 @@ async def _clarify(
 ) -> None:
     clarified, revision = _clarification_token(payload, secret, target=target)
     revised = {**payload, "revision": revision, "target_id": target.id, "target_version": target.version}
+    prior = await _decision(db, payload["confirmation_id"], revision)
+    if prior is not None and prior.outcome != "awaiting_confirmation":
+        raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=prior.outcome)
     await _record_decision(
         db,
         payload=revised,
@@ -492,6 +556,41 @@ async def _replace_target(
     target = await db.scalar(
         select(Memory).where(Memory.id == target_id, Memory.owner_id == owner_id, Memory.status == "active")
     )
+    # Durable recovery before target validation: the effect may have committed
+    # while its decision receipt did not. A matching corrected row is the
+    # successful outcome for a replacement.
+    applied = await _exact_content(db, owner_id=owner_id, capture=capture, status="active")
+    if applied is not None and applied.supersedes_id == target_id:
+        response = {"status": "corrected", "memory": asdict(memory_result(applied))}
+        await _record_decision(
+            db,
+            payload=payload,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            token=token,
+            decision="replace",
+            outcome=response["status"],
+            result=response,
+            target=applied,
+        )
+        return response
+    # A retraction has no new row; its receipt is the superseded target version.
+    if capture.negated:
+        previous = await db.scalar(select(Memory).where(Memory.id == target_id, Memory.owner_id == owner_id))
+        if previous is not None and previous.status == "superseded" and previous.version == target_version + 1:
+            response = {"status": "retracted", "memory": None}
+            await _record_decision(
+                db,
+                payload=payload,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                token=token,
+                decision="replace",
+                outcome=response["status"],
+                result=response,
+                target=previous,
+            )
+            return response
     if target is None or target.version != target_version:
         raise MemoryCaptureError("TARGET_CHANGED", 409, target_id=target_id)
     if capture.negated:
@@ -507,8 +606,20 @@ async def _replace_target(
         )
         if changed.rowcount != 1:
             raise MemoryCaptureError("TARGET_CHANGED", 409, target_id=target_id)
-        await db.commit()
         response = {"status": "retracted", "memory": None}
+        await _record_decision(
+            db,
+            payload=payload,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            token=token,
+            decision="replace",
+            outcome=response["status"],
+            result=response,
+            target=target,
+            commit=False,
+        )
+        await db.commit()
     else:
         key = _request_key(owner_id, f"{proposed_turn}:replace:{payload['revision']}", capture.text)
         try:
