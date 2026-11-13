@@ -342,6 +342,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
 
         validate_assembly(conversation.revision, compiled.manifest, turn.snapshot)
         conversation_id = voice.conversation_id
+        owner_id = conversation.owner_id
         db.add(turn)
         if conversation.title == "New conversation":
             conversation.title = body.text[:80]
@@ -356,7 +357,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
                 raise
             return _turn_response(
                 config,
-                owner_id=conversation.owner_id,
+                owner_id=owner_id,
                 conversation_id=conversation_id,
                 turn=existing,
                 context=existing.snapshot,
