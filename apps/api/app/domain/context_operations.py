@@ -84,6 +84,11 @@ def _term_authorizes_budget(term: str) -> bool:
     return bool(BUDGET_PATTERN.search(term))
 
 
+def normalize_authority(authority: tuple[str, ...]) -> tuple[str, ...]:
+    """Trim and drop empty entries, matching preview's authority handling."""
+    return tuple(term.strip() for term in authority if isinstance(term, str) and term.strip())
+
+
 def _normalized_authority(value: str) -> str:
     """Casefold and collapse whitespace for full-content authority equality."""
     return " ".join(value.split()).casefold()
@@ -95,10 +100,11 @@ def budget_removal_authorized(candidate_id: str, content: str, authority: tuple[
     Topic substrings (for example ``"trip"`` inside ``"Budget for the trip"``)
     never authorize removing a budget-classified record.
     """
-    if candidate_id in authority:
+    terms = normalize_authority(authority)
+    if candidate_id in terms:
         return True
     normalized_content = _normalized_authority(content)
-    return any(term and _normalized_authority(term) == normalized_content for term in authority)
+    return any(_normalized_authority(term) == normalized_content for term in terms)
 
 
 def keep_authorized(candidate_id: str, content: str, *, is_budget: bool, authority: tuple[str, ...]) -> bool:
@@ -109,12 +115,11 @@ def keep_authorized(candidate_id: str, content: str, *, is_budget: bool, authori
     term. Confirmation must not evaluate keep with the stricter removal
     predicate, or preview-valid keeps on UUID records are silently lost.
     """
-    if candidate_id in authority:
+    terms = normalize_authority(authority)
+    if candidate_id in terms:
         return True
     lowered = content.casefold()
-    for term in authority:
-        if not term:
-            continue
+    for term in terms:
         if is_budget and not _term_authorizes_budget(term):
             continue
         if term.casefold() in lowered:
@@ -160,8 +165,8 @@ def select_candidates(
     preserved and surfaced as ambiguous so lost keep/parser state fails closed.
     Duplicate ids are collapsed so diffs stay canonical.
     """
-    keep_terms = tuple(term.strip() for term in keep if term and term.strip())
-    exclude_terms = tuple(term.strip() for term in exclude if term and term.strip())
+    keep_terms = normalize_authority(keep)
+    exclude_terms = normalize_authority(exclude)
     preserved: dict[str, PreservedRecord] = {}
     ambiguous: dict[str, PreservedRecord] = {}
     excluded: set[str] = set()

@@ -13,6 +13,7 @@ import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from app.config import Settings
 from app.domain.context_operations import sign_proposal
 from app.main import create_app as real_create_app
@@ -429,3 +430,45 @@ def test_confirmation_rejects_a_keep_term_on_a_uuid_record(tmp_path):
         assert response.status_code == 400, response.text
         assert response.json()["detail"]["code"] == "PROPOSAL_INVALID"
         assert client.get(f"/v1/conversations/{chat}/context").json()["excluded_ids"] == []
+
+
+@pytest.mark.parametrize(
+    ("content", "keep"),
+    [
+        ("Budget 500 USD for the trip", " budget "),
+        ("Passport number X123", " 0b6f3e1a-6d64-4f2b-9a1e-6f0b6f3e1a11 "),
+    ],
+)
+def test_padded_keep_authority_blocks_inconsistent_removal(tmp_path, content, keep):
+    file, settings = configured(tmp_path)
+    record_id = "0b6f3e1a-6d64-4f2b-9a1e-6f0b6f3e1a11"
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        seed(file, chat, ((record_id, content),))
+        with closing(sqlite3.connect(file)) as db, db:
+            owner = db.execute("SELECT owner_id FROM conversations WHERE id=?", (chat,)).fetchone()[0]
+
+        preview_body = preview(client, chat, query="forget it", keep=(keep,))
+        assert record_id in {item["id"] for item in preview_body["preserved"]}
+
+        forged = sign_proposal(
+            {
+                "v": 1,
+                "owner_id": owner,
+                "conversation_id": chat,
+                "revision": 0,
+                "query": "forget it",
+                "keep": [keep],
+                "exclude": [],
+                "excluded_ids": [record_id],
+                "kept_ids": [],
+            },
+            "proposal-secret",
+        )
+        response = client.post(
+            f"/v1/conversations/{chat}/context/confirm",
+            json={"proposal": forged, "expected_revision": 0, "idempotency_key": f"padded-{keep.strip()}"},
+        )
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"]["code"] == "PROPOSAL_INVALID"
