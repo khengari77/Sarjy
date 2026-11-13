@@ -1,6 +1,6 @@
 import { request, type Conversation, type SessionConfig, type StartVoice, type Turn, type VoiceOption } from '../api';
 
-export type ToolCall = { id: string; name: string; result: unknown };
+export type ToolCall = { id: string; name: string; result: unknown; turn_id?: string };
 
 export function mergeVoices(current: VoiceOption[], incoming: VoiceOption[]): VoiceOption[] {
   return [...new Map([...current, ...incoming].map((voice) => [voice.id, voice])).values()];
@@ -34,11 +34,4 @@ export async function startVoiceSession(
 
 export async function endVoiceSession(session: SessionConfig | null): Promise<void> {
   if (session) await request('voice/sessions/' + session.id + '/end', {});
-}
-
-export async function bootstrapConversations(): Promise<Conversation[]> {
-  await request('demo-session', {});
-  const conversations = await request<Conversation[]>('conversations');
-  if (conversations.length) return conversations;
-  return [await createConversation()];
 }

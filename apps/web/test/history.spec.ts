@@ -176,6 +176,16 @@ test('resuming a conversation loads turns without starting a microphone session'
   await expect.poll(() => mocked.turns.length).toBeGreaterThanOrEqual(2);
   expect(sessionPosts).toBe(0);
   await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeEnabled();
+
+  // A reload restores a conversation without ever requesting microphone or a
+  // voice session; capture only starts from the explicit start action.
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Trip to Paris', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect.poll(() => mocked.turns.length).toBeGreaterThanOrEqual(3);
+  expect(sessionPosts).toBe(0);
 });
 
 test('an empty list offers an explicit new-chat action', async ({ page }) => {

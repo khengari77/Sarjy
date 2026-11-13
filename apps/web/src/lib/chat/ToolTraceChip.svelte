@@ -11,6 +11,8 @@
     get_weather: { en: 'Checked weather', ar: 'تحقّق من الطقس' },
     weather: { en: 'Checked weather', ar: 'تحقّق من الطقس' },
     search_memory: { en: 'Searched memory', ar: 'بحث في الذاكرة' },
+    memory_search: { en: 'Searched memory', ar: 'بحث في الذاكرة' },
+    get_current_time: { en: 'Checked the time', ar: 'تحقّق من الوقت' },
     propose_context_exclusion: { en: 'Prepared a context change', ar: 'جهّز تغييرًا في السياق' },
   };
 
@@ -22,7 +24,9 @@
   }
 
   const city = $derived(location(result));
-  const base = $derived(FRIENDLY[name]?.[arabic ? 'ar' : 'en'] ?? (arabic ? 'أداة' : `Used ${name}`));
+  // Unknown tool names are humanised rather than shown as raw snake_case ids.
+  const fallback = $derived(arabic ? 'استُخدمت أداة' : `Used ${name.replace(/_/g, ' ')}`);
+  const base = $derived(FRIENDLY[name]?.[arabic ? 'ar' : 'en'] ?? fallback);
   const label = $derived(city ? `${base} · ${city}` : base);
 </script>
 

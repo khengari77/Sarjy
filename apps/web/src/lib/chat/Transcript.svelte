@@ -19,7 +19,7 @@
     arabic: boolean;
     captionsVisible: boolean;
     expanded: boolean;
-    onexpand: () => void;
+    onexpand: (trigger?: HTMLElement) => void;
   } = $props();
 </script>
 

@@ -63,24 +63,32 @@
 
   let transcriptOpen = $state(false);
   let transcriptButton: HTMLButtonElement | undefined = $state();
+  let transcriptOpener: HTMLElement | null = null;
+  let stageSection: HTMLElement | undefined = $state();
   let switchCancel: HTMLButtonElement | undefined = $state();
 
   $effect(() => {
     if (pendingIntent) switchCancel?.focus();
   });
 
-  async function openTranscript() {
+  async function openTranscript(trigger?: HTMLElement) {
+    transcriptOpener = trigger ?? transcriptButton ?? null;
     transcriptOpen = true;
   }
 
   async function closeTranscript() {
     transcriptOpen = false;
     await tick();
-    transcriptButton?.focus();
+    // The compact expand affordance is unmounted while the drawer is open, so
+    // fall back to the freshly rendered control when the old node is detached.
+    const expand = stageSection?.querySelector<HTMLElement>('.captions .expand');
+    if (transcriptOpener?.isConnected) transcriptOpener.focus();
+    else (expand ?? transcriptButton)?.focus();
+    transcriptOpener = null;
   }
 </script>
 
-<section class="voice-stage" dir={arabic ? 'rtl' : 'ltr'}>
+<section class="voice-stage" bind:this={stageSection} dir={arabic ? 'rtl' : 'ltr'}>
   {#if pendingIntent}
     <div class="confirm-scrim" role="presentation">
       <div
@@ -120,11 +128,6 @@
       </div>
     </div>
   {/if}
-
-  <p class="status-line" data-phase={presentation.effectivePhase} role="status">
-    <span class="status-dot" style:background-color={presentation.primaryColor} aria-hidden="true"></span>
-    {arabic ? presentation.statusLabel.ar : presentation.statusLabel.en}
-  </p>
 
   {#if voiceErrorText}
     <div class="alert" role="alert" data-code={voiceErrorCode}>
@@ -171,6 +174,14 @@
     {/if}
   </div>
 
+  <!-- The plain-language state line sits under the orb. It deliberately has no
+       implicit live-region role: the page owns one debounced, visually hidden
+       announcer so screen readers are not flooded by rapid phase updates. -->
+  <p class="status-line" data-phase={presentation.effectivePhase}>
+    <span class="status-dot" style:background-color={presentation.primaryColor} aria-hidden="true"></span>
+    {arabic ? presentation.statusLabel.ar : presentation.statusLabel.en}
+  </p>
+
   <Transcript
     {turns}
     {provisional}
@@ -182,7 +193,14 @@
   />
 
   {#if live || turns.length || provisional}
-    <button class="ghost-button transcript-trigger" bind:this={transcriptButton} type="button" onclick={openTranscript}>
+    <button
+      class="ghost-button transcript-trigger"
+      bind:this={transcriptButton}
+      type="button"
+      aria-expanded={transcriptOpen}
+      aria-controls="transcript-drawer"
+      onclick={() => openTranscript(transcriptButton)}
+    >
       {arabic ? 'سجل المحادثة' : 'Transcript'}
     </button>
   {/if}

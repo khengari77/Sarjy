@@ -101,9 +101,76 @@ test('collapsed captions show two lines, keep the orb and open a transcript', as
   await page.getByRole('button', { name: 'Show full transcript' }).click();
   const drawer = page.getByRole('dialog', { name: 'Conversation transcript' });
   await expect(drawer).toBeVisible();
+  await expect(page.locator('.orb-button')).toBeVisible();
   await expect(drawer).toContainText('What is the weather in Riyadh?');
   await page.keyboard.press('Escape');
   await expect(drawer).toHaveCount(0);
+});
+
+test('the state line sits below the orb and exposes only human wording', async ({ page }) => {
+  await mockData(page);
+  await page.goto('/');
+
+  const orb = page.locator('.orb-button');
+  const status = page.locator('.status-line');
+  await expect(status).toHaveAttribute('data-phase', 'idle');
+  await expect(status).toHaveText('Ready');
+  const orbBox = await orb.boundingBox();
+  const statusBox = await status.boundingBox();
+  expect(orbBox).not.toBeNull();
+  expect(statusBox).not.toBeNull();
+  expect(statusBox!.y).toBeGreaterThan(orbBox!.y + orbBox!.height - 1);
+  // The visible line must not be its own live region; the page owns one
+  // debounced announcer for screen readers.
+  await expect(status).not.toHaveAttribute('role', 'status');
+});
+
+test('the transcript uses human role labels rather than raw API enums', async ({ page }) => {
+  await mockData(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Show full transcript' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Conversation transcript' });
+  await expect(drawer).toContainText('You');
+  await expect(drawer).toContainText('Sarjy');
+  await expect(drawer).not.toContainText('user · completed');
+  await expect(drawer).not.toContainText('assistant · completed');
+});
+
+test('opening the drawer focuses its close control and returns focus', async ({ page }) => {
+  await mockData(page);
+  await page.goto('/');
+  const expand = page.getByRole('button', { name: 'Show full transcript' });
+  await expand.click();
+  await expect(page.getByRole('button', { name: 'Close transcript' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(expand).toBeFocused();
+});
+
+test('partial text never reaches the debounced live region', async ({ page }) => {
+  await mockData(page);
+  await allowMicrophone(page);
+  await installFakeRuntime(page);
+  await page.goto('/');
+  await startCall(page);
+
+  const announcer = page.locator('.status-announcer');
+  await expect(announcer).toHaveText('Listening…');
+
+  await page.evaluate(() =>
+    (window as unknown as { __fakeRuntime: { simulate: (event: unknown) => void } }).__fakeRuntime.simulate({
+      type: 'transcript',
+      text: 'unfinished phrase',
+      final: false,
+      segmentId: 'seg-live',
+      speaker: 'user',
+    }),
+  );
+  await expect(page.locator('.caption.provisional')).toContainText('unfinished phrase');
+  // A partial is display-only: it must not advance the turn list or the phase.
+  await expect(page.locator('.caption')).toHaveCount(2);
+  await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'listening');
+  await expect(announcer).toHaveText('Listening…');
+  await expect(announcer).not.toContainText('unfinished phrase');
 });
 
 test('tool results render as a compact chip, never raw payloads', async ({ page }) => {
@@ -133,6 +200,8 @@ test('provisional transcript replaces the final line and clears without commands
   const provisional = page.locator('.caption.provisional');
   await expect(provisional).toContainText('It is thirty');
   await expect(page.locator('.caption')).toHaveCount(2);
+  // Provisional styling must not fade text below WCAG AA contrast.
+  await expect(provisional).toHaveCSS('opacity', '1');
 
   await page.evaluate(() =>
     (window as unknown as { __fakeRuntime: { simulate: (event: unknown) => void } }).__fakeRuntime.simulate({
@@ -159,6 +228,11 @@ test('turning captions off keeps the session and the transcript reachable', asyn
   await expect(page.getByRole('button', { name: 'Transcript', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Transcript', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Conversation transcript' })).toBeVisible();
+
+  // Turning captions back on must repaint from stored turns, not a fresh call.
+  await page.keyboard.press('Escape');
+  await page.getByRole('checkbox', { name: 'Show captions' }).check();
+  await expect(page.locator('.caption.user')).toContainText('What is the weather in Riyadh?');
 });
 
 test('a live session with no turns still exposes the transcript', async ({ page }) => {
