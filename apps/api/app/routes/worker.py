@@ -170,7 +170,7 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
                 secret=_memory_secret(config),
             )
         except MemoryCaptureError as exc:
-            raise HTTPException(exc.status, detail={"code": exc.code}) from exc
+            raise HTTPException(exc.status, detail={"code": exc.code, **exc.details}) from exc
         except ValueError as exc:
             raise HTTPException(
                 429 if str(exc) == "DAILY_BUDGET_EXHAUSTED" else 422, detail={"code": str(exc)}

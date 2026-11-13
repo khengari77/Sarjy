@@ -59,22 +59,13 @@ def openai_request_within_bounds(serialized: bytes, tools: list, max_output_toke
 def _memory_decision(text: str) -> str | None:
     lowered = " ".join(text.casefold().replace(",", " ").split()).strip(" .!?;:")
     affirmative = {
-        "yes",
-        "yeah",
-        "yep",
-        "sure",
-        "ok",
-        "okay",
-        "yes please",
-        "yes please do",
-        "please do",
         "yes save it",
+        "yes please save it",
         "save it",
         "please save it",
         "remember it",
+        "yes remember it",
         "confirm",
-        "sure thing",
-        "go ahead",
     }
     negative = {
         "no",
@@ -103,13 +94,6 @@ def _memory_decision(text: str) -> str | None:
 def _clarify_decision(text: str) -> str | None:
     lowered = " ".join(text.casefold().replace(",", " ").split()).strip(" .!?;:")
     if lowered in {
-        "yes",
-        "yeah",
-        "yep",
-        "sure",
-        "ok",
-        "okay",
-        "yes please",
         "yes replace it",
         "replace",
         "replace it",
@@ -253,14 +237,15 @@ class SarjyAgent(Agent):
             if self.notify:
                 await self.notify("MEMORY_SAVE_FAILED")
             return
-        code = ""
+        detail: dict = {}
         if not response.is_success:
             try:
-                code = response.json().get("detail", {}).get("code", "")
+                raw = response.json().get("detail", {})
+                detail = raw if isinstance(raw, dict) else {}
             except (ValueError, AttributeError):
-                code = ""
+                detail = {}
             if self.notify:
-                await self.notify(code or "MEMORY_SAVE_FAILED")
+                await self.notify(detail.get("code") or "MEMORY_SAVE_FAILED")
         if response.is_success:
             self.memory_proposal = None
             self.memory_clarify = False
@@ -269,9 +254,18 @@ class SarjyAgent(Agent):
                 status = response.json().get("status", "")
             except (ValueError, AttributeError):
                 status = ""
-            self.memory_outcome = "replace" if status == "corrected" else decision
-        elif code in {"MEMORY_CLARIFICATION_REQUIRED", "MEMORY_CONFLICT_RETRY"}:
-            # Keep the signed proposal so the next turn can authorise an explicit replace.
+            self.memory_outcome = "replace" if status in {"corrected", "retracted"} else decision
+        elif detail.get("code") == "MEMORY_CLARIFICATION_REQUIRED" and isinstance(detail.get("token"), str):
+            # Adopt the server-issued clarification revision. The old token can
+            # never authorize a replacement.
+            self.memory_proposal = {
+                **proposal,
+                "token": detail["token"],
+                "confirmation_id": detail.get("confirmation_id"),
+                "confirmation_revision": detail.get("confirmation_revision"),
+                "target_id": detail.get("target_id"),
+                "target_version": detail.get("target_version"),
+            }
             self.memory_clarify = True
             self.memory_outcome = "clarify"
         else:
@@ -321,11 +315,6 @@ class SarjyAgent(Agent):
         if user is None:
             return
         snapshot = await self.compile(user)
-        if self.memory_proposal is not None and self.current_turn == self.memory_question_turn:
-            text = self.memory_proposal.get("text", "")
-            question = f"Should I remember this: {text}?"
-            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=question))
-            return
         handle = self.session.current_speech
         if handle and handle.id not in self.speeches:
             self.speeches.add(handle.id)

@@ -53,6 +53,15 @@ def memory_rows(file):
         ).fetchall()
 
 
+def confirm_replace(client, headers, detail):
+    assert detail["code"] == "MEMORY_CLARIFICATION_REQUIRED"
+    return client.post(
+        "/internal/agent/memory/confirm",
+        headers=headers,
+        json={"token": detail["token"], "decision": "replace"},
+    )
+
+
 def test_parse_explicit_and_ordinary_but_not_negated_or_quoted():
     assert parse_capture("Remember that I prefer tea").text == "I prefer tea"
     assert parse_capture("Don't forget my budget is 300 USD").subject == "attribute:budget"
@@ -94,7 +103,8 @@ def test_finalized_fact_requires_confirmation_then_recalls_corrects_and_isolates
         duplicate = client.post(
             "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "save"}
         )
-        assert duplicate.status_code == 200 and duplicate.json()["status"] == "already_saved"
+        assert duplicate.status_code == 200 and duplicate.json()["status"] == "saved"
+        assert duplicate.json().get("idempotent") is True
         assert len(memory_rows(file)) == 1
 
         # A different conversation under the same owner recalls the confirmed fact.
@@ -106,11 +116,13 @@ def test_finalized_fact_requires_confirmation_then_recalls_corrects_and_isolates
         assert recalled_memory and all(message["role"] != "system" for message in recalled_memory)
 
         corrected = turn(client, recalled_headers, "I prefer coffee now", "fact-2").json()["memory_proposal"]
-        result = client.post(
+        clarify = client.post(
             "/internal/agent/memory/confirm",
             headers=recalled_headers,
             json={"token": corrected["token"], "decision": "save"},
         )
+        assert clarify.status_code == 409, clarify.text
+        result = confirm_replace(client, recalled_headers, clarify.json()["detail"])
         assert result.status_code == 200, result.text
         assert result.json()["status"] == "corrected" and result.json()["memory"]["version"] == 2
         active = [row for row in memory_rows(file) if row[2] == "active"]
@@ -143,6 +155,8 @@ def test_preference_correction_targets_the_same_topic_and_can_be_restored(tmp_pa
                 headers=headers,
                 json={"token": proposal["token"], "decision": "save"},
             )
+            if response.status_code == 409:
+                response = confirm_replace(client, headers, response.json()["detail"])
             assert response.status_code == 200, response.text
             return response.json()
 
@@ -161,11 +175,7 @@ def test_preference_correction_targets_the_same_topic_and_can_be_restored(tmp_pa
         )
         assert conflict.status_code == 409
         assert conflict.json()["detail"]["code"] == "MEMORY_CLARIFICATION_REQUIRED"
-        replaced = client.post(
-            "/internal/agent/memory/confirm",
-            headers=headers,
-            json={"token": without_marker["token"], "decision": "replace"},
-        )
+        replaced = confirm_replace(client, headers, conflict.json()["detail"])
         assert replaced.status_code == 200, replaced.text
         assert replaced.json()["status"] == "corrected" and replaced.json()["memory"]["version"] == 3
 
@@ -189,6 +199,8 @@ def test_replacement_marker_corrects_a_preference_without_a_topic_keyword(tmp_pa
                 headers=headers,
                 json={"token": proposal["token"], "decision": "save"},
             )
+            if response.status_code == 409:
+                response = confirm_replace(client, headers, response.json()["detail"])
             assert response.status_code == 200, response.text
             return response.json()
 
@@ -298,12 +310,16 @@ def test_worker_confirms_pending_memory_only_on_explicit_affirmative():
             await agent.compile(SimpleNamespace(id="message", text_content=text))
             return paths, agent.memory_proposal, agent.memory_outcome
 
-    paths, remaining, _ = asyncio.run(exchange("Yes."))
+    paths, remaining, _ = asyncio.run(exchange("save it"))
     assert remaining is None
     assert paths == [
-        ("/internal/agent/turn/start", {"request_id": "message", "text": "Yes."}),
+        ("/internal/agent/turn/start", {"request_id": "message", "text": "save it"}),
         ("/internal/agent/memory/confirm", {"token": "signed", "decision": "save"}),
     ]
+
+    paths, remaining, outcome = asyncio.run(exchange("Yes."))
+    assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "Yes."})]
+    assert remaining is None and outcome == "not_saved"
 
     paths, remaining, outcome = asyncio.run(exchange("maybe later"))
     assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "maybe later"})]
@@ -334,8 +350,8 @@ def test_worker_decides_once_when_a_message_is_compiled_twice():
 
         async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
             agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
-            agent.memory_proposal = {"token": "signed"}
-            message = SimpleNamespace(id="message", text_content="Yes, please.")
+            agent.memory_proposal = {"token": "signed", "confirmation_id": "cid"}
+            message = SimpleNamespace(id="message", text_content="save it")
             await agent.compile(message)
             await agent.compile(message)
 
@@ -440,14 +456,26 @@ def test_worker_retains_a_clarifying_proposal_and_replaces_on_confirmation():
             if request.url.path.endswith("/memory/confirm"):
                 if not state["clarified"]:
                     state["clarified"] = True
-                    return httpx.Response(409, json={"detail": {"code": "MEMORY_CLARIFICATION_REQUIRED"}})
+                    return httpx.Response(
+                        409,
+                        json={
+                            "detail": {
+                                "code": "MEMORY_CLARIFICATION_REQUIRED",
+                                "token": "clarified",
+                                "confirmation_id": "cid",
+                                "confirmation_revision": 2,
+                                "target_id": "target",
+                                "target_version": 1,
+                            }
+                        },
+                    )
                 return httpx.Response(200, json={"status": "corrected"})
             return httpx.Response(200, json={"turn_id": "turn", "context": {}, "memory_proposal": None})
 
         async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
             agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
-            agent.memory_proposal = {"token": "signed"}
-            await agent.compile(SimpleNamespace(id="one", text_content="yes"))
+            agent.memory_proposal = {"token": "signed", "confirmation_id": "cid"}
+            await agent.compile(SimpleNamespace(id="one", text_content="save it"))
             assert agent.memory_proposal is not None and agent.memory_clarify is True
             await agent.compile(SimpleNamespace(id="two", text_content="replace it"))
             assert agent.memory_proposal is None
@@ -558,9 +586,7 @@ def test_non_preference_conflicts_require_explicit_replacement(tmp_path):
         assert blocked.json()["detail"]["code"] == "MEMORY_CLARIFICATION_REQUIRED"
         assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I live in Riyadh"]
 
-        replaced = client.post(
-            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "replace"}
-        )
+        replaced = confirm_replace(client, headers, blocked.json()["detail"])
         assert replaced.status_code == 200 and replaced.json()["status"] == "corrected"
         assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I stay in Jeddah"]
 
@@ -579,11 +605,13 @@ def test_negated_corrections_and_vegetarian_are_captured(tmp_path):
 
         negated = turn(client, headers, "I no longer live in Riyadh", "neg-2").json()["memory_proposal"]
         assert negated is not None
-        result = client.post(
+        clarify = client.post(
             "/internal/agent/memory/confirm", headers=headers, json={"token": negated["token"], "decision": "save"}
         )
-        assert result.status_code == 200 and result.json()["status"] == "corrected"
-        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I no longer live in Riyadh"]
+        assert clarify.status_code == 409
+        result = confirm_replace(client, headers, clarify.json()["detail"])
+        assert result.status_code == 200 and result.json()["status"] == "retracted"
+        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == []
 
         vegetarian = turn(client, headers, "I am vegetarian", "neg-3").json()["memory_proposal"]
         assert vegetarian is not None
@@ -608,45 +636,56 @@ def test_discard_is_durable_and_replay_cannot_save(tmp_path):
         assert memory_rows(file) == []
 
 
-def test_worker_asks_a_deterministic_question_for_a_new_proposal(monkeypatch):
-    import asyncio
-    from types import SimpleNamespace
+def test_replacement_marker_must_be_final_not_an_idiom():
+    assert parse_capture("I prefer tea now").replaces is True
+    assert parse_capture("I prefer tea instead").replaces is True
+    assert parse_capture("I prefer tea now and then").replaces is False
 
-    import httpx
-    from livekit.agents import llm
-    from main import SarjyAgent
-    from test_generation import request
 
-    monkeypatch.setattr(SarjyAgent, "session", property(lambda self: SimpleNamespace(current_speech=None, llm=None)))
+def test_old_revision_and_changed_target_cannot_replace(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
 
-    async def run():
-        written = request()
-        from app.domain.context import prompt_sha256
+        first = turn(client, headers, "I prefer tea", "rev-1").json()["memory_proposal"]
+        assert (
+            client.post(
+                "/internal/agent/memory/confirm",
+                headers=headers,
+                json={"token": first["token"], "decision": "save"},
+            ).json()["status"]
+            == "saved"
+        )
 
-        messages = [message.model_dump() for message in written.messages]
-        context = {
-            "revision": 7,
-            "messages": messages,
-            "canonical_prompt_sha256": prompt_sha256(messages),
-            "model_request": written.model_dump(mode="json"),
-        }
+        second = turn(client, headers, "I prefer coffee", "rev-2").json()["memory_proposal"]
+        clarify = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": second["token"], "decision": "save"},
+        )
+        assert clarify.status_code == 409
+        detail = clarify.json()["detail"]
 
-        async def backend(request):
-            return httpx.Response(
-                200,
-                json={
-                    "turn_id": written.turn_id,
-                    "context": context,
-                    "memory_proposal": {"token": "signed", "text": "I prefer tea"},
-                },
-            )
+        # The pre-clarification token cannot authorize a replacement.
+        stale = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": second["token"], "decision": "replace"},
+        )
+        assert stale.status_code == 409
+        assert stale.json()["detail"]["code"] == "CONFIRMATION_STALE"
 
-        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
-            agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
-            chat = llm.ChatContext()
-            chat.add_message(role="user", content="I prefer tea", id="message")
-            chunks = [chunk async for chunk in agent.llm_node(chat, [], None)]
-            assert chunks and "Should I remember" in chunks[0].delta.content
-            assert agent.memory_question_turn == written.turn_id
-
-    asyncio.run(run())
+        # A changed target version invalidates the clarification too.
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("UPDATE memories SET version = version + 1 WHERE id = ?", (detail["target_id"],))
+            db.commit()
+        changed = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": detail["token"], "decision": "replace"},
+        )
+        assert changed.status_code == 409
+        assert changed.json()["detail"]["code"] == "TARGET_CHANGED"
+        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I prefer tea"]

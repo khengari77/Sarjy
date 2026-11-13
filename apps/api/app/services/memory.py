@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, a
 from sqlalchemy.pool import StaticPool
 
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
+from app.domain.memory_capture import parse_capture
 from app.infrastructure.database import Memory, MemoryWriteRequest, Turn, now
 from app.infrastructure.upsert import insert_ignore
 from app.services.authorization import owned_conversation, owned_memory
@@ -368,9 +369,11 @@ class MemoryService:
                 if changed.rowcount != 1:
                     raise HTTPException(409, detail={"code": "MEMORY_VERSION_CONFLICT"})
                 version = expected_version + 1
+            parsed = parse_capture(content)
             memory = Memory(
                 id=str(uuid4()),
                 owner_id=owner_id,
+                subject=parsed.subject if parsed is not None else None,
                 content=content,
                 embedding=list(validate_embedding(claim["embedding"])),
                 embedding_model=EMBEDDING_MODEL,

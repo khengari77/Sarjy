@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 EMBEDDING_DIMENSIONS = 1536
@@ -16,6 +16,24 @@ def now():
 
 class Base(DeclarativeBase):
     pass
+
+
+class MemoryCaptureDecision(Base):
+    """Durable consent and clarification state for one proposal revision."""
+
+    __tablename__ = "memory_capture_decisions"
+    confirmation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64))
+    decision: Mapped[str] = mapped_column(String(16))
+    outcome: Mapped[str] = mapped_column(String(32))
+    target_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    target_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40))
+    expires_at: Mapped[str] = mapped_column(String(40))
 
 
 class Identity(Base):
@@ -87,11 +105,15 @@ class DevelopmentBudget(Base):
 
 class Memory(Base):
     __tablename__ = "memories"
-    __table_args__ = (UniqueConstraint("owner_id", "request_key"),)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "request_key"),
+        Index("ix_memories_owner_subject_status", "owner_id", "subject", "status"),
+    )
     supersedes_id: Mapped[str | None] = mapped_column(ForeignKey("memories.id"), nullable=True)
     request_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    subject: Mapped[str | None] = mapped_column(String(120), nullable=True)
     content: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list | None] = mapped_column(EMBEDDING_TYPE, nullable=True)
     embedding_model: Mapped[str] = mapped_column(String(60), default="text-embedding-3-small")
