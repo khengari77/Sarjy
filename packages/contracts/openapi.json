@@ -1182,6 +1182,29 @@
         ],
         "title": "BudgetReservation"
       },
+      "ContextAmbiguity": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "reason"
+        ],
+        "title": "ContextAmbiguity"
+      },
       "ContextConfirmInput": {
         "properties": {
           "proposal": {
@@ -1493,6 +1516,17 @@
             "type": "array",
             "title": "Preserved"
           },
+          "ambiguous": {
+            "items": {
+              "$ref": "#/components/schemas/ContextAmbiguity"
+            },
+            "type": "array",
+            "title": "Ambiguous"
+          },
+          "requires_clarification": {
+            "type": "boolean",
+            "title": "Requires Clarification"
+          },
           "diff": {
             "$ref": "#/components/schemas/ContextDiff"
           }
@@ -1505,6 +1539,8 @@
           "proposal",
           "matches",
           "preserved",
+          "ambiguous",
+          "requires_clarification",
           "diff"
         ],
         "title": "ContextProposal"
@@ -1523,6 +1559,14 @@
             },
             "type": "array",
             "title": "Keep",
+            "default": []
+          },
+          "exclude": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude",
             "default": []
           },
           "limit": {
@@ -2007,6 +2051,14 @@
               "type": "string"
             },
             "title": "Keep",
+            "type": "array"
+          },
+          "exclude": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Exclude",
             "type": "array"
           }
         },

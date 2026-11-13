@@ -377,6 +377,7 @@ class ProposeContextExclusion(Contract):
     kind: Literal["ProposeContextExclusion"] = "ProposeContextExclusion"
     query: str = Field(min_length=1, max_length=200)
     keep: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
 
 
 class RestoreContextOperation(Contract):

@@ -19,6 +19,7 @@ class ContextProposalInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, max_length=200)
     keep: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
     limit: int = Field(default=20, ge=1, le=20)
 
 
@@ -58,6 +59,12 @@ class ContextPreserved(BaseModel):
     reason: str
 
 
+class ContextAmbiguity(BaseModel):
+    id: str
+    content: str
+    reason: str
+
+
 class ContextProposal(BaseModel):
     conversation_id: str
     query: str
@@ -65,6 +72,8 @@ class ContextProposal(BaseModel):
     proposal: str
     matches: list[ContextMatch]
     preserved: list[ContextPreserved]
+    ambiguous: list[ContextAmbiguity]
+    requires_clarification: bool
     diff: ContextDiff
 
 
@@ -148,6 +157,7 @@ def register_context_routes(app, *, config: Settings, database, identity, semant
                 conversation_id=conversation_id,
                 query=body.query,
                 keep=body.keep,
+                exclude=body.exclude,
                 limit=body.limit,
                 secret=proposal_secret(),
                 search=semantic_search,
