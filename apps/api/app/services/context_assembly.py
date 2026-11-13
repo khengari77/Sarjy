@@ -323,8 +323,15 @@ async def read_context_inputs(
         values = (turn.snapshot or {}).get("included_record_ids")
         known = isinstance(values, list) and all(isinstance(value, str) for value in values)
         deps = frozenset(values) if known else frozenset()
-        # A tool parent missing from the evaluated set has unknown provenance.
-        if fail_closed or turn.id not in by_id or turn.id in blocked or deps & blocked or (policy_active and not known):
+        # An out-of-window tool parent is unknown only while an exclusion policy
+        # is active; with no exclusions the base permitted it and must stay admitted.
+        if (
+            fail_closed
+            or (policy_active and turn.id not in by_id)
+            or turn.id in blocked
+            or deps & blocked
+            or (policy_active and not known)
+        ):
             blocked.add(call.id)
             continue
         tool_results.append(

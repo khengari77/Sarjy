@@ -291,6 +291,49 @@ def test_old_excluded_source_with_recent_derived_reply_and_tool_stays_blocked(tm
     asyncio.run(run())
 
 
+def test_old_tool_parent_outside_window_is_admitted_without_exclusions(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "tool-no-policy.db")
+        try:
+            async with sessions() as db:
+                await seed_turns(db, "chat", 150)
+                await db.execute(
+                    insert(Turn),
+                    [
+                        {
+                            "id": "old-admitted-tool-parent",
+                            "conversation_id": "chat",
+                            "request_id": "old-admitted-tool-parent-request",
+                            "role": "user",
+                            "text": "Legacy action",
+                            "status": "completed",
+                            "created_at": stamp(0),
+                            "snapshot": None,
+                        }
+                    ],
+                )
+                db.add(
+                    ToolCall(
+                        id="tool-old-admitted",
+                        turn_id="old-admitted-tool-parent",
+                        request_id="tool-old-admitted-request",
+                        name="get_current_weather",
+                        state="completed",
+                        result={"city": "Tripoli"},
+                    )
+                )
+                await db.commit()
+            async with sessions() as db:
+                inputs = await read_context_inputs(db, owner_id="alice", conversation_id="chat")
+            assert inputs.memories.excluded_ids == frozenset()
+            assert "old-admitted-tool-parent" not in {candidate.id for candidate in inputs.history}
+            assert "tool-old-admitted" in {candidate.id for candidate in inputs.tool_results}
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
 def test_old_tool_parent_outside_window_still_propagates_transitive_derivation(tmp_path):
     async def run():
         engine, sessions = await database(tmp_path / "tool-derived.db")
