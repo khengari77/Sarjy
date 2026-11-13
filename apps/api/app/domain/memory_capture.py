@@ -77,9 +77,9 @@ def _ordinary(text: str) -> tuple[str, str] | None:
                 (name for name, vocabulary in _PREFERENCE_TOPICS.items() if words & vocabulary),
                 "",
             )
-            return (f"preference:{topic}" if topic else f"preference:{value.split()[0].casefold()}"), value
+            return (f"preference:{topic}" if topic else f"preference:{value.casefold()}"), value
         if subject == "diet":
-            return f"diet:{value.split()[0].casefold() if value else 'other'}", value
+            return f"diet:{value.casefold()}", value
         return subject, value
     return None
 

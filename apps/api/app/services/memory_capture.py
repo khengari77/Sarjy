@@ -1,10 +1,11 @@
 """Consent-aware memory capture shell around the existing memory service."""
 
+import asyncio
 import hashlib
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.context_operations import sign_proposal, verify_proposal
@@ -15,6 +16,16 @@ from app.services.memory import MemoryService, memory_result
 CAPTURE_KIND = "memory_capture"
 MAX_CONTRADICTION_SCAN = 200
 PROPOSAL_TTL_SECONDS = 600
+_SUBJECT_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
+
+
+def _subject_lock(owner_id: str, subject: str | None) -> asyncio.Lock:
+    key = (owner_id, subject or "explicit")
+    lock = _SUBJECT_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SUBJECT_LOCKS[key] = lock
+    return lock
 
 
 class MemoryCaptureError(Exception):
@@ -140,6 +151,55 @@ async def confirm_memory(
     if decision != "save":
         raise MemoryCaptureError("INVALID_DECISION", 422)
 
+    return await _apply_consent(
+        db,
+        memory_service,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        proposed_turn=proposed_turn,
+        source_turn_id=source_turn_id,
+        capture=capture,
+    )
+
+
+async def _apply_consent(
+    db: AsyncSession,
+    memory_service: MemoryService,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    proposed_turn: str,
+    source_turn_id: str | None,
+    capture: MemoryCapture,
+) -> dict:
+    async with _subject_lock(owner_id, capture.subject):
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            # Cross-process serialization for the same owner/subject decision.
+            await db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"memcap:{owner_id}:{capture.subject or capture.text}"},
+            )
+        return await _write_consented(
+            db,
+            memory_service,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            proposed_turn=proposed_turn,
+            source_turn_id=source_turn_id,
+            capture=capture,
+        )
+
+
+async def _write_consented(
+    db: AsyncSession,
+    memory_service: MemoryService,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    proposed_turn: str,
+    source_turn_id: str | None,
+    capture: MemoryCapture,
+) -> dict:
     key = _request_key(owner_id, proposed_turn, capture.text)
     active_same = await _exact_content(db, owner_id=owner_id, capture=capture, status="active")
     if active_same is not None:
@@ -152,23 +212,23 @@ async def confirm_memory(
     conflicting = [
         row for row in previous if (parsed := parse_capture(row.content)) is not None and parsed.value != capture.value
     ]
-    if len(conflicting) > 1:
-        raise MemoryCaptureError("MEMORY_CLARIFICATION_REQUIRED", 409)
     if conflicting:
-        # Category preferences are additive unless the user replaces or restores a known value.
-        corrective = capture.subject not in {"preference"} or capture.replaces or superseded_same is not None
-        if corrective:
-            row = conflicting[0]
-            result = await memory_service.correct_memory(
-                owner_id,
-                row.id,
-                row.version,
-                capture.text,
-                key,
-                source_turn_id=source_turn_id or proposed_turn,
-                conversation_id=conversation_id,
-            )
-            return {"status": "corrected", "memory": asdict(result)}
+        corrective = (
+            not capture.subject.startswith(("preference:", "diet:")) or capture.replaces or superseded_same is not None
+        )
+        if not corrective:
+            raise MemoryCaptureError("MEMORY_CLARIFICATION_REQUIRED", 409)
+        row = conflicting[0]
+        result = await memory_service.correct_memory(
+            owner_id,
+            row.id,
+            row.version,
+            capture.text,
+            key,
+            source_turn_id=source_turn_id or proposed_turn,
+            conversation_id=conversation_id,
+        )
+        return {"status": "corrected", "memory": asdict(result)}
     result = await memory_service.create_memory(
         owner_id, conversation_id, source_turn_id or proposed_turn, capture.text, key
     )

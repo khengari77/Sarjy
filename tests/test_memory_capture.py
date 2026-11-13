@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from app.config import Settings
 from app.domain.budget import OPENAI_DAILY_MICRO_USD, budget_day
 from app.domain.memory_capture import parse_capture
+from app.infrastructure.database import Memory
 from app.main import create_app
 from fastapi.testclient import TestClient
 from test_memory import FakeEmbedder
@@ -152,7 +153,16 @@ def test_preference_correction_targets_the_same_topic_and_can_be_restored(tmp_pa
         active = {row[0]: row[1] for row in memory_rows(file) if row[2] == "active"}
         assert active == {"I love jazz": 1, "I prefer coffee now": 2}
 
-        restored = save("I prefer tea", "pref-4")
+        without_marker = turn(client, headers, "I prefer juice", "pref-4").json()["memory_proposal"]
+        conflict = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": without_marker["token"], "decision": "save"},
+        )
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"]["code"] == "MEMORY_CLARIFICATION_REQUIRED"
+
+        restored = save("I prefer tea", "pref-5")
         assert restored["status"] == "corrected" and restored["memory"]["version"] == 3
         active = {row[0]: row[1] for row in memory_rows(file) if row[2] == "active"}
         assert active == {"I love jazz": 1, "I prefer tea": 3}
@@ -165,7 +175,16 @@ def test_unrelated_preferences_and_allergies_are_not_destroyed(tmp_path):
         chat = client.post("/v1/conversations").json()["id"]
         headers = add_turn_session(file, chat, owner)
         for index, text in enumerate(
-            ["I prefer tea", "I love jazz", "I am allergic to peanuts", "I am allergic to shellfish"]
+            [
+                "I prefer tea",
+                "I love jazz",
+                "I love my wife",
+                "I love my dog",
+                "I am allergic to peanuts",
+                "I am allergic to shellfish",
+                "I am allergic to tree nuts",
+                "I am allergic to tree pollen",
+            ]
         ):
             proposal = turn(client, headers, text, f"additive-{index}").json()["memory_proposal"]
             result = client.post(
@@ -179,7 +198,11 @@ def test_unrelated_preferences_and_allergies_are_not_destroyed(tmp_path):
         assert active == [
             "I am allergic to peanuts",
             "I am allergic to shellfish",
+            "I am allergic to tree nuts",
+            "I am allergic to tree pollen",
             "I love jazz",
+            "I love my dog",
+            "I love my wife",
             "I prefer tea",
         ]
 
@@ -242,24 +265,24 @@ def test_worker_confirms_pending_memory_only_on_explicit_affirmative():
             agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
             agent.memory_proposal = {"token": "signed", "text": "I prefer tea"}
             await agent.compile(SimpleNamespace(id="message", text_content=text))
-            return paths, agent.memory_proposal
+            return paths, agent.memory_proposal, agent.memory_outcome
 
-    paths, remaining = asyncio.run(exchange("Yes."))
+    paths, remaining, _ = asyncio.run(exchange("Yes."))
     assert remaining is None
     assert paths == [
         ("/internal/agent/turn/start", {"request_id": "message", "text": "Yes."}),
         ("/internal/agent/memory/confirm", {"token": "signed", "decision": "save"}),
     ]
 
-    paths, remaining = asyncio.run(exchange("maybe later"))
+    paths, remaining, outcome = asyncio.run(exchange("maybe later"))
     assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "maybe later"})]
-    assert remaining is None
+    assert remaining is None and outcome == "not_saved"
 
-    paths, remaining = asyncio.run(exchange("okay what's the weather"))
+    paths, remaining, outcome = asyncio.run(exchange("okay what's the weather"))
     assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "okay what's the weather"})]
-    assert remaining is None
+    assert remaining is None and outcome == "not_saved"
 
-    paths, remaining = asyncio.run(exchange("No thanks."))
+    paths, remaining, _ = asyncio.run(exchange("No thanks."))
     assert remaining is None
     assert paths[-1] == ("/internal/agent/memory/confirm", {"token": "signed", "decision": "discard"})
 
@@ -287,3 +310,83 @@ def test_worker_decides_once_when_a_message_is_compiled_twice():
 
     asyncio.run(run())
     assert paths.count("/internal/agent/memory/confirm") == 1
+
+
+def test_concurrent_confirms_never_leave_contradictory_active_rows(tmp_path):
+    import asyncio
+
+    from app.domain.context_operations import sign_proposal
+    from app.infrastructure.database import Base, Conversation, Identity, Turn
+    from app.services.memory import MemoryService
+    from app.services.memory_capture import confirm_memory
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    file = tmp_path / "concurrent.db"
+    secret = "capture-secret"
+
+    async def run():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{file}")
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with engine.begin() as db:
+                await db.run_sync(Base.metadata.create_all)
+            owner, chat = "owner", "chat"
+            async with sessions() as db:
+                db.add(Identity(id=owner, token_hash=owner, expires_at="2030"))
+                await db.commit()
+                db.add(Conversation(id=chat, owner_id=owner))
+                await db.commit()
+                db.add_all(
+                    [
+                        Turn(id="turn-tea", conversation_id=chat, request_id="tea", role="user", text="tea"),
+                        Turn(id="turn-coffee", conversation_id=chat, request_id="coffee", role="user", text="coffee"),
+                    ]
+                )
+                await db.commit()
+
+            def token(content, turn):
+                return sign_proposal(
+                    {
+                        "v": 1,
+                        "kind": "memory_capture",
+                        "owner_id": owner,
+                        "conversation_id": chat,
+                        "source_turn_id": turn,
+                        "content": content,
+                        "subject": parse_capture(content).subject,
+                        "value": parse_capture(content).value,
+                        "explicit": False,
+                        "exp": 9999999999,
+                    },
+                    secret,
+                )
+
+            tea, coffee = token("I prefer tea", "turn-tea"), token("I prefer coffee now", "turn-coffee")
+
+            async def apply(value):
+                async with sessions() as db:
+                    try:
+                        return await confirm_memory(
+                            db,
+                            MemoryService(db, FakeEmbedder()),
+                            token=value,
+                            decision="save",
+                            owner_id=owner,
+                            conversation_id=chat,
+                            source_turn_id=None,
+                            secret=secret,
+                        )
+                    except Exception as exc:  # clarification is acceptable; contradiction is not
+                        return {"status": type(exc).__name__}
+
+            await asyncio.gather(apply(tea), apply(coffee))
+            async with sessions() as db:
+                active = list(
+                    await db.scalars(select(Memory).where(Memory.owner_id == owner, Memory.status == "active"))
+                )
+            assert len(active) <= 1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())

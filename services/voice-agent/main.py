@@ -187,6 +187,7 @@ class SarjyAgent(Agent):
                     # A proposal is a one-shot for the next user turn; never stay armed
                     # across unrelated acknowledgements.
                     self.memory_proposal = None
+                    self.memory_outcome = "not_saved"
         if result.get("memory_proposal") is not None:
             self.memory_proposal = result["memory_proposal"]
         return result["context"]
@@ -276,6 +277,7 @@ class SarjyAgent(Agent):
                     "More than one saved fact matches this correction. Ask the user which one to update; "
                     "do not claim it was saved."
                 ),
+                "not_saved": "The pending memory was not saved; do not claim it was saved.",
             }[outcome]
             request = request.model_copy(update={"instructions": f"{request.instructions}\n\n{note}"})
         async for chunk in self._stream_with_fallback(
