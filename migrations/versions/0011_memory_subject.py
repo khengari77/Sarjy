@@ -20,7 +20,7 @@ def upgrade():
         sa.Column("confirmation_id", sa.String(36), primary_key=True),
         sa.Column("revision", sa.Integer(), primary_key=True),
         sa.Column("owner_id", sa.String(64), sa.ForeignKey("identities.id"), nullable=False),
-        sa.Column("conversation_id", sa.String(64), sa.ForeignKey("conversations.id"), nullable=False),
+        sa.Column("conversation_id", sa.String(36), sa.ForeignKey("conversations.id"), nullable=False),
         sa.Column("token_hash", sa.String(64), nullable=False),
         sa.Column("decision", sa.String(16), nullable=False),
         sa.Column("outcome", sa.String(32), nullable=False),
