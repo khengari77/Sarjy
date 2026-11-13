@@ -26,13 +26,27 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/healthz":
             self.reply(200, {"status": "ok"})
             return
+        if self.path.split("?")[0] == "/v1/echo":
+            self.reply(200, self.echo())
+            return
         time.sleep(DELAY_SECONDS)
         self.reply(200, [])
+
+    def echo(self) -> dict[str, object]:
+        forwarded = [
+            name
+            for name in ("x-agent-secret", "authorization", "x-web-service-secret", "cookie", "idempotency-key")
+            if self.headers.get(name)
+        ]
+        return {"path": self.path, "forwarded": forwarded}
 
     def do_POST(self) -> None:
         length = int(self.headers.get("content-length") or 0)
         if length:
             self.rfile.read(length)
+        if self.path.split("?")[0] == "/v1/echo":
+            self.reply(200, self.echo())
+            return
         time.sleep(DELAY_SECONDS)
         status = 201 if self.path == "/v1/voice/sessions" else 200
         self.reply(

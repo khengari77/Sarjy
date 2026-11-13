@@ -4,7 +4,6 @@ Routes live in :mod:`app.routes`; this module only wires configuration,
 persistence, providers and middleware together.
 """
 
-import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -14,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.config import Settings
 from app.dependencies import build_dependencies
 from app.domain.context_operations import MemoryCandidate, classify
+from app.domain.secrets import secret_matches
 from app.infrastructure.database import Base, SessionGate
 from app.services.context_actions import build_context_action_handlers
 from app.services.memory import MemoryService, OpenAIEmbedder
@@ -70,7 +70,7 @@ def create_app(
     async def protect_web_api(request, call_next):
         if config.development_protected and request.url.path.startswith("/v1/"):
             supplied = request.headers.get("x-web-service-secret", "")
-            if not hmac.compare_digest(supplied, config.web_service_secret):
+            if not secret_matches(supplied, config.web_service_secret):
                 from fastapi.responses import JSONResponse
 
                 return JSONResponse({"detail": {"code": "WEB_AUTH_REQUIRED"}}, status_code=401)

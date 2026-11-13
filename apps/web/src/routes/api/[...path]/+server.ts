@@ -1,15 +1,15 @@
 import { API_INTERNAL_URL, WEB_SERVICE_SECRET } from '$app/env/private';
 import type { RequestHandler } from '@sveltejs/kit';
 import { proxyTimeoutMs } from '../../../lib/proxy-deadline';
+import { resolveProxyTarget } from '../../../lib/proxy-path';
 
 const proxy: RequestHandler = async ({ request, params, url }) => {
   if (!['GET', 'POST'].includes(request.method)) return new Response(null, { status: 405 });
   if (request.method === 'POST' && request.headers.get('origin') !== url.origin) {
     return Response.json({ detail: { code: 'INVALID_ORIGIN' } }, { status: 403 });
   }
-  const path = params.path ?? '';
-  if (!path.startsWith('v1/') || path.includes('..')) return new Response(null, { status: 404 });
-  const target = new URL('/' + path, API_INTERNAL_URL);
+  const target = resolveProxyTarget(params.path ?? '', API_INTERNAL_URL);
+  if (target === null) return new Response(null, { status: 404 });
   target.search = url.search;
   const headers = new Headers();
   if (WEB_SERVICE_SECRET) headers.set('x-web-service-secret', WEB_SERVICE_SECRET);
@@ -23,7 +23,7 @@ const proxy: RequestHandler = async ({ request, params, url }) => {
       headers,
       body: request.method === 'POST' ? await request.arrayBuffer() : undefined,
       redirect: 'manual',
-      signal: AbortSignal.timeout(proxyTimeoutMs(path, request.method)),
+      signal: AbortSignal.timeout(proxyTimeoutMs(params.path ?? '', request.method)),
     });
     const outgoing = new Headers({ 'cache-control': 'no-store' });
     outgoing.set('content-type', result.headers.get('content-type') || 'application/json');
