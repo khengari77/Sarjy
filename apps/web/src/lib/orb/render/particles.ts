@@ -1,9 +1,3 @@
-export function hexToRgb(hex: string): [number, number, number] {
-  const value = hex.replace('#', '');
-  const parsed = Number.parseInt(value.length === 3 ? value.replace(/(.)/g, '$1$1') : value, 16);
-  return [((parsed >> 16) & 255) / 255, ((parsed >> 8) & 255) / 255, (parsed & 255) / 255];
-}
-
 /** Fibonacci sphere with a little radial jitter so the shell reads as organic. */
 export function buildParticles(count: number): { positions: Float32Array; seeds: Float32Array } {
   const positions = new Float32Array(count * 3);

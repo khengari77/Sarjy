@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { mixHexColors, parseHexColor } from './render/colors';
 import {
   INITIAL_STATE,
+  ORB_COLORS,
   deriveOrbPresentation,
   isCurrentTag,
   nextEpoch,
@@ -117,5 +119,45 @@ describe('renderer fallback', () => {
     expect(nextRendererTier('static', 60)).toBe('static');
     expect(nextRendererTier('enhanced', 60)).toBe('enhanced');
     expect(nextRendererTier('enhanced', Number.NaN)).toBe('enhanced');
+  });
+});
+
+describe('renderer colour contract', () => {
+  const phases = ['idle', 'connecting', 'listening', 'thinking', 'speaking', 'disconnected'] as const;
+  const overlays = ['none', 'memory_work', 'confirming', 'muted', 'error'] as const;
+
+  it('emits only parseable literal colours for every reachable phase/overlay pair', () => {
+    for (const phase of phases) {
+      for (const overlay of overlays) {
+        const presentation = deriveOrbPresentation(state({ phase, overlay }));
+        const primary = parseHexColor(presentation.primaryColor);
+        expect(primary, `${phase}/${overlay} primary ${presentation.primaryColor}`).not.toBeNull();
+        expect(primary!.every((channel) => Number.isFinite(channel) && channel >= 0 && channel <= 1)).toBe(true);
+        if (presentation.accent) {
+          const accent = parseHexColor(presentation.accent);
+          expect(accent, `${phase}/${overlay} accent ${presentation.accent}`).not.toBeNull();
+          expect(accent!.every((channel) => Number.isFinite(channel) && channel >= 0 && channel <= 1)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('uses the numeric muted blend rather than a near-black parse', () => {
+    for (const phase of ['idle', 'connecting', 'listening', 'thinking', 'speaking'] as const) {
+      const presentation = deriveOrbPresentation(state({ phase, overlay: 'muted' }));
+      expect(presentation.primaryColor).toBe(mixHexColors(ORB_COLORS[phase], ORB_COLORS.disconnected, 0.55));
+      const channels = parseHexColor(presentation.primaryColor)!;
+      expect(channels.reduce((sum, channel) => sum + channel, 0)).toBeGreaterThan(0.3);
+    }
+  });
+
+  it('keeps muted speaking/thinking labels and live-state precedence', () => {
+    for (const phase of ['speaking', 'thinking'] as const) {
+      const presentation = deriveOrbPresentation(state({ phase, overlay: 'muted', micActive: false }));
+      expect(presentation.effectivePhase).toBe(phase);
+      expect(presentation.statusLabel.en).not.toBe('Microphone muted');
+      expect(presentation.statusLabel.en).toContain(phase === 'speaking' ? 'Speaking' : 'Thinking');
+      expect(presentation.showMicSlash).toBe(true);
+    }
   });
 });

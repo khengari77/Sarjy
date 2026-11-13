@@ -1,4 +1,5 @@
-import { buildParticles, hexToRgb } from './particles';
+import { hexToRgb } from './colors';
+import { buildParticles } from './particles';
 import type { OrbRenderState, Rgb } from './types';
 
 const CLOUD_RADIUS = 0.74;

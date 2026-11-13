@@ -1,8 +1,10 @@
 import type { SessionConfig } from '../api';
-import { endVoiceSession, startVoiceSession } from '../chat/session';
+import { endVoiceSession } from '../chat/session';
 import { ensureMicrophoneAccess } from '../audio/microphone';
 import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
 import { errorCode } from './errors';
+import { startSessionAttempt } from './sessionAttempt';
+import { interruptVoice, sendVoiceText, toggleVoiceMute } from './voiceControls';
 import type { MeterController } from './meters';
 
 export interface ProvisionalTranscript {
@@ -53,6 +55,33 @@ export interface ConnectionDeps {
   meters: MeterController;
 }
 
+function handleVoiceEvent(state: VoiceState, deps: ConnectionDeps, event: VoiceEvent, isEnding: () => boolean) {
+  if (event.type === 'status') {
+    if (event.source === 'agent') {
+      state.agentState = event.text;
+    } else {
+      state.agentState = null;
+      state.transportStatus = event.text;
+      if (event.text === 'disconnected' && state.live && !isEnding()) {
+        deps.meters.teardownMeters();
+        state.muted = true;
+        state.connectionLost = true;
+        state.provisional = null;
+      }
+    }
+  }
+  if (event.type === 'error') state.voiceErrorCode = event.code;
+  if (event.type === 'audio-blocked') state.audioBlocked = true;
+  if (event.type === 'transcript') {
+    if (event.final) {
+      state.provisional = null;
+      void deps.refresh().catch(() => {});
+    } else {
+      state.provisional = { id: event.segmentId, text: event.text, speaker: event.speaker };
+    }
+  }
+}
+
 export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   let attemptCounter = 0;
   let ending = false;
@@ -80,7 +109,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
 
   async function connect(microphone: boolean) {
     if (state.live) {
-      if (microphone && state.muted) await toggleMute();
+      if (microphone && state.muted) await toggleVoiceMute(state, deps);
       return;
     }
     if (state.connecting) return;
@@ -107,49 +136,13 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         if (attempt !== attemptCounter) return;
       }
 
-      const voice = deps.getVoice();
-      const config = await startVoiceSession(conversationId, deps.getLanguage(), voice.id);
-      if (attempt !== attemptCounter || deps.getConversationId() !== conversationId) {
-        await releaseSession(config);
-        return;
-      }
-
-      try {
-        state.transportStatus = 'connecting';
-        state.agentState = null;
-        const runtime = deps.getRuntime();
-        await runtime.connect(config);
-        if (attempt !== attemptCounter || deps.getConversationId() !== conversationId) {
-          await releaseSession(config);
-          return;
-        }
-        state.live = config;
-        state.activeVoiceName = voice.name;
-        state.muted = !microphone;
-        if (microphone) await runtime.startMicrophone();
-        if (attempt !== attemptCounter || deps.getConversationId() !== conversationId) {
-          clearOwnedLive(config.id);
-          await releaseSession(config);
-          return;
-        }
-        deps.meters.setupMeters();
-      } catch (error) {
-        if (attempt === attemptCounter) {
-          clearOwnedLive(config.id);
-          state.muted = true;
-          state.activeVoiceName = '';
-          state.connectionLost = false;
-          state.provisional = null;
-          state.transportStatus = 'disconnected';
-          state.agentState = null;
-          state.voiceErrorCode = errorCode(error);
-          await deps
-            .getRuntime()
-            .disconnect()
-            .catch(() => {});
-        }
-        await releaseSession(config);
-      }
+      await startSessionAttempt(state, deps, {
+        microphone,
+        conversationId,
+        isCurrent: () => attempt === attemptCounter && deps.getConversationId() === conversationId,
+        releaseSession,
+        clearOwnedLive,
+      });
     } catch (error) {
       if (attempt === attemptCounter) {
         state.voiceErrorCode = errorCode(error);
@@ -207,57 +200,20 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     await connect(true);
   }
 
-  async function toggleMute() {
-    if (!state.live) return;
-    if (state.muted) {
-      await deps.getRuntime().startMicrophone();
-      state.muted = false;
-      deps.meters.startMicMeter();
-    } else {
-      await deps.getRuntime().stopMicrophone();
-      state.muted = true;
-      deps.meters.stopMicMeter();
-    }
-  }
-
-  async function interrupt() {
-    await deps.getRuntime().interrupt();
-    state.agentState = 'listening';
-  }
-
-  async function sendText(text: string) {
-    if (!state.live) return;
-    await deps.getRuntime().sendText(text);
-  }
-
   function handleEvent(event: VoiceEvent) {
-    if (event.type === 'status') {
-      if (event.source === 'agent') {
-        state.agentState = event.text;
-      } else {
-        state.agentState = null;
-        state.transportStatus = event.text;
-        if (event.text === 'disconnected' && state.live && !ending) {
-          deps.meters.teardownMeters();
-          state.muted = true;
-          state.connectionLost = true;
-          state.provisional = null;
-        }
-      }
-    }
-    if (event.type === 'error') state.voiceErrorCode = event.code;
-    if (event.type === 'audio-blocked') state.audioBlocked = true;
-    if (event.type === 'transcript') {
-      if (event.final) {
-        state.provisional = null;
-        void deps.refresh().catch(() => {});
-      } else {
-        state.provisional = { id: event.segmentId, text: event.text, speaker: event.speaker };
-      }
-    }
+    handleVoiceEvent(state, deps, event, () => ending);
   }
 
-  return { connect, cancelConnect, end, reconnect, toggleMute, interrupt, sendText, handleEvent };
+  return {
+    connect,
+    reconnect,
+    cancelConnect,
+    end,
+    toggleMute: () => toggleVoiceMute(state, deps),
+    interrupt: () => interruptVoice(state, deps),
+    sendText: (text: string) => sendVoiceText(state, deps, text),
+    handleEvent,
+  };
 }
 
 export type VoiceConnection = ReturnType<typeof createVoiceConnection>;

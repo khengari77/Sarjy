@@ -1,5 +1,6 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
+import { waitForAgent, type StartupSignal } from './agentStartup';
 
 type VoiceEventBody =
   | { type: 'status'; source: 'transport' | 'agent'; text: string }
@@ -35,6 +36,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   private handlers = new Set<(event: VoiceEvent) => void>();
   private sessionEpoch = 0;
   private sawTranscriptionSegments = false;
+  private startup: StartupSignal | null = null;
 
   get epoch() {
     return this.sessionEpoch;
@@ -61,6 +63,8 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     this.sessionEpoch += 1;
     const epoch = this.sessionEpoch;
     this.sawTranscriptionSegments = false;
+    const startup: StartupSignal = { epoch, error: null, wake: null };
+    this.startup = startup;
     const room = new Room();
     this.room = room;
 
@@ -90,7 +94,13 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
       if (this.active(room, epoch)) this.emit({ type: 'status', source: 'transport', text: 'connected' });
     });
     room.on(RoomEvent.Disconnected, () => {
-      if (this.active(room, epoch)) this.emit({ type: 'status', source: 'transport', text: 'disconnected' });
+      if (!this.active(room, epoch)) return;
+      this.emit({ type: 'status', source: 'transport', text: 'disconnected' });
+      if (this.startup === startup) {
+        startup.error = new Error('CONNECTION_LOST');
+        startup.wake?.();
+        startup.wake = null;
+      }
     });
     room.on(RoomEvent.ParticipantAttributesChanged, (attributes) => {
       const state = attributes['lk.agent.state'];
@@ -136,27 +146,25 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
       }
     });
 
-    this.emit({ type: 'status', source: 'transport', text: 'connecting' });
-    await room.connect(config.url, config.token);
-    if (!this.active(room, epoch)) return;
-    await room.startAudio();
-    this.emit({ type: 'status', source: 'transport', text: 'starting' });
-    await this.waitForAgent(room, epoch);
-  }
-
-  private async waitForAgent(room: Room, epoch: number) {
-    const deadline = Date.now() + 45000;
-    while (this.active(room, epoch) && Date.now() < deadline) {
-      const agent = [...room.remoteParticipants.values()].find((participant) => participant.isAgent);
-      const state = agent?.attributes['lk.agent.state'];
-      if (state && ['listening', 'thinking', 'speaking'].includes(state)) {
-        this.emit({ type: 'status', source: 'agent', text: state });
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    try {
+      this.emit({ type: 'status', source: 'transport', text: 'connecting' });
+      await room.connect(config.url, config.token);
+      if (!this.active(room, epoch)) return;
+      if (startup.error) throw startup.error;
+      await room.startAudio();
+      if (!this.active(room, epoch)) return;
+      if (startup.error) throw startup.error;
+      this.emit({ type: 'status', source: 'transport', text: 'starting' });
+      await waitForAgent({
+        room,
+        epoch,
+        startup,
+        isActive: (candidate, tag) => this.active(candidate, tag),
+        emit: (state) => this.emit({ type: 'status', source: 'agent', text: state }),
+      });
+    } finally {
+      if (this.startup === startup) this.startup = null;
     }
-    if (!this.active(room, epoch)) return;
-    throw new Error('AGENT_START_TIMEOUT');
   }
 
   async resumeAudio() {
@@ -246,6 +254,8 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   }
 
   private async disconnectRoom() {
+    this.startup?.wake?.();
+    this.startup = null;
     const room = this.room;
     this.room = null;
     if (room) {

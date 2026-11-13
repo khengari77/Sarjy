@@ -6,6 +6,8 @@
  * storage, no side effects.
  */
 
+import { mixHexColors } from './render/colors';
+
 export type VoicePhase = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'disconnected';
 
 export type OrbOverlay = 'none' | 'memory_work' | 'confirming' | 'muted' | 'error';
@@ -77,6 +79,8 @@ const COLORS = {
   memory: '#e9b454',
   confirmation: '#ffa65a',
 } as const;
+
+export const ORB_COLORS = COLORS;
 
 const MOTION: Record<VoicePhase | 'error', MotionPreset> = {
   idle: {
@@ -238,7 +242,7 @@ export function deriveOrbPresentation(state: VoiceUiState): OrbPresentation {
       // Muted keeps the live phase colour but desaturates and shows a mic slash.
       // The agent's speaking/thinking label still wins: muting the microphone
       // must not hide that the assistant is producing a reply.
-      primaryColor = `color-mix(in srgb, ${COLORS[effectivePhase]} 55%, #5e7189)`;
+      primaryColor = mixHexColors(COLORS[effectivePhase], COLORS.disconnected, 0.55);
       accent = COLORS.memory;
       accentOnly = true;
       statusLabel =
