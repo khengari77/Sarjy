@@ -885,3 +885,97 @@ def test_reply_derived_from_a_blocked_tool_result_is_blocked(tmp_path):
             await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_reply_from_a_tool_outside_the_provider_window_is_blocked(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "old-tool.db")
+        try:
+            async with sessions() as db:
+                await seed_turns(db, "chat", 600)
+                await db.execute(
+                    insert(Turn),
+                    [
+                        {
+                            "id": "old-tool-parent",
+                            "conversation_id": "chat",
+                            "request_id": "old-tool-parent-request",
+                            "role": "user",
+                            "text": "I live in Tripoli",
+                            "status": "completed",
+                            "created_at": stamp(0),
+                            "snapshot": {"included_record_ids": ["m-old", "system"]},
+                        },
+                        {
+                            "id": "reply-from-old-tool",
+                            "conversation_id": "chat",
+                            "request_id": "reply:old-tool-parent",
+                            "role": "assistant",
+                            "text": "Tripoli is still warm",
+                            "status": "completed",
+                            "created_at": stamp(800),
+                            "snapshot": {"derivation": {"record_ids": ["tool-old", "system"]}},
+                        },
+                        {
+                            "id": "unrelated-reply",
+                            "conversation_id": "chat",
+                            "request_id": "reply:turn-00599",
+                            "role": "assistant",
+                            "text": "Unrelated answer",
+                            "status": "completed",
+                            "created_at": stamp(801),
+                            "snapshot": {"derivation": {"record_ids": ["turn-00599", "system"]}},
+                        },
+                    ],
+                )
+                await db.execute(
+                    insert(Memory),
+                    [
+                        {
+                            "id": "m-old",
+                            "owner_id": "alice",
+                            "content": "I live in Tripoli",
+                            "embedding_model": "text-embedding-3-small",
+                            "source_turn_id": "old-tool-parent",
+                            "source_conversation_id": "chat",
+                            "version": 1,
+                            "status": "active",
+                            "created_at": stamp(0),
+                            "updated_at": stamp(0),
+                        }
+                    ],
+                )
+                await add_exclusion(db, "m-old", conversation_id="chat", owner_id="alice")
+                db.add(
+                    ToolCall(
+                        id="tool-old",
+                        turn_id="old-tool-parent",
+                        request_id="tool-old-request",
+                        name="get_current_weather",
+                        state="completed",
+                        result={"city": "Tripoli"},
+                    )
+                )
+                # Push the old tool result outside the provider's latest-50 window.
+                for index in range(55):
+                    db.add(
+                        ToolCall(
+                            id=f"tool-new-{index:03d}",
+                            turn_id="turn-00599",
+                            request_id=f"tool-new-{index:03d}-request",
+                            name="get_current_weather",
+                            state="completed",
+                            result={"city": "Tripoli"},
+                        )
+                    )
+                await db.commit()
+            async with sessions() as db:
+                inputs = await read_context_inputs(db, owner_id="alice", conversation_id="chat")
+            history_ids = {candidate.id for candidate in inputs.history}
+            assert "reply-from-old-tool" not in history_ids
+            assert "unrelated-reply" in history_ids
+            assert "tool-old" not in {candidate.id for candidate in inputs.tool_results}
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())

@@ -182,19 +182,90 @@ def _dependency_ids(turn: Turn) -> set[str]:
     return references
 
 
+async def _closure_page(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    chunk: list[str],
+    loaded: dict[str, Turn],
+    tools: dict[str, tuple[ToolCall, Turn]],
+    frontier: set[str],
+    budget: int,
+    fetched: int,
+) -> tuple[bool, int]:
+    """Resolve one id chunk of turns, tool provenance and memory references."""
+    remaining = budget - fetched
+    if remaining <= 0:
+        return True, fetched
+    rows = (
+        await db.scalars(
+            select(Turn)
+            .where(
+                Turn.conversation_id == conversation_id,
+                Turn.status == "completed",
+                Turn.id.in_(chunk),
+            )
+            .order_by(Turn.created_at, Turn.id)
+        )
+    ).all()
+    if len(rows) > remaining:
+        for row in rows[:remaining]:
+            loaded[row.id] = row
+        return True, fetched
+    for row in rows:
+        if row.id not in loaded:
+            loaded[row.id] = row
+            fetched += 1
+            frontier.update(_dependency_ids(row))
+    tool_rows = (
+        await db.execute(
+            select(ToolCall, Turn)
+            .join(Turn, ToolCall.turn_id == Turn.id)
+            .where(
+                ToolCall.id.in_(chunk),
+                Turn.conversation_id == conversation_id,
+                Turn.status == "completed",
+            )
+        )
+    ).all()
+    for call, parent in tool_rows:
+        tools.setdefault(call.id, (call, parent))
+        if parent.id not in loaded:
+            if fetched >= budget:
+                return True, fetched
+            loaded[parent.id] = parent
+            fetched += 1
+            frontier.update(_dependency_ids(parent))
+    # Referenced ids may legitimately be memory records or the synthetic
+    # instruction id. Anything else is unresolved provenance: fail closed.
+    unresolved = set(chunk) - {row.id for row in rows} - set(tools) - {"system"}
+    if unresolved:
+        memory_ids = set(
+            (await db.scalars(select(Memory.id).where(Memory.owner_id == owner_id, Memory.id.in_(unresolved)))).all()
+        )
+        if unresolved - memory_ids:
+            return True, fetched
+    return False, fetched
+
+
 async def _dependency_closure(
     db: AsyncSession,
     *,
+    owner_id: str,
     conversation_id: str,
     loaded: dict[str, Turn],
     budget: int = DEPENDENCY_CLOSURE_LIMIT,
-) -> bool:
-    """Load only referenced turn ids needed to propagate exclusions.
+) -> tuple[bool, dict[str, tuple[ToolCall, Turn]]]:
+    """Load referenced turns and tool provenance needed to propagate exclusions.
 
-    Returns ``True`` when the budget cannot cover every referenced turn.  The
-    caller must then fail closed for derived content while exclusions exist.
+    Tool ids referenced by a snapshot are resolved by exact id even when the
+    provider tool-result window no longer contains them.  Returns ``True`` when
+    the budget cannot cover every reference or provenance cannot be resolved;
+    the caller must then fail closed for derived content while exclusions exist.
     """
     attempted = set(loaded)
+    tools: dict[str, tuple[ToolCall, Turn]] = {}
     frontier: set[str] = set()
     for turn in loaded.values():
         frontier.update(_dependency_ids(turn))
@@ -202,34 +273,23 @@ async def _dependency_closure(
     while True:
         missing = sorted(frontier - attempted)
         if not missing:
-            return False
+            return False, tools
         for start in range(0, len(missing), _ID_CHUNK):
             chunk = missing[start : start + _ID_CHUNK]
             attempted.update(chunk)
-            remaining = budget - fetched
-            if remaining <= 0:
-                return True
-            rows = (
-                await db.scalars(
-                    select(Turn)
-                    .where(
-                        Turn.conversation_id == conversation_id,
-                        Turn.status == "completed",
-                        Turn.id.in_(chunk),
-                    )
-                    .order_by(Turn.created_at, Turn.id)
-                )
-            ).all()
-            if len(rows) > remaining:
-                rows = rows[:remaining]
-                for row in rows:
-                    loaded[row.id] = row
-                return True
-            for row in rows:
-                if row.id not in loaded:
-                    loaded[row.id] = row
-                    fetched += 1
-                    frontier.update(_dependency_ids(row))
+            exceeded, fetched = await _closure_page(
+                db,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                chunk=chunk,
+                loaded=loaded,
+                tools=tools,
+                frontier=frontier,
+                budget=budget,
+                fetched=fetched,
+            )
+            if exceeded:
+                return True, tools
 
 
 async def _recent_turns(db: AsyncSession, conversation_id: str, *, limit: int) -> list[Turn]:
@@ -278,13 +338,16 @@ async def read_context_inputs(
     window = await _recent_turns(db, conversation_id, limit=history_limit * HISTORY_WINDOW_MULTIPLIER)
     by_id = {turn.id: turn for turn in window}
     closure_exceeded = False
+    closure_tools: dict[str, tuple[ToolCall, Turn]] = {}
     if policy_active:
         # Tool rows are bounded by the tool-result limit, not the history window.
         # Their parents must join the evaluated set so an exclusion can propagate
         # through older derivations; no traversal happens with no active policy.
         for _, parent in tool_rows:
             by_id.setdefault(parent.id, parent)
-        closure_exceeded = await _dependency_closure(db, conversation_id=conversation_id, loaded=by_id)
+        closure_exceeded, closure_tools = await _dependency_closure(
+            db, owner_id=owner_id, conversation_id=conversation_id, loaded=by_id
+        )
     blocked = set(memories.excluded_ids | memories.blocked_sources)
 
     def dependencies(turn):
@@ -306,7 +369,9 @@ async def read_context_inputs(
     turns = list(by_id.values())
     blocked_tools: set[str] = set()
     tool_dependencies: dict[str, frozenset[str]] = {}
-    for call, turn in tool_rows:
+    window_tool_ids = {call.id for call, _ in tool_rows}
+    all_tools = list(tool_rows) + [pair for tool_id, pair in closure_tools.items() if tool_id not in window_tool_ids]
+    for call, turn in all_tools:
         values = (turn.snapshot or {}).get("included_record_ids")
         known = isinstance(values, list) and all(isinstance(value, str) for value in values)
         tool_dependencies[call.id] = frozenset(values) if known else frozenset()
@@ -327,7 +392,7 @@ async def read_context_inputs(
         }
         more_tools = {
             call.id
-            for call, turn in tool_rows
+            for call, turn in all_tools
             if (
                 fail_closed
                 or (policy_active and turn.id not in by_id)
