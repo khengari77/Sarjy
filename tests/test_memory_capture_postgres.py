@@ -132,7 +132,8 @@ def test_postgres_advisory_lock_serializes_same_subject_confirms():
                 await db.commit()
                 db.add(Conversation(id=chat, owner_id=owner))
                 await db.commit()
-                for turn_id, text in (("turn-tea", "I prefer tea"), ("turn-coffee", "I prefer coffee now")):
+                tea_turn, coffee_turn = str(uuid4()), str(uuid4())
+                for turn_id, text in ((tea_turn, "I prefer tea"), (coffee_turn, "I prefer coffee now")):
                     db.add(Turn(id=turn_id, conversation_id=chat, request_id=turn_id, role="user", text=text))
                 await db.commit()
 
@@ -173,7 +174,7 @@ def test_postgres_advisory_lock_serializes_same_subject_confirms():
                         return {"status": type(exc).__name__}
 
             await asyncio.gather(
-                apply(token("I prefer tea", "turn-tea")), apply(token("I prefer coffee now", "turn-coffee"))
+                apply(token("I prefer tea", tea_turn)), apply(token("I prefer coffee now", coffee_turn))
             )
             async with sessions() as db:
                 active = list(
