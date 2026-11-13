@@ -12,7 +12,9 @@ from uuid import uuid4
 import httpx
 from fastapi import HTTPException
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 from app.infrastructure.database import Memory, MemoryWriteRequest, Turn, now
@@ -23,6 +25,15 @@ from app.services.memory_eligibility import blocked_memory_ids
 
 EMBEDDING_TIMEOUT_SECONDS = 20
 CLAIM_TIMEOUT_SECONDS = 30
+SQLITE_BUSY = 5
+SQLITE_LOCKED = 6
+
+
+def _sqlite_busy(exc: OperationalError) -> bool:
+    code = getattr(getattr(exc, "orig", None), "sqlite_errorcode", None)
+    if code is not None:
+        return code in {SQLITE_BUSY, SQLITE_LOCKED}
+    return "database is locked" in str(exc).lower()
 
 
 def validate_embedding(values) -> tuple[float, ...]:
@@ -157,19 +168,46 @@ async def _require_source_turn(db: AsyncSession, source_turn_id, conversation_id
 
 
 class MemoryService:
-    def __init__(self, db: AsyncSession, embedder: Embedder):
-        self.db, self.embedder = db, embedder
-        self.sessions = async_sessionmaker(db.bind, expire_on_commit=False)
+    """Memory writes own their sessions.
+
+    ``db_or_factory`` may be a session (for backwards compatibility), a session
+    factory, or an engine. Writes never read, flush, commit, or roll back the
+    caller's session, so pending business changes survive a memory operation.
+    """
+
+    def __init__(self, db_or_factory, embedder: Embedder):
+        self.embedder = embedder
+        self.caller = db_or_factory if isinstance(db_or_factory, AsyncSession) else None
+        self.caller_dialect = None
+        self.shared_connection = False
+        if isinstance(db_or_factory, AsyncSession):
+            bind = db_or_factory.bind
+            engine = bind.engine if isinstance(bind, AsyncConnection) else bind
+            self.caller_dialect = engine.dialect.name
+            self.shared_connection = isinstance(engine.pool, StaticPool)
+            self.sessions = async_sessionmaker(engine, expire_on_commit=False)
+        elif isinstance(db_or_factory, AsyncEngine):
+            self.sessions = async_sessionmaker(db_or_factory, expire_on_commit=False)
+        else:
+            self.sessions = db_or_factory
+
+    def _require_isolated_caller(self) -> None:
+        if self.caller is not None and self.shared_connection:
+            raise HTTPException(503, detail={"code": "MEMORY_SHARED_CONNECTION_UNSUPPORTED"})
 
     async def get_memory(self, owner_id, memory_id):
-        return await owned_memory(self.db, owner_id, memory_id)
+        self._require_isolated_caller()
+        async with self.sessions() as db:
+            return await owned_memory(db, owner_id, memory_id)
 
     async def create_memory(self, owner_id, conversation_id, source_turn_id, content, idempotency_key):
+        self._require_isolated_caller()
         return await self._write(owner_id, conversation_id, source_turn_id, content, idempotency_key, None, None)
 
     async def correct_memory(
         self, owner_id, memory_id, expected_version, content, idempotency_key, *, source_turn_id=None
     ):
+        self._require_isolated_caller()
         previous = await self.get_memory(owner_id, memory_id)
         conversation_id = previous.source_conversation_id
         return await self._write(
@@ -179,10 +217,8 @@ class MemoryService:
     async def _claim(
         self, owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version, fingerprint
     ):
-        if self.db.new or self.db.dirty or self.db.deleted:
-            raise ValueError("MEMORY_SESSION_HAS_PENDING_WRITES")
-        # Authorization/source reads are complete; never hold their transaction across HTTP.
-        await self.db.rollback()
+        # The claim transaction owns authorization and source reads as well as
+        # the reservation, so no caller transaction is touched.
         async with self.sessions() as db, db.begin():
             existing = await db.scalar(
                 select(MemoryWriteRequest).where(
@@ -191,6 +227,8 @@ class MemoryService:
             )
             if existing is not None:
                 return _claim_value(existing), False
+            await owned_conversation(db, owner_id, conversation_id)
+            await _require_source_turn(db, source_turn_id, conversation_id)
             legacy = await db.scalar(select(Memory).where(Memory.owner_id == owner_id, Memory.request_key == key))
             if legacy is not None:
                 legacy_fingerprint = _fingerprint(
@@ -337,13 +375,28 @@ class MemoryService:
             return result
 
     async def _write(self, owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version):
+        self._require_isolated_caller()
         _validate_write(content, key, previous_id, expected_version)
-        await owned_conversation(self.db, owner_id, conversation_id)
-        await _require_source_turn(self.db, source_turn_id, conversation_id)
+        if (
+            self.caller_dialect == "sqlite"
+            and self.caller is not None
+            and (self.caller.new or self.caller.dirty or self.caller.deleted)
+        ):
+            # SQLite cannot co-exist with an independent writer. Never autoflush
+            # or roll back caller work; reject before touching any ledger row.
+            raise HTTPException(409, detail={"code": "MEMORY_CALLER_TRANSACTION_ACTIVE"})
         fingerprint = _fingerprint(conversation_id, source_turn_id, content, previous_id, expected_version)
-        claim, winner = await self._claim(
-            owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version, fingerprint
-        )
+        try:
+            claim, winner = await self._claim(
+                owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version, fingerprint
+            )
+        except OperationalError as exc:
+            # SQLite cannot open an independent writer while the caller holds a
+            # flushed write transaction. Reject with a typed error; nothing was
+            # durably changed.
+            if _sqlite_busy(exc):
+                raise HTTPException(409, detail={"code": "MEMORY_CALLER_TRANSACTION_ACTIVE"}) from exc
+            raise
         if not winner:
             result = self._replay(claim, fingerprint)
             if result is not None:
@@ -363,8 +416,10 @@ class MemoryService:
                 expected_version,
             )
         except HTTPException as exc:
-            if exc.status_code == 409:
-                await self._mark_error(claim["id"], exc.detail["code"], 409)
+            if exc.status_code in {400, 403, 404, 409, 422}:
+                # Terminal finalization failures must be durable so a retry
+                # returns the recorded outcome instead of re-running finalize.
+                await self._mark_error(claim["id"], exc.detail["code"], exc.status_code)
             raise
 
     async def _embed_claim(self, claim, content):
@@ -374,7 +429,8 @@ class MemoryService:
                     vector = validate_embedding(await self.embedder.embed_reserved(content))
                 else:
                     # Backwards-compatible deterministic test/embedder adapters must not reserve again.
-                    vector = validate_embedding(await self.embedder.embed(self.db, content))
+                    async with self.sessions() as embed_db:
+                        vector = validate_embedding(await self.embedder.embed(embed_db, content))
             async with self.sessions() as db, db.begin():
                 await db.execute(
                     update(MemoryWriteRequest)
@@ -397,6 +453,7 @@ class MemoryService:
     async def search_memories(self, owner_id, conversation_id, query, limit=5):
         if not isinstance(query, str) or not query.strip() or len(query) > 4000 or not 1 <= limit <= 20:
             raise HTTPException(422, detail={"code": "INVALID_MEMORY_QUERY"})
+        self._require_isolated_caller()
         # Search owns its read and budget sessions; never rollback a caller's effects.
         async with self.sessions() as access:
             await owned_conversation(access, owner_id, conversation_id)
