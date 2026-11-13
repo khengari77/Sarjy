@@ -1,19 +1,32 @@
 /*
- * Sarjy design tokens.
+ * Sarjy design tokens — Living Cloud v2.1.
  *
- * Values come from sarjy_orb_ui_spec_v1.md section 3.2 and are proposed
- * starting points: verify contrast after visual testing rather than treating
- * them as measured reference-video colours.
+ * Canonical values live in Sarjy_Living_Cloud_UI_UX_Design_Kit_v2.1/
+ * design/tokens/tokens.json. This file maps them onto the variable names the
+ * shell/chat components already consume, then adds the Living Cloud palette.
+ *
+ * Dark (Cosmic Cloud) is the server-rendered fallback so there is no flash
+ * before the theme resolver applies the saved preference. Light (Sky Prism)
+ * and dark are both first-class; switching is presentation-only and must
+ * never touch the voice session.
  */
-:root {
-  --bg-app: #080c13;
-  --bg-sidebar: #0d1420;
-  --surface-elevated: #142032;
-  --surface-hover: #1a2940;
-  --text-primary: #eaf2fb;
-  --text-muted: #96a6ba;
-  --border-subtle: #273448;
-  --focus-ring: #b3dcff;
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg-app: #080f29;
+  --bg-sidebar: #101b3b;
+  --surface-elevated: #19284b;
+  --surface-raised: #1b2853;
+  --surface-hover: #203463;
+  --text-primary: #f3f6ff;
+  --text-muted: #a6b6dc;
+  --border-subtle: #2e406b;
+  --accent: #7762f6;
+  --focus-ring: #a8b3ff;
+
+  --status-success: #57dfb8;
+  --status-error: #ff7d9d;
 
   --orb-idle: #4cc9b6;
   --orb-listening: #4da8ff;
@@ -24,20 +37,61 @@
   --orb-error: #f25565;
   --orb-offline: #5e7189;
 
-  --radius-control: 10px;
-  --radius-panel: 16px;
+  --radius-control: 12px;
+  --radius-panel: 18px;
+  --radius-composer: 28px;
   --control-height: 44px;
   --sidebar-left-width: 264px;
-  --sidebar-right-width: 332px;
-  --stage-max-width: 960px;
+  --sidebar-right-width: 328px;
+  --stage-max-width: 760px;
+  --header-height: 68px;
+  --orb-desktop: 290px;
+  --orb-mobile: 220px;
 
   --font-ui:
-    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Noto Naskh Arabic', sans-serif;
+    Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Noto Sans Arabic',
+    'Noto Naskh Arabic', sans-serif;
+
+  --transition-quick: 160ms ease-out;
+  --transition-state: 280ms ease-in-out;
 }
 
-:root {
-  --transition-quick: 160ms ease-out;
-  --transition-state: 320ms ease-in-out;
+[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-app: #eaf6ff;
+  --bg-sidebar: #f3faff;
+  --surface-elevated: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-hover: #deedfb;
+  --text-primary: #122d52;
+  --text-muted: #526d91;
+  --border-subtle: #c9def2;
+  --accent: #2475e6;
+  --focus-ring: #185ac4;
+
+  --status-success: #15ab7b;
+  --status-error: #c94767;
+}
+
+/* System preference applies only until the resolver stamps data-theme. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+
+    --bg-app: #eaf6ff;
+    --bg-sidebar: #f3faff;
+    --surface-elevated: #ffffff;
+    --surface-raised: #ffffff;
+    --surface-hover: #deedfb;
+    --text-primary: #122d52;
+    --text-muted: #526d91;
+    --border-subtle: #c9def2;
+    --accent: #2475e6;
+    --focus-ring: #185ac4;
+    --status-success: #15ab7b;
+    --status-error: #c94767;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -55,6 +109,9 @@ body {
   color: var(--text-primary);
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
+  transition:
+    background-color var(--transition-state),
+    color var(--transition-state);
 }
 
 *,
