@@ -110,9 +110,8 @@ def expire(db_path, session_id):
 
 def test_failed_dispatch_releases_capacity_without_resetting_ledger(tmp_path, monkeypatch):
     app, alice, state, db_path = build(tmp_path, monkeypatch, demo_session_budget=10)
-    with alice:
+    with alice, closing(TestClient(app)) as bob:
         chat_a = conversation(alice)
-        bob = TestClient(app)
         chat_b = conversation(bob)
         reserved = reserve_ledger(alice)
 
@@ -132,17 +131,17 @@ def test_failed_dispatch_releases_capacity_without_resetting_ledger(tmp_path, mo
         assert session_row(db_path, replacement.json()["id"])["status"] == "starting"
 
         # Two active sessions remain the hard cap; the failed one does not add a third.
-        carol = TestClient(app)
-        assert start(carol, conversation(carol)).status_code == 429
+        # A bare client reuses the running lifespan and must still be closed explicitly.
+        with closing(TestClient(app)) as carol:
+            assert start(carol, conversation(carol)).status_code == 429
         with closing(sqlite3.connect(db_path)) as connection, connection:
             assert connection.execute("SELECT reserved_units FROM development_budgets").fetchone()[0] == reserved
 
 
 def test_expired_session_is_reaped_and_frees_capacity(tmp_path, monkeypatch):
     app, alice, state, db_path = build(tmp_path, monkeypatch, demo_session_budget=10)
-    with alice:
+    with alice, closing(TestClient(app)) as bob:
         chat_a = conversation(alice)
-        bob = TestClient(app)
         chat_b = conversation(bob)
         reserved = reserve_ledger(alice)
 
@@ -150,16 +149,17 @@ def test_expired_session_is_reaped_and_frees_capacity(tmp_path, monkeypatch):
         assert first.status_code == 201
         assert start(bob, chat_b).status_code == 201
 
-        carol = TestClient(app)
-        chat_c = conversation(carol)
-        assert start(carol, chat_c).status_code == 429
+        # A bare client reuses the running lifespan and must still be closed explicitly.
+        with closing(TestClient(app)) as carol:
+            chat_c = conversation(carol)
+            assert start(carol, chat_c).status_code == 429
 
-        expire(db_path, first.json()["id"])
-        replacement = start(carol, chat_c)
-        assert replacement.status_code == 201
-        assert session_row(db_path, first.json()["id"])["status"] == "ended"
-        # Reaping an expired reservation is not room cleanup; no room delete was invented.
-        assert session_row(db_path, first.json()["id"])["room_cleanup_completed_at"] is None
+            expire(db_path, first.json()["id"])
+            replacement = start(carol, chat_c)
+            assert replacement.status_code == 201
+            assert session_row(db_path, first.json()["id"])["status"] == "ended"
+            # Reaping an expired reservation is not room cleanup; no room delete was invented.
+            assert session_row(db_path, first.json()["id"])["room_cleanup_completed_at"] is None
         with closing(sqlite3.connect(db_path)) as connection, connection:
             assert connection.execute("SELECT reserved_units FROM development_budgets").fetchone()[0] == reserved
 
@@ -210,7 +210,7 @@ def ledger(db_path):
         ).fetchall()
 
 
-def reconcile_local(app, settings, *, apply=False, limit=20):
+def reconcile_local(settings, *, apply=False, limit=20):
     import asyncio
 
     from app.services.session_cleanup import reconcile
@@ -282,10 +282,10 @@ def test_uncertain_dispatch_keeps_reconciling_late_rooms_until_expiry(tmp_path, 
         assert not rooms  # Best-effort early deletion succeeded.
         assert failed["room_cleanup_completed_at"] is None
         settings = app.state.settings
-        assert reconcile_local(app, settings, apply=True)["pending"] == 1  # Early not-found is not final.
+        assert reconcile_local(settings, apply=True)["pending"] == 1  # Early not-found is not final.
         rooms.add(failed["room_name"])  # Delayed remote creation after early absence.
         expire(db_path, failed["id"])
-        assert reconcile_local(app, settings, apply=True)["completed"] == 1
+        assert reconcile_local(settings, apply=True)["completed"] == 1
         assert not rooms
         assert session_row(db_path, failed["id"])["room_cleanup_completed_at"] is not None
         assert ledger(db_path) == before
@@ -301,18 +301,17 @@ def test_reconciliation_is_dry_by_default_bounded_and_skips_active(tmp_path, mon
         second = start(alice, chat).json()["id"]
         state["delete_fails"] = False
         prior_attempts = list(state["deleted"])
-        assert reconcile_local(app, app.state.settings)["pending"] == 1
+        assert reconcile_local(app.state.settings)["pending"] == 1
         assert state["deleted"] == prior_attempts
-        assert reconcile_local(app, app.state.settings, apply=True, limit=1)["completed"] == 1
+        assert reconcile_local(app.state.settings, apply=True, limit=1)["completed"] == 1
         assert session_row(db_path, second)["status"] == "starting"
         assert session_row(db_path, second)["room_name"] not in state["deleted"]
 
 
 def test_wrong_owner_cannot_clean_or_bootstrap_terminal_session(tmp_path, monkeypatch):
     app, alice, state, db_path = build(tmp_path, monkeypatch)
-    with alice:
+    with alice, closing(TestClient(app)) as bob:
         identifier = start(alice, conversation(alice)).json()["id"]
-        bob = TestClient(app)
         conversation(bob)
         assert bob.post(f"/v1/voice/sessions/{identifier}/end").status_code == 404
         assert state["deleted"] == []
@@ -335,8 +334,11 @@ def test_reconciliation_after_restart_and_expiry(tmp_path, monkeypatch):
         assert start(alice, conversation(alice)).status_code == 201
         assert session_row(db_path, first)["status"] == "ended"
         settings = app.state.settings
+    # Restart against the same database, then reconcile from a fresh engine.
     restarted = create_app(settings, voice_catalog=FakeCatalog())
-    assert reconcile_local(restarted, settings, apply=True)["completed"] == 1
+    with TestClient(restarted):
+        pass
+    assert reconcile_local(settings, apply=True)["completed"] == 1
     assert session_row(db_path, first)["room_cleanup_completed_at"] is not None
 
 
@@ -388,7 +390,7 @@ def test_missing_configuration_and_reconcile_errors_remain_pending(tmp_path, mon
         assert response.status_code == 503
         assert response.json()["detail"]["code"] == "ROOM_CLEANUP_NOT_CONFIGURED"
         assert state["deleted"] == []
-        result = reconcile_local(app, app.state.settings, apply=True)
+        result = reconcile_local(app.state.settings, apply=True)
         assert result["errors"] == 1 and result["completed"] == 0
         assert session_row(db_path, identifier)["room_cleanup_completed_at"] is None
 
