@@ -110,77 +110,257 @@ def test_postgres_capture_creates_once_and_corrects_across_conversations():
     asyncio.run(run())
 
 
-def test_postgres_advisory_lock_serializes_same_subject_confirms():
-    url = os.environ.get("TEST_MEMORY_POSTGRES_URL")
-    if not url:
-        pytest.skip("TEST_MEMORY_POSTGRES_URL requires disposable migrated pgvector PostgreSQL")
+class _PausingEmbedder(FakeEmbedder):
+    def __init__(self):
+        super().__init__()
+        self.pause = False
+        self.entered = None
+        self.release = None
 
-    async def run():
-        from app.domain.context_operations import sign_proposal
-        from app.domain.memory_capture import parse_capture
-        from app.services.memory_capture import confirm_memory
-        from sqlalchemy import select
+    async def embed(self, db, text):
+        if self.pause:
+            self.entered.set()
+            await self.release.wait()
+        return await super().embed(db, text)
 
+
+def _postgres_harness(url):
+    from app.infrastructure.database import MemoryCaptureDecision
+    from app.services.memory_capture import MemoryCaptureError, confirm_memory, propose_memory
+    from sqlalchemy import select
+
+    async def open_store(texts):
         engine = create_async_engine(url)
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         owner, chat = (str(uuid4()) for _ in range(2))
-        embedder = FakeEmbedder()
-        secret = "capture-secret"
-        try:
-            async with sessions() as db:
-                db.add(Identity(id=owner, token_hash=owner, expires_at="2030"))
-                await db.commit()
-                db.add(Conversation(id=chat, owner_id=owner))
-                await db.commit()
-                tea_turn, coffee_turn = str(uuid4()), str(uuid4())
-                for turn_id, text in ((tea_turn, "I prefer tea"), (coffee_turn, "I prefer coffee now")):
-                    db.add(Turn(id=turn_id, conversation_id=chat, request_id=turn_id, role="user", text=text))
-                await db.commit()
+        turns = []
+        async with sessions() as db:
+            db.add(Identity(id=owner, token_hash=owner, expires_at="2030"))
+            await db.commit()
+            db.add(Conversation(id=chat, owner_id=owner))
+            await db.commit()
+            for text in texts:
+                turn_id = str(uuid4())
+                turns.append(turn_id)
+                db.add(Turn(id=turn_id, conversation_id=chat, request_id=str(uuid4()), role="user", text=text))
+            await db.commit()
+        return engine, sessions, owner, chat, turns
 
-            def token(text, turn):
-                capture = parse_capture(text)
-                return sign_proposal(
-                    {
-                        "v": 1,
-                        "kind": "memory_capture",
-                        "owner_id": owner,
-                        "conversation_id": chat,
-                        "source_turn_id": turn,
-                        "content": text,
-                        "subject": capture.subject,
-                        "value": capture.value,
-                        "explicit": False,
-                        "replaces": capture.replaces,
-                        "negated": capture.negated,
-                        "exp": 9999999999,
-                    },
-                    secret,
+    def proposal(owner, chat, turn, text):
+        return propose_memory(
+            text,
+            owner_id=owner,
+            conversation_id=chat,
+            source_turn_id=turn,
+            secret=SECRET,
+        )
+
+    async def decision(sessions, embedder, token, value, owner, chat):
+        async with sessions() as db:
+            try:
+                return "ok", await confirm_memory(
+                    db,
+                    MemoryService(db, embedder),
+                    token=token,
+                    decision=value,
+                    owner_id=owner,
+                    conversation_id=chat,
+                    source_turn_id=None,
+                    secret=SECRET,
                 )
+            except MemoryCaptureError as exc:
+                return "error", exc
 
-            async def apply(value):
-                async with sessions() as db:
-                    try:
-                        return await confirm_memory(
-                            db,
-                            MemoryService(db, embedder),
-                            token=value,
-                            decision="save",
-                            owner_id=owner,
-                            conversation_id=chat,
-                            source_turn_id=None,
-                            secret=secret,
-                        )
-                    except Exception as exc:
-                        return {"status": type(exc).__name__}
-
-            await asyncio.gather(
-                apply(token("I prefer tea", tea_turn)), apply(token("I prefer coffee now", coffee_turn))
+    async def rows(sessions, owner):
+        async with sessions() as db:
+            memories = list(
+                await db.scalars(select(Memory).where(Memory.owner_id == owner).order_by(Memory.created_at))
             )
-            async with sessions() as db:
-                active = list(
-                    await db.scalars(select(Memory).where(Memory.owner_id == owner, Memory.status == "active"))
+            decisions = list(
+                await db.scalars(
+                    select(MemoryCaptureDecision)
+                    .where(MemoryCaptureDecision.owner_id == owner)
+                    .order_by(MemoryCaptureDecision.revision)
                 )
-            assert len(active) <= 1
+            )
+        return (
+            [(row.content, row.version, row.status) for row in memories],
+            [(row.revision, row.decision, row.outcome, row.target_id, row.target_version) for row in decisions],
+        )
+
+    return asyncio, open_store, proposal, decision, rows, MemoryCaptureError
+
+
+def test_postgres_concurrent_confirms_never_leave_contradictory_active_rows():
+    url = os.environ.get("TEST_MEMORY_POSTGRES_URL")
+    if not url:
+        pytest.skip("TEST_MEMORY_POSTGRES_URL requires disposable migrated pgvector PostgreSQL")
+    asyncio, open_store, proposal, decision, rows, MemoryCaptureError = _postgres_harness(url)
+
+    async def run():
+        engine, sessions, owner, chat, turns = await open_store(["I prefer tea", "I prefer coffee now"])
+        embedder = FakeEmbedder()
+        try:
+            tea = proposal(owner, chat, turns[0], "I prefer tea")
+            coffee = proposal(owner, chat, turns[1], "I prefer coffee now")
+            outcomes = await asyncio.gather(
+                decision(sessions, embedder, tea["token"], "save", owner, chat),
+                decision(sessions, embedder, coffee["token"], "save", owner, chat),
+            )
+            successes = [value for kind, value in outcomes if kind == "ok"]
+            conflicts = [value for kind, value in outcomes if kind == "error"]
+            assert len(successes) == 1 and successes[0]["status"] == "saved"
+            assert len(conflicts) == 1 and isinstance(conflicts[0], MemoryCaptureError)
+            assert conflicts[0].code == "MEMORY_CLARIFICATION_REQUIRED"
+            memories, decisions = await rows(sessions, owner)
+            assert len([row for row in memories if row[2] == "active"]) == 1
+            assert {(revision, outcome) for revision, _, outcome, _, _ in decisions} == {
+                (1, "saved"),
+                (2, "awaiting_confirmation"),
+            }
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_postgres_concurrent_save_and_discard_claim_one_revision(monkeypatch):
+    url = os.environ.get("TEST_MEMORY_POSTGRES_URL")
+    if not url:
+        pytest.skip("TEST_MEMORY_POSTGRES_URL requires disposable migrated pgvector PostgreSQL")
+    asyncio, open_store, proposal, decision, rows, MemoryCaptureError = _postgres_harness(url)
+
+    async def run():
+        from app.services import memory_capture as capture_service
+
+        engine, sessions, owner, chat, turns = await open_store(["I prefer tea"])
+        embedder = _PausingEmbedder()
+        embedder.entered, embedder.release = asyncio.Event(), asyncio.Event()
+        request = proposal(owner, chat, turns[0], "I prefer tea")
+        try:
+            embedder.pause = True
+            saving = asyncio.create_task(decision(sessions, embedder, request["token"], "save", owner, chat))
+            await embedder.entered.wait()
+            kind, value = await decision(sessions, embedder, request["token"], "discard", owner, chat)
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "MEMORY_DECISION_IN_PROGRESS"
+            embedder.release.set()
+            kind, value = await saving
+            assert kind == "ok" and value["status"] == "saved"
+            memories, decisions = await rows(sessions, owner)
+            assert memories == [("I prefer tea", 1, "active")]
+            assert [(revision, choice, outcome) for revision, choice, outcome, _, _ in decisions] == [
+                (1, "save", "saved")
+            ]
+        finally:
+            await engine.dispose()
+
+        engine, sessions, owner, chat, turns = await open_store(["I prefer coffee"])
+        embedder = _PausingEmbedder()
+        embedder.entered, embedder.release = asyncio.Event(), asyncio.Event()
+        request = proposal(owner, chat, turns[0], "I prefer coffee")
+        original = capture_service._claim_decision
+
+        async def gated_claim(db, *, decision, **kwargs):
+            if decision == "save":
+                embedder.entered.set()
+                await embedder.release.wait()
+            return await original(db, decision=decision, **kwargs)
+
+        monkeypatch.setattr(capture_service, "_claim_decision", gated_claim)
+        try:
+            saving = asyncio.create_task(decision(sessions, embedder, request["token"], "save", owner, chat))
+            await embedder.entered.wait()
+            kind, value = await decision(sessions, embedder, request["token"], "discard", owner, chat)
+            assert kind == "ok" and value["status"] == "discarded"
+            embedder.release.set()
+            kind, value = await saving
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "DECISION_ALREADY_FINAL"
+            memories, decisions = await rows(sessions, owner)
+            assert memories == []
+            assert [(revision, choice, outcome) for revision, choice, outcome, _, _ in decisions] == [
+                (1, "discard", "discarded")
+            ]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_postgres_concurrent_replace_and_discard_claim_one_clarification(monkeypatch):
+    url = os.environ.get("TEST_MEMORY_POSTGRES_URL")
+    if not url:
+        pytest.skip("TEST_MEMORY_POSTGRES_URL requires disposable migrated pgvector PostgreSQL")
+    asyncio, open_store, proposal, decision, rows, MemoryCaptureError = _postgres_harness(url)
+
+    async def clarification(sessions, embedder, owner, chat, turns):
+        first = proposal(owner, chat, turns[0], "I prefer tea")
+        kind, value = await decision(sessions, embedder, first["token"], "save", owner, chat)
+        assert kind == "ok" and value["status"] == "saved"
+        second = proposal(owner, chat, turns[1], "I prefer coffee")
+        kind, value = await decision(sessions, embedder, second["token"], "save", owner, chat)
+        assert kind == "error" and isinstance(value, MemoryCaptureError)
+        assert value.code == "MEMORY_CLARIFICATION_REQUIRED"
+        return value.details
+
+    async def run():
+        from app.services import memory_capture as capture_service
+
+        engine, sessions, owner, chat, turns = await open_store(["I prefer tea", "I prefer coffee"])
+        embedder = _PausingEmbedder()
+        embedder.entered, embedder.release = asyncio.Event(), asyncio.Event()
+        try:
+            detail = await clarification(sessions, embedder, owner, chat, turns)
+            embedder.pause = True
+            replacing = asyncio.create_task(decision(sessions, embedder, detail["token"], "replace", owner, chat))
+            await embedder.entered.wait()
+            kind, value = await decision(sessions, embedder, detail["token"], "discard", owner, chat)
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "MEMORY_DECISION_IN_PROGRESS"
+            embedder.release.set()
+            kind, value = await replacing
+            assert kind == "ok" and value["status"] == "corrected"
+            memories, decisions = await rows(sessions, owner)
+            assert [(content, status) for content, _, status in memories] == [
+                ("I prefer tea", "superseded"),
+                ("I prefer coffee", "active"),
+            ]
+            assert [(revision, choice, outcome, target) for revision, choice, outcome, target, _ in decisions] == [
+                (1, "save", "saved", None),
+                (2, "replace", "corrected", detail["target_id"]),
+            ]
+        finally:
+            await engine.dispose()
+
+        engine, sessions, owner, chat, turns = await open_store(["I prefer tea", "I prefer coffee"])
+        embedder = _PausingEmbedder()
+        embedder.entered, embedder.release = asyncio.Event(), asyncio.Event()
+        detail = await clarification(sessions, embedder, owner, chat, turns)
+        original = capture_service._claim_decision
+
+        async def gated_claim(db, *, decision, **kwargs):
+            if decision == "replace":
+                embedder.entered.set()
+                await embedder.release.wait()
+            return await original(db, decision=decision, **kwargs)
+
+        monkeypatch.setattr(capture_service, "_claim_decision", gated_claim)
+        try:
+            replacing = asyncio.create_task(decision(sessions, embedder, detail["token"], "replace", owner, chat))
+            await embedder.entered.wait()
+            kind, value = await decision(sessions, embedder, detail["token"], "discard", owner, chat)
+            assert kind == "ok" and value["status"] == "discarded"
+            embedder.release.set()
+            kind, value = await replacing
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "DECISION_ALREADY_FINAL"
+            memories, decisions = await rows(sessions, owner)
+            assert [(content, status) for content, _, status in memories] == [("I prefer tea", "active")]
+            assert [(revision, choice, outcome) for revision, choice, outcome, _, _ in decisions] == [
+                (1, "save", "saved"),
+                (2, "discard", "discarded"),
+            ]
         finally:
             await engine.dispose()
 

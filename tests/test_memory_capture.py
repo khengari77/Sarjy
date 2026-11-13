@@ -371,80 +371,272 @@ def test_worker_decides_once_when_a_message_is_compiled_twice():
     assert paths.count("/internal/agent/memory/confirm") == 1
 
 
-def test_concurrent_confirms_never_leave_contradictory_active_rows(tmp_path):
+SECRET = "capture-secret"
+
+
+class _PausingEmbedder(FakeEmbedder):
+    """Pause inside the embedding boundary to force an overlapping decision."""
+
+    def __init__(self):
+        super().__init__()
+        self.pause = False
+        self.entered = None
+        self.release = None
+
+    async def embed(self, db, text):
+        if self.pause:
+            self.entered.set()
+            await self.release.wait()
+        return await super().embed(db, text)
+
+
+def _capture_harness(tmp_path):
+    """Seed a SQLite capture store and return sessions plus proposal helpers."""
+
     import asyncio
 
-    from app.domain.context_operations import sign_proposal
     from app.infrastructure.database import Base, Conversation, Identity, Turn
     from app.services.memory import MemoryService
-    from app.services.memory_capture import confirm_memory
-    from sqlalchemy import select
+    from app.services.memory_capture import MemoryCaptureError, confirm_memory, propose_memory
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    file = tmp_path / "concurrent.db"
-    secret = "capture-secret"
-
-    async def run():
+    async def open_store(name, texts):
+        file = tmp_path / name
         engine = create_async_engine(f"sqlite+aiosqlite:///{file}")
         sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with engine.begin() as db:
+            await db.run_sync(Base.metadata.create_all)
+        async with sessions() as db:
+            db.add(Identity(id="owner", token_hash="owner", expires_at="2030"))
+            await db.commit()
+            db.add(Conversation(id="chat", owner_id="owner"))
+            await db.commit()
+            for index, text in enumerate(texts):
+                db.add(
+                    Turn(
+                        id=f"turn-{index}",
+                        conversation_id="chat",
+                        request_id=f"request-{index}",
+                        role="user",
+                        text=text,
+                    )
+                )
+            await db.commit()
+        return engine, sessions
+
+    def proposal(text, index):
+        return propose_memory(
+            text,
+            owner_id="owner",
+            conversation_id="chat",
+            source_turn_id=f"turn-{index}",
+            secret=SECRET,
+        )
+
+    async def decision(sessions, embedder, token, value):
+        async with sessions() as db:
+            try:
+                return "ok", await confirm_memory(
+                    db,
+                    MemoryService(db, embedder),
+                    token=token,
+                    decision=value,
+                    owner_id="owner",
+                    conversation_id="chat",
+                    source_turn_id=None,
+                    secret=SECRET,
+                )
+            except MemoryCaptureError as exc:
+                return "error", exc
+
+    async def rows(sessions):
+        from app.infrastructure.database import MemoryCaptureDecision
+        from sqlalchemy import select
+
+        async with sessions() as db:
+            memories = list(
+                await db.scalars(select(Memory).where(Memory.owner_id == "owner").order_by(Memory.created_at))
+            )
+            decisions = list(
+                await db.scalars(
+                    select(MemoryCaptureDecision).order_by(
+                        MemoryCaptureDecision.revision, MemoryCaptureDecision.created_at
+                    )
+                )
+            )
+        return (
+            [(row.content, row.version, row.status) for row in memories],
+            [(row.revision, row.decision, row.outcome, row.target_id, row.target_version) for row in decisions],
+        )
+
+    return asyncio, open_store, proposal, decision, rows, MemoryCaptureError
+
+
+def test_concurrent_confirms_never_leave_contradictory_active_rows(tmp_path):
+    asyncio, open_store, proposal, decision, rows, MemoryCaptureError = _capture_harness(tmp_path)
+
+    async def run():
+        engine, sessions = await open_store("concurrent.db", ["I prefer tea", "I prefer coffee now"])
+        embedder = FakeEmbedder()
         try:
-            async with engine.begin() as db:
-                await db.run_sync(Base.metadata.create_all)
-            owner, chat = "owner", "chat"
-            async with sessions() as db:
-                db.add(Identity(id=owner, token_hash=owner, expires_at="2030"))
-                await db.commit()
-                db.add(Conversation(id=chat, owner_id=owner))
-                await db.commit()
-                db.add_all(
-                    [
-                        Turn(id="turn-tea", conversation_id=chat, request_id="tea", role="user", text="tea"),
-                        Turn(id="turn-coffee", conversation_id=chat, request_id="coffee", role="user", text="coffee"),
-                    ]
-                )
-                await db.commit()
+            tea = proposal("I prefer tea", 0)
+            coffee = proposal("I prefer coffee now", 1)
+            outcomes = await asyncio.gather(
+                decision(sessions, embedder, tea["token"], "save"),
+                decision(sessions, embedder, coffee["token"], "save"),
+            )
+            successes = [value for kind, value in outcomes if kind == "ok"]
+            conflicts = [value for kind, value in outcomes if kind == "error"]
+            assert len(successes) == 1 and successes[0]["status"] == "saved"
+            assert len(conflicts) == 1
+            assert isinstance(conflicts[0], MemoryCaptureError)
+            assert conflicts[0].code == "MEMORY_CLARIFICATION_REQUIRED"
+            memories, decisions = await rows(sessions)
+            assert len([row for row in memories if row[2] == "active"]) == 1
+            outcomes = {(revision, outcome) for revision, _, outcome, _, _ in decisions}
+            assert outcomes == {(1, "saved"), (2, "awaiting_confirmation")}
+        finally:
+            await engine.dispose()
 
-            def token(content, turn):
-                return sign_proposal(
-                    {
-                        "v": 1,
-                        "kind": "memory_capture",
-                        "owner_id": owner,
-                        "conversation_id": chat,
-                        "source_turn_id": turn,
-                        "content": content,
-                        "subject": parse_capture(content).subject,
-                        "value": parse_capture(content).value,
-                        "explicit": False,
-                        "exp": 9999999999,
-                    },
-                    secret,
-                )
+    asyncio.run(run())
 
-            tea, coffee = token("I prefer tea", "turn-tea"), token("I prefer coffee now", "turn-coffee")
 
-            async def apply(value):
-                async with sessions() as db:
-                    try:
-                        return await confirm_memory(
-                            db,
-                            MemoryService(db, FakeEmbedder()),
-                            token=value,
-                            decision="save",
-                            owner_id=owner,
-                            conversation_id=chat,
-                            source_turn_id=None,
-                            secret=secret,
-                        )
-                    except Exception as exc:  # clarification is acceptable; contradiction is not
-                        return {"status": type(exc).__name__}
+def test_concurrent_save_and_discard_claim_one_revision(tmp_path, monkeypatch):
+    asyncio, open_store, proposal, decision, rows, MemoryCaptureError = _capture_harness(tmp_path)
 
-            await asyncio.gather(apply(tea), apply(coffee))
-            async with sessions() as db:
-                active = list(
-                    await db.scalars(select(Memory).where(Memory.owner_id == owner, Memory.status == "active"))
-                )
-            assert len(active) <= 1
+    async def run():
+        from app.services import memory_capture as capture_service
+
+        # Save claims first, then pauses in the embedder; discard must lose.
+        engine, sessions = await open_store("save-wins.db", ["I prefer tea"])
+        embedder = _PausingEmbedder()
+        embedder.entered, embedder.release = asyncio.Event(), asyncio.Event()
+        request = proposal("I prefer tea", 0)
+        try:
+            embedder.pause = True
+            saving = asyncio.create_task(decision(sessions, embedder, request["token"], "save"))
+            await embedder.entered.wait()
+            kind, value = await decision(sessions, embedder, request["token"], "discard")
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "MEMORY_DECISION_IN_PROGRESS"
+            embedder.release.set()
+            kind, value = await saving
+            assert kind == "ok" and value["status"] == "saved"
+            memories, decisions = await rows(sessions)
+            assert memories == [("I prefer tea", 1, "active")]
+            assert [(revision, choice, outcome) for revision, choice, outcome, _, _ in decisions] == [
+                (1, "save", "saved")
+            ]
+        finally:
+            await engine.dispose()
+
+        # Discard claims first; the paused save must observe a terminal receipt.
+        engine, sessions = await open_store("discard-wins.db", ["I prefer coffee"])
+        embedder = _PausingEmbedder()
+        embedder.entered, embedder.release = asyncio.Event(), asyncio.Event()
+        request = proposal("I prefer coffee", 0)
+        original = capture_service._claim_decision
+
+        async def gated_claim(db, *, decision, **kwargs):
+            if decision == "save":
+                embedder.entered.set()
+                await embedder.release.wait()
+            return await original(db, decision=decision, **kwargs)
+
+        monkeypatch.setattr(capture_service, "_claim_decision", gated_claim)
+        try:
+            saving = asyncio.create_task(decision(sessions, embedder, request["token"], "save"))
+            await embedder.entered.wait()
+            kind, value = await decision(sessions, embedder, request["token"], "discard")
+            assert kind == "ok" and value["status"] == "discarded"
+            embedder.release.set()
+            kind, value = await saving
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "DECISION_ALREADY_FINAL"
+            memories, decisions = await rows(sessions)
+            assert memories == []
+            assert [(revision, choice, outcome) for revision, choice, outcome, _, _ in decisions] == [
+                (1, "discard", "discarded")
+            ]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_concurrent_replace_and_discard_claim_one_clarification(tmp_path, monkeypatch):
+    asyncio, open_store, proposal, decision, rows, MemoryCaptureError = _capture_harness(tmp_path)
+
+    async def clarification(sessions, embedder):
+        first = proposal("I prefer tea", 0)
+        kind, value = await decision(sessions, embedder, first["token"], "save")
+        assert kind == "ok" and value["status"] == "saved"
+        second = proposal("I prefer coffee", 1)
+        kind, value = await decision(sessions, embedder, second["token"], "save")
+        assert kind == "error" and isinstance(value, MemoryCaptureError)
+        assert value.code == "MEMORY_CLARIFICATION_REQUIRED"
+        return value.details
+
+    async def run():
+        from app.services import memory_capture as capture_service
+
+        # Replace claims first, then pauses in the embedder; discard must lose.
+        engine, sessions = await open_store("replace-wins.db", ["I prefer tea", "I prefer coffee"])
+        embedder = _PausingEmbedder()
+        embedder.entered, embedder.release = asyncio.Event(), asyncio.Event()
+        try:
+            detail = await clarification(sessions, embedder)
+            embedder.pause = True
+            replacing = asyncio.create_task(decision(sessions, embedder, detail["token"], "replace"))
+            await embedder.entered.wait()
+            kind, value = await decision(sessions, embedder, detail["token"], "discard")
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "MEMORY_DECISION_IN_PROGRESS"
+            embedder.release.set()
+            kind, value = await replacing
+            assert kind == "ok" and value["status"] == "corrected"
+            memories, decisions = await rows(sessions)
+            assert [(content, status) for content, _, status in memories] == [
+                ("I prefer tea", "superseded"),
+                ("I prefer coffee", "active"),
+            ]
+            assert [(revision, choice, outcome, target) for revision, choice, outcome, target, _ in decisions] == [
+                (1, "save", "saved", None),
+                (2, "replace", "corrected", detail["target_id"]),
+            ]
+            assert all(outcome != "discarded" for _, _, outcome, _, _ in decisions)
+        finally:
+            await engine.dispose()
+
+        # Discard claims first; the paused replace must report a typed conflict.
+        engine, sessions = await open_store("replace-loses.db", ["I prefer tea", "I prefer coffee"])
+        embedder = _PausingEmbedder()
+        embedder.entered, embedder.release = asyncio.Event(), asyncio.Event()
+        detail = await clarification(sessions, embedder)
+        original = capture_service._claim_decision
+
+        async def gated_claim(db, *, decision, **kwargs):
+            if decision == "replace":
+                embedder.entered.set()
+                await embedder.release.wait()
+            return await original(db, decision=decision, **kwargs)
+
+        monkeypatch.setattr(capture_service, "_claim_decision", gated_claim)
+        try:
+            replacing = asyncio.create_task(decision(sessions, embedder, detail["token"], "replace"))
+            await embedder.entered.wait()
+            kind, value = await decision(sessions, embedder, detail["token"], "discard")
+            assert kind == "ok" and value["status"] == "discarded"
+            embedder.release.set()
+            kind, value = await replacing
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "DECISION_ALREADY_FINAL"
+            memories, decisions = await rows(sessions)
+            assert [(content, status) for content, _, status in memories] == [("I prefer tea", "active")]
+            assert [(revision, choice, outcome) for revision, choice, outcome, _, _ in decisions] == [
+                (1, "save", "saved"),
+                (2, "discard", "discarded"),
+            ]
         finally:
             await engine.dispose()
 

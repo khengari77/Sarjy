@@ -7,7 +7,8 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.context_operations import sign_proposal, verify_proposal
@@ -19,6 +20,7 @@ CAPTURE_KIND = "memory_capture"
 PROPOSAL_TTL_SECONDS = 600
 LEGACY_SUBJECT_SCAN = 500
 LEGACY_SUBJECT_SCAN_MAX = 5000
+TERMINAL_OUTCOMES = frozenset({"saved", "corrected", "retracted", "discarded"})
 _SUBJECT_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
 
 
@@ -153,6 +155,174 @@ async def _decision(db: AsyncSession, confirmation_id: str, revision: int):
     return await db.get(MemoryCaptureDecision, (confirmation_id, revision))
 
 
+def _decision_values(
+    *,
+    payload: dict,
+    owner_id: str,
+    conversation_id: str,
+    token: str,
+    decision: str,
+    outcome: str,
+    result: dict | None = None,
+    target: Memory | None = None,
+) -> dict:
+    return {
+        "confirmation_id": payload["confirmation_id"],
+        "revision": int(payload["revision"]),
+        "owner_id": owner_id,
+        "conversation_id": conversation_id,
+        "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+        "decision": decision,
+        "outcome": outcome,
+        "target_id": target.id if target is not None else payload.get("target_id"),
+        "target_version": target.version if target is not None else payload.get("target_version"),
+        "result": result,
+        "created_at": now(),
+        "expires_at": datetime.fromtimestamp(int(payload["exp"]), UTC).isoformat(),
+    }
+
+
+def _replay_response(row, decision: str, payload: dict) -> dict:
+    """Return a stored terminal response only for the same decision/target."""
+    target_matches = decision != "replace" or row.target_id == payload.get("target_id")
+    if row.decision != decision or not target_matches:
+        raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=row.outcome)
+    response = dict(row.result or {"status": row.outcome})
+    response["idempotent"] = True
+    return response
+
+
+async def _claim_decision(
+    db: AsyncSession,
+    *,
+    payload: dict,
+    owner_id: str,
+    conversation_id: str,
+    token: str,
+    decision: str,
+    target: Memory | None = None,
+):
+    """Durably claim one proposal revision for one decision.
+
+    The conditional write is committed before any embedding or memory effect so
+    a concurrent request cannot apply a different decision to the same revision.
+    Returns an existing terminal row for idempotent replay, otherwise ``None``.
+
+    Limitation: a process crash after this commit but before the effect leaves
+    the revision ``applying``. Retries then fail closed with
+    ``MEMORY_DECISION_IN_PROGRESS`` rather than risk a duplicate write; an
+    operator must reconcile that revision.
+    """
+    from app.infrastructure.database import MemoryCaptureDecision
+
+    confirmation_id = payload["confirmation_id"]
+    revision = int(payload["revision"])
+    for _ in range(3):
+        row = await _decision(db, confirmation_id, revision)
+        if row is None:
+            if decision not in {"save", "discard"}:
+                # A replacement needs an existing awaiting_confirmation row;
+                # the caller handles recovery or refuses without a claim.
+                return None
+            values = _decision_values(
+                payload=payload,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                token=token,
+                decision=decision,
+                outcome="applying",
+                target=target,
+            )
+            try:
+                db.add(MemoryCaptureDecision(**values))
+                await db.commit()
+                return None
+            except IntegrityError:
+                # Another request inserted first; re-read and honour its claim.
+                await db.rollback()
+                continue
+        if row.outcome == "applying":
+            raise MemoryCaptureError("MEMORY_DECISION_IN_PROGRESS", 409, decision=row.decision)
+        if row.outcome in TERMINAL_OUTCOMES:
+            return row
+        if row.outcome != "awaiting_confirmation":
+            raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=row.outcome)
+        if decision not in {"replace", "discard"}:
+            raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=row.outcome)
+        values = _decision_values(
+            payload=payload,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            token=token,
+            decision=decision,
+            outcome="applying",
+            target=target,
+        )
+        changed = await db.execute(
+            update(MemoryCaptureDecision)
+            .where(
+                MemoryCaptureDecision.confirmation_id == confirmation_id,
+                MemoryCaptureDecision.revision == revision,
+                MemoryCaptureDecision.outcome == "awaiting_confirmation",
+            )
+            .values(**values)
+        )
+        if changed.rowcount == 1:
+            await db.commit()
+            return None
+        await db.rollback()
+    raise MemoryCaptureError("MEMORY_DECISION_IN_PROGRESS", 409, decision=decision)
+
+
+async def _release_claim(
+    db: AsyncSession,
+    *,
+    payload: dict,
+    decision: str,
+    awaiting: bool = False,
+) -> None:
+    """Undo an uncommitted claim after a synchronous pre-effect failure.
+
+    Crashes intentionally leave the claim ``applying``; this helper is only for
+    failures the process observed and can safely retry.
+    """
+    from app.infrastructure.database import MemoryCaptureDecision
+
+    query = delete(MemoryCaptureDecision).where(
+        MemoryCaptureDecision.confirmation_id == payload["confirmation_id"],
+        MemoryCaptureDecision.revision == int(payload["revision"]),
+        MemoryCaptureDecision.outcome == "applying",
+        MemoryCaptureDecision.decision == decision,
+    )
+    if awaiting:
+        await db.execute(
+            update(MemoryCaptureDecision)
+            .where(
+                MemoryCaptureDecision.confirmation_id == payload["confirmation_id"],
+                MemoryCaptureDecision.revision == int(payload["revision"]),
+                MemoryCaptureDecision.outcome == "applying",
+                MemoryCaptureDecision.decision == decision,
+            )
+            .values(outcome="awaiting_confirmation", decision="clarify", result=None)
+        )
+    else:
+        await db.execute(query)
+    await db.commit()
+
+
+def _apply_decision_row(row, *, values: dict, decision: str, result: dict | None) -> dict | None:
+    """Update an existing claimed row, or replay a terminal receipt."""
+    if row.outcome == "applying":
+        if row.decision != decision:
+            raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=row.outcome)
+        for key, value in values.items():
+            setattr(row, key, value)
+        return None
+    if row.outcome in TERMINAL_OUTCOMES and row.decision == decision:
+        return result or dict(row.result or {"status": row.outcome})
+    raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=row.outcome)
+
+
 async def _record_decision(
     db: AsyncSession,
     *,
@@ -165,30 +335,48 @@ async def _record_decision(
     result: dict | None = None,
     target: Memory | None = None,
     commit: bool = True,
+    attempt: int = 0,
 ) -> dict:
+    """Record an outcome without ever overwriting a terminal receipt."""
     from app.infrastructure.database import MemoryCaptureDecision
 
-    revision = int(payload["revision"])
-    row = await _decision(db, payload["confirmation_id"], revision)
-    values = {
-        "confirmation_id": payload["confirmation_id"],
-        "revision": revision,
-        "owner_id": owner_id,
-        "conversation_id": conversation_id,
-        "token_hash": hashlib.sha256(token.encode()).hexdigest(),
-        "decision": decision,
-        "outcome": outcome,
-        "target_id": target.id if target is not None else payload.get("target_id"),
-        "target_version": target.version if target is not None else payload.get("target_version"),
-        "result": result,
-        "created_at": now(),
-        "expires_at": datetime.fromtimestamp(int(payload["exp"]), UTC).isoformat(),
-    }
+    row = await _decision(db, payload["confirmation_id"], int(payload["revision"]))
+    values = _decision_values(
+        payload=payload,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        token=token,
+        decision=decision,
+        outcome=outcome,
+        result=result,
+        target=target,
+    )
     if row is None:
         db.add(MemoryCaptureDecision(**values))
-    else:
-        for key, value in values.items():
-            setattr(row, key, value)
+        if commit:
+            try:
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()
+                if attempt >= 2:
+                    raise
+                return await _record_decision(
+                    db,
+                    payload=payload,
+                    owner_id=owner_id,
+                    conversation_id=conversation_id,
+                    token=token,
+                    decision=decision,
+                    outcome=outcome,
+                    result=result,
+                    target=target,
+                    commit=commit,
+                    attempt=attempt + 1,
+                )
+        return result or {"status": outcome}
+    replayed = _apply_decision_row(row, values=values, decision=decision, result=result)
+    if replayed is not None:
+        return replayed
     if commit:
         await db.commit()
     return result or {"status": outcome}
@@ -260,37 +448,25 @@ async def _contradictions(db: AsyncSession, *, owner_id: str, capture: MemoryCap
 
 async def _discard(
     db: AsyncSession,
-    existing,
     *,
-    confirmation_id: str,
-    revision: int,
     payload: dict,
     owner_id: str,
     conversation_id: str,
     token: str,
 ) -> dict:
-    from sqlalchemy import update as sql_update
-
-    from app.infrastructure.database import MemoryCaptureDecision
-
     response = {"status": "discarded", "memory": None}
-    if existing is not None:
-        # A clarification revision is still consent-free; declining it must be
-        # recorded and must close replacement authority atomically.
-        changed = await db.execute(
-            sql_update(MemoryCaptureDecision)
-            .where(
-                MemoryCaptureDecision.confirmation_id == confirmation_id,
-                MemoryCaptureDecision.revision == revision,
-                MemoryCaptureDecision.outcome == "awaiting_confirmation",
-            )
-            .values(decision="discard", outcome="discarded", result=response, created_at=now())
-        )
-        if changed.rowcount != 1:
-            await db.rollback()
-            raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome="discarded")
-        await db.commit()
-        return response
+    # Claiming the revision before recording success means a losing discard can
+    # never report ``discarded`` when a concurrent save/replace owns the effect.
+    claimed = await _claim_decision(
+        db,
+        payload=payload,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        token=token,
+        decision="discard",
+    )
+    if claimed is not None:
+        return _replay_response(claimed, "discard", payload)
     await _record_decision(
         db,
         payload=payload,
@@ -331,19 +507,17 @@ async def confirm_memory(
     revision = int(payload["revision"])
 
     existing = await _decision(db, confirmation_id, revision)
-    if existing is not None and existing.outcome != "awaiting_confirmation":
-        if existing.decision == decision and existing.target_id == payload.get("target_id"):
-            response = dict(existing.result or {"status": existing.outcome})
-            response["idempotent"] = True
-            return response
-        raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=existing.outcome)
+    if existing is not None:
+        if existing.outcome == "applying":
+            # A claim is not a receipt: never report success for an effect whose
+            # outcome this process cannot observe (for example after a crash).
+            raise MemoryCaptureError("MEMORY_DECISION_IN_PROGRESS", 409, decision=existing.decision)
+        if existing.outcome != "awaiting_confirmation":
+            return _replay_response(existing, decision, payload)
 
     if decision == "discard":
         return await _discard(
             db,
-            existing,
-            confirmation_id=confirmation_id,
-            revision=revision,
             payload=payload,
             owner_id=owner_id,
             conversation_id=conversation_id,
@@ -503,24 +677,31 @@ async def _apply_consent(
     secret: str,
 ) -> dict:
     async with _subject_lock(owner_id, capture.subject):
-        if db.bind is not None and db.bind.dialect.name == "postgresql":
-            # Cross-process serialization for the same owner/subject decision.
-            await db.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-                {"key": f"memcap:{owner_id}:{capture.subject or capture.text}"},
+        key = f"memcap:{owner_id}:{capture.subject or capture.text}"
+        advisory = db.bind is not None and db.bind.dialect.name == "postgresql"
+        if advisory:
+            # Session-level (not transaction-level) so the lock survives the
+            # durable decision-claim commit before the memory effect.
+            await db.execute(text("SELECT pg_advisory_lock(hashtext(:key))"), {"key": key})
+        try:
+            return await _write_consented(
+                db,
+                memory_service,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                proposed_turn=proposed_turn,
+                source_turn_id=source_turn_id,
+                capture=capture,
+                payload=payload,
+                token=token,
+                secret=secret,
             )
-        return await _write_consented(
-            db,
-            memory_service,
-            owner_id=owner_id,
-            conversation_id=conversation_id,
-            proposed_turn=proposed_turn,
-            source_turn_id=source_turn_id,
-            capture=capture,
-            payload=payload,
-            token=token,
-            secret=secret,
-        )
+        finally:
+            if advisory:
+                if db.in_transaction():
+                    await db.rollback()
+                await db.execute(text("SELECT pg_advisory_unlock(hashtext(:key))"), {"key": key})
+                await db.commit()
 
 
 def _conflict_rows(rows: list[Memory], capture: MemoryCapture) -> list[Memory]:
@@ -546,18 +727,19 @@ async def _clarify(
     clarified, revision = _clarification_token(payload, secret, target=target)
     revised = {**payload, "revision": revision, "target_id": target.id, "target_version": target.version}
     prior = await _decision(db, payload["confirmation_id"], revision)
-    if prior is not None and prior.outcome != "awaiting_confirmation":
+    if prior is None:
+        await _record_decision(
+            db,
+            payload=revised,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            token=clarified,
+            decision="clarify",
+            outcome="awaiting_confirmation",
+            target=target,
+        )
+    elif prior.outcome != "awaiting_confirmation":
         raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=prior.outcome)
-    await _record_decision(
-        db,
-        payload=revised,
-        owner_id=owner_id,
-        conversation_id=conversation_id,
-        token=clarified,
-        decision="clarify",
-        outcome="awaiting_confirmation",
-        target=target,
-    )
     raise MemoryCaptureError(
         "MEMORY_CLARIFICATION_REQUIRED",
         409,
@@ -632,9 +814,25 @@ async def _write_consented(
             secret=secret,
             target=conflicting[0],
         )
-    result = await memory_service.create_memory(
-        owner_id, conversation_id, source_turn_id or proposed_turn, capture.text, key
+    claimed = await _claim_decision(
+        db,
+        payload=payload,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        token=token,
+        decision="save",
     )
+    if claimed is not None:
+        return _replay_response(claimed, "save", payload)
+    try:
+        result = await memory_service.create_memory(
+            owner_id, conversation_id, source_turn_id or proposed_turn, capture.text, key
+        )
+    except Exception:
+        # No memory effect was observed; release the claim so a retry can
+        # proceed. A crash (not an observed failure) leaves it ``applying``.
+        await _release_claim(db, payload=payload, decision="save")
+        raise
     response = {"status": "saved", "memory": asdict(result)}
     await _record_decision(
         db,
@@ -706,34 +904,48 @@ async def _replace_target(
         raise MemoryCaptureError("MEMORY_FRESH_CONFIRMATION_REQUIRED", 409, target_id=target_id)
     if target is None or target.version != target_version:
         raise MemoryCaptureError("TARGET_CHANGED", 409, target_id=target_id)
-    if capture.negated:
-        changed = await db.execute(
-            update(Memory)
-            .where(
-                Memory.id == target_id,
-                Memory.owner_id == owner_id,
-                Memory.status == "active",
-                Memory.version == target_version,
+    # Validate before claiming so an already-stale clarification is not turned
+    # into an in-progress claim; the correction itself still re-checks version.
+    claimed = await _claim_decision(
+        db,
+        payload=payload,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        token=token,
+        decision="replace",
+        target=target,
+    )
+    if claimed is not None:
+        return _replay_response(claimed, "replace", payload)
+    try:
+        if capture.negated:
+            changed = await db.execute(
+                update(Memory)
+                .where(
+                    Memory.id == target_id,
+                    Memory.owner_id == owner_id,
+                    Memory.status == "active",
+                    Memory.version == target_version,
+                )
+                .values(status="superseded", version=Memory.version + 1, updated_at=now())
             )
-            .values(status="superseded", version=Memory.version + 1, updated_at=now())
-        )
-        if changed.rowcount != 1:
-            raise MemoryCaptureError("TARGET_CHANGED", 409, target_id=target_id)
-        response = {"status": "retracted", "memory": None}
-        await _record_decision(
-            db,
-            payload=payload,
-            owner_id=owner_id,
-            conversation_id=conversation_id,
-            token=token,
-            decision="replace",
-            outcome=response["status"],
-            result=response,
-            target=target,
-            commit=False,
-        )
-        await db.commit()
-    else:
+            if changed.rowcount != 1:
+                raise MemoryCaptureError("TARGET_CHANGED", 409, target_id=target_id)
+            response = {"status": "retracted", "memory": None}
+            await _record_decision(
+                db,
+                payload=payload,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                token=token,
+                decision="replace",
+                outcome=response["status"],
+                result=response,
+                target=target,
+                commit=False,
+            )
+            await db.commit()
+            return response
         key = _request_key(owner_id, f"{proposed_turn}:replace:{payload['revision']}", capture.text)
         try:
             result = await memory_service.correct_memory(
@@ -754,18 +966,24 @@ async def _replace_target(
                 raise MemoryCaptureError("TARGET_CHANGED", 409, target_id=target_id) from exc
             raise
         response = {"status": "corrected", "memory": asdict(result)}
-    await _record_decision(
-        db,
-        payload=payload,
-        owner_id=owner_id,
-        conversation_id=conversation_id,
-        token=token,
-        decision="replace",
-        outcome=response["status"],
-        result=response,
-        target=target,
-    )
-    return response
+        await _record_decision(
+            db,
+            payload=payload,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            token=token,
+            decision="replace",
+            outcome=response["status"],
+            result=response,
+            target=target,
+        )
+        return response
+    except Exception:
+        # The observed failure happened before a memory effect; restore the
+        # clarification so a retry can decide again. A crashed process leaves
+        # the claim ``applying`` and retries fail closed with 409.
+        await _release_claim(db, payload=payload, decision="replace", awaiting=True)
+        raise
 
 
 __all__ = [
