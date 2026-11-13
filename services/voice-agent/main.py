@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from app.domain.budget import DEEPSEEK_MAX_REQUEST_BYTES
 from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolItem, ToolSpec
 from app.domain.tool_operations import operation_key
 from config import provider_credentials, read_worker_environment, require_values
@@ -42,6 +43,10 @@ MAX_TIER_OUTPUT_TOKENS = 1024
 MAX_CONTEXT_BYTES = 64000
 MAX_TOOLS = 1
 GENERATION_ATTEMPT_SECONDS = 30.0
+
+
+def deepseek_request_within_bounds(serialized: bytes) -> bool:
+    return len(serialized) <= DEEPSEEK_MAX_REQUEST_BYTES
 
 
 def openai_request_within_bounds(serialized: bytes, tools: list, max_output_tokens: int) -> bool:
@@ -173,9 +178,6 @@ class SarjyAgent(Agent):
         request = snapshot_request(snapshot, self.current_turn)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
         request = _with_continuation(request, _continuation(chat_ctx, user), schemas)
-        if self.pipeline["llm"]["provider"] == "openai_direct":
-            self._require_openai_bounds(request, tools)
-            await self.reserve("openai")
         async for chunk in self._stream_with_fallback(
             request, tools, model_settings.tool_choice if model_settings else None
         ):
@@ -202,6 +204,18 @@ class SarjyAgent(Agent):
         task = asyncio.create_task(persist_playout())
         self.pending.add(task)
         task.add_done_callback(self.pending.discard)
+
+    def _require_deepseek_bounds(self, request: ModelRequest) -> None:
+        serialized = json.dumps(
+            {
+                key: value
+                for key, value in request.model_dump(mode="json").items()
+                if key in {"messages", "tool_history", "tools"}
+            },
+            ensure_ascii=False,
+        ).encode()
+        if not deepseek_request_within_bounds(serialized):
+            raise ValueError("DEEPSEEK_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS")
 
     def _require_openai_bounds(self, request: ModelRequest, tools) -> None:
         serialized = json.dumps(
@@ -245,6 +259,14 @@ class SarjyAgent(Agent):
     async def _stream_with_fallback(self, request, tools, tool_choice):
         primary_kind = self.pipeline["llm"]["provider"]
         emitted = False
+        if primary_kind == "openai_direct":
+            self._require_openai_bounds(request, tools)
+            await self.reserve("openai")
+        elif primary_kind == "deepseek_direct":
+            self._require_deepseek_bounds(request)
+            await self.reserve("deepseek")
+        else:
+            raise ValueError("UNSUPPORTED_GENERATION_PROVIDER")
         try:
             async for event in self._stream_attempt(self.session.llm, primary_kind, request, tools, tool_choice):
                 if event.kind in {"text", "tool"}:

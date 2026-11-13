@@ -37,7 +37,7 @@ from app.services.weather import WeatherError, get_current_weather
 
 
 class BudgetReservation(BaseModel):
-    provider: Literal["openai", "elevenlabs"]
+    provider: Literal["openai", "elevenlabs", "deepseek"]
     characters: int = Field(default=0, ge=0, le=500)
 
 
@@ -94,8 +94,21 @@ def _register_budget_routes(app, *, config: Settings, database):
             request.headers.get("x-agent-secret", ""), config.agent_service_secret
         ):
             raise HTTPException(401)
+        if body.provider == "deepseek" and not config.deepseek_budget_enabled:
+            return {
+                "provider": "deepseek",
+                "enabled": False,
+                "reserved_units": 0,
+                "remaining_units": None,
+                "unit": "micro_usd",
+            }
+        overrides = (
+            {"units": config.deepseek_request_micro_usd, "limit": config.deepseek_daily_micro_usd}
+            if body.provider == "deepseek"
+            else {}
+        )
         try:
-            return await reserve_development_budget(db, body.provider, body.characters)
+            return await reserve_development_budget(db, body.provider, body.characters, **overrides)
         except ValueError as exc:
             raise HTTPException(429, detail={"code": str(exc)}) from exc
 
