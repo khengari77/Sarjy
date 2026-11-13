@@ -14,7 +14,7 @@ import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from app.domain.contracts import ContextEntry, ContextSelection
 
@@ -23,9 +23,11 @@ DEFAULT_MAX_CHARS = 16000
 DEFAULT_ALLOWED_ORIGINS: frozenset[str] = frozenset({"system", "history", "memory", "tool"})
 DEFAULT_PERMITTED_TOOLS: frozenset[str] = frozenset({"get_current_weather"})
 PROVIDER_ROLES = frozenset({"system", "user", "assistant"})
+LOWER_TRUST_ROLES = frozenset({"memory", "tool"})
 
 Origin = Literal["system", "history", "memory", "tool"]
 CandidateRole = Literal["system", "user", "assistant", "memory", "tool"]
+ProviderRole = Literal["system", "user", "assistant"]
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,28 @@ def canonical_messages(messages: Sequence[Mapping[str, str]]) -> str:
 
 def prompt_sha256(messages: Sequence[Mapping[str, str]]) -> str:
     return hashlib.sha256(canonical_messages(messages).encode("utf-8")).hexdigest()
+
+
+def provider_role(role: CandidateRole) -> ProviderRole:
+    """Map a selection role onto the only provider roles the boundary permits.
+
+    Stored memory and external tool output are data, never instructions. They
+    keep their provenance in ``ContextEntry.role`` but reach the provider as
+    ordinary user-role content.
+    """
+    return cast(ProviderRole, role) if role in PROVIDER_ROLES else "user"
+
+
+def untrusted_data_message(record_id: str, origin: Literal["memory", "tool"], text: str) -> str:
+    """Render one lower-trust record as an inert JSON envelope.
+
+    JSON encoding the original text means nested quotes, delimiters and
+    newlines cannot escape the data boundary. The short prefix keeps the
+    message readable while the envelope carries provenance and the source id.
+    """
+    label = "Memory" if origin == "memory" else "Tool result"
+    envelope = canonical_json({"id": record_id, "origin": origin, "text": text, "trust": "untrusted"})
+    return f"{label} (untrusted {origin} data, id={record_id}): {envelope}"
 
 
 @dataclass(frozen=True)
@@ -226,13 +250,13 @@ def _select_messages(
 
     selected: list[tuple[str, CandidateRole, str]] = [("system", "system", instructions)]
     selected.extend(
-        (candidate.id, "memory", f"Memory: {candidate.text}")
+        (candidate.id, "memory", untrusted_data_message(candidate.id, "memory", candidate.text))
         for candidate in sorted(memories, key=lambda item: item.id)
         if eligible(candidate)
     )
     selected.extend((candidate.id, candidate.role, candidate.text) for candidate in history if eligible(candidate))
     selected.extend(
-        (candidate.id, "tool", f"Tool result ({candidate.source}): {candidate.text}")
+        (candidate.id, "tool", untrusted_data_message(candidate.id, "tool", candidate.text))
         for candidate in sorted(tool_results, key=lambda item: item.id)
         if eligible(candidate)
     )
@@ -287,8 +311,7 @@ def _render(
     included_ids: list[str] = []
     selection_entries: list[ContextEntry] = []
     for record_id, role, text in kept:
-        provider_role = role if role in PROVIDER_ROLES else "system"
-        messages.append({"role": provider_role, "content": text})
+        messages.append({"role": provider_role(role), "content": text})
         included_ids.append(record_id)
         selection_entries.append(ContextEntry(id=record_id, role=role, text=text[:16000]))
     return messages, included_ids, selection_entries
@@ -354,10 +377,13 @@ __all__ = [
     "DEFAULT_ALLOWED_ORIGINS",
     "DEFAULT_MAX_CHARS",
     "DEFAULT_PERMITTED_TOOLS",
+    "LOWER_TRUST_ROLES",
     "PROVIDER_CAPTURE",
     "canonical_json",
     "canonical_messages",
     "compile_turn_context",
     "prompt_sha256",
+    "provider_role",
+    "untrusted_data_message",
     "validate_assembly",
 ]
