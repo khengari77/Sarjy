@@ -78,22 +78,24 @@ def _verified(token: str, secret: str, owner_id: str, conversation_id: str) -> M
     return capture
 
 
-async def _existing_content(db: AsyncSession, *, owner_id: str, capture: MemoryCapture) -> Memory | None:
-    return await db.scalar(
-        select(Memory)
-        .where(Memory.owner_id == owner_id, func.lower(Memory.content) == capture.text.casefold())
-        .order_by(Memory.updated_at.desc())
-        .limit(1)
-    )
+async def _exact_content(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    capture: MemoryCapture,
+    status: str | None = None,
+    source_turn_id: str | None = None,
+) -> Memory | None:
+    query = select(Memory).where(Memory.owner_id == owner_id, func.lower(Memory.content) == capture.text.casefold())
+    if status is not None:
+        query = query.where(Memory.status == status)
+    if source_turn_id is not None:
+        query = query.where(Memory.source_turn_id == source_turn_id)
+    return await db.scalar(query.order_by(Memory.updated_at.desc()).limit(1))
 
 
 async def _contradictions(db: AsyncSession, *, owner_id: str, capture: MemoryCapture) -> list[Memory]:
     if capture.subject is None:
-        return []
-    if capture.subject == "diet":
-        # Allergies and diets are additive unless an explicit correction flow exists.
-        return []
-    if capture.subject == "preference" and not capture.replaces:
         return []
     rows = (
         await db.scalars(
@@ -139,9 +141,13 @@ async def confirm_memory(
         raise MemoryCaptureError("INVALID_DECISION", 422)
 
     key = _request_key(owner_id, proposed_turn, capture.text)
-    existing = await _existing_content(db, owner_id=owner_id, capture=capture)
-    if existing is not None:
-        return {"status": "already_saved", "memory": asdict(memory_result(existing))}
+    active_same = await _exact_content(db, owner_id=owner_id, capture=capture, status="active")
+    if active_same is not None:
+        return {"status": "already_saved", "memory": asdict(memory_result(active_same))}
+    replay = await _exact_content(db, owner_id=owner_id, capture=capture, source_turn_id=proposed_turn)
+    if replay is not None:
+        return {"status": "already_saved", "memory": asdict(memory_result(replay))}
+    superseded_same = await _exact_content(db, owner_id=owner_id, capture=capture, status="superseded")
     previous = await _contradictions(db, owner_id=owner_id, capture=capture)
     conflicting = [
         row for row in previous if (parsed := parse_capture(row.content)) is not None and parsed.value != capture.value
@@ -149,17 +155,20 @@ async def confirm_memory(
     if len(conflicting) > 1:
         raise MemoryCaptureError("MEMORY_CLARIFICATION_REQUIRED", 409)
     if conflicting:
-        row = conflicting[0]
-        result = await memory_service.correct_memory(
-            owner_id,
-            row.id,
-            row.version,
-            capture.text,
-            key,
-            source_turn_id=source_turn_id or proposed_turn,
-            conversation_id=conversation_id,
-        )
-        return {"status": "corrected", "memory": asdict(result)}
+        # Category preferences are additive unless the user replaces or restores a known value.
+        corrective = capture.subject not in {"preference"} or capture.replaces or superseded_same is not None
+        if corrective:
+            row = conflicting[0]
+            result = await memory_service.correct_memory(
+                owner_id,
+                row.id,
+                row.version,
+                capture.text,
+                key,
+                source_turn_id=source_turn_id or proposed_turn,
+                conversation_id=conversation_id,
+            )
+            return {"status": "corrected", "memory": asdict(result)}
     result = await memory_service.create_memory(
         owner_id, conversation_id, source_turn_id or proposed_turn, capture.text, key
     )

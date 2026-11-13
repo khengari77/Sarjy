@@ -70,8 +70,11 @@ def _memory_decision(text: str) -> str | None:
         "please do",
         "yes save it",
         "save it",
+        "please save it",
         "remember it",
         "confirm",
+        "sure thing",
+        "go ahead",
     }
     negative = {
         "no",
@@ -80,6 +83,11 @@ def _memory_decision(text: str) -> str | None:
         "don't",
         "do not",
         "don't save",
+        "don't save that",
+        "do not save that",
+        "no thank you",
+        "no, wait",
+        "no wait",
         "cancel",
         "discard",
         "forget it",
@@ -175,6 +183,10 @@ class SarjyAgent(Agent):
                 decision = _memory_decision(message.text_content)
                 if decision is not None:
                     await self._resolve_memory(decision)
+                else:
+                    # A proposal is a one-shot for the next user turn; never stay armed
+                    # across unrelated acknowledgements.
+                    self.memory_proposal = None
         if result.get("memory_proposal") is not None:
             self.memory_proposal = result["memory_proposal"]
         return result["context"]

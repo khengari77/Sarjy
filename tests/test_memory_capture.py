@@ -128,6 +128,36 @@ def test_finalized_fact_requires_confirmation_then_recalls_corrects_and_isolates
         assert forged.status_code == 404
 
 
+def test_preference_correction_targets_the_same_topic_and_can_be_restored(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        def save(text, request_id):
+            proposal = turn(client, headers, text, request_id).json()["memory_proposal"]
+            response = client.post(
+                "/internal/agent/memory/confirm",
+                headers=headers,
+                json={"token": proposal["token"], "decision": "save"},
+            )
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        assert save("I prefer tea", "pref-1")["status"] == "saved"
+        assert save("I love jazz", "pref-2")["status"] == "saved"
+        changed = save("I prefer coffee now", "pref-3")
+        assert changed["status"] == "corrected" and changed["memory"]["version"] == 2
+        active = {row[0]: row[1] for row in memory_rows(file) if row[2] == "active"}
+        assert active == {"I love jazz": 1, "I prefer coffee now": 2}
+
+        restored = save("I prefer tea", "pref-4")
+        assert restored["status"] == "corrected" and restored["memory"]["version"] == 3
+        active = {row[0]: row[1] for row in memory_rows(file) if row[2] == "active"}
+        assert active == {"I love jazz": 1, "I prefer tea": 3}
+
+
 def test_unrelated_preferences_and_allergies_are_not_destroyed(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
@@ -223,11 +253,11 @@ def test_worker_confirms_pending_memory_only_on_explicit_affirmative():
 
     paths, remaining = asyncio.run(exchange("maybe later"))
     assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "maybe later"})]
-    assert remaining == {"token": "signed", "text": "I prefer tea"}
+    assert remaining is None
 
     paths, remaining = asyncio.run(exchange("okay what's the weather"))
     assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "okay what's the weather"})]
-    assert remaining == {"token": "signed", "text": "I prefer tea"}
+    assert remaining is None
 
     paths, remaining = asyncio.run(exchange("No thanks."))
     assert remaining is None

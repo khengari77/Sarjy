@@ -21,6 +21,12 @@ _REPLACEMENT = re.compile(
 )
 _PRONOUN_VALUES = frozenset({"it", "this", "that", "them", "him", "her", "those", "these", "something", "anything"})
 _ATTRIBUTE_STOPWORDS = frozenset({"point", "question", "issue", "problem", "thing", "idea", "reason", "story"})
+_PREFERENCE_TOPICS = {
+    "beverage": frozenset({"tea", "coffee", "water", "juice", "milk", "wine", "beer", "soda", "drink", "drinks"}),
+    "music": frozenset({"jazz", "rock", "pop", "classical", "music", "songs", "song", "rap", "metal"}),
+    "food": frozenset({"pizza", "pasta", "food", "rice", "bread", "spicy", "sweet", "meat", "fish"}),
+    "travel": frozenset({"travel", "trips", "trip", "flying", "trains", "beach", "mountains"}),
+}
 _NON_REMEMBERABLE = re.compile(
     r"^\s*(?:don't|do not|never)\s+remember\b|\bnever\s+mind\b|\bforget\s+(?:it|that|this)\b",
     re.IGNORECASE,
@@ -65,6 +71,15 @@ def _ordinary(text: str) -> tuple[str, str] | None:
             if key in _ATTRIBUTE_STOPWORDS:
                 return None
             return f"attribute:{key}", value
+        if subject == "preference":
+            words = set(value.casefold().replace(",", " ").split())
+            topic = next(
+                (name for name, vocabulary in _PREFERENCE_TOPICS.items() if words & vocabulary),
+                "",
+            )
+            return (f"preference:{topic}" if topic else f"preference:{value.split()[0].casefold()}"), value
+        if subject == "diet":
+            return f"diet:{value.split()[0].casefold() if value else 'other'}", value
         return subject, value
     return None
 
