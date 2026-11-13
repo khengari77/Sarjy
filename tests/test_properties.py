@@ -1,18 +1,24 @@
 import pytest
-from app.domain.context import ContextRecord, compile_context
+from app.domain.context import ContextCandidate, compile_turn_context
+from app.domain.sessions import admission_error
 from app.services.weather import WeatherError, select_location
 from hypothesis import given
 from hypothesis import strategies as st
 
 
-@given(st.lists(st.text(min_size=1), unique=True, max_size=30), st.sets(st.text(min_size=1), max_size=30))
+@given(
+    st.lists(st.uuids().map(str), unique=True, max_size=30),
+    st.sets(st.uuids().map(str), max_size=30),
+)
 def test_visibility_and_compilation_are_pure(ids, excluded):
-    records = tuple(ContextRecord(id, "user", f"Fact {id}") for id in ids)
-    before = tuple(records)
-    result = compile_context(records, 0, frozenset(excluded))
-    assert set(result["included_record_ids"]).isdisjoint(excluded)
-    assert records == before
-    assert result == compile_context(records, 0, frozenset(excluded))
+    history = tuple(ContextCandidate(id, "user", f"Fact {id}", "history") for id in ids)
+    before = tuple(history)
+    result = compile_turn_context(revision=0, instructions="Rules", history=history, excluded_ids=frozenset(excluded))
+    assert (set(result.included_ids) - {"system"}).isdisjoint(excluded)
+    assert history == before
+    assert result == compile_turn_context(
+        revision=0, instructions="Rules", history=history, excluded_ids=frozenset(excluded)
+    )
 
 
 def test_ambiguous_location_requires_clarification():
@@ -23,15 +29,10 @@ def test_ambiguous_location_requires_clarification():
 
 @given(st.lists(st.text(max_size=100), max_size=30), st.integers(min_value=0, max_value=2000))
 def test_budget_preserves_protected_rules_and_newest_fitting_input(texts, budget):
-    records = (ContextRecord("rules", "system", "Protected"),) + tuple(
-        ContextRecord(str(i), "user", text) for i, text in enumerate(texts)
-    )
-    result = compile_context(records, 0, max_chars=budget)
-    assert result["included_record_ids"][0] == "rules"
-    assert sum(len(m["content"]) for m in result["messages"]) <= max(budget, len("Protected"))
-
-
-from app.domain.sessions import admission_error
+    history = tuple(ContextCandidate(str(i), "user", text, "history") for i, text in enumerate(texts))
+    result = compile_turn_context(revision=0, instructions="Protected", history=history, max_chars=budget)
+    assert result.messages[0]["content"] == "Protected"
+    assert sum(len(message["content"]) for message in result.messages) <= max(budget, len("Protected"))
 
 
 @given(st.tuples(st.text(), st.text()), st.text())

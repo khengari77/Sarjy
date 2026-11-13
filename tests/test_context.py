@@ -1,12 +1,14 @@
-from app.domain.context import ContextRecord, compile_context
+from app.domain.context import ContextCandidate, compile_turn_context
 from app.domain.pipeline import PipelineConfig, validate_pipeline
 
 
 def test_exclusions_preserve_system_and_determinism():
-    records = (ContextRecord("s", "system", "Rules"), ContextRecord("m", "user", "Riyadh"))
-    result = compile_context(records, 3, frozenset({"s", "m"}))
-    assert result["included_record_ids"] == ["s"]
-    assert result == compile_context(records, 3, frozenset({"s", "m"}))
+    history = (ContextCandidate("m", "user", "Riyadh", "history"),)
+    result = compile_turn_context(revision=3, instructions="Rules", history=history, excluded_ids=frozenset({"m"}))
+    assert result.included_ids == ("system",)
+    assert result == compile_turn_context(
+        revision=3, instructions="Rules", history=history, excluded_ids=frozenset({"m"})
+    )
 
 
 def test_arabic_deepgram_tts_rejected():

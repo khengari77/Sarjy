@@ -1,0 +1,165 @@
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #f8f7f3;
+  color: #263d38;
+}
+* {
+  box-sizing: border-box;
+}
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+aside {
+  width: 260px;
+  background: #eeeee7;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+strong {
+  font-size: 30px;
+}
+strong span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 4px;
+}
+button {
+  border: 1px solid #cdd4ca;
+  background: transparent;
+  padding: 12px 18px;
+  border-radius: 10px;
+  color: inherit;
+}
+button:enabled {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+}
+aside p {
+  font-size: 12px;
+  margin-top: auto;
+}
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 5vw;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+}
+section {
+  margin: auto;
+  width: 100%;
+  max-width: 850px;
+  text-align: center;
+  padding: 64px 0;
+}
+article {
+  text-align: start;
+  background: white;
+  border: 1px solid #ddd;
+  padding: 16px;
+  border-radius: 14px;
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}
+article p {
+  white-space: pre-wrap;
+  color: #263d38;
+}
+.voice-settings {
+  border: 1px solid #cdd4ca;
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 16px;
+  display: grid;
+  gap: 10px;
+}
+.voice-settings form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.voice-settings input,
+.voice-settings select {
+  font: inherit;
+  padding: 10px;
+  border: 1px solid #cdd4ca;
+  border-radius: 8px;
+  background: white;
+  max-width: 100%;
+}
+.voice-settings input {
+  flex: 1;
+  min-width: 140px;
+}
+.voice-settings small {
+  display: block;
+  color: #52665d;
+}
+.voice-error {
+  color: #933;
+}
+nav {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+a {
+  color: inherit;
+}
+.chosen {
+  background: #d9e9dd;
+}
+h1 {
+  font-size: clamp(26px, 4vw, 48px);
+  max-width: 650px;
+  font-weight: 500;
+}
+.orb {
+  margin: auto;
+  border-radius: 50%;
+  background: #d9e9dd;
+  width: 100px;
+  height: 100px;
+  display: grid;
+  place-items: center;
+  font-size: 48px;
+}
+p {
+  color: #728078;
+}
+footer {
+  display: flex;
+  gap: 12px;
+  padding-bottom: 24px;
+}
+textarea {
+  flex: 1;
+  resize: none;
+  padding: 18px;
+  border: 1px solid #d4d9d0;
+  border-radius: 14px;
+  background: white;
+  font: inherit;
+}
+@media (max-width: 650px) {
+  aside {
+    display: none;
+  }
+  main {
+    padding: 20px;
+  }
+  header span {
+    max-width: 180px;
+  }
+}
