@@ -50,6 +50,7 @@ jobs:
         env:
           CI: "true"
       - run: pnpm --dir apps/web test:browser
+      - run: pnpm --dir apps/web test:proxy
 
   postgres:
     # This PR is the top of the Day 2 stack: the pgvector gates exercise

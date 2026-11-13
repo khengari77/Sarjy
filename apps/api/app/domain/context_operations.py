@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.domain.secrets import secret_matches
+
 # Budget-like records are never removed by a bulk "forget" proposal.  The
 # architecture's signature interaction is "forget the trip but keep the
 # budget"; treating budget as a default keep-exception makes that safe even if
@@ -165,8 +167,11 @@ def verify_proposal(token: str, secret: str) -> dict[str, Any]:
         body, signature = token.rsplit(".", 1)
     except (AttributeError, ValueError) as exc:
         raise ValueError("PROPOSAL_INVALID") from exc
-    expected = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(signature, expected):
+    try:
+        expected = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
+    except UnicodeEncodeError as exc:
+        raise ValueError("PROPOSAL_INVALID") from exc
+    if not secret_matches(signature, expected):
         raise ValueError("PROPOSAL_INVALID")
     try:
         padded = body + "=" * (-len(body) % 4)
