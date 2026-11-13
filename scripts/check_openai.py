@@ -21,8 +21,11 @@ async def main():
         async with async_sessionmaker(engine)() as db:
             try:
                 allowance = await reserve(db, "openai")
-            except ValueError as exc:
-                reason = "DAILY_BUDGET_EXHAUSTED" if str(exc) == "DAILY_BUDGET_EXHAUSTED" else "BUDGET_SERVICE_FAILED"
+            except Exception as exc:
+                # This diagnostic must fail closed on ledger outages without
+                # printing database exception strings (which can contain secrets).
+                denied = isinstance(exc, ValueError) and str(exc) == "DAILY_BUDGET_EXHAUSTED"
+                reason = "DAILY_BUDGET_EXHAUSTED" if denied else "BUDGET_SERVICE_FAILED"
                 print({"check": "stopped", "reason": reason})
                 return
         print(

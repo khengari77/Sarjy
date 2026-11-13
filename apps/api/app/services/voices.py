@@ -51,6 +51,8 @@ def public_catalog(payload: dict) -> VoiceCatalog:
         payload.get("next_page_token") is not None and not isinstance(payload["next_page_token"], str)
     ):
         raise ValueError("INVALID_VOICE_CATALOG")
+    if payload.get("has_more") and not payload.get("next_page_token"):
+        raise ValueError("INVALID_VOICE_CATALOG")
     return VoiceCatalog(
         voices=tuple(voices), next_page_token=payload.get("next_page_token") if payload.get("has_more") else None
     )

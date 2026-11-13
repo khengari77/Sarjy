@@ -9,6 +9,7 @@ import httpx
 import pytest
 from app.services import weather
 from app.services.voices import ElevenLabsVoices, VoiceCatalogError
+from sqlalchemy.exc import OperationalError
 
 
 @pytest.mark.parametrize(
@@ -17,6 +18,14 @@ from app.services.voices import ElevenLabsVoices, VoiceCatalogError
         None,
         [],
         {"voices": None},
+        {"voices": [], "has_more": "yes"},
+        {"voices": [], "next_page_token": 5},
+        {"voices": [], "has_more": True},
+        {"voices": [], "has_more": True, "next_page_token": None},
+        {"voices": [], "has_more": True, "next_page_token": ""},
+        {"voices": [{"voice_id": 1, "name": "n"}]},
+        {"voices": [{"voice_id": "v", "name": "n", "verified_languages": {}}]},
+        {"voices": [{"voice_id": "v", "name": "n", "labels": []}]},
         {"voices": [None]},
         {"voices": [{"voice_id": "v", "name": "n", "labels": "PRIVATE"}]},
         {"voices": [{"voice_id": "v", "name": "n", "verified_languages": [None]}]},
@@ -56,6 +65,11 @@ def test_malformed_weather_is_typed(monkeypatch, payload):
         None,
         [],
         {"current": None},
+        {
+            "current": {"temperature_2m": 20, "wind_speed_10m": 2, "weather_code": 0},
+            "timezone": "Africa/Tripoli",
+            "current_units": [],
+        },
         {"current": {"temperature_2m": True}},
         {"current": {"temperature_2m": 20, "wind_speed_10m": 2, "weather_code": 0}, "timezone": []},
     ],
@@ -85,6 +99,9 @@ def test_malformed_forecast_is_typed(monkeypatch, forecast):
         ("invalid", "PROVIDER_RESPONSE_INVALID"),
         ("connection", "PROVIDER_CONNECTION_FAILED"),
         ("denied", "DAILY_BUDGET_EXHAUSTED"),
+        ("ledger-runtime", "BUDGET_SERVICE_FAILED"),
+        ("ledger-operational", "BUDGET_SERVICE_FAILED"),
+        ("ledger-unsupported", "BUDGET_SERVICE_FAILED"),
         ("valid", None),
         ("valid-zero", None),
         ("empty", "PROVIDER_RESPONSE_INVALID"),
@@ -119,8 +136,14 @@ def test_diagnostic_classifies_without_paid_calls(monkeypatch, capsys, mode, rea
 
     async def reserve(db, provider):
         events.append("reserve")
-        if mode == "denied":
-            raise ValueError("DAILY_BUDGET_EXHAUSTED")
+        failures = {
+            "denied": ValueError("DAILY_BUDGET_EXHAUSTED"),
+            "ledger-runtime": RuntimeError("PRIVATE"),
+            "ledger-operational": OperationalError("PRIVATE", {}, RuntimeError("PRIVATE")),
+            "ledger-unsupported": ValueError("Unsupported budget database PRIVATE"),
+        }
+        if mode in failures:
+            raise failures[mode]
         return {"reserved_units": 1, "remaining_units": 1, "day": "test"}
 
     def transport(request):
@@ -147,7 +170,7 @@ def test_diagnostic_classifies_without_paid_calls(monkeypatch, capsys, mode, rea
         assert "input_tokens" in output and "stopped" not in output
         assert "'success': True" in output
     assert events[0] == "reserve" and events[-1] == "disposed"
-    if mode == "denied":
+    if mode in {"denied", "ledger-runtime", "ledger-operational", "ledger-unsupported"}:
         assert "send" not in events
     else:
         assert events.count("send") == 1
