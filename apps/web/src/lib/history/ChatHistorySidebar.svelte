@@ -76,7 +76,7 @@
   });
 </script>
 
-<div class="sidebar-inner chat-history" dir={arabic ? 'rtl' : 'ltr'}>
+<div class="sidebar-inner chat-history" dir={arabic ? 'rtl' : 'ltr'} aria-busy={loading}>
   <button class="primary-button new-chat" disabled={busy} onclick={oncreate}>
     {arabic ? 'محادثة جديدة' : 'New conversation'} +
   </button>
@@ -96,8 +96,15 @@
       <input
         type="search"
         bind:value={query}
+        autocomplete="off"
         placeholder={arabic ? 'ابحث في المحادثات' : 'Search conversations'}
         aria-label={arabic ? 'البحث في المحادثات' : 'Search conversations'}
+        onkeydown={(event) => {
+          if (event.key === 'Escape' && query) {
+            event.preventDefault();
+            query = '';
+          }
+        }}
       />
       {#if query}
         <button

@@ -262,4 +262,4 @@
   {/snippet}
 </AppShell>
 
-<p class="sr-only" aria-live="polite" aria-atomic="true">{announcement}</p>
+<p class="sr-only status-announcer" aria-live="polite" aria-atomic="true">{announcement}</p>

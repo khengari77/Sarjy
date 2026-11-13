@@ -7,7 +7,7 @@
     captionsVisible: boolean;
     expanded: boolean;
     provisional?: { id: string; text: string; speaker: 'user' | 'assistant' } | null;
-    onexpand: () => void;
+    onexpand: (trigger?: HTMLElement) => void;
   }
 
   let { turns, arabic, captionsVisible, expanded, provisional = null, onexpand }: Props = $props();
@@ -58,7 +58,13 @@
       </p>
     {/if}
     {#if !expanded}
-      <button class="expand" type="button" onclick={onexpand}>
+      <button
+        class="expand"
+        type="button"
+        aria-expanded={expanded}
+        aria-controls="transcript-drawer"
+        onclick={(event) => onexpand(event.currentTarget as HTMLElement)}
+      >
         {arabic ? 'عرض المحادثة كاملة' : 'Show full transcript'}
       </button>
     {/if}
@@ -100,11 +106,13 @@
     color: var(--text-muted);
   }
 
+  /* Provisional text stays at full opacity so it keeps WCAG AA contrast; the
+     dashed rule, italics and ellipsis carry the provisional meaning instead. */
   .caption.provisional {
     font-style: italic;
-    opacity: 0.72;
     border-inline-start: 2px dashed var(--border-subtle);
     padding-inline-start: 8px;
+    color: var(--text-primary);
   }
 
   .caption .pending {

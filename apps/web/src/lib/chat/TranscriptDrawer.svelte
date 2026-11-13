@@ -5,7 +5,7 @@
   interface Props {
     open: boolean;
     turns: Turn[];
-    tools: { id: string; name: string; result: unknown }[];
+    tools: { id: string; name: string; result: unknown; turn_id?: string }[];
     arabic: boolean;
     provisional?: { id: string; text: string; speaker: 'user' | 'assistant' } | null;
     onclose: () => void;
@@ -14,6 +14,31 @@
   let { open, turns, tools, arabic, provisional = null, onclose }: Props = $props();
 
   let closeButton: HTMLButtonElement | undefined = $state();
+
+  const byTurn = $derived.by(() => {
+    const grouped = new Map<string, { id: string; name: string; result: unknown; turn_id?: string }[]>();
+    for (const tool of tools) {
+      if (!tool.turn_id) continue;
+      const bucket = grouped.get(tool.turn_id) ?? [];
+      bucket.push(tool);
+      grouped.set(tool.turn_id, bucket);
+    }
+    return grouped;
+  });
+  const unattached = $derived(tools.filter((tool) => !tool.turn_id || !turns.some((turn) => turn.id === tool.turn_id)));
+
+  // Human wording only: role/status values come from the API and must never
+  // read as raw enums in the interface.
+  function speaker(role: string): string {
+    if (role === 'user') return arabic ? 'أنت' : 'You';
+    if (role === 'assistant') return arabic ? 'سَرْجي' : 'Sarjy';
+    return arabic ? 'مشارك' : 'Participant';
+  }
+
+  function statusText(status: string): string {
+    if (status === 'failed' || status === 'error') return arabic ? 'لم يكتمل' : 'not completed';
+    return '';
+  }
 
   $effect(() => {
     if (open) closeButton?.focus();
@@ -27,7 +52,13 @@
 <svelte:window onkeydown={open ? onkeydown : undefined} />
 
 {#if open}
-  <div class="drawer" role="dialog" aria-modal="false" aria-label={arabic ? 'سجل المحادثة' : 'Conversation transcript'}>
+  <div
+    class="drawer"
+    id="transcript-drawer"
+    role="dialog"
+    aria-modal="false"
+    aria-label={arabic ? 'سجل المحادثة' : 'Conversation transcript'}
+  >
     <header class="drawer-head">
       <h2>{arabic ? 'المحادثة' : 'Transcript'}</h2>
       <button
@@ -41,25 +72,35 @@
       </button>
     </header>
     <div class="drawer-body">
-      {#if turns.length === 0}
+      {#if turns.length === 0 && !provisional}
         <p class="empty">{arabic ? 'لا توجد رسائل بعد.' : 'No messages yet.'}</p>
       {:else}
         {#each turns as turn (turn.id)}
           <article class="turn" class:assistant={turn.role === 'assistant'} dir="auto">
-            <small>{turn.role} · {turn.status}</small>
+            <small
+              >{speaker(turn.role)}{#if statusText(turn.status)}
+                · {statusText(turn.status)}{/if}</small
+            >
             <p>{turn.text}</p>
+            {#if byTurn.get(turn.id)?.length}
+              <div class="traces">
+                {#each byTurn.get(turn.id) ?? [] as tool (tool.id)}
+                  <ToolTraceChip name={tool.name} result={tool.result} {arabic} />
+                {/each}
+              </div>
+            {/if}
           </article>
         {/each}
       {/if}
       {#if provisional}
         <article class="turn provisional" dir="auto" aria-label={arabic ? 'نص مؤقت' : 'Provisional transcript'}>
-          <small>{provisional.speaker} · {arabic ? 'مؤقت' : 'provisional'}</small>
+          <small>{speaker(provisional.speaker)} · {arabic ? 'مؤقت' : 'provisional'}</small>
           <p>{provisional.text}…</p>
         </article>
       {/if}
-      {#if tools.length}
+      {#if unattached.length}
         <div class="traces">
-          {#each tools as tool (tool.id)}
+          {#each unattached as tool (tool.id)}
             <ToolTraceChip name={tool.name} result={tool.result} {arabic} />
           {/each}
         </div>
@@ -142,7 +183,6 @@
 
   .turn.provisional {
     border-style: dashed;
-    opacity: 0.75;
     font-style: italic;
   }
 
