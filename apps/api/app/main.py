@@ -24,6 +24,10 @@ def create_app(
     settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None, embedding_adapter=None
 ):
     config = settings or Settings()
+    # Reject invalid configuration before allocating the engine so a failed
+    # create_app never leaves a connection pool behind.
+    if config.development_protected and not config.web_service_secret:
+        raise ValueError("WEB_SERVICE_SECRET_REQUIRED")
     catalog = voice_catalog or ElevenLabsVoices(config.eleven_api_key)
     engine = create_async_engine(config.database_url)
     if config.database_url.startswith("sqlite"):
@@ -38,19 +42,21 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app):
-        # Local bootstrap only. Production uses Alembic before application startup.
-        if config.database_url.startswith("sqlite"):
-            async with engine.begin() as connection:
-                await connection.run_sync(Base.metadata.create_all)
-            async with sessions() as db:
-                if not await db.get(SessionGate, 1):
-                    db.add(SessionGate(id=1, marker=1))
-                    await db.commit()
-        yield
-        await engine.dispose()
+        # Dispose on every exit path: startup failure, normal shutdown and an
+        # exception raised while the application is serving requests.
+        try:
+            # Local bootstrap only. Production uses Alembic before application startup.
+            if config.database_url.startswith("sqlite"):
+                async with engine.begin() as connection:
+                    await connection.run_sync(Base.metadata.create_all)
+                async with sessions() as db:
+                    if not await db.get(SessionGate, 1):
+                        db.add(SessionGate(id=1, marker=1))
+                        await db.commit()
+            yield
+        finally:
+            await engine.dispose()
 
-    if config.development_protected and not config.web_service_secret:
-        raise ValueError("WEB_SERVICE_SECRET_REQUIRED")
     app = FastAPI(
         title="Sarjy API",
         version="0.1.0",
