@@ -9,7 +9,7 @@ Install uv, Node 22, and pnpm 10.32.1. From the repository root:
 ```sh
 uv sync --locked
 pnpm --dir apps/web install --frozen-lockfile
-uv run uvicorn app.main:app --app-dir apps/api --reload
+uv run uvicorn app.main:create_app --factory --app-dir apps/api --reload
 ```
 
 Fill the existing root `.env` with the names in `.env.example` (do not overwrite existing secrets). SQLite defaults to `sarjy.db` and bootstraps locally. In another terminal:
@@ -24,7 +24,7 @@ For real speech, configure `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET
 
 ```sh
 uv run -m livekit.agents download-files
-uv run services/voice-agent/main.py dev
+PYTHONPATH=apps/api uv run services/voice-agent/main.py dev
 ```
 
 The temporary default is Nova-3 English → OpenAI GPT-6 Luna → ElevenLabs Flash v2.5. DeepSeek Flash direct remains available for an explicit switch after funding. No fallback is silently selected. Arabic voice quality and live provider entitlement still require manual validation.
@@ -59,7 +59,7 @@ LiveKit Build quotas must be checked in the account before testing. Hosted agent
 
 - Real provider replies and prerecorded English STT are verified; live English conversation acceptance remains pending.
 - Day 1 snapshots capture initial context assembly; tool continuations are retained in the worker but do not yet receive separate request snapshots.
-- Persistent history is implemented; extracted memory and context exclusion/Undo are Day 2 work.
+- Persistent history, extracted memory, context exclusion/Undo and typed action dispatch are implemented and covered by the test suite.
 - Managed DeepSeek/Cartesia fallback candidates are not enabled.
 - Disposable PostgreSQL migration parity and hosted Supabase connectivity/persistence passed; cleanup migration is deployed.
 - Public identity creation needs further abuse controls before unrestricted public exposure.
