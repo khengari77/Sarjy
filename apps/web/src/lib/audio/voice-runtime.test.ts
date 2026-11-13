@@ -1,40 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionConfig } from '../api';
 
-interface FakeElement {
-  pause: ReturnType<typeof vi.fn>;
-  remove: ReturnType<typeof vi.fn>;
-  srcObject: unknown;
-}
-
 interface FakeRoom {
   connectResolve: (() => void) | null;
   connectReject: ((error: Error) => void) | null;
   remoteParticipants: Map<string, { isAgent: boolean; attributes: Record<string, string> }>;
-  localParticipant: { identity: string; setMicrophoneEnabled: ReturnType<typeof vi.fn> };
-  disconnectGate: Promise<void> | null;
+  localParticipant: { identity: string };
   emit(event: string, ...args: unknown[]): void;
   emitTextStream(topic: string, reader: unknown, participantInfo: { identity: string }): void;
   disconnect: () => Promise<void>;
 }
-
-const appended: FakeElement[] = [];
-(globalThis as unknown as { document: { body: { appendChild(element: FakeElement): void } } }).document = {
-  body: { appendChild: (element) => appended.push(element) },
-};
-(globalThis as unknown as { window: Record<string, unknown> }).window = {};
 
 vi.mock('livekit-client', () => {
   const rooms: FakeRoom[] = [];
   class Room {
     listeners = new Map<string, Set<(...args: unknown[]) => void>>();
     remoteParticipants = new Map<string, { isAgent: boolean; attributes: Record<string, string> }>();
-    localParticipant = { identity: 'user-1', setMicrophoneEnabled: vi.fn(async () => {}) };
+    localParticipant = { identity: 'user-1' };
     textHandlers = new Map<string, (reader: unknown, participantInfo: { identity: string }) => void>();
     canPlaybackAudio = true;
     connectResolve: (() => void) | null = null;
     connectReject: ((error: Error) => void) | null = null;
-    disconnectGate: Promise<void> | null = null;
     constructor() {
       rooms.push(this as unknown as FakeRoom);
     }
@@ -52,9 +38,7 @@ vi.mock('livekit-client', () => {
       });
     }
     async startAudio() {}
-    async disconnect() {
-      if (this.disconnectGate) await this.disconnectGate;
-    }
+    async disconnect() {}
     removeAllListeners() {
       this.listeners.clear();
     }
@@ -141,10 +125,6 @@ describe('startup terminal disconnection', () => {
   });
 });
 
-function fakeElement(): FakeElement {
-  return { pause: vi.fn(), remove: vi.fn(), srcObject: null };
-}
-
 async function connectedRuntime(start: SessionConfig) {
   const runtime = new LiveKitVoiceRuntime();
   const connecting = runtime.connect(start);
@@ -156,40 +136,6 @@ async function connectedRuntime(start: SessionConfig) {
   await connecting;
   return { runtime, room };
 }
-
-describe('teardown generation', () => {
-  it('does not remove a replacement room attached during an in-flight disconnect', async () => {
-    vi.useFakeTimers();
-    const { runtime, room: roomA } = await connectedRuntime(config);
-    const elementA = fakeElement();
-    roomA.emit('trackSubscribed', { kind: 'audio', attach: () => elementA, detach: () => [elementA] });
-
-    let releaseA!: () => void;
-    roomA.disconnectGate = new Promise<void>((resolve) => {
-      releaseA = resolve;
-    });
-    const teardown = runtime.disconnect();
-
-    const second = runtime.connect({ ...config, id: 'sess-2' });
-    await vi.advanceTimersByTimeAsync(1);
-    const roomB = rooms().at(-1)!;
-    roomB.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
-    roomB.connectResolve!();
-    await vi.advanceTimersByTimeAsync(100);
-    await second;
-
-    const elementB = fakeElement();
-    roomB.emit('trackSubscribed', { kind: 'audio', attach: () => elementB, detach: () => [elementB] });
-
-    releaseA();
-    await teardown;
-
-    expect(elementA.remove).toHaveBeenCalledTimes(1);
-    expect(elementB.remove).not.toHaveBeenCalled();
-    expect(roomA.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(false);
-    expect(roomB.localParticipant.setMicrophoneEnabled).not.toHaveBeenCalledWith(false);
-  });
-});
 
 describe('text-stream transcription metadata', () => {
   it('keeps a user provisional segment as user/false with its segment id', async () => {

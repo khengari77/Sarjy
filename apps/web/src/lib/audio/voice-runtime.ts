@@ -1,7 +1,6 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
 import { waitForAgent, type StartupSignal } from './agentStartup';
-import { disposeAudioElements, releaseMicrophone } from './teardown';
 
 type VoiceEventBody =
   | { type: 'status'; source: 'transport' | 'agent'; text: string }
@@ -261,29 +260,24 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   }
 
   private async disconnectRoom() {
-    // Capture the generation being torn down and detach it synchronously.
-    // `room.disconnect()` is asynchronous: a replacement connect() can start
-    // while it is pending. If this method kept using the shared fields after
-    // the await, it would remove the replacement room's audio elements and
-    // close its AudioContext while leaving the replacement session active.
-    const room = this.room;
-    const audio = this.audio;
-    const audioContext = this.audioContext;
-    const startup = this.startup;
-    this.room = null;
-    this.audio = new Set();
-    this.audioContext = null;
+    this.startup?.wake?.();
     this.startup = null;
-
-    startup?.wake?.();
+    const room = this.room;
+    this.room = null;
     if (room) {
-      // Release the old microphone before the potentially slow disconnect so
-      // a replacement call cannot overlap with live capture from this room.
-      await releaseMicrophone(room);
       await room.disconnect();
       room.removeAllListeners();
     }
-    disposeAudioElements(audio, (element) => this.detachAnalyser(element));
-    if (audioContext) void audioContext.close().catch(() => {});
+    for (const element of this.audio) {
+      this.detachAnalyser(element);
+      element.pause();
+      element.srcObject = null;
+      element.remove();
+    }
+    this.audio.clear();
+    if (this.audioContext) {
+      void this.audioContext.close().catch(() => {});
+      this.audioContext = null;
+    }
   }
 }

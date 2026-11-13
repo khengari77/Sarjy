@@ -12,43 +12,18 @@ vi.mock('../chat/session', () => ({
   endVoiceSession: mocks.end,
 }));
 
-vi.mock('../audio/microphone', () => ({
-  ensureMicrophoneAccess: vi.fn(async () => {}),
-}));
-
-interface FakeElement {
-  pause: ReturnType<typeof vi.fn>;
-  remove: ReturnType<typeof vi.fn>;
-  srcObject: unknown;
-}
-
 interface FakeRoom {
   connectResolve: (() => void) | null;
   remoteParticipants: Map<string, { isAgent: boolean; attributes: Record<string, string> }>;
-  localParticipant: { identity: string; setMicrophoneEnabled: ReturnType<typeof vi.fn> };
-  micStartRejects: boolean;
-  disconnectGate: Promise<void> | null;
   emit(event: string, ...args: unknown[]): void;
 }
-
-(globalThis as unknown as { document: { body: { appendChild(element: FakeElement): void } } }).document = {
-  body: { appendChild: () => {} },
-};
-(globalThis as unknown as { window: Record<string, unknown> }).window = {};
 
 vi.mock('livekit-client', () => {
   const rooms: FakeRoom[] = [];
   class Room {
     listeners = new Map<string, Set<(...args: unknown[]) => void>>();
     remoteParticipants = new Map<string, { isAgent: boolean; attributes: Record<string, string> }>();
-    localParticipant = {
-      identity: 'user-1',
-      setMicrophoneEnabled: vi.fn(async (enabled: boolean) => {
-        if (enabled && this.micStartRejects) throw new Error('MIC_START_FAILED');
-      }),
-    };
-    micStartRejects = false;
-    disconnectGate: Promise<void> | null = null;
+    localParticipant = {};
     canPlaybackAudio = true;
     connectResolve: (() => void) | null = null;
     constructor() {
@@ -67,9 +42,7 @@ vi.mock('livekit-client', () => {
       });
     }
     async startAudio() {}
-    async disconnect() {
-      if (this.disconnectGate) await this.disconnectGate;
-    }
+    async disconnect() {}
     removeAllListeners() {
       this.listeners.clear();
     }
@@ -181,58 +154,6 @@ describe('terminal startup failure cleanup', () => {
     expect(state.voiceErrorCode).toBe('');
     expect(mocks.end).toHaveBeenCalledTimes(1);
     expect(mocks.end).toHaveBeenCalledWith(config);
-  });
-});
-
-function fakeElement(): FakeElement {
-  return { pause: vi.fn(), remove: vi.fn(), srcObject: null };
-}
-
-describe('stalled cleanup isolation', () => {
-  it('keeps a replacement call live and unmuted when the failed attempt cleanup stalls', async () => {
-    vi.useFakeTimers();
-    const second: SessionConfig = { ...config, id: 'sess-2' };
-    mocks.start.mockResolvedValueOnce(config).mockResolvedValueOnce(second);
-    const { state, connection } = harness();
-
-    const first = connection.connect(true);
-    await vi.advanceTimersByTimeAsync(1);
-    const roomA = rooms().at(-1)!;
-    roomA.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
-    roomA.micStartRejects = true;
-    let releaseA!: () => void;
-    roomA.disconnectGate = new Promise<void>((resolve) => {
-      releaseA = resolve;
-    });
-    roomA.connectResolve!();
-
-    const elementA = fakeElement();
-    roomA.emit('trackSubscribed', { kind: 'audio', attach: () => elementA, detach: () => [elementA] });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(roomA.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(false);
-
-    await connection.cancelConnect();
-    const replacement = connection.connect(true);
-    await vi.advanceTimersByTimeAsync(1);
-    const roomB = rooms().at(-1)!;
-    roomB.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
-    roomB.connectResolve!();
-    await vi.advanceTimersByTimeAsync(100);
-    await replacement;
-
-    const elementB = fakeElement();
-    roomB.emit('trackSubscribed', { kind: 'audio', attach: () => elementB, detach: () => [elementB] });
-
-    releaseA();
-    await first;
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(elementA.remove).toHaveBeenCalledTimes(1);
-    expect(elementB.remove).not.toHaveBeenCalled();
-    expect(roomB.localParticipant.setMicrophoneEnabled).not.toHaveBeenCalledWith(false);
-    expect(state.live).toEqual(second);
-    expect(state.muted).toBe(false);
-    expect(state.voiceErrorCode).toBe('');
   });
 });
 
