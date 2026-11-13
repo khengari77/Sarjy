@@ -1,0 +1,85 @@
+/*
+ * Sarjy design tokens.
+ *
+ * Values come from sarjy_orb_ui_spec_v1.md section 3.2 and are proposed
+ * starting points: verify contrast after visual testing rather than treating
+ * them as measured reference-video colours.
+ */
+:root {
+  --bg-app: #080c13;
+  --bg-sidebar: #0d1420;
+  --surface-elevated: #142032;
+  --surface-hover: #1a2940;
+  --text-primary: #eaf2fb;
+  --text-muted: #96a6ba;
+  --border-subtle: #273448;
+  --focus-ring: #b3dcff;
+
+  --orb-idle: #4cc9b6;
+  --orb-listening: #4da8ff;
+  --orb-thinking: #a684f7;
+  --orb-speaking: #4add91;
+  --orb-memory: #e9b454;
+  --orb-confirmation: #ffa65a;
+  --orb-error: #f25565;
+  --orb-offline: #5e7189;
+
+  --radius-control: 10px;
+  --radius-panel: 16px;
+  --control-height: 44px;
+  --sidebar-left-width: 264px;
+  --sidebar-right-width: 332px;
+  --stage-max-width: 960px;
+
+  --font-ui:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Noto Naskh Arabic', sans-serif;
+}
+
+:root {
+  --transition-quick: 160ms ease-out;
+  --transition-state: 320ms ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition-quick: 0ms;
+    --transition-state: 0ms;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--orb-listening) 35%, transparent);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
