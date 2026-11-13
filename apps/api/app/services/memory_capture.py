@@ -341,15 +341,10 @@ async def confirm_memory(
         raise MemoryCaptureError("INVALID_DECISION", 422)
 
     if decision == "replace":
-        target_id = payload.get("target_id")
-        target_version = payload.get("target_version")
-        if not isinstance(target_id, str) or not isinstance(target_version, int):
-            raise MemoryCaptureError("CONFIRMATION_STALE", 409, revision=revision)
-        if existing is not None and (existing.target_id != target_id or existing.target_version != target_version):
-            raise MemoryCaptureError("CONFIRMATION_STALE", 409, revision=revision)
-        return await _replace_target(
+        return await _confirm_replace(
             db,
             memory_service,
+            existing=existing,
             owner_id=owner_id,
             conversation_id=conversation_id,
             proposed_turn=proposed_turn,
@@ -357,8 +352,7 @@ async def confirm_memory(
             capture=capture,
             payload=payload,
             token=token,
-            target_id=target_id,
-            target_version=target_version,
+            revision=revision,
         )
 
     if existing is not None:
@@ -376,6 +370,45 @@ async def confirm_memory(
         payload=payload,
         token=token,
         secret=secret,
+    )
+
+
+async def _confirm_replace(
+    db: AsyncSession,
+    memory_service: MemoryService,
+    *,
+    existing,
+    owner_id: str,
+    conversation_id: str,
+    proposed_turn: str,
+    source_turn_id: str | None,
+    capture: MemoryCapture,
+    payload: dict,
+    token: str,
+    revision: int,
+) -> dict:
+    target_id = payload.get("target_id")
+    target_version = payload.get("target_version")
+    if not isinstance(target_id, str) or not isinstance(target_version, int):
+        raise MemoryCaptureError("CONFIRMATION_STALE", 409, revision=revision)
+    if existing is not None:
+        if existing.outcome != "awaiting_confirmation":
+            raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=existing.outcome)
+        if existing.target_id != target_id or existing.target_version != target_version:
+            raise MemoryCaptureError("CONFIRMATION_STALE", 409, revision=revision)
+    return await _replace_target(
+        db,
+        memory_service,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        proposed_turn=proposed_turn,
+        source_turn_id=source_turn_id,
+        capture=capture,
+        payload=payload,
+        token=token,
+        target_id=target_id,
+        target_version=target_version,
+        recovery_only=existing is None,
     )
 
 
@@ -552,6 +585,7 @@ async def _replace_target(
     token: str,
     target_id: str,
     target_version: int,
+    recovery_only: bool = False,
 ) -> dict:
     target = await db.scalar(
         select(Memory).where(Memory.id == target_id, Memory.owner_id == owner_id, Memory.status == "active")
@@ -571,7 +605,6 @@ async def _replace_target(
             decision="replace",
             outcome=response["status"],
             result=response,
-            target=applied,
         )
         return response
     # A retraction has no new row; its receipt is the superseded target version.
@@ -588,9 +621,12 @@ async def _replace_target(
                 decision="replace",
                 outcome=response["status"],
                 result=response,
-                target=previous,
             )
             return response
+    if recovery_only:
+        # Without an awaiting confirmation row, only a previously committed
+        # effect may be reported. A missing row never authorizes a new write.
+        raise MemoryCaptureError("MEMORY_FRESH_CONFIRMATION_REQUIRED", 409, target_id=target_id)
     if target is None or target.version != target_version:
         raise MemoryCaptureError("TARGET_CHANGED", 409, target_id=target_id)
     if capture.negated:

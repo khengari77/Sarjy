@@ -189,7 +189,17 @@ class SarjyAgent(Agent):
         self.memory_message: str | None = None
         self.memory_clarify = False
         self.memory_question_turn: str | None = None
-        self.memory_prompted_revision: int | None = None
+        # Consent is bound to the exact proposal identity. Playout marking and
+        # question delivery are tracked separately: having yielded the question
+        # is not evidence that the user heard it.
+        self.memory_prompted_key: tuple[Any, Any] | None = None
+        self.memory_question_key: tuple[Any, Any] | None = None
+
+    @staticmethod
+    def _proposal_key(proposal: Mapping[str, Any] | None) -> tuple[Any, Any]:
+        if proposal is None:
+            return (None, None)
+        return (proposal.get("confirmation_id"), proposal.get("confirmation_revision"))
 
     async def compile(self, message):
         if message.id not in self.prepared:
@@ -205,12 +215,13 @@ class SarjyAgent(Agent):
             self.memory_message = message.id
             self.memory_outcome = None
             if self.memory_proposal is not None:
-                revision = self.memory_proposal.get("confirmation_revision")
-                if self.memory_prompted_revision != revision:
-                    # The specific question for this revision was never
+                if self._proposal_key(self.memory_proposal) != self.memory_prompted_key:
+                    # The specific question for this proposal was never
                     # delivered; the utterance cannot be consent for it.
                     self.memory_proposal = None
                     self.memory_clarify = False
+                    self.memory_prompted_key = None
+                    self.memory_question_key = None
                     self.memory_outcome = "not_saved"
                 else:
                     decision = (
@@ -225,12 +236,18 @@ class SarjyAgent(Agent):
                         # across unrelated acknowledgements.
                         self.memory_proposal = None
                         self.memory_clarify = False
-                        self.memory_prompted_revision = None
+                        self.memory_prompted_key = None
+                        self.memory_question_key = None
                         self.memory_outcome = "not_saved"
         if result.get("memory_proposal") is not None:
-            self.memory_proposal = result["memory_proposal"]
+            proposal = result["memory_proposal"]
+            if self._proposal_key(proposal) != self._proposal_key(self.memory_proposal):
+                # Only a new proposal identity re-arms the question. Repeated
+                # compiles of the same proposal must not re-emit or re-arm it.
+                self.memory_prompted_key = None
+                self.memory_question_key = None
+            self.memory_proposal = proposal
             self.memory_question_turn = result["turn_id"]
-            self.memory_prompted_revision = None
         return result["context"]
 
     async def _resolve_memory(self, decision: str) -> None:
@@ -261,6 +278,8 @@ class SarjyAgent(Agent):
             self.memory_proposal = None
             self.memory_clarify = False
             self.memory_question_turn = None
+            self.memory_prompted_key = None
+            self.memory_question_key = None
             try:
                 status = response.json().get("status", "")
             except (ValueError, AttributeError):
@@ -278,12 +297,15 @@ class SarjyAgent(Agent):
                 "target_version": detail.get("target_version"),
             }
             self.memory_clarify = True
-            self.memory_prompted_revision = None
+            self.memory_prompted_key = None
+            self.memory_question_key = None
             self.memory_outcome = "clarify"
         else:
             self.memory_proposal = None
             self.memory_clarify = False
             self.memory_question_turn = None
+            self.memory_prompted_key = None
+            self.memory_question_key = None
             self.memory_outcome = "failed"
 
     async def reserve(self, provider: str, characters: int = 0):
@@ -328,12 +350,17 @@ class SarjyAgent(Agent):
             return
         snapshot = await self.compile(user)
         proposal = self.memory_proposal
-        if proposal is not None and self.memory_prompted_revision != proposal.get("confirmation_revision"):
-            # Deliver the exact confirmation question deterministically; consent
-            # for this revision cannot exist until it has been spoken.
+        key = self._proposal_key(proposal)
+        if proposal is not None and self.memory_question_key != key:
+            # Deliver the exact confirmation question deterministically. Merely
+            # yielding the text proves nothing: consent is armed only once the
+            # resulting speech has fully played out.
             question = proposal.get("question") or f"Should I remember this: {proposal.get('text', '')}?"
-            self.memory_prompted_revision = proposal.get("confirmation_revision")
+            self.memory_question_key = key
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=question))
+            handle = self.session.current_speech
+            if handle is not None:
+                self._schedule_prompt_confirmation(key, handle)
             return
         handle = self.session.current_speech
         if handle and handle.id not in self.speeches:
@@ -360,6 +387,22 @@ class SarjyAgent(Agent):
             request, tools, model_settings.tool_choice if model_settings else None
         ):
             yield chunk
+
+    def _schedule_prompt_confirmation(self, key: tuple[Any, Any], handle) -> None:
+        async def mark_after_playout():
+            try:
+                await handle.wait_for_playout()
+            except Exception:
+                return
+            if handle.interrupted or handle.exception() is not None:
+                return
+            if self._proposal_key(self.memory_proposal) != key:
+                return
+            self.memory_prompted_key = key
+
+        task = asyncio.create_task(mark_after_playout())
+        self.pending.add(task)
+        task.add_done_callback(self.pending.discard)
 
     def _schedule_persistence(self, user, handle):
         turn_id = self.prepared[user.id]["turn_id"]

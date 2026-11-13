@@ -3,6 +3,7 @@ import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from app.config import Settings
 from app.domain.budget import OPENAI_DAILY_MICRO_USD, budget_day
 from app.domain.memory_capture import parse_capture
@@ -309,9 +310,10 @@ def test_worker_confirms_pending_memory_only_on_explicit_affirmative():
             agent.memory_proposal = {
                 "token": "signed",
                 "text": "I prefer tea",
+                "confirmation_id": "cid",
                 "confirmation_revision": 1,
             }
-            agent.memory_prompted_revision = 1
+            agent.memory_prompted_key = ("cid", 1)
             await agent.compile(SimpleNamespace(id="message", text_content=text))
             return paths, agent.memory_proposal, agent.memory_outcome
 
@@ -360,7 +362,7 @@ def test_worker_decides_once_when_a_message_is_compiled_twice():
                 "confirmation_id": "cid",
                 "confirmation_revision": 1,
             }
-            agent.memory_prompted_revision = 1
+            agent.memory_prompted_key = ("cid", 1)
             message = SimpleNamespace(id="message", text_content="save it")
             await agent.compile(message)
             await agent.compile(message)
@@ -489,10 +491,13 @@ def test_worker_retains_a_clarifying_proposal_and_replaces_on_confirmation():
                 "confirmation_id": "cid",
                 "confirmation_revision": 1,
             }
-            agent.memory_prompted_revision = 1
+            agent.memory_prompted_key = ("cid", 1)
             await agent.compile(SimpleNamespace(id="one", text_content="save it"))
             assert agent.memory_proposal is not None and agent.memory_clarify is True
-            agent.memory_prompted_revision = agent.memory_proposal.get("confirmation_revision")
+            agent.memory_prompted_key = (
+                agent.memory_proposal.get("confirmation_id"),
+                agent.memory_proposal.get("confirmation_revision"),
+            )
             await agent.compile(SimpleNamespace(id="two", text_content="replace it"))
             assert agent.memory_proposal is None
 
@@ -707,6 +712,53 @@ def test_old_revision_and_changed_target_cannot_replace(tmp_path):
         assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I prefer tea"]
 
 
+def test_missing_confirmation_state_cannot_authorize_replacement(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        first = turn(client, headers, "I prefer tea", "missing-1").json()["memory_proposal"]
+        client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+        )
+        second = turn(client, headers, "I prefer coffee", "missing-2").json()["memory_proposal"]
+        clarify = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "save"}
+        )
+        detail = clarify.json()["detail"]
+        assert detail["code"] == "MEMORY_CLARIFICATION_REQUIRED"
+
+        # A lost awaiting row means the signed token no longer carries consent.
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute(
+                "DELETE FROM memory_capture_decisions WHERE confirmation_id = ? AND revision = ?",
+                (detail["confirmation_id"], detail["confirmation_revision"]),
+            )
+            db.commit()
+
+        blocked = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": detail["token"], "decision": "replace"},
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "MEMORY_FRESH_CONFIRMATION_REQUIRED"
+        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I prefer tea"]
+        assert all(row[0] != "I prefer coffee" for row in memory_rows(file))
+
+        # A fresh save/clarify cycle still works after the rejected replay.
+        fresh = turn(client, headers, "I prefer juice", "missing-3").json()["memory_proposal"]
+        fresh_clarify = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": fresh["token"], "decision": "save"}
+        )
+        assert fresh_clarify.status_code == 409
+        replaced = confirm_replace(client, headers, fresh_clarify.json()["detail"])
+        assert replaced.status_code == 200 and replaced.json()["status"] == "corrected"
+        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I prefer juice"]
+
+
 def test_discard_clarification_is_terminal(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
@@ -755,9 +807,11 @@ def test_legacy_contradiction_beyond_one_page_is_found(tmp_path):
         chat = client.post("/v1/conversations").json()["id"]
         headers = add_turn_session(file, chat, owner)
         with closing(sqlite3.connect(file)) as db, db:
+            # The contradiction sorts behind a full page of unrelated rows, so
+            # it is only reachable by exhausting the first legacy page.
             db.execute(
                 "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,"
-                "created_at,updated_at) VALUES ('0000-old', ?, 'I live in Tripoli', 'text-embedding-3-small', ?, 1, "
+                "created_at,updated_at) VALUES ('zzzz-old', ?, 'I live in Tripoli', 'text-embedding-3-small', ?, 1, "
                 "'active', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
                 (owner, chat),
             )
@@ -765,7 +819,7 @@ def test_legacy_contradiction_beyond_one_page_is_found(tmp_path):
                 "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,"
                 "created_at,updated_at) VALUES (?, ?, ?, 'text-embedding-3-small', ?, 1, 'active', "
                 "'2026-01-02T00:00:00+00:00', '2026-01-02T00:00:00+00:00')",
-                [(f"zz-{index:04d}", owner, f"Unrelated note {index}", chat) for index in range(500)],
+                [(f"aa-{index:04d}", owner, f"Unrelated note {index}", chat) for index in range(500)],
             )
             db.commit()
 
@@ -778,6 +832,38 @@ def test_legacy_contradiction_beyond_one_page_is_found(tmp_path):
         assert blocked.status_code == 409
         active = [row[0] for row in memory_rows(file) if row[2] == "active"]
         assert "I live in Tripoli" in active and "I live in Paris" not in active
+
+
+def test_legacy_contradiction_scan_cap_fails_closed(tmp_path, monkeypatch):
+    from app.services import memory_capture
+
+    monkeypatch.setattr(memory_capture, "LEGACY_SUBJECT_SCAN", 1)
+    monkeypatch.setattr(memory_capture, "LEGACY_SUBJECT_SCAN_MAX", 2)
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        with closing(sqlite3.connect(file)) as db, db:
+            db.executemany(
+                "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,"
+                "created_at,updated_at) VALUES (?, ?, ?, 'text-embedding-3-small', ?, 1, 'active', "
+                "'2026-01-02T00:00:00+00:00', '2026-01-02T00:00:00+00:00')",
+                [(f"aa-{index:04d}", owner, f"Unrelated legacy note {index}", chat) for index in range(2)],
+            )
+            db.commit()
+
+        new_fact = turn(client, headers, "I live in Paris", "cap-1").json()["memory_proposal"]
+        blocked = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": new_fact["token"], "decision": "save"},
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "MEMORY_CONTRADICTION_SCAN_INCOMPLETE"
+        active = [row[0] for row in memory_rows(file) if row[2] == "active"]
+        assert "I live in Paris" not in active
+        assert len(active) == 2
 
 
 def test_replacement_recovers_after_a_lost_decision_receipt(tmp_path):
@@ -815,42 +901,90 @@ def test_replacement_recovers_after_a_lost_decision_receipt(tmp_path):
         assert retried.json()["status"] == "corrected"
         assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I prefer coffee"]
 
+        again = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": detail["token"], "decision": "replace"},
+        )
+        assert again.status_code == 200, again.text
+        assert again.json()["status"] == "corrected"
 
-def test_worker_delivers_the_question_before_accepting_consent(monkeypatch):
+        with closing(sqlite3.connect(file)) as db, db:
+            receipt = db.execute(
+                "SELECT target_id,target_version,outcome FROM memory_capture_decisions "
+                "WHERE confirmation_id = ? AND revision = ?",
+                (detail["confirmation_id"], detail["confirmation_revision"]),
+            ).fetchone()
+        assert receipt == (detail["target_id"], detail["target_version"], "corrected")
+
+
+class _FakeSpeech:
+    def __init__(self, *, interrupted=False, error=None):
+        self.id = "speech"
+        self.interrupted = interrupted
+        self._error = error
+        self.waited = False
+        self.chat_items = ()
+
+    async def wait_for_playout(self):
+        self.waited = True
+
+    def exception(self):
+        return self._error
+
+
+def _question_context():
+    from app.domain.context import prompt_sha256
+    from test_generation import request
+
+    written = request()
+    messages = [message.model_dump() for message in written.messages]
+    return written.turn_id, {
+        "revision": 7,
+        "messages": messages,
+        "canonical_prompt_sha256": prompt_sha256(messages),
+        "model_request": written.model_dump(mode="json"),
+    }
+
+
+def _question_proposal():
+    return {
+        "token": "signed",
+        "text": "I prefer tea",
+        "confirmation_id": "cid",
+        "confirmation_revision": 1,
+        "question": "Should I remember this: I prefer tea?",
+    }
+
+
+def _session_with(handle):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(current_speech=handle, llm=None)
+
+
+def test_worker_arms_consent_only_after_completed_playout(monkeypatch):
     import asyncio
     from types import SimpleNamespace
 
     import httpx
     from livekit.agents import llm
     from main import SarjyAgent
-    from test_generation import request
 
-    monkeypatch.setattr(SarjyAgent, "session", property(lambda self: SimpleNamespace(current_speech=None, llm=None)))
+    handle = _FakeSpeech()
+    monkeypatch.setattr(SarjyAgent, "session", property(lambda self: _session_with(handle)))
+    paths = []
 
     async def run():
-        written = request()
-        from app.domain.context import prompt_sha256
+        turn_id, context = _question_context()
 
-        messages = [message.model_dump() for message in written.messages]
-        context = {
-            "revision": 7,
-            "messages": messages,
-            "canonical_prompt_sha256": prompt_sha256(messages),
-            "model_request": written.model_dump(mode="json"),
-        }
-        proposal = {
-            "token": "signed",
-            "text": "I prefer tea",
-            "confirmation_revision": 1,
-            "question": "Should I remember this: I prefer tea?",
-        }
-
-        async def backend(request):
+        def backend(request):
+            paths.append((request.url.path, json.loads(request.content or b"{}")))
             return httpx.Response(200, json={})
 
         async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
             agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
-            agent.prepared["m"] = {"turn_id": written.turn_id, "context": context, "memory_proposal": proposal}
+            agent.prepared["m"] = {"turn_id": turn_id, "context": context, "memory_proposal": _question_proposal()}
             generated = []
 
             async def stream(request, tools, tool_choice):
@@ -864,9 +998,105 @@ def test_worker_delivers_the_question_before_accepting_consent(monkeypatch):
             text = "".join(chunk.delta.content or "" for chunk in chunks)
             assert "Should I remember this" in text
             assert generated == [], "the model must not run before the question is delivered"
-            assert agent.memory_prompted_revision == 1
+            assert agent.memory_prompted_key is None
+            assert agent.memory_question_key == ("cid", 1)
+
+            await asyncio.gather(*agent.pending)
+            assert handle.waited is True
+            assert agent.memory_prompted_key == ("cid", 1)
+
+            # Repeated inference for the same revision must not re-emit or
+            # re-arm the question.
+            again = [chunk async for chunk in agent.llm_node(chat, [], None)]
+            assert "Should I remember" not in "".join(chunk.delta.content or "" for chunk in again)
+            assert generated == [True]
+            assert agent.memory_question_key == ("cid", 1)
+            await asyncio.gather(*agent.pending)
+
+            # The completed playout is now valid consent for exactly this tuple.
+            agent.prepared["next"] = {"turn_id": "turn-2", "context": {}, "memory_proposal": None}
+            await agent.compile(SimpleNamespace(id="next", text_content="save it"))
+            assert agent.memory_proposal is None
 
     asyncio.run(run())
+    confirmations = [body for path, body in paths if path.endswith("/memory/confirm")]
+    assert confirmations == [{"token": "signed", "decision": "save"}]
+
+
+def test_worker_does_not_arm_consent_when_question_generator_is_stopped(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    import httpx
+    from livekit.agents import llm
+    from main import SarjyAgent
+
+    handle = _FakeSpeech()
+    monkeypatch.setattr(SarjyAgent, "session", property(lambda self: _session_with(handle)))
+    paths = []
+
+    async def run():
+        def backend(request):
+            paths.append((request.url.path, json.loads(request.content or b"{}")))
+            return httpx.Response(200, json={"turn_id": "turn", "context": {}, "memory_proposal": None})
+
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
+            agent.prepared["m"] = {"turn_id": "turn", "context": {}, "memory_proposal": _question_proposal()}
+            chat = llm.ChatContext()
+            chat.add_message(role="user", content="I prefer tea", id="m")
+            generator = agent.llm_node(chat, [], None)
+            first = await anext(generator)
+            assert "Should I remember this" in (first.delta.content or "")
+            # Stopped before TTS accepted the text: the code after the yield
+            # never runs, so no handle is observed and no prompt is armed.
+            await generator.aclose()
+            assert handle.waited is False
+            assert agent.memory_prompted_key is None
+            assert not agent.pending
+
+            agent.prepared["next"] = {"turn_id": "turn-2", "context": {}, "memory_proposal": None}
+            await agent.compile(SimpleNamespace(id="next", text_content="save it"))
+            assert agent.memory_proposal is None and agent.memory_outcome == "not_saved"
+
+    asyncio.run(run())
+    assert all(not path.endswith("/memory/confirm") for path, _ in paths)
+
+
+@pytest.mark.parametrize("handle_kwargs", [{"interrupted": True}, {"error": RuntimeError("tts failed")}])
+def test_worker_does_not_arm_consent_when_question_playout_is_not_clean(monkeypatch, handle_kwargs):
+    import asyncio
+    from types import SimpleNamespace
+
+    import httpx
+    from livekit.agents import llm
+    from main import SarjyAgent
+
+    handle = _FakeSpeech(**handle_kwargs)
+    monkeypatch.setattr(SarjyAgent, "session", property(lambda self: _session_with(handle)))
+    paths = []
+
+    async def run():
+        def backend(request):
+            paths.append((request.url.path, json.loads(request.content or b"{}")))
+            return httpx.Response(200, json={"turn_id": "turn", "context": {}, "memory_proposal": None})
+
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
+            agent.prepared["m"] = {"turn_id": "turn", "context": {}, "memory_proposal": _question_proposal()}
+            chat = llm.ChatContext()
+            chat.add_message(role="user", content="I prefer tea", id="m")
+            _ = [chunk async for chunk in agent.llm_node(chat, [], None)]
+            await asyncio.gather(*agent.pending)
+            assert handle.waited is True
+            assert agent.memory_prompted_key is None
+
+            agent.prepared["next"] = {"turn_id": "turn-2", "context": {}, "memory_proposal": None}
+            await agent.compile(SimpleNamespace(id="next", text_content="save it"))
+            assert agent.memory_proposal is None and agent.memory_outcome == "not_saved"
+
+    asyncio.run(run())
+    assert all(not path.endswith("/memory/confirm") for path, _ in paths)
 
 
 def test_worker_refuses_consent_for_an_unprompted_revision():
@@ -885,9 +1115,9 @@ def test_worker_refuses_consent_for_an_unprompted_revision():
 
         async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
             agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
-            agent.memory_proposal = {"token": "signed", "confirmation_revision": 2}
+            agent.memory_proposal = {"token": "signed", "confirmation_id": "cid", "confirmation_revision": 2}
             agent.memory_clarify = True
-            agent.memory_prompted_revision = None
+            agent.memory_prompted_key = None
             await agent.compile(SimpleNamespace(id="m", text_content="replace it"))
             assert agent.memory_proposal is None
             assert agent.memory_outcome == "not_saved"
