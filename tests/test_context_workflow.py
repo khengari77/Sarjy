@@ -51,18 +51,18 @@ def test_budget_content_is_ambiguous_without_explicit_budget_scope():
 
 def test_budget_query_without_explicit_authority_is_ambiguous():
     records = (candidate("budget", "Budget 500 USD for the trip"),)
-    unscoped = select_candidates(records, query="forget the budget")
+    unscoped = select_candidates(records)
     assert unscoped.excluded_ids == frozenset()
     assert unscoped.kept_ids == frozenset({"budget"})
     assert {record.id for record in unscoped.ambiguous} == {"budget"}
     assert unscoped.requires_clarification is True
 
-    excluded = select_candidates(records, query="forget the budget", exclude=("budget",))
+    excluded = select_candidates(records, exclude=("budget",))
     assert excluded.excluded_ids == frozenset({"budget"})
     assert excluded.ambiguous == ()
     assert excluded.requires_clarification is False
 
-    kept = select_candidates(records, keep=("budget",), query="forget the budget", exclude=("budget",))
+    kept = select_candidates(records, keep=("budget",), exclude=("budget",))
     assert kept.excluded_ids == frozenset()
     assert kept.kept_ids == frozenset({"budget"})
     assert kept.requires_clarification is False

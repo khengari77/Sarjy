@@ -97,7 +97,6 @@ def _explicitly_excluded(candidate: MemoryCandidate, exclude_terms: tuple[str, .
 def select_candidates(
     candidates: tuple[MemoryCandidate, ...],
     keep: tuple[str, ...] = (),
-    query: str = "",
     exclude: tuple[str, ...] = (),
 ) -> Selection:
     """Apply keep-exceptions and explicit exclusions exactly.
@@ -108,8 +107,7 @@ def select_candidates(
     merely because its content or the query mentions budget/cost/price: it is
     removed only when ``exclude`` explicitly authorises it, and otherwise it is
     preserved and surfaced as ambiguous so lost keep/parser state fails closed.
-    ``query`` is retained for display and caller context; it grants no removal
-    authority by itself.  Duplicate ids are collapsed so diffs stay canonical.
+    Duplicate ids are collapsed so diffs stay canonical.
     """
     keep_terms = tuple(term.strip() for term in keep if term and term.strip())
     exclude_terms = tuple(term.strip() for term in exclude if term and term.strip())

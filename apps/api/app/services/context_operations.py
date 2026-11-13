@@ -219,7 +219,7 @@ async def create_proposal(
     ).all()
     owned = {row.id for row in rows}
     candidates = tuple(candidate for candidate in candidates if candidate.id in owned)
-    selection = select_candidates(candidates, keep, query, exclude)
+    selection = select_candidates(candidates, keep, exclude)
     revision = conversation.revision
     token = sign_proposal(
         {
