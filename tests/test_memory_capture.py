@@ -455,3 +455,51 @@ def test_worker_retains_a_clarifying_proposal_and_replaces_on_confirmation():
     asyncio.run(run())
     confirmations = [body for path, body in paths if path.endswith("/memory/confirm")]
     assert [body["decision"] for body in confirmations] == ["save", "replace"]
+
+
+def test_worker_replies_after_a_successful_replacement(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    import httpx
+    from livekit.agents import llm
+    from main import SarjyAgent
+    from test_generation import request
+
+    monkeypatch.setattr(SarjyAgent, "session", property(lambda self: SimpleNamespace(current_speech=None, llm=None)))
+
+    async def run():
+        written = request()
+        from app.domain.context import prompt_sha256
+
+        messages = [message.model_dump() for message in written.messages]
+        context = {
+            "revision": 7,
+            "messages": messages,
+            "canonical_prompt_sha256": prompt_sha256(messages),
+            "model_request": written.model_dump(mode="json"),
+        }
+
+        async def backend(request):
+            return httpx.Response(200, json={})
+
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
+            agent.prepared["message"] = {"turn_id": written.turn_id, "context": context}
+            agent.current_turn = written.turn_id
+            agent.memory_message = "message"
+            agent.memory_outcome = "replace"
+            seen = []
+
+            async def stream(request, tools, tool_choice):
+                seen.append(request.instructions)
+                yield llm.ChatChunk(id="r", delta=llm.ChoiceDelta(content="updated"))
+
+            agent._stream_with_fallback = stream
+            chat = llm.ChatContext()
+            chat.add_message(role="user", content="yes", id="message")
+            chunks = [chunk async for chunk in agent.llm_node(chat, [], None)]
+            assert chunks and "replaced" in seen[0]
+            assert agent.memory_outcome is None
+
+    asyncio.run(run())

@@ -102,7 +102,21 @@ def _memory_decision(text: str) -> str | None:
 
 def _clarify_decision(text: str) -> str | None:
     lowered = " ".join(text.casefold().replace(",", " ").split()).strip(" .!?;:")
-    if lowered in {"yes", "yeah", "yep", "sure", "ok", "okay", "yes please", "replace it", "use the new one"}:
+    if lowered in {
+        "yes",
+        "yeah",
+        "yep",
+        "sure",
+        "sure thing",
+        "go ahead",
+        "ok",
+        "okay",
+        "yes please",
+        "yes replace it",
+        "replace",
+        "replace it",
+        "use the new one",
+    }:
         return "replace"
     if lowered in {"no", "nope", "no thanks", "cancel", "don't", "do not", "discard", "keep the old one"}:
         return "discard"
@@ -300,6 +314,7 @@ class SarjyAgent(Agent):
                     "An existing saved fact conflicts with this update. Ask the user to confirm replacing it; "
                     "do not claim it was saved until they confirm."
                 ),
+                "replace": "The pending memory was replaced; tell the user the earlier fact was updated.",
                 "not_saved": "The pending memory was not saved; do not claim it was saved.",
             }[outcome]
             request = request.model_copy(update={"instructions": f"{request.instructions}\n\n{note}"})

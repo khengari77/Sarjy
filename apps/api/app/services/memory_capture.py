@@ -105,22 +105,6 @@ async def _exact_content(
     return await db.scalar(query.order_by(Memory.updated_at.desc()).limit(1))
 
 
-async def _latest_active_preference(db: AsyncSession, *, owner_id: str) -> Memory | None:
-    rows = (
-        await db.scalars(
-            select(Memory)
-            .where(Memory.owner_id == owner_id, Memory.status == "active")
-            .order_by(Memory.updated_at.desc(), Memory.id)
-            .limit(MAX_CONTRADICTION_SCAN)
-        )
-    ).all()
-    for row in rows:
-        parsed = parse_capture(row.content)
-        if parsed is not None and parsed.subject.startswith("preference:"):
-            return row
-    return None
-
-
 async def _contradictions(db: AsyncSession, *, owner_id: str, capture: MemoryCapture) -> list[Memory]:
     if capture.subject is None:
         return []
@@ -232,9 +216,6 @@ async def _write_consented(
     conflicting = [
         row for row in previous if (parsed := parse_capture(row.content)) is not None and parsed.value != capture.value
     ]
-    if not conflicting and capture.subject.startswith("preference:") and (force_replace or capture.replaces):
-        latest = await _latest_active_preference(db, owner_id=owner_id)
-        conflicting = [latest] if latest is not None else []
     if conflicting:
         corrective = (
             force_replace

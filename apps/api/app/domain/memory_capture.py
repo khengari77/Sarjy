@@ -20,6 +20,9 @@ _REPLACEMENT = re.compile(
     re.IGNORECASE,
 )
 _PRONOUN_VALUES = frozenset({"it", "this", "that", "them", "him", "her", "those", "these", "something", "anything"})
+_SLOT_STOPWORDS = frozenset(
+    {"a", "an", "the", "my", "our", "your", "his", "her", "its", "their", "now", "instead", "actually", "please"}
+)
 _ATTRIBUTE_STOPWORDS = frozenset({"point", "question", "issue", "problem", "thing", "idea", "reason", "story"})
 _PREFERENCE_TOPICS = {
     "beverage": frozenset({"tea", "coffee", "water", "juice", "milk", "wine", "beer", "soda", "drink", "drinks"}),
@@ -58,6 +61,12 @@ def _normalize(value: str) -> str:
     return _WHITESPACE.sub(" ", value).strip().strip(".,;:!? ")
 
 
+def _head_word(value: str) -> str:
+    words = [word.strip(".,;:!?\"'") for word in value.casefold().split()]
+    significant = [word for word in words if word and word not in _SLOT_STOPWORDS]
+    return significant[-1] if significant else value.casefold()
+
+
 def _ordinary(text: str) -> tuple[str, str] | None:
     for pattern, subject in _ORDINARY:
         match = pattern.match(text)
@@ -77,7 +86,7 @@ def _ordinary(text: str) -> tuple[str, str] | None:
                 (name for name, vocabulary in _PREFERENCE_TOPICS.items() if words & vocabulary),
                 "",
             )
-            return (f"preference:{topic}" if topic else f"preference:{value.casefold()}"), value
+            return (f"preference:{topic}" if topic else f"preference:{_head_word(value)}"), value
         if subject == "diet":
             return f"diet:{value.casefold()}", value
         return subject, value
