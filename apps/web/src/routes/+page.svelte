@@ -203,6 +203,16 @@
       pendingIntent = { type: 'switch', id };
       return;
     }
+    if (connecting) {
+      // An attempt that has not gone live does not own the selected
+      // conversation yet. Cancel it before switching so typed text can never
+      // follow the previous conversation's session.
+      void run(async () => {
+        await cancelConnect();
+        await select(id);
+      });
+      return;
+    }
     void run(() => select(id));
   }
 
@@ -282,6 +292,14 @@
       pendingIntent = { type: 'create' };
       return;
     }
+    if (connecting) {
+      // No live session exists yet; abandoning the pending attempt is enough.
+      await run(async () => {
+        await cancelConnect();
+        await createConversation();
+      });
+      return;
+    }
     await run(createConversation);
   }
 
@@ -304,8 +322,14 @@
       if (!current) {
         const chat = await request<Conversation>('conversations', {});
         conversations = [chat, ...conversations];
+        if (attempt !== connectAttempt) return;
         current = chat.id;
       }
+
+      // Bind the attempt to the conversation that was selected when it began.
+      // A switch or new chat cancels the attempt, so typed text can never follow
+      // a session belonging to the previous conversation.
+      const conversationId = current;
 
       // Ask for the microphone before creating a paid session so a denial
       // cannot consume capacity or leave a half-open room.
@@ -313,21 +337,24 @@
         try {
           await ensureMicrophoneAccess();
         } catch (error) {
-          voiceErrorCode = errorCode(error);
+          if (attempt === connectAttempt) voiceErrorCode = errorCode(error);
           return;
         }
+        // Cancellation can arrive while the permission prompt is open; do not
+        // create a paid session for an attempt the user already abandoned.
+        if (attempt !== connectAttempt) return;
       }
 
       const requestedVoiceId = voiceId;
       const requestedVoiceName = voices.find((voice) => voice.id === requestedVoiceId)?.name || requestedVoiceId;
       const config = await request<SessionConfig>('voice/sessions', {
-        conversation_id: current,
+        conversation_id: conversationId,
         language: arabic ? 'ar' : 'en',
         voice_id: requestedVoiceId || null,
         response_preference: 'automatic'
       } satisfies StartVoice);
-      if (attempt !== connectAttempt) {
-        // The user cancelled while the session request was in flight.
+      if (attempt !== connectAttempt || current !== conversationId) {
+        // The user cancelled or switched while the session request was in flight.
         await request('voice/sessions/' + config.id + '/end', {}).catch(() => {});
         return;
       }
@@ -336,8 +363,9 @@
         transportStatus = 'connecting';
         agentState = null;
         await runtime.connect(config);
-        if (attempt !== connectAttempt) {
-          await runtime.disconnect();
+        if (attempt !== connectAttempt || current !== conversationId) {
+          // Cancellation already aborted this attempt's runtime. Only release
+          // its paid session; never disconnect a replacement attempt.
           await request('voice/sessions/' + config.id + '/end', {}).catch(() => {});
           return;
         }
@@ -349,15 +377,28 @@
         // metering is conditional inside setupMeters().
         setupMeters();
       } catch (error) {
-        await runtime.disconnect();
+        // A stale attempt has already been aborted and may have a replacement
+        // using the shared runtime; its failure must only release its own
+        // session. The current attempt also needs its local live state cleared.
+        if (attempt === connectAttempt) {
+          await runtime.disconnect().catch(() => {});
+          teardownMeters();
+          live = null;
+          muted = true;
+          activeVoiceName = '';
+          connectionLost = false;
+          provisional = null;
+          transportStatus = 'disconnected';
+          agentState = null;
+          voiceErrorCode = errorCode(error);
+        }
         await request('voice/sessions/' + config.id + '/end', {}).catch(() => {});
-        transportStatus = 'disconnected';
-        agentState = null;
-        voiceErrorCode = errorCode(error);
       }
     } catch (error) {
-      voiceErrorCode = errorCode(error);
-      transportStatus = 'disconnected';
+      if (attempt === connectAttempt) {
+        voiceErrorCode = errorCode(error);
+        transportStatus = 'disconnected';
+      }
     } finally {
       if (attempt === connectAttempt) connecting = false;
     }
