@@ -57,12 +57,37 @@ def openai_request_within_bounds(serialized: bytes, tools: list, max_output_toke
 
 
 def _memory_decision(text: str) -> str | None:
-    lowered = " ".join(text.casefold().split())
-    affirmative = ("yes", "yeah", "yep", "sure", "ok", "okay", "please do", "save it", "remember it", "confirm")
-    negative = ("no", "nope", "don't", "do not", "cancel", "discard", "forget it", "forget that")
-    if any(lowered == phrase or lowered.startswith(phrase + " ") for phrase in negative):
+    lowered = " ".join(text.casefold().replace(",", " ").split()).strip(" .!?;:")
+    affirmative = {
+        "yes",
+        "yeah",
+        "yep",
+        "sure",
+        "ok",
+        "okay",
+        "yes please",
+        "yes please do",
+        "please do",
+        "yes save it",
+        "save it",
+        "remember it",
+        "confirm",
+    }
+    negative = {
+        "no",
+        "nope",
+        "no thanks",
+        "don't",
+        "do not",
+        "don't save",
+        "cancel",
+        "discard",
+        "forget it",
+        "forget that",
+    }
+    if lowered in negative:
         return "discard"
-    if any(lowered == phrase or lowered.startswith(phrase + " ") for phrase in affirmative):
+    if lowered in affirmative:
         return "save"
     return None
 
@@ -131,6 +156,7 @@ class SarjyAgent(Agent):
         self.speeches: set[str] = set()
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
+        self.memory_message: str | None = None
 
     async def compile(self, message):
         if message.id not in self.prepared:
@@ -141,24 +167,44 @@ class SarjyAgent(Agent):
             self.prepared[message.id] = response.json()
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
-        if self.memory_proposal is not None:
-            decision = _memory_decision(message.text_content)
-            if decision is not None:
-                await self._resolve_memory(decision)
+        if message.id != self.memory_message:
+            # The SDK compiles a user message twice (turn hook + llm_node); decide once.
+            self.memory_message = message.id
+            self.memory_outcome = None
+            if self.memory_proposal is not None:
+                decision = _memory_decision(message.text_content)
+                if decision is not None:
+                    await self._resolve_memory(decision)
         if result.get("memory_proposal") is not None:
             self.memory_proposal = result["memory_proposal"]
         return result["context"]
 
     async def _resolve_memory(self, decision: str) -> None:
         proposal, self.memory_proposal = self.memory_proposal, None
-        response = await self.backend.post(
-            "/internal/agent/memory/confirm",
-            json={"token": proposal["token"], "decision": decision},
-        )
-        self.memory_outcome = decision if response.is_success else "failed"
-        if not response.is_success and self.notify:
-            code = response.json().get("detail", {}).get("code") if response.content else None
-            await self.notify(code or "MEMORY_SAVE_FAILED")
+        try:
+            response = await self.backend.post(
+                "/internal/agent/memory/confirm",
+                json={"token": proposal["token"], "decision": decision},
+            )
+        except httpx.HTTPError:
+            self.memory_outcome = "failed"
+            if self.notify:
+                await self.notify("MEMORY_SAVE_FAILED")
+            return
+        code = ""
+        if not response.is_success:
+            try:
+                code = response.json().get("detail", {}).get("code", "")
+            except (ValueError, AttributeError):
+                code = ""
+            if self.notify:
+                await self.notify(code or "MEMORY_SAVE_FAILED")
+        if response.is_success:
+            self.memory_outcome = decision
+        elif code == "MEMORY_CLARIFICATION_REQUIRED":
+            self.memory_outcome = "clarify"
+        else:
+            self.memory_outcome = "failed"
 
     async def reserve(self, provider: str, characters: int = 0):
         if provider == "elevenlabs" and characters > 500:
@@ -214,6 +260,10 @@ class SarjyAgent(Agent):
                 "save": "The memory save succeeded; confirm to the user that it is saved.",
                 "failed": "The memory save failed; apologise and do not claim it was saved.",
                 "discard": "The user declined the memory save; do not claim it was saved.",
+                "clarify": (
+                    "More than one saved fact matches this correction. Ask the user which one to update; "
+                    "do not claim it was saved."
+                ),
             }[outcome]
             request = request.model_copy(update={"instructions": f"{request.instructions}\n\n{note}"})
         async for chunk in self._stream_with_fallback(

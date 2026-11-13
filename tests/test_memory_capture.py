@@ -61,6 +61,10 @@ def test_parse_explicit_and_ordinary_but_not_negated_or_quoted():
     assert parse_capture("Remember that if I win I prefer tea") is None
     assert parse_capture('"I prefer tea"') is None
     assert parse_capture("Do I prefer tea?") is None
+    assert parse_capture("I prefer tea?") is None
+    assert parse_capture("I like it") is None
+    assert parse_capture("I love this") is None
+    assert parse_capture("My point is that we should leave") is None
 
 
 def test_finalized_fact_requires_confirmation_then_recalls_corrects_and_isolates(tmp_path):
@@ -124,6 +128,32 @@ def test_finalized_fact_requires_confirmation_then_recalls_corrects_and_isolates
         assert forged.status_code == 404
 
 
+def test_unrelated_preferences_and_allergies_are_not_destroyed(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        for index, text in enumerate(
+            ["I prefer tea", "I love jazz", "I am allergic to peanuts", "I am allergic to shellfish"]
+        ):
+            proposal = turn(client, headers, text, f"additive-{index}").json()["memory_proposal"]
+            result = client.post(
+                "/internal/agent/memory/confirm",
+                headers=headers,
+                json={"token": proposal["token"], "decision": "save"},
+            )
+            assert result.status_code == 200, result.text
+            assert result.json()["status"] == "saved"
+        active = sorted(row[0] for row in memory_rows(file) if row[2] == "active")
+        assert active == [
+            "I am allergic to peanuts",
+            "I am allergic to shellfish",
+            "I love jazz",
+            "I prefer tea",
+        ]
+
+
 def test_discard_negation_and_quotation_write_nothing(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
@@ -184,10 +214,10 @@ def test_worker_confirms_pending_memory_only_on_explicit_affirmative():
             await agent.compile(SimpleNamespace(id="message", text_content=text))
             return paths, agent.memory_proposal
 
-    paths, remaining = asyncio.run(exchange("yes"))
+    paths, remaining = asyncio.run(exchange("Yes."))
     assert remaining is None
     assert paths == [
-        ("/internal/agent/turn/start", {"request_id": "message", "text": "yes"}),
+        ("/internal/agent/turn/start", {"request_id": "message", "text": "Yes."}),
         ("/internal/agent/memory/confirm", {"token": "signed", "decision": "save"}),
     ]
 
@@ -195,6 +225,35 @@ def test_worker_confirms_pending_memory_only_on_explicit_affirmative():
     assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "maybe later"})]
     assert remaining == {"token": "signed", "text": "I prefer tea"}
 
-    paths, remaining = asyncio.run(exchange("no thanks"))
+    paths, remaining = asyncio.run(exchange("okay what's the weather"))
+    assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "okay what's the weather"})]
+    assert remaining == {"token": "signed", "text": "I prefer tea"}
+
+    paths, remaining = asyncio.run(exchange("No thanks."))
     assert remaining is None
     assert paths[-1] == ("/internal/agent/memory/confirm", {"token": "signed", "decision": "discard"})
+
+
+def test_worker_decides_once_when_a_message_is_compiled_twice():
+    import asyncio
+    from types import SimpleNamespace
+
+    import httpx
+    from main import SarjyAgent
+
+    paths = []
+
+    async def run():
+        def backend(request):
+            paths.append(request.url.path)
+            return httpx.Response(200, json={"turn_id": "turn", "context": {}, "memory_proposal": None})
+
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
+            agent.memory_proposal = {"token": "signed"}
+            message = SimpleNamespace(id="message", text_content="Yes, please.")
+            await agent.compile(message)
+            await agent.compile(message)
+
+    asyncio.run(run())
+    assert paths.count("/internal/agent/memory/confirm") == 1

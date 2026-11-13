@@ -15,6 +15,12 @@ _EXPLICIT = (
     re.compile(r"^\s*(?:please\s+)?(?:don't|do not)\s+forget(?:\s+that)?\s+(?P<content>.+?)\s*$", re.IGNORECASE),
 )
 _HYPOTHETICAL = re.compile(r"\b(?:if|would|could|suppose|supposing|imagine|maybe|perhaps)\b", re.IGNORECASE)
+_REPLACEMENT = re.compile(
+    r"\b(?:now|instead|actually|no\s+longer|not\s+anymore|changed\s+my\s+mind|from\s+now\s+on)\b",
+    re.IGNORECASE,
+)
+_PRONOUN_VALUES = frozenset({"it", "this", "that", "them", "him", "her", "those", "these", "something", "anything"})
+_ATTRIBUTE_STOPWORDS = frozenset({"point", "question", "issue", "problem", "thing", "idea", "reason", "story"})
 _NON_REMEMBERABLE = re.compile(
     r"^\s*(?:don't|do not|never)\s+remember\b|\bnever\s+mind\b|\bforget\s+(?:it|that|this)\b",
     re.IGNORECASE,
@@ -39,6 +45,7 @@ class MemoryCapture:
     subject: str | None
     value: str
     explicit: bool
+    replaces: bool = False
 
 
 def _normalize(value: str) -> str:
@@ -51,18 +58,23 @@ def _ordinary(text: str) -> tuple[str, str] | None:
         if match is None:
             continue
         value = _normalize(match.group("value"))
-        if not value:
+        if not value or value.casefold() in _PRONOUN_VALUES:
             return None
         if subject == "attribute":
-            return f"attribute:{_normalize(match.group('key')).casefold()}", value
+            key = _normalize(match.group("key")).casefold()
+            if key in _ATTRIBUTE_STOPWORDS:
+                return None
+            return f"attribute:{key}", value
         return subject, value
     return None
 
 
 def parse_capture(text: str) -> MemoryCapture | None:
     """Return a candidate for an explicit or ordinary first-person statement."""
+    if text.strip().endswith("?"):
+        return None
     candidate = _normalize(text)
-    if not candidate or len(candidate) > MAX_CAPTURE_CHARS or candidate.endswith("?"):
+    if not candidate or len(candidate) > MAX_CAPTURE_CHARS:
         return None
     if _NON_REMEMBERABLE.search(candidate) or _HYPOTHETICAL.search(candidate):
         return None
@@ -83,8 +95,9 @@ def parse_capture(text: str) -> MemoryCapture | None:
         if _ordinary(content) is None:
             return None
 
+    replaces = bool(_REPLACEMENT.search(content))
     slot = _ordinary(content)
     if slot is None:
-        return MemoryCapture(text=content, subject=None, value=content.casefold(), explicit=explicit)
+        return MemoryCapture(text=content, subject=None, value=content.casefold(), explicit=explicit, replaces=replaces)
     subject, value = slot
-    return MemoryCapture(text=content, subject=subject, value=value.casefold(), explicit=explicit)
+    return MemoryCapture(text=content, subject=subject, value=value.casefold(), explicit=explicit, replaces=replaces)
