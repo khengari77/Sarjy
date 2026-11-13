@@ -65,6 +65,24 @@ class SessionGate(Base):
     marker: Mapped[int] = mapped_column(Integer, default=1)
 
 
+class VoiceAdmission(Base):
+    """Owner-scoped idempotency record for one start-voice intent."""
+
+    __tablename__ = "voice_admissions"
+    __table_args__ = (UniqueConstraint("owner_id", "request_key", name="uq_voice_admission_owner_request"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    request_key: Mapped[str] = mapped_column(String(100))
+    intent_hash: Mapped[str] = mapped_column(String(64))
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
+    state: Mapped[str] = mapped_column(String(20), default="in_progress", index=True)
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("voice_sessions.id"), nullable=True, index=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
 class ToolCall(Base):
     __tablename__ = "tool_calls"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

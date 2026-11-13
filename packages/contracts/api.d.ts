@@ -918,6 +918,8 @@ export interface components {
             response_tier?: number | null;
             /** @default automatic */
             response_preference: components["schemas"]["ResponsePreference"];
+            /** Request Key */
+            request_key?: string | null;
         };
         /** UnhandledAction */
         UnhandledAction: {

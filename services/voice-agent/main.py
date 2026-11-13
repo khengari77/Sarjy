@@ -115,7 +115,10 @@ class SarjyAgent(Agent):
         self.notify = notify
         self.fallback_llm = fallback_llm
         self.prepared: dict[str, dict] = {}
-        self.current_turn: str | None = None
+        # A tool invocation is bound to the turn that generated its call_id.  A
+        # mutable "current turn" is not safe to read inside a delayed callback:
+        # the SDK may start a later turn before an earlier tool task runs.
+        self.tool_turns: dict[str, str] = {}
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
 
@@ -126,9 +129,7 @@ class SarjyAgent(Agent):
             )
             response.raise_for_status()
             self.prepared[message.id] = response.json()
-        result = self.prepared[message.id]
-        self.current_turn = result["turn_id"]
-        return result["context"]
+        return self.prepared[message.id]["context"]
 
     async def reserve(self, provider: str, characters: int = 0):
         if provider == "elevenlabs" and characters > 500:
@@ -171,11 +172,12 @@ class SarjyAgent(Agent):
         if user is None:
             return
         snapshot = await self.compile(user)
+        turn_id = self.prepared[user.id]["turn_id"]
         handle = self.session.current_speech
         if handle and handle.id not in self.speeches:
             self.speeches.add(handle.id)
             self._schedule_persistence(user, handle)
-        request = snapshot_request(snapshot, self.current_turn)
+        request = snapshot_request(snapshot, turn_id)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
         request = _with_continuation(request, _continuation(chat_ctx, user), schemas)
         async for chunk in self._stream_with_fallback(
@@ -271,6 +273,8 @@ class SarjyAgent(Agent):
             async for event in self._stream_attempt(self.session.llm, primary_kind, request, tools, tool_choice):
                 if event.kind in {"text", "tool"}:
                     emitted = True
+                if event.kind == "tool" and event.call_id:
+                    self.tool_turns[event.call_id] = request.turn_id
                 chunk = livekit_chunk(event)
                 if chunk is not None:
                     yield chunk
@@ -290,6 +294,8 @@ class SarjyAgent(Agent):
             async for event in self._stream_attempt(
                 self.fallback_llm, "openai_direct", fallback_request, tools, tool_choice
             ):
+                if event.kind == "tool" and event.call_id:
+                    self.tool_turns[event.call_id] = fallback_request.turn_id
                 chunk = livekit_chunk(event)
                 if chunk is not None:
                     yield chunk
@@ -297,13 +303,16 @@ class SarjyAgent(Agent):
     @function_tool()
     async def get_current_weather(self, ctx: RunContext, city: str, country: str | None = None):
         """Get current weather for an explicitly identified city. Use an ISO 3166-1 alpha-2 country code such as LY when a country is known. Ask for city if missing."""
-        if not self.current_turn:
-            raise ValueError("TOOL_TURN_REQUIRED")
         call_id = getattr(ctx.function_call, "call_id", "")
-        key = operation_key(self.current_turn, call_id)
+        # Bind to the turn that generated this call, not to whichever turn most
+        # recently compiled when the SDK finally starts the invocation.
+        turn_id = self.tool_turns.get(call_id)
+        if not turn_id:
+            raise ValueError("TOOL_TURN_REQUIRED")
+        key = operation_key(turn_id, call_id)
         result = await self.backend.post(
             "/internal/agent/tool/weather",
-            json={"city": city, "country": country, "turn_id": self.current_turn, "request_id": key},
+            json={"city": city, "country": country, "turn_id": turn_id, "request_id": key},
         )
         result.raise_for_status()
         return result.json()

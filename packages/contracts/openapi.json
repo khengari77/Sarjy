@@ -2226,6 +2226,20 @@
           "response_preference": {
             "$ref": "#/components/schemas/ResponsePreference",
             "default": "automatic"
+          },
+          "request_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._:-]+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Key"
           }
         },
         "type": "object",
