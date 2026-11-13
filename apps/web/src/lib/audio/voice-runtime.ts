@@ -1,6 +1,7 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
 import { waitForAgent, type StartupSignal } from './agentStartup';
+import { disposeAudioResources } from './disposeAudio';
 
 type VoiceEventBody =
   | { type: 'status'; source: 'transport' | 'agent'; text: string }
@@ -258,20 +259,22 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     this.startup = null;
     const room = this.room;
     this.room = null;
-    if (room) {
-      await room.disconnect();
-      room.removeAllListeners();
-    }
-    for (const element of this.audio) {
-      this.detachAnalyser(element);
-      element.pause();
-      element.srcObject = null;
-      element.remove();
-    }
-    this.audio.clear();
-    if (this.audioContext) {
-      void this.audioContext.close().catch(() => {});
-      this.audioContext = null;
+    // Detach resource ownership before awaiting the old room. A replacement
+    // connection may start while disconnect is pending or rejecting.
+    const audio = this.audio;
+    const analysers = this.analysers;
+    const audioContext = this.audioContext;
+    this.audio = new Set();
+    this.analysers = new Map();
+    this.audioContext = null;
+    try {
+      await room?.disconnect();
+    } finally {
+      try {
+        room?.removeAllListeners();
+      } finally {
+        await disposeAudioResources(audio, analysers, audioContext);
+      }
     }
   }
 }

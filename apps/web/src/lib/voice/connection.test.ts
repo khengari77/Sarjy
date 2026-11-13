@@ -14,6 +14,8 @@ vi.mock('../chat/session', () => ({
 
 interface FakeRoom {
   connectResolve: (() => void) | null;
+  disconnectWait?: Promise<void>;
+  failMicrophone?: boolean;
   remoteParticipants: Map<string, { isAgent: boolean; attributes: Record<string, string> }>;
   emit(event: string, ...args: unknown[]): void;
 }
@@ -23,7 +25,13 @@ vi.mock('livekit-client', () => {
   class Room {
     listeners = new Map<string, Set<(...args: unknown[]) => void>>();
     remoteParticipants = new Map<string, { isAgent: boolean; attributes: Record<string, string> }>();
-    localParticipant = {};
+    failMicrophone = false;
+    disconnectWait?: Promise<void>;
+    localParticipant = {
+      setMicrophoneEnabled: async () => {
+        if (this.failMicrophone) throw Object.assign(new Error('denied'), { name: 'NotAllowedError' });
+      },
+    };
     canPlaybackAudio = true;
     connectResolve: (() => void) | null = null;
     constructor() {
@@ -42,7 +50,9 @@ vi.mock('livekit-client', () => {
       });
     }
     async startAudio() {}
-    async disconnect() {}
+    async disconnect() {
+      await this.disconnectWait;
+    }
     removeAllListeners() {
       this.listeners.clear();
     }
@@ -107,6 +117,7 @@ function harness() {
 afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
   rooms().length = 0;
 });
 
@@ -155,4 +166,68 @@ describe('terminal startup failure cleanup', () => {
     expect(mocks.end).toHaveBeenCalledTimes(1);
     expect(mocks.end).toHaveBeenCalledWith(config);
   });
+});
+
+it.each([false, true])('old cleanup preserves replacement resources (reject=%s)', async (rejectCleanup) => {
+  vi.useFakeTimers();
+  vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
+  const contexts: { close: ReturnType<typeof vi.fn> }[] = [];
+  class AudioContext {
+    destination = {};
+    close = vi.fn(async () => {});
+    constructor() {
+      contexts.push(this);
+    }
+    createMediaElementSource() {
+      return { connect: vi.fn(), disconnect: vi.fn() };
+    }
+    createAnalyser() {
+      return { fftSize: 256, connect: vi.fn(), disconnect: vi.fn() };
+    }
+  }
+  vi.stubGlobal('window', { AudioContext });
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) } });
+  mocks.start.mockResolvedValueOnce(config).mockResolvedValueOnce({ ...config, id: 'sess-2' });
+  const { state, connection } = harness();
+  const first = connection.connect(true);
+  await vi.advanceTimersByTimeAsync(1);
+  const old = rooms().at(-1)!;
+  let finish!: () => void;
+  old.disconnectWait = new Promise<void>((resolve, reject) => {
+    finish = () => (rejectCleanup ? reject(new Error('disconnect failed')) : resolve());
+  });
+  old.failMicrophone = true;
+  old.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
+  const oldAudio = { pause: vi.fn(), remove: vi.fn(), srcObject: {} };
+  old.emit('trackSubscribed', { kind: 'audio', attach: () => oldAudio });
+  old.connectResolve!();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(state.voiceErrorCode).toBe('MICROPHONE_PERMISSION_DENIED');
+  await connection.cancelConnect();
+  const next = connection.connect(true);
+  await vi.advanceTimersByTimeAsync(1);
+  const replacement = rooms().at(-1)!;
+  replacement.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
+  replacement.connectResolve!();
+  await vi.advanceTimersByTimeAsync(100);
+  await next;
+  const audio = { pause: vi.fn(), remove: vi.fn(), srcObject: {} };
+  replacement.emit('trackSubscribed', { kind: 'audio', attach: () => audio });
+  finish();
+  await first;
+  expect(oldAudio.pause).toHaveBeenCalledOnce();
+  expect(oldAudio.srcObject).toBeNull();
+  expect(contexts[0].close).toHaveBeenCalledOnce();
+  expect(audio.pause).not.toHaveBeenCalled();
+  expect(audio.srcObject).not.toBeNull();
+  expect(contexts[1].close).not.toHaveBeenCalled();
+  expect(state.live?.id).toBe('sess-2');
+  expect(state.muted).toBe(false);
+  old.emit('disconnected');
+  expect(state.live?.id).toBe('sess-2');
+  expect(mocks.end).toHaveBeenCalledExactlyOnceWith(config);
+  await connection.end();
+  await connection.end();
+  expect(audio.pause).toHaveBeenCalledOnce();
+  expect(contexts[1].close).toHaveBeenCalledOnce();
 });
