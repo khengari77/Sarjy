@@ -47,17 +47,6 @@ MAX_TOOLS = 1
 GENERATION_ATTEMPT_SECONDS = 30.0
 
 
-def deepseek_request_within_bounds(serialized: bytes) -> bool:
-    return len(serialized) <= DEEPSEEK_MAX_REQUEST_BYTES
-
-
-def openai_request_within_bounds(serialized: bytes, tools: list, max_output_tokens: int) -> bool:
-    """Pure budget guard: 64KB context, one fixed tool and at most the tier-5 cap."""
-    return (
-        len(serialized) <= MAX_CONTEXT_BYTES and len(tools) <= MAX_TOOLS and max_output_tokens <= MAX_TIER_OUTPUT_TOKENS
-    )
-
-
 class RequestRefused(Exception):
     """A request rejected before any provider call; carried to the UI as a code."""
 
@@ -128,7 +117,6 @@ class SarjyAgent(Agent):
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
-        self.refused_turns: set[str] = set()
 
     async def _notify(self, code: str) -> None:
         if not self.notify:
@@ -209,36 +197,32 @@ class SarjyAgent(Agent):
 
     def _schedule_persistence(self, user, handle):
         turn_id = self.prepared[user.id]["turn_id"]
-
-        async def persist_playout():
-            text, status = await _playout_result(handle)
-            if turn_id in self.refused_turns:
-                return
-            if not text.strip():
-                logging.warning("Skipping persistence for an empty reply")
-                return
-            for attempt in range(3):
-                try:
-                    response = await self.backend.post(
-                        "/internal/agent/turn/finalize", json={"turn_id": turn_id, "text": text, "status": status}
-                    )
-                    response.raise_for_status()
-                    return
-                except httpx.HTTPError:
-                    if attempt == 2:
-                        logging.error("Turn persistence failed after three attempts")
-                        return
-                    await asyncio.sleep(0.25 * (attempt + 1))
-
-        task = asyncio.create_task(persist_playout())
+        task = asyncio.create_task(self._persist_playout(turn_id, handle))
         self.pending.add(task)
         task.add_done_callback(self.pending.discard)
+
+    async def _persist_playout(self, turn_id, handle):
+        text, status = await _playout_result(handle)
+        if not text.strip():
+            logging.warning("Skipping persistence for an empty reply")
+            return
+        for attempt in range(3):
+            try:
+                response = await self.backend.post(
+                    "/internal/agent/turn/finalize", json={"turn_id": turn_id, "text": text, "status": status}
+                )
+                response.raise_for_status()
+                return
+            except httpx.HTTPError:
+                if attempt == 2:
+                    logging.error("Turn persistence failed after three attempts")
+                    return
+                await asyncio.sleep(0.25 * (attempt + 1))
 
     async def _require_deepseek_bounds(self, request: ModelRequest) -> None:
         payload = request.model_dump(mode="json")
         size = provider_request_bytes(payload["messages"], payload.get("tool_history", ()), payload.get("tools", ()))
         if size > DEEPSEEK_MAX_REQUEST_BYTES:
-            self.refused_turns.add(request.turn_id)
             await self._notify("PROVIDER_REQUEST_TOO_LARGE")
             raise ProviderRequestTooLarge("PROVIDER_REQUEST_TOO_LARGE")
 
@@ -250,7 +234,6 @@ class SarjyAgent(Agent):
             or len(tools) > MAX_TOOLS
             or request.response_policy.max_output_tokens > MAX_TIER_OUTPUT_TOKENS
         ):
-            self.refused_turns.add(request.turn_id)
             await self._notify("PROVIDER_REQUEST_TOO_LARGE")
             raise ProviderRequestTooLarge("PROVIDER_REQUEST_TOO_LARGE")
 
@@ -334,6 +317,22 @@ class SarjyAgent(Agent):
         return result.json()
 
 
+def _text_input_callback(agent):
+    """Compile a typed turn before generating so refusals never enter chat context."""
+
+    async def text_input(sess, event):
+        async with sess._claim_user_turn():
+            await sess.interrupt()
+            message = llm.ChatMessage(role="user", content=[event.text])
+            try:
+                await agent.compile(message)
+            except RequestRefused:
+                return
+            sess.generate_reply(user_input=message)
+
+    return text_input
+
+
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
     values = read_worker_environment()
@@ -402,7 +401,13 @@ async def entrypoint(ctx: JobContext):
                 await asyncio.sleep(2)
 
         await session.start(
-            agent, room=ctx.room, record=False, room_options=room_io.RoomOptions(close_on_disconnect=False)
+            agent,
+            room=ctx.room,
+            record=False,
+            room_options=room_io.RoomOptions(
+                close_on_disconnect=False,
+                text_input=room_io.TextInputOptions(text_input_cb=_text_input_callback(agent)),
+            ),
         )
         expiry = datetime.fromisoformat(bootstrap["expires_at"])
         remaining = max(0, (expiry - datetime.now(UTC)).total_seconds())

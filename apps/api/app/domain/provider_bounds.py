@@ -2,8 +2,9 @@
 
 The worker sends only ``messages``, ``tool_history`` and ``tools``. Admission
 must measure that same UTF-8 envelope, not character counts, or it will admit a
-turn the worker later refuses. The reserve covers one tool schema and one
-continuation round added after ``/internal/agent/turn/start`` has returned.
+turn the worker later refuses. The reserve is an explicit policy: worst-case
+UTF-8 output bytes for one completion plus a fixed number of tool rounds added
+after ``/internal/agent/turn/start`` has returned.
 """
 
 import json
@@ -12,12 +13,15 @@ from typing import Any
 
 from app.domain.budget import DEEPSEEK_MAX_REQUEST_BYTES
 
-# Measured weather schema is ~454 bytes; keep headroom for separators and small
+# A token decodes to more than one UTF-8 byte; use the maximum scalar width.
+MAX_UTF8_BYTES_PER_OUTPUT_TOKEN = 4
+# Measured weather schema is ~456 bytes; keep headroom for separators and small
 # schema edits. A CI test pins the real schema below this limit.
 TOOL_SCHEMA_RESERVE_BYTES = 512
-# Assistant text, tool call and tool result item envelopes. Assistant text is
-# charged separately as one output-token budget (one byte per token here).
-CONTINUATION_ENVELOPE_BYTES = 1024
+# One assistant text/tool-call/tool-result round. Two rounds cover the observed
+# two-city weather call; more than that fails closed at the worker guard.
+CONTINUATION_TOOL_ROUND_BYTES = 1024
+MAX_CONTINUATION_TOOL_ROUNDS = 2
 
 
 class ProviderRequestTooLarge(ValueError):
@@ -45,18 +49,28 @@ def provider_request_bytes(
     return len(json.dumps(envelope, ensure_ascii=False).encode("utf-8"))
 
 
-def admission_reserve_bytes(max_output_tokens: int) -> int:
-    """Bytes held back for the tool schema and one post-admission continuation."""
+def continuation_reserve_bytes(max_output_tokens: int) -> int:
+    """Worst-case bytes for one completion plus the bounded tool rounds."""
     if max_output_tokens < 0:
         raise ValueError("max_output_tokens must be non-negative")
-    return TOOL_SCHEMA_RESERVE_BYTES + CONTINUATION_ENVELOPE_BYTES + max_output_tokens
+    output_bytes = max_output_tokens * MAX_UTF8_BYTES_PER_OUTPUT_TOKEN
+    tool_bytes = CONTINUATION_TOOL_ROUND_BYTES * MAX_CONTINUATION_TOOL_ROUNDS
+    return output_bytes + tool_bytes
+
+
+def admission_reserve_bytes(max_output_tokens: int) -> int:
+    """Bytes held back for the tool schema and post-admission continuation."""
+    return TOOL_SCHEMA_RESERVE_BYTES + continuation_reserve_bytes(max_output_tokens)
 
 
 __all__ = [
-    "CONTINUATION_ENVELOPE_BYTES",
+    "CONTINUATION_TOOL_ROUND_BYTES",
     "DEEPSEEK_MAX_REQUEST_BYTES",
+    "MAX_CONTINUATION_TOOL_ROUNDS",
+    "MAX_UTF8_BYTES_PER_OUTPUT_TOKEN",
     "ProviderRequestTooLarge",
     "TOOL_SCHEMA_RESERVE_BYTES",
     "admission_reserve_bytes",
+    "continuation_reserve_bytes",
     "provider_request_bytes",
 ]

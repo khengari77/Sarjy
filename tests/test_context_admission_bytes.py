@@ -96,6 +96,28 @@ def test_reserve_is_smaller_than_the_provider_bound():
     assert provider_request_bytes([]) + reserve < DEEPSEEK_MAX_REQUEST_BYTES
 
 
+def test_admission_reserves_room_for_two_tool_rounds():
+    reserve = admission_reserve_bytes(1024)
+    for body in ("x" * 9000, "ا" * 4000):
+        compiled = compile_turn_context(
+            revision=0,
+            instructions="Rules",
+            current_turn=candidate("u1", body),
+            max_provider_bytes=DEEPSEEK_MAX_REQUEST_BYTES,
+            reserve_bytes=reserve,
+        )
+        assert provider_request_bytes(compiled.messages) + reserve <= DEEPSEEK_MAX_REQUEST_BYTES
+
+    with pytest.raises(ValueError, match="CONTEXT_BUDGET_EXCEEDED"):
+        compile_turn_context(
+            revision=0,
+            instructions="Rules",
+            current_turn=candidate("u2", "x" * 10000),
+            max_provider_bytes=DEEPSEEK_MAX_REQUEST_BYTES,
+            reserve_bytes=reserve,
+        )
+
+
 def test_optional_context_is_dropped_before_the_current_turn():
     older = candidate("old", "o" * 8000)
     current = candidate("current", "hello")
