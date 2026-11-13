@@ -338,9 +338,13 @@ def _render(
     included_ids: list[str] = []
     selection_entries: list[ContextEntry] = []
     for record_id, role, text in kept:
+        if len(text) > 16000:
+            # ContextEntry and ModelRequest share this maximum. Failing here is
+            # preferable to persisting a selection that cannot be replayed.
+            raise ValueError("CONTEXT_ENTRY_TOO_LONG")
         messages.append({"role": provider_role(role), "content": text})
         included_ids.append(record_id)
-        selection_entries.append(ContextEntry(id=record_id, role=role, text=text[:16000]))
+        selection_entries.append(ContextEntry(id=record_id, role=role, text=text))
     return messages, included_ids, selection_entries
 
 
