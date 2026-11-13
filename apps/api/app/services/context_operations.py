@@ -2,8 +2,12 @@
 
 Wire format and authorization
 -----------------------------
-* Preview is read-only: it signs an opaque proposal token containing the exact
-  candidate ids and the conversation revision.  No rows are written.
+* Preview writes no memory, exclusion, operation or revision rows: it signs an
+  opaque proposal token containing the exact candidate ids and the conversation
+  revision.  Semantic preview may commit one conservative embedding reservation
+  through the shared ledger; that is a provider-cost boundary, not context state.
+* Confirmation and Undo change context state without provider calls or new
+  spending reservations.
 * Confirmation trusts only the signed token.  Ids supplied by a client are
   never read, and every id is re-authorized against the owner's active
   memories before the single transaction commits.
@@ -206,7 +210,11 @@ async def create_proposal(
     secret: str,
     search: MemorySearcher = keyword_search,
 ) -> dict:
-    """Build a preview without writing anything. Read-only by construction."""
+    """Build a preview without changing context state.
+
+    Semantic retrieval may reserve one embedding request in the shared ledger;
+    no memory, exclusion, operation or revision rows are written.
+    """
     if not secret:
         raise ContextOperationError("CONTEXT_PROPOSALS_NOT_CONFIGURED", 503)
     conversation = await owned_conversation(db, owner_id, conversation_id)
