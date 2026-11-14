@@ -20,6 +20,7 @@ export interface StudioBoot {
   setArabic(value: boolean): void;
   setCaptions(value: boolean): void;
   setDevOverlay(value: DevOverlay): void;
+  afterBootstrap?(): void;
   run(work: () => Promise<void>, onError?: (error: unknown) => void): Promise<void>;
   getLanguage(): 'ar' | 'en';
   onVoiceError(error: unknown): void;
@@ -72,6 +73,7 @@ export function bootStudio(options: StudioBoot) {
         await request('demo-session', {});
         await conversations.reload();
         if (conversation.conversations.length) await conversations.select(conversation.conversations[0].id);
+        options.afterBootstrap?.();
       }),
     getLive: () => voice.live,
     endExpired: () => void options.run(() => connection.end(), options.onVoiceError),

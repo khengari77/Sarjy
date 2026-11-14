@@ -110,8 +110,10 @@ def create_app(
     )
 
     from app.routes.memory import memory_router
+    from app.routes.onboarding import onboarding_router
 
     app.include_router(memory_router(database, identity, embedder))
+    app.include_router(onboarding_router(database, identity, config))
 
     from app.routes.context import register_context_routes
     from app.routes.system import register_system_routes

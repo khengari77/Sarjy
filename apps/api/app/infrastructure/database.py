@@ -188,6 +188,24 @@ class TurnMetric(Base):
     usage: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class OnboardingRecord(Base):
+    __tablename__ = "onboarding_progress"
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), primary_key=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    stage: Mapped[str] = mapped_column(String(30), default="not_started")
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    preferred_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    selected_voice_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    selected_pace: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    intro_played_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    started_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    completed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    suspended_from: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    last_event_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    applied_events: Mapped[list] = mapped_column(JSON, default=list)
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
 class UserSetting(Base):
     __tablename__ = "user_settings"
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), primary_key=True)

@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     agent_service_secret: str = ""
     demo_session_budget: int = 80
     demo_calls_per_identity: int = 3
+    # Enable only once the TTS runtime actually applies a speed parameter.
+    speaking_pace_supported: bool = False
 
     @model_validator(mode="after")
     def validate_deepseek_budget(self):

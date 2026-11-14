@@ -22,6 +22,8 @@
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
   import { bootStudio } from '../lib/voice/studio';
   import { createSelectionController } from '../lib/voice/selection';
+  import OnboardingHost from '../lib/onboarding/OnboardingHost.svelte';
+  import { createOnboarding } from '../lib/onboarding/state.svelte';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -42,6 +44,7 @@
   let connection: VoiceConnection | undefined;
   let conversations: ConversationStore | undefined;
   let catalogStore: ReturnType<typeof createCatalogStore> | undefined;
+  const onboarding = createOnboarding();
   const selection = createSelectionController({
     voice,
     getPending: () => pendingIntent,
@@ -115,6 +118,8 @@
   async function send() {
     if (!draft.trim()) return;
     await run(async () => {
+      // An unrelated message takes priority; setup waits behind a "Continue setup" chip.
+      if (onboarding.controller.active()) await onboarding.controller.suspend();
       if (!voice.live) await connection!.connect(false);
       if (!voice.live) return;
       await connection!.sendText(draft.trim());
@@ -161,6 +166,7 @@
       getLanguage: () => (arabic ? 'ar' : 'en'),
       run: (work, onError) => run(work, onError),
       onVoiceError,
+      afterBootstrap: () => void onboarding.controller.load(),
     });
     runtime = boot.runtime;
     connection = boot.connection;
@@ -198,6 +204,7 @@
   {/snippet}
 
   {#snippet stage()}
+    <OnboardingHost {onboarding} {busy} {catalog} {voice} />
     <VoiceStage
       {presentation}
       micLevel={voice.micLevel}
