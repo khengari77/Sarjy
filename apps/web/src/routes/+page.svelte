@@ -236,10 +236,8 @@
       oncancel={() => run(() => connection!.cancelConnect(), onVoiceError)}
       ontoggle={toggleMute}
       oninterrupt={interrupt}
-      onconnect={startConnect}
     />
     <Composer bind:draft placeholder={words.placeholder} sendLabel={words.send} disabled={busy} onsend={send} />
-    <small class="attribution"><a href="https://open-meteo.com/">Weather data: Open-Meteo</a></small>
   {/snippet}
 
   {#snippet right()}

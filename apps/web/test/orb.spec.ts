@@ -209,7 +209,7 @@ test('a lost WebGL context falls back to Canvas2D without breaking the session',
 
   await page.goto('/');
   await expect(page.getByText('No conversations yet.')).toBeVisible();
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
   const orb = page.locator('.orb-button');
   // This scenario only exists on the WebGL tier. When the probe or the first
