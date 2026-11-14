@@ -15,6 +15,17 @@ async function mockData(
   await page.route('**/api/v1/conversations', (route) => route.fulfill({ json: [CHAT] }));
   await page.route('**/api/v1/conversations/*/turns', (route) => route.fulfill({ json: turns }));
   await page.route('**/api/v1/conversations/*/tool-calls', (route) => route.fulfill({ json: tools }));
+  await page.route('**/api/v1/settings', (route) =>
+    route.fulfill({
+      json: {
+        speaking_speed: 1,
+        captions_visible: true,
+        approved_voice_id: null,
+        response_preference: 'automatic',
+        revision: 0,
+      },
+    }),
+  );
 }
 
 async function allowMicrophone(page: Page) {

@@ -106,7 +106,7 @@
       <span>{arabic ? 'إظهار الترجمة' : 'Show captions'}</span>
     </label>
     <p class="muted-text">
-      {arabic ? 'سيُضاف التحكم بسرعة الكلام هنا.' : 'Speaking-speed controls will live here.'}
+      {arabic ? 'التحكم بسرعة الكلام غير متاح بعد.' : 'Speaking-speed control is not available yet.'}
     </p>
   </section>
 </div>

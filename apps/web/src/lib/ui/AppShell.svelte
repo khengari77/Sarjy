@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
   import { onMount, tick } from 'svelte';
   import {
     applyTheme,
@@ -10,24 +9,10 @@
     themeName,
     type ThemePreference,
   } from './theme';
+  import type { ShellProps } from './shellTypes';
   import { createDrawerSession } from './drawerSession.svelte';
   import { browserStorage } from '../storage';
   import './shell.css';
-
-  interface Props {
-    dir?: 'ltr' | 'rtl';
-    languageLabel?: string;
-    onLanguage?: () => void;
-    leftLabel?: string;
-    rightLabel?: string;
-    left?: Snippet;
-    stage?: Snippet;
-    /** Always-reachable control surface (call controls, composer). */
-    controls?: Snippet;
-    right?: Snippet;
-    /** A dialog inside the stage has taken over modal ownership. */
-    stageDialogOpen?: boolean;
-  }
 
   let {
     dir = 'ltr',
@@ -40,17 +25,15 @@
     controls,
     right,
     stageDialogOpen = false,
-  }: Props = $props();
-
-  // The document ships as English; follow the UI language on the client.
+    leftOpen = $bindable(false),
+    rightOpen = $bindable(false),
+  }: ShellProps = $props();
   $effect(() => {
     document.documentElement.lang = dir === 'rtl' ? 'ar' : 'en';
   });
 
   // SSR renders both panels closed. The saved theme was already stamped on
   // <html> by the inline boot script, so hydration never reads storage.
-  let leftOpen = $state(false);
-  let rightOpen = $state(false);
   // ≥1200px docks the panels side by side; below that they share the overlay
   // layer, so only one can be open at a time.
   let docked = $state(false);

@@ -5,6 +5,7 @@ import json
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 from uuid import uuid4
 
@@ -203,14 +204,22 @@ async def _playout_result(handle) -> tuple[str, str]:
 
 class SarjyAgent(Agent):
     def __init__(
-        self, backend: httpx.AsyncClient, pipeline: Mapping[str, Any], instructions: str, notify=None, fallback_llm=None
+        self,
+        backend: httpx.AsyncClient,
+        pipeline: Mapping[str, Any],
+        instructions: str,
+        notify=None,
+        fallback_llm=None,
+        publish=None,
     ):
         super().__init__(instructions=instructions)
         self.backend = backend
         self.pipeline = pipeline
         self.notify = notify
         self.fallback_llm = fallback_llm
+        self.publish = publish
         self.prepared: dict[str, dict] = {}
+        self.commands: dict[str, dict | None] = {}
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
@@ -390,12 +399,53 @@ class SarjyAgent(Agent):
     async def on_user_turn_completed(self, turn_ctx, new_message):
         await self.compile(new_message)
 
+    async def command_for(self, message) -> dict | None:
+        """Ask the API to interpret one finalized turn, once per turn.
+
+        A transport failure is not proof that nothing was applied, so it is not
+        turned into a spoken success or failure; the turn continues through the
+        guarded conversational path and the API's idempotency key protects a
+        retry of the same source turn.
+        """
+        if message.id not in self.commands:
+            result = None
+            try:
+                response = await self.backend.post(
+                    "/internal/agent/command", json={"turn_id": self.prepared[message.id]["turn_id"]}
+                )
+                response.raise_for_status()
+                result = response.json().get("command")
+            except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
+                logging.error("Finalized command resolution failed; continuing conversationally")
+            self.commands[message.id] = result if isinstance(result, dict) else None
+        return self.commands[message.id]
+
+    async def _publish_command(self, command: Mapping[str, Any]) -> None:
+        if self.publish is None:
+            return
+        try:
+            await self.publish(dict(command))
+        except Exception:
+            # The effect is already committed; a lost UI update must not be
+            # retried or turned into a second spoken outcome.
+            logging.error("Finalized command result publication failed")
+
     async def llm_node(self, chat_ctx, tools, model_settings):
         # Also covers typed input and repeated inference after tool calls.
         user = _user_message(chat_ctx)
         if user is None:
             return
         snapshot = await self.compile(user)
+        command = await self.command_for(user)
+        if command is not None:
+            await self._publish_command(command)
+            # Exact commands bypass conversational generation entirely; TTS
+            # remains budgeted and the deterministic spoken line is the whole
+            # assistant turn.
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=command["spoken"]))
+            handle = self.session.current_speech
+            self._schedule_persistence(user, handle)
+            return
         proposal = self.memory_proposal
         key = self._proposal_key(proposal)
         if proposal is not None and self.memory_question_key != key:
@@ -582,6 +632,11 @@ class SarjyAgent(Agent):
         return result.json()
 
 
+async def publish_command(room, command: Mapping[str, Any]) -> None:
+    """One authoritative result for the shared UI store (effect already committed)."""
+    await room.local_participant.publish_data(json.dumps(dict(command)).encode(), reliable=True, topic="sarjy.command")
+
+
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
     values = read_worker_environment()
@@ -606,7 +661,12 @@ async def entrypoint(ctx: JobContext):
         providers = build_providers(config, provider_credentials(values, config["llm"]["provider"]))
         fallback_llm = providers.pop("fallback_llm", None)
         agent = SarjyAgent(
-            backend, config, instructions=bootstrap["instructions"], notify=notify, fallback_llm=fallback_llm
+            backend,
+            config,
+            instructions=bootstrap["instructions"],
+            notify=notify,
+            fallback_llm=fallback_llm,
+            publish=partial(publish_command, ctx.room),
         )
         session = AgentSession(
             **providers,

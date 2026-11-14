@@ -1,6 +1,7 @@
 import type { SessionConfig } from '../api';
 import { ensureMicrophoneAccess } from '../audio/microphone';
 import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
+import type { CommandResult } from '../commands/commandStore';
 import { errorCode } from './errors';
 import { startSessionAttempt } from './sessionAttempt';
 import { createSessionReleaser } from './sessionRelease';
@@ -54,6 +55,8 @@ export interface ConnectionDeps {
   getRuntime(): VoiceRuntime;
   getLanguage(): 'ar' | 'en';
   getVoice(): { id: string; name: string };
+  /** Apply one backend-authored result to the shared command store. */
+  applyCommand(result: CommandResult): void;
   meters: MeterController;
 }
 
@@ -79,6 +82,7 @@ function handleVoiceEvent(
   }
   if (event.type === 'error') state.voiceErrorCode = event.code;
   if (event.type === 'audio-blocked') state.audioBlocked = true;
+  if (event.type === 'command') deps.applyCommand(event.command);
   if (event.type === 'transcript') {
     if (event.final) {
       state.provisional = null;
