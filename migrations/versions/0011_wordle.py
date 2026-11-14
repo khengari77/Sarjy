@@ -25,6 +25,7 @@ def upgrade():
         sa.Column("payload_hash", sa.String(64), nullable=True),
         sa.Column("claim_id", sa.String(36), nullable=True),
         sa.Column("claim_expires_at", sa.String(40), nullable=True),
+        sa.Column("retry_after", sa.String(40), nullable=True),
         sa.Column("last_attempt_at", sa.String(40), nullable=True),
     )
 
@@ -45,14 +46,17 @@ def upgrade():
         "wordle_guesses",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("game_id", sa.String(36), sa.ForeignKey("wordle_games.id"), nullable=False),
+        sa.Column("owner_id", sa.String(64), sa.ForeignKey("identities.id"), nullable=False),
         sa.Column("attempt", sa.Integer(), nullable=False),
         sa.Column("word", sa.String(5), nullable=False),
         sa.Column("marks", sa.JSON(), nullable=False),
-        sa.Column("request_id", sa.String(100), nullable=False, unique=True),
+        sa.Column("request_id", sa.String(100), nullable=False),
         sa.Column("created_at", sa.String(40), nullable=False),
         sa.UniqueConstraint("game_id", "attempt", name="uq_wordle_guesses_game_attempt"),
+        sa.UniqueConstraint("owner_id", "request_id", name="uq_wordle_guesses_owner_request"),
     )
     op.create_index("ix_wordle_guesses_game_id", "wordle_guesses", ["game_id"])
+    op.create_index("ix_wordle_guesses_owner_id", "wordle_guesses", ["owner_id"])
 
     if op.get_bind().dialect.name == "postgresql":
         for table in TABLES:

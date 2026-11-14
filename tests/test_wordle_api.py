@@ -26,13 +26,13 @@ def settings(tmp_path, *, enabled=True):
         database_url=f"sqlite+aiosqlite:///{tmp_path}/wordle-api.db",
         _env_file=None,
         wordle_enabled=enabled,
-        wordle_timezone="Africa/Tripoli",
+        wordle_timezone="America/New_York",
         agent_service_secret="refresh-secret",
     )
 
 
 def today():
-    return resolve_puzzle_date(datetime.now(UTC), "Africa/Tripoli").isoformat()
+    return resolve_puzzle_date(datetime.now(UTC), "America/New_York").isoformat()
 
 
 def test_today_starts_one_game_and_keeps_answer_secret(tmp_path):
@@ -151,6 +151,30 @@ def test_owner_isolation_and_independent_stats(tmp_path):
             client.post("/v1/wordle/guesses", json={"guess": "CRANE", "request_id": "owner-one-win"})
             assert client.get("/v1/wordle/stats").json()["won"] == 1
             assert other.get("/v1/wordle/stats").json()["played"] == 0
+
+
+def test_two_owners_may_reuse_the_same_request_id(tmp_path):
+    source = FixtureSource()
+    with TestClient(create_app(settings(tmp_path), wordle_source=source)) as client:
+        client.post("/v1/demo-session")
+        client.get("/v1/wordle/today")
+        first = client.post("/v1/wordle/guesses", json={"guess": "SLATE", "request_id": "guess-1"})
+        assert first.status_code == 200, first.text
+
+        with closing(TestClient(client.app)) as other:
+            other.post("/v1/demo-session")
+            other.get("/v1/wordle/today")
+            second = other.post("/v1/wordle/guesses", json={"guess": "SLATE", "request_id": "guess-1"})
+            assert second.status_code == 200, second.text
+            assert second.json()["id"] != first.json()["id"]
+            assert len(second.json()["guesses"]) == 1
+            assert second.json()["attempts_remaining"] == 5
+
+        # Owner-scoped replay still returns the owner's own original row.
+        replay = client.post("/v1/wordle/guesses", json={"guess": "SLATE", "request_id": "guess-1"})
+        assert replay.status_code == 200
+        assert replay.json()["id"] == first.json()["id"]
+        assert len(replay.json()["guesses"]) == 1
 
 
 def test_stats_are_computed_from_stored_games(tmp_path):
@@ -324,7 +348,13 @@ def test_concurrent_same_request_id_consumes_one_attempt(tmp_path):
 
             first, second = await asyncio.gather(guess(), guess())
             async with sessions() as db:
-                rows = (await db.scalars(select(WordleGuess).where(WordleGuess.request_id == "same-tab"))).all()
+                rows = (
+                    await db.scalars(
+                        select(WordleGuess).where(
+                            WordleGuess.owner_id == "owner-one", WordleGuess.request_id == "same-tab"
+                        )
+                    )
+                ).all()
             assert len(rows) == 1
             assert first.marks == second.marks
             assert len(first.game.guesses) == len(second.game.guesses) == 1

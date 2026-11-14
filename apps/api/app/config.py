@@ -32,7 +32,11 @@ class Settings(BaseSettings):
     # never reaches the external source.
     wordle_enabled: bool = False
     wordle_source_url: str = "https://www.nytimes.com/svc/wordle/v2/{date}.json"
-    wordle_timezone: str = "Africa/Tripoli"
+    # The *publisher's* publication schedule, not the player's local zone.  The
+    # answer for date D is only published once D begins in this zone; resolving
+    # "today" in a player zone would request an unpublished future date for the
+    # first hours of every local day.
+    wordle_timezone: str = "America/New_York"
     # Optional pre-warm hour (0-23) in ``wordle_timezone``.  When unset only
     # the protected refresh endpoint and lazy request-time fetch run.
     wordle_refresh_hour: int | None = Field(default=None, ge=0, le=23)

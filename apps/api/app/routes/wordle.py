@@ -75,7 +75,12 @@ async def _game_or_unavailable(db: AsyncSession, *, owner_id: str, day: date):
         raise HTTPException(exc.status, detail={"code": exc.code}) from exc
 
 
-def _day_or_unavailable(timezone: str) -> date:
+def _scheduled_day(timezone: str) -> date:
+    """Publisher-schedule date, used only when no puzzle row has been ingested.
+
+    Enabled requests never call this: the stored puzzle's upstream date is
+    authoritative, so the server clock cannot shift the game to another day.
+    """
     try:
         return resolve_puzzle_date(datetime.now(UTC), timezone)
     except WordleValidationError as exc:
@@ -98,13 +103,15 @@ def _register_player_routes(app, *, config: Settings, database, identity, source
 
     @app.get("/v1/wordle/today")
     async def today(user=Depends(identity), db: AsyncSession = Depends(database)):
-        day = _day_or_unavailable(config.wordle_timezone)
         if not config.wordle_enabled:
+            day = _scheduled_day(config.wordle_timezone)
             return {"date": day.isoformat(), "available": False, "game": None, "code": "WORDLE_DISABLED"}
         try:
             puzzle = await ensure(db)
         except HTTPException as exc:
+            day = _scheduled_day(config.wordle_timezone)
             return {"date": day.isoformat(), "available": False, "game": None, "code": exc.detail["code"]}
+        # The ingested row carries the publisher's date; never recompute it.
         game = await _game_or_unavailable(db, owner_id=user.id, day=date.fromisoformat(puzzle.puzzle_date))
         return {
             "date": puzzle.puzzle_date,

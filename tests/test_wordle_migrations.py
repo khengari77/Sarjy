@@ -10,6 +10,7 @@ WORDLE_INDEXES = {
     "ix_wordle_games_owner_status",
     "ix_wordle_games_puzzle_date",
     "ix_wordle_guesses_game_id",
+    "ix_wordle_guesses_owner_id",
 }
 PREVIOUS_HEAD = "0010_context_retrieval_indexes"
 
@@ -71,6 +72,7 @@ def test_wordle_migration_upgrades_downgrades_and_matches_models(tmp_path):
         "payload_hash",
         "claim_id",
         "claim_expires_at",
+        "retry_after",
         "last_attempt_at",
     }
     assert columns(path, "wordle_games") == {
@@ -84,6 +86,7 @@ def test_wordle_migration_upgrades_downgrades_and_matches_models(tmp_path):
     assert columns(path, "wordle_guesses") == {
         "id",
         "game_id",
+        "owner_id",
         "attempt",
         "word",
         "marks",
@@ -121,21 +124,32 @@ def test_wordle_uniqueness_constraints(tmp_path):
     url = f"sqlite+aiosqlite:///{path}"
     alembic(url, "upgrade", "head")
     with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute("INSERT INTO identities VALUES ('owner-1','hash-1','2030-01-01T00:00:00+00:00')")
+        connection.execute("INSERT INTO identities VALUES ('owner-2','hash-2','2030-01-01T00:00:00+00:00')")
         connection.execute(
             "INSERT INTO wordle_games (id, owner_id, puzzle_date, status, created_at, updated_at)"
             " VALUES ('game-1','owner-1','2026-11-13','in_progress','now','now')"
         )
         connection.execute(
-            "INSERT INTO wordle_guesses (id, game_id, attempt, word, marks, request_id, created_at)"
-            " VALUES ('guess-1','game-1',1,'SLATE','[\"gray\"]','request-1','now')"
+            "INSERT INTO wordle_games (id, owner_id, puzzle_date, status, created_at, updated_at)"
+            " VALUES ('game-2','owner-2','2026-11-13','in_progress','now','now')"
+        )
+        connection.execute(
+            "INSERT INTO wordle_guesses (id, game_id, owner_id, attempt, word, marks, request_id, created_at)"
+            " VALUES ('guess-1','game-1','owner-1',1,'SLATE','[\"gray\"]','request-1','now')"
+        )
+        # Two owners may reuse a client-generated request id.
+        connection.execute(
+            "INSERT INTO wordle_guesses (id, game_id, owner_id, attempt, word, marks, request_id, created_at)"
+            " VALUES ('guess-2','game-2','owner-2',1,'SLATE','[\"gray\"]','request-1','now')"
         )
         for statement in (
             "INSERT INTO wordle_games (id, owner_id, puzzle_date, status, created_at, updated_at)"
-            " VALUES ('game-2','owner-1','2026-11-13','in_progress','now','now')",
-            "INSERT INTO wordle_guesses (id, game_id, attempt, word, marks, request_id, created_at)"
-            " VALUES ('guess-2','game-1',1,'CRANE','[]','request-2','now')",
-            "INSERT INTO wordle_guesses (id, game_id, attempt, word, marks, request_id, created_at)"
-            " VALUES ('guess-3','game-1',2,'CRANE','[]','request-1','now')",
+            " VALUES ('game-3','owner-1','2026-11-13','in_progress','now','now')",
+            "INSERT INTO wordle_guesses (id, game_id, owner_id, attempt, word, marks, request_id, created_at)"
+            " VALUES ('guess-3','game-1','owner-1',1,'CRANE','[]','request-2','now')",
+            "INSERT INTO wordle_guesses (id, game_id, owner_id, attempt, word, marks, request_id, created_at)"
+            " VALUES ('guess-4','game-1','owner-1',2,'CRANE','[]','request-1','now')",
         ):
             try:
                 connection.execute(statement)

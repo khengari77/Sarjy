@@ -215,6 +215,7 @@ class WordlePuzzle(Base):
     payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     claim_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     claim_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    retry_after: Mapped[str | None] = mapped_column(String(40), nullable=True)
     last_attempt_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
@@ -235,13 +236,18 @@ class WordleGame(Base):
 
 class WordleGuess(Base):
     __tablename__ = "wordle_guesses"
-    __table_args__ = (UniqueConstraint("game_id", "attempt", name="uq_wordle_guesses_game_attempt"),)
+    __table_args__ = (
+        UniqueConstraint("game_id", "attempt", name="uq_wordle_guesses_game_attempt"),
+        # Idempotency is per owner: two owners may reuse a client-generated id.
+        UniqueConstraint("owner_id", "request_id", name="uq_wordle_guesses_owner_request"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     game_id: Mapped[str] = mapped_column(ForeignKey("wordle_games.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
     attempt: Mapped[int] = mapped_column(Integer)
     word: Mapped[str] = mapped_column(String(5))
     marks: Mapped[list] = mapped_column(JSON)
-    request_id: Mapped[str] = mapped_column(String(100), unique=True)
+    request_id: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[str] = mapped_column(String(40), default=now)
 
 

@@ -2,7 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 import pytest
@@ -17,12 +17,15 @@ from app.domain.wordle import (
 )
 from app.infrastructure.database import Base, WordlePuzzle
 from app.services.wordle import (
+    CLAIM_LEASE,
+    RETRY_BUDGET_SECONDS,
     HttpWordleSource,
     WordleServiceError,
     WordleSourceError,
     ensure_puzzle,
     ensure_today,
     parse_source_payload,
+    validate_claim_lease,
 )
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -283,18 +286,232 @@ def test_ensure_today_resolves_timezone_and_rolls_over(tmp_path):
                 before = await ensure_today(
                     db,
                     source=source,
-                    timezone="Africa/Tripoli",
-                    now=datetime(2026, 11, 12, 22, 30, tzinfo=UTC),
+                    timezone="America/New_York",
+                    now=datetime(2026, 11, 13, 5, 30, tzinfo=UTC),
                 )
             async with sessions() as db:
                 after = await ensure_today(
                     db,
                     source=source,
-                    timezone="Africa/Tripoli",
-                    now=datetime(2026, 11, 13, 22, 30, tzinfo=UTC),
+                    timezone="America/New_York",
+                    now=datetime(2026, 11, 14, 5, 30, tzinfo=UTC),
                 )
             assert (before.puzzle_date, after.puzzle_date) == ("2026-11-13", "2026-11-14")
             assert source.calls == ["2026-11-13", "2026-11-14"]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_today_uses_the_publisher_schedule_not_the_player_local_date(tmp_path):
+    """At 03:30 Tripoli the NYT puzzle is still the previous US-Eastern date."""
+
+    async def run():
+        engine = _memory_engine(tmp_path)
+        await _create_schema(engine)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        source = FixtureSource(answers={}, default_answer="CRANE")
+        # 2026-11-14T00:30Z: 03:30 in Africa/Tripoli, 19:30 on 2026-11-13 in New York.
+        instant = datetime(2026, 11, 14, 0, 30, tzinfo=UTC)
+        assert resolve_puzzle_date(instant, "Africa/Tripoli") == date(2026, 11, 14)
+        assert resolve_puzzle_date(instant, "America/New_York") == date(2026, 11, 13)
+        try:
+            async with sessions() as db:
+                puzzle = await ensure_today(db, source=source, timezone="America/New_York", now=instant)
+            assert puzzle.puzzle_date == "2026-11-13"
+            assert source.calls == ["2026-11-13"]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_claim_lease_strictly_exceeds_the_retry_budget():
+    assert timedelta(seconds=RETRY_BUDGET_SECONDS) < CLAIM_LEASE
+    with pytest.raises(ValueError):
+        validate_claim_lease(timedelta(seconds=RETRY_BUDGET_SECONDS), timedelta(seconds=RETRY_BUDGET_SECONDS))
+    with pytest.raises(ValueError):
+        validate_claim_lease(timedelta(seconds=1), timedelta(seconds=RETRY_BUDGET_SECONDS))
+
+
+def test_released_claim_is_not_stealable_before_the_retry_cooldown(tmp_path):
+    async def run():
+        engine = _memory_engine(tmp_path)
+        await _create_schema(engine)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        source = FixtureSource(always_fail=True)
+        try:
+            async with sessions() as db:
+                with pytest.raises(WordleServiceError):
+                    await ensure_puzzle(db, DAY, source=source, now=FIXED_NOW)
+            assert source.calls == ["2026-11-13"] * 3
+
+            # Past the old 30s lease but inside the 60s retry cooldown: the
+            # released row must not be reclaimed, so no new source call.
+            leak = FIXED_NOW.replace(second=30)
+            async with sessions() as db:
+                with pytest.raises(WordleServiceError):
+                    await ensure_puzzle(db, DAY, source=source, now=leak)
+            assert source.calls == ["2026-11-13"] * 3
+            async with sessions() as db:
+                row = await db.scalar(select(WordlePuzzle).where(WordlePuzzle.puzzle_date == "2026-11-13"))
+                assert row is not None and row.claim_id is None
+                assert row.claim_expires_at is None
+                assert row.retry_after is not None
+
+            # After the cooldown the date may be retried.
+            later = FIXED_NOW + timedelta(seconds=61)
+            async with sessions() as db:
+                with pytest.raises(WordleServiceError):
+                    await ensure_puzzle(db, DAY, source=source, now=later)
+            assert source.calls == ["2026-11-13"] * 6
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_stored_schedule_wins_when_it_disagrees_with_the_wall_clock(tmp_path):
+    async def run():
+        engine = _memory_engine(tmp_path)
+        await _create_schema(engine)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        source = FixtureSource()
+        try:
+            async with sessions() as db:
+                db.add(
+                    WordlePuzzle(
+                        puzzle_date="2026-11-15",
+                        answer="CRANE",
+                        source="fixture",
+                        fetched_at=FIXED_NOW.isoformat(),
+                        payload_hash="hash",
+                    )
+                )
+                await db.commit()
+            async with sessions() as db:
+                puzzle = await ensure_today(
+                    db,
+                    source=source,
+                    timezone="America/New_York",
+                    now=FIXED_NOW,
+                )
+            assert puzzle.puzzle_date == "2026-11-15"
+            assert source.calls == []
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_publication_delay_serves_the_last_ingested_puzzle(tmp_path):
+    async def run():
+        engine = _memory_engine(tmp_path)
+        await _create_schema(engine)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        source = FixtureSource(always_fail=True)
+        try:
+            async with sessions() as db:
+                db.add(
+                    WordlePuzzle(
+                        puzzle_date="2026-11-13",
+                        answer="CRANE",
+                        source="fixture",
+                        fetched_at=FIXED_NOW.isoformat(),
+                        payload_hash="hash",
+                    )
+                )
+                await db.commit()
+            # 2026-11-14T01:00 New York: the 14th should be live, but the
+            # source has not published it yet.
+            async with sessions() as db:
+                puzzle = await ensure_today(
+                    db,
+                    source=source,
+                    timezone="America/New_York",
+                    now=datetime(2026, 11, 14, 6, 0, tzinfo=UTC),
+                )
+            assert puzzle.puzzle_date == "2026-11-13"
+            assert puzzle.answer == "CRANE"
+            assert source.calls == ["2026-11-14"] * 3
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_slow_but_bounded_fetch_is_served_to_a_late_concurrent_waiter(tmp_path):
+    async def run():
+        engine = _memory_engine(tmp_path)
+        await _create_schema(engine)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        started = asyncio.Event()
+
+        class FiveSecondSource:
+            label = "fixture://slow"
+            calls = 0
+
+            async def fetch(self, puzzle_date):
+                self.calls += 1
+                started.set()
+                await asyncio.sleep(5)
+                return parse_source_payload(
+                    {"solution": "CRANE", "print_date": puzzle_date.isoformat()},
+                    puzzle_date,
+                    source=self.label,
+                )
+
+        source = FiveSecondSource()
+        try:
+
+            async def request():
+                async with sessions() as db:
+                    row = await ensure_puzzle(db, DAY, source=source, now=FIXED_NOW)
+                    return row.puzzle_date, row.answer
+
+            first = asyncio.create_task(request())
+            await asyncio.wait_for(started.wait(), timeout=5)
+            # The second tab arrives after the fetch is already in flight; it
+            # must wait for the stored answer instead of returning 503.
+            second = asyncio.create_task(request())
+            results = await asyncio.wait_for(asyncio.gather(first, second), timeout=15)
+            assert results[0] == results[1] == ("2026-11-13", "CRANE")
+            assert source.calls == 1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_fetch_attempt_is_hard_bounded_by_the_total_timeout(tmp_path, monkeypatch):
+    import app.services.wordle as wordle_module
+
+    monkeypatch.setattr(wordle_module, "FETCH_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr(wordle_module, "MAX_FETCH_ATTEMPTS", 2)
+    monkeypatch.setattr(wordle_module, "BACKOFF_SECONDS", (0.0,))
+
+    async def run():
+        engine = _memory_engine(tmp_path)
+        await _create_schema(engine)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        source = FixtureSource(answers={}, default_answer="CRANE")
+        source_fetch = source.fetch
+
+        async def hanging_fetch(puzzle_date):
+            source.calls.append(puzzle_date.isoformat())
+            await asyncio.sleep(30)
+            return await source_fetch(puzzle_date)
+
+        source.fetch = hanging_fetch  # type: ignore[method-assign]
+        try:
+            async with sessions() as db:
+                started = asyncio.get_running_loop().time()
+                with pytest.raises(WordleServiceError):
+                    await ensure_puzzle(db, DAY, source=source, now=FIXED_NOW)
+                elapsed = asyncio.get_running_loop().time() - started
+            assert source.calls == ["2026-11-13", "2026-11-13"]
+            assert elapsed < 2
         finally:
             await engine.dispose()
 
@@ -319,7 +536,7 @@ def test_failed_source_serves_unavailable_without_fabricating_an_answer(tmp_path
                 assert row.answer is None
                 assert row.fetched_at is None
                 assert row.claim_id is None
-                assert row.last_attempt_at == FIXED_NOW.isoformat()
+                assert row.last_attempt_at == FIXED_NOW.astimezone(UTC).isoformat(timespec="microseconds")
         finally:
             await engine.dispose()
 

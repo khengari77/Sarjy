@@ -9,7 +9,7 @@ narrow API that withholds the answer until the game is terminal.
 | --- | --- | --- |
 | `WORDLE_ENABLED` | `false` | Kill switch. Off means no fetch, no game writes and `503` on guess/stats/refresh. |
 | `WORDLE_SOURCE_URL` | `https://www.nytimes.com/svc/wordle/v2/{date}.json` | JSON source template; `{date}` is `YYYY-MM-DD`. |
-| `WORDLE_TIMEZONE` | `Africa/Tripoli` | Timezone used to resolve "today" and the refresh hour. |
+| `WORDLE_TIMEZONE` | `America/New_York` | Publisher's publication schedule used to resolve "today" and the refresh hour. Not the player's local zone. |
 | `WORDLE_REFRESH_HOUR` | unset | Optional `0`-`23` local hour for the in-process pre-warm. |
 
 The source must return a JSON object with `solution` (exactly five uppercase
@@ -20,13 +20,20 @@ falls back to another date or a fabricated answer.
 
 ## Fetch-once guarantee
 
-`wordle_puzzles.puzzle_date` is the primary key. `ensure_today()` inserts a
+`wordle_puzzles.puzzle_date` is the primary key. `ensure_today()` resolves the
+live date from the ingested source schedule (the publisher's publication zone,
+never the player's local clock); the clock is only a logged fallback when no
+schedule row exists or the next day has not been published yet, in which case
+the last stored answer remains current. `ensure_today()` inserts a
 short-lived claim row (`answer` is null) with `INSERT ... ON CONFLICT DO
 NOTHING`; only the claimant calls the source. Concurrent requests poll the
-stored row for a bounded time instead of calling out. An expired claim can be
-reclaimed atomically, and failed attempts are recorded through
-`last_attempt_at` plus a retry cooldown. The database uniqueness guarantee, not
-the scheduler, is authoritative.
+stored row for a bounded time instead of calling out. Each source attempt is
+hard-capped by `asyncio.timeout`, and the lease is asserted at import to exceed
+the whole retry budget, so a slow source cannot be reclaimed mid-fetch. An
+expired in-flight claim can be reclaimed atomically; a released claim records
+its cooldown separately in `retry_after` and cannot be stolen before it
+elapses. The database uniqueness guarantee, not the scheduler, is
+authoritative.
 
 Refresh paths:
 
@@ -56,6 +63,8 @@ enter compiled context.
 
 `migrations/versions/0011_wordle.py` adds `wordle_puzzles`, `wordle_games` and
 `wordle_guesses` with owner/date indexes, the unique `(owner_id, puzzle_date)`
-game key, the unique `(game_id, attempt)` guess order and unique `request_id`.
-Downgrade drops only the Wordle tables. PostgreSQL deployments also get RLS and
-revoked `anon`/`authenticated` grants on the new tables.
+game key, the unique `(game_id, attempt)` guess order and the per-owner unique
+`(owner_id, request_id)` idempotency key. `wordle_puzzles` carries the claim
+lease plus a separate `retry_after` cooldown. Downgrade drops only the Wordle
+tables. PostgreSQL deployments also get RLS and revoked `anon`/`authenticated`
+grants on the new tables.
