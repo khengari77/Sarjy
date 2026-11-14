@@ -187,6 +187,7 @@ test('turning captions off keeps the session and the transcript reachable', asyn
   await startCall(page);
 
   await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).click();
   await page.getByRole('checkbox', { name: 'Show captions' }).uncheck();
   await expect(page.locator('.captions')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();

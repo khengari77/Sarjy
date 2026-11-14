@@ -281,7 +281,7 @@ test('desktop docks toggle independently', async ({ page }) => {
   await expect(left).toHaveAttribute('aria-expanded', 'false');
 });
 
-test('the right drawer exposes the four tabs, closes on Escape and returns focus', async ({ page }) => {
+test('the right drawer exposes the three tabs, closes on Escape and returns focus', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/');
   await waitForOrb(page);
@@ -294,7 +294,7 @@ test('the right drawer exposes the four tabs, closes on Escape and returns focus
   await expect(page.getByRole('button', { name: 'Show conversations' })).toHaveAttribute('aria-expanded', 'true');
 
   const tabs = page.locator('#shell-right').getByRole('tab');
-  await expect(tabs).toHaveText(['Memories', 'Voice', 'Appearance', 'Context']);
+  await expect(tabs).toHaveText(['Memories', 'Controls', 'Context']);
   await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
   await expect(page.locator('#shell-right').getByTestId('memory-panel')).toBeVisible();
   await expect(page.locator('#shell-right')).toContainText('Memory & context');
