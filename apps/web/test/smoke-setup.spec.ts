@@ -7,6 +7,9 @@ test('English smoke selectors reach real controls without starting a call', asyn
   });
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
   await page.goto('/');
+  // The drawer trigger is inert until Svelte hydrates; a click before then is
+  // dropped and the drawer never opens. Wait for the hydrated renderer first.
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static', { timeout: 30000 });
   await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
   const settings = page.getByRole('button', { name: 'Show memory and settings', exact: true });
   if ((await settings.getAttribute('aria-expanded')) !== 'true') await settings.click();
