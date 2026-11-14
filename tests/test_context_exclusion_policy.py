@@ -472,3 +472,55 @@ def test_padded_keep_authority_blocks_inconsistent_removal(tmp_path, content, ke
         )
         assert response.status_code == 400, response.text
         assert response.json()["detail"]["code"] == "PROPOSAL_INVALID"
+
+
+def test_explorer_exact_id_exclusion_is_previewed_applied_compiled_and_undone(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        created = client.post(
+            f"/v1/conversations/{chat}/memories",
+            json={"content": "Trip to Tripoli from 1 to 5 May", "idempotency_key": "explorer-seed"},
+        )
+        assert created.status_code == 201, created.text
+        memory_id = created.json()["id"]
+
+        before = counts(file)
+        proposal = client.post(f"/v1/conversations/{chat}/context/exclusions", json={"memory_ids": [memory_id]})
+        assert proposal.status_code == 200, proposal.text
+        body = proposal.json()
+        assert body["diff"]["removed"] == [memory_id]
+        assert [item["id"] for item in body["matches"]] == [memory_id]
+        assert counts(file) == before, "exact-id preview must not mutate context state"
+
+        listed = client.get("/v1/memories", params={"conversation_id": chat}).json()
+        assert listed["items"][0]["included_in_conversation"] is True
+        assert listed["items"][0]["excluded_in_conversation"] is False
+
+        headers = add_turn_session(file, chat)
+        context = start_turn(client, headers, request_id="before", text="What do I remember?")
+        assert memory_id in context["included_record_ids"]
+
+        applied = confirm(client, chat, body, "explorer-exclude").json()
+        assert applied["excluded_ids"] == [memory_id]
+        assert applied["diff"]["removed"] == [memory_id]
+        after_context = start_turn(client, headers, request_id="after", text="What do I remember?")
+        assert memory_id not in after_context["included_record_ids"]
+        assert memory_id in after_context["excluded_record_ids"]
+        listed_after = client.get("/v1/memories", params={"conversation_id": chat}).json()
+        assert listed_after["items"][0]["included_in_conversation"] is False
+        assert listed_after["items"][0]["excluded_in_conversation"] is True
+
+        restored = client.post(
+            f"/v1/conversations/{chat}/context/undo",
+            json={
+                "operation_id": applied["operation_id"],
+                "expected_revision": applied["revision_after"],
+                "idempotency_key": "explorer-undo",
+            },
+        )
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["restored_ids"] == [memory_id]
+        undone_context = start_turn(client, headers, request_id="undone", text="What do I remember?")
+        assert memory_id in undone_context["included_record_ids"]

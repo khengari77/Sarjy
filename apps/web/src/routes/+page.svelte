@@ -16,6 +16,7 @@
   import Composer from '../lib/chat/Composer.svelte';
   import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
   import RightDrawer from '../lib/ui/RightDrawer.svelte';
+  import MemoryPanel from '../lib/memory/MemoryPanel.svelte';
   import { createAnnouncement } from '../lib/chat/announcement.svelte';
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
@@ -241,6 +242,9 @@
 
   {#snippet right()}
     <RightDrawer {arabic}>
+      {#snippet memoryPanel()}
+        <MemoryPanel conversationId={conversation.current} />
+      {/snippet}
       {#snippet voicePanel()}
         <VoiceSettings
           {arabic}

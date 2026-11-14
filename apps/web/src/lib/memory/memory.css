@@ -1,0 +1,298 @@
+/* Transparent memory explorer. Tokens come from the shared Living Cloud theme. */
+
+.memory-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 2px 20px;
+  color: var(--text-primary);
+}
+
+.memory-header h3 {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.memory-panel p {
+  margin: 0;
+}
+
+.memory-muted,
+.memory-footnote {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.memory-notice {
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--orb-memory) 10%, transparent);
+  font-size: 13px;
+}
+
+.memory-search {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memory-search label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.memory-search-row {
+  display: flex;
+  gap: 8px;
+}
+
+.memory-search input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-height);
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.memory-panel .ghost-button,
+.memory-panel .primary-button {
+  font: inherit;
+  border-radius: var(--radius-control);
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.memory-panel .ghost-button:hover:enabled {
+  background: var(--surface-hover);
+}
+
+.memory-panel .primary-button {
+  background: color-mix(in srgb, var(--orb-confirmation) 22%, transparent);
+  border-color: color-mix(in srgb, var(--orb-confirmation) 55%, var(--border-subtle));
+  font-weight: 600;
+}
+
+.memory-panel button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.memory-error {
+  color: var(--status-error);
+  font-size: 12px;
+}
+
+.memory-error-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid color-mix(in srgb, var(--status-error) 45%, transparent);
+  font-size: 13px;
+}
+
+.memory-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 12px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-control);
+  font-size: 13px;
+}
+
+.memory-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.memory-rows,
+.memory-review-matches,
+.memory-preserved ul,
+.memory-diff ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.memory-row {
+  padding: 11px 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memory-row[data-included='true'] {
+  border-color: color-mix(in srgb, var(--orb-idle) 50%, var(--border-subtle));
+}
+
+.memory-row[data-excluded='true'] {
+  border-color: color-mix(in srgb, var(--orb-confirmation) 55%, var(--border-subtle));
+  background: color-mix(in srgb, var(--orb-confirmation) 8%, var(--surface-elevated));
+}
+
+.memory-content {
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.memory-summary {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.memory-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.chip {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+}
+
+.chip-stored {
+  border-color: color-mix(in srgb, var(--text-muted) 45%, transparent);
+}
+
+.chip-retrieved {
+  border-color: color-mix(in srgb, var(--orb-listening) 60%, transparent);
+  color: var(--orb-listening);
+}
+
+.chip-included {
+  border-color: color-mix(in srgb, var(--orb-idle) 60%, transparent);
+  color: var(--orb-idle);
+}
+
+.chip-excluded {
+  border-color: color-mix(in srgb, var(--orb-confirmation) 70%, transparent);
+  color: var(--orb-confirmation);
+}
+
+.memory-provenance {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.memory-kind {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.memory-row-actions,
+.memory-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.memory-id {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.memory-load-more {
+  align-self: flex-start;
+}
+
+.memory-review,
+.memory-applied {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-panel);
+  border: 1px solid color-mix(in srgb, var(--orb-confirmation) 50%, var(--border-subtle));
+  background: var(--surface-raised);
+}
+
+.memory-review h4,
+.memory-applied h4,
+.memory-diff h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.memory-caution {
+  font-size: 12px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--orb-confirmation) 80%, var(--text-primary));
+}
+
+.memory-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--surface-hover) 55%, transparent);
+}
+
+.memory-diff-counts,
+.memory-diff-summary,
+.memory-diff-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.memory-diff-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.memory-diff ul {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.memory-preserved {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.memory-review-matches li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+@media (max-width: 480px) {
+  .memory-search-row {
+    flex-direction: column;
+  }
+}

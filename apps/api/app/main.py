@@ -143,7 +143,7 @@ def create_app(
 
     app.include_router(memory_router(database, identity, embedder))
 
-    from app.routes.context import register_context_routes
+    from app.routes.context import register_context_routes, register_exclusion_routes
     from app.routes.system import register_system_routes
     from app.routes.voice import register_voice_routes
     from app.routes.wordle import register_wordle_routes
@@ -153,6 +153,7 @@ def create_app(
     register_voice_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
     register_worker_routes(app, config=config, database=database, embedder=embedder)
     register_context_routes(app, config=config, database=database, identity=identity, semantic_search=semantic_search)
+    register_exclusion_routes(app, config=config, database=database, identity=identity)
     register_wordle_routes(app, config=config, database=database, identity=identity, source=source)
 
     return app

@@ -9,6 +9,7 @@ from app.services.context_operations import (
     ContextOperationError,
     confirm_proposal,
     context_state,
+    create_exclusion_proposal,
     create_proposal,
     list_operations,
     undo_operation,
@@ -21,6 +22,11 @@ class ContextProposalInput(BaseModel):
     keep: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
     limit: int = Field(default=20, ge=1, le=20)
+
+
+class ContextExclusionProposalInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    memory_ids: tuple[str, ...] = Field(min_length=1, max_length=20)
 
 
 class ContextConfirmInput(BaseModel):
@@ -194,6 +200,35 @@ def register_context_routes(app, *, config: Settings, database, identity, semant
                 operation_id=body.operation_id,
                 expected_revision=body.expected_revision,
                 idempotency_key=body.idempotency_key,
+            )
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+
+def register_exclusion_routes(app, *, config: Settings, database, identity):
+    """Exact-id preview for the transparent memory explorer.
+
+    Kept separate from the search-driven proposal routes so each registration
+    function stays within the project's complexity budget.
+    """
+
+    def proposal_secret() -> str:
+        return config.context_proposal_secret or config.agent_service_secret
+
+    @app.post("/v1/conversations/{conversation_id}/context/exclusions", response_model=ContextProposal)
+    async def propose_exclusion(
+        conversation_id: str,
+        body: ContextExclusionProposalInput,
+        user=Depends(identity),
+        db: AsyncSession = Depends(database),
+    ):
+        try:
+            return await create_exclusion_proposal(
+                db,
+                owner_id=user.id,
+                conversation_id=conversation_id,
+                memory_ids=body.memory_ids,
+                secret=proposal_secret(),
             )
         except ContextOperationError as exc:
             raise _context_error(exc) from exc

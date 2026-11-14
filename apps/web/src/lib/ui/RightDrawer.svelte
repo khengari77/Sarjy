@@ -12,9 +12,11 @@
     arabic?: boolean;
     /** Existing voice controls stay reachable in the Voice tab (#41 owns their contents). */
     voicePanel?: Snippet;
+    /** Transparent memory/context explorer (#43). Rendered in its own tab. */
+    memoryPanel?: Snippet;
   }
 
-  let { arabic = false, voicePanel }: Props = $props();
+  let { arabic = false, voicePanel, memoryPanel }: Props = $props();
 
   const tabs: Tab[] = [
     { id: 'memories', label: 'Memories' },
@@ -106,14 +108,21 @@
           <p class="mode-preview" aria-hidden="true"><span>Simple</span><span>Developer</span></p>
         </section>
       {:else if tab.id === 'memories'}
-        <section class="placeholder-block">
-          <h2>Memories</h2>
-          <p>The memory explorer arrives in #43. No remembered items are shown yet.</p>
-        </section>
+        {#if memoryPanel}
+          {@render memoryPanel()}
+        {:else}
+          <section class="placeholder-block">
+            <h2>Memories</h2>
+            <p>No remembered items are shown yet.</p>
+          </section>
+        {/if}
       {:else}
         <section class="placeholder-block">
           <h2>Context</h2>
-          <p>The context inspector arrives in #43/#46. No context data is shown yet.</p>
+          <p>
+            The general context inspector arrives in #46. Saved facts and whether each one is included in or excluded
+            from the next compiled context are shown in the Memories tab.
+          </p>
         </section>
       {/if}
     </div>
