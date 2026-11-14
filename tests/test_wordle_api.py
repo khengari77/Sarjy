@@ -389,6 +389,58 @@ def test_duplicate_request_id_replays_after_the_game_is_terminal(tmp_path):
     asyncio.run(run())
 
 
+def test_guess_early_exits_release_the_locked_game_transaction(tmp_path):
+    async def run():
+        engine = _concurrent_engine(tmp_path)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        day = resolve_puzzle_date(datetime(2026, 11, 13, 12, 0, tzinfo=UTC), "Africa/Tripoli")
+        try:
+            async with sessions() as db:
+                db.add(
+                    WordlePuzzle(
+                        puzzle_date=day.isoformat(),
+                        answer=CRANE,
+                        source="fixture",
+                        fetched_at="2026-11-13T12:00:00+00:00",
+                        payload_hash="hash",
+                    )
+                )
+                await db.commit()
+            async with sessions() as db:
+                await ensure_game(db, owner_id="owner-one", day=day)
+                await submit_guess(db, owner_id="owner-one", day=day, answer=CRANE, guess=CRANE, request_id="win")
+
+            # Replay of the winning id returns while releasing the lock.
+            async with sessions() as db:
+                replay = await submit_guess(
+                    db, owner_id="owner-one", day=day, answer=CRANE, guess=CRANE, request_id="win"
+                )
+                assert replay.game.status == "won"
+                assert db.in_transaction() is False
+
+            # Request-id conflict releases the lock before raising.
+            async with sessions() as db:
+                with pytest.raises(WordleServiceError) as conflict:
+                    await submit_guess(db, owner_id="owner-one", day=day, answer=CRANE, guess="SLATE", request_id="win")
+                assert conflict.value.code == "WORDLE_REQUEST_CONFLICT"
+                assert db.in_transaction() is False
+
+            # Late guess on a terminal game releases the lock before raising.
+            async with sessions() as db:
+                with pytest.raises(WordleServiceError) as over:
+                    await submit_guess(
+                        db, owner_id="owner-one", day=day, answer=CRANE, guess="SLATE", request_id="late"
+                    )
+                assert over.value.code == "WORDLE_GAME_OVER"
+                assert db.in_transaction() is False
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
 def test_concurrent_tab_submissions_do_not_double_count(tmp_path):
     async def run():
         engine = _concurrent_engine(tmp_path)

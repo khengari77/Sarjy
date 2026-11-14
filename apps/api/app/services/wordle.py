@@ -606,6 +606,7 @@ async def _replay_guess(
     if existing is None:
         return None
     if existing.game_id != game.id or existing.word != word:
+        await db.rollback()
         raise WordleServiceError("WORDLE_REQUEST_CONFLICT", 409)
     return GuessOutcome(
         game=await game_view(db, game, answer=answer),
@@ -649,8 +650,10 @@ async def submit_guess(
             game = await ensure_game(db, owner_id=owner_id, day=day, now=instant)
         replay = await _replay_guess(db, game=game, owner_id=owner_id, request_id=request_id, word=word, answer=answer)
         if replay is not None:
+            await db.rollback()
             return replay
         if game.status != WordleStatus.IN_PROGRESS.value:
+            await db.rollback()
             raise WordleServiceError("WORDLE_GAME_OVER", 409)
         if _race_hook is not None:
             await _race_hook()
@@ -658,6 +661,7 @@ async def submit_guess(
         rows = (await db.scalars(select(WordleGuess).where(WordleGuess.game_id == game.id))).all()
         attempt = len(rows) + 1
         if attempt > MAX_ATTEMPTS:
+            await db.rollback()
             raise WordleServiceError("WORDLE_GAME_OVER", 409)
         marks = tuple(mark.value for mark in score_guess(answer, word))
         status = status_after_guess(answer, word, attempt).value
