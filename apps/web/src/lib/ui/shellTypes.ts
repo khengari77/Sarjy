@@ -1,5 +1,6 @@
 import type { Snippet } from 'svelte';
 import type { ResolvedTheme } from './theme';
+import type { ThemeControl } from './themeSession.svelte';
 
 export interface ShellProps {
   dir?: 'ltr' | 'rtl';
@@ -23,4 +24,9 @@ export interface ShellProps {
    * re-derive it from `data-theme` or `prefers-color-scheme` themselves.
    */
   onthemechange?: (theme: ResolvedTheme) => void;
+  /**
+   * Hands the shell-owned theme setter to the parent once, so a voice theme
+   * command applies through the same session that persists and resolves it.
+   */
+  onthemeready?: (control: ThemeControl) => void;
 }

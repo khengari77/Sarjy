@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     default_llm_provider: Literal["openai_direct", "deepseek_direct"] = "deepseek_direct"
     deepseek_budget_enabled: bool = True
     deepseek_daily_micro_usd: int = 250_000
+    # Shared daily ElevenLabs character reservation. Application guard, not a provider quota (#151).
+    elevenlabs_daily_characters: int = Field(default=2500, ge=1)
     deepseek_request_micro_usd: int = 7_000
     eleven_api_key: str = ""
     approved_voice_ids: str = ""
@@ -33,6 +35,7 @@ class Settings(BaseSettings):
     agent_service_secret: str = ""
     demo_session_budget: int = 80
     demo_calls_per_identity: int = 3
+    reviewer_access_enabled: bool = False
     # Daily Wordle kill switch.  Off by default so an unconfigured deployment
     # never reaches the external source.
     wordle_enabled: bool = False
@@ -54,14 +57,6 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
-    def validate_voice_configuration(self):
-        # Fail at startup, not on the first demo tap: with voice configured but no
-        # approved or default voice, every session request would fail at runtime.
-        if self.eleven_api_key and not (self.approved_voice_ids.strip() or self.default_voice_id):
-            raise ValueError("APPROVED_VOICE_IDS or DEFAULT_VOICE_ID is required when ELEVEN_API_KEY is set")
-        return self
-
-    @model_validator(mode="after")
     def validate_wordle_timezone(self):
         # A disabled feature must never prevent boot; an empty value is the
         # ordinary compose/TZ interpolation case.
@@ -79,4 +74,16 @@ class Settings(BaseSettings):
             DEEPSEEK_MINIMUM_REQUEST_MICRO_USD <= self.deepseek_request_micro_usd <= self.deepseek_daily_micro_usd
         ):
             raise ValueError("DEEPSEEK_BUDGET_CONFIGURATION_INVALID")
+        return self
+
+    @model_validator(mode="after")
+    def validate_reviewer_access(self):
+        if not self.reviewer_access_enabled:
+            return self
+        if not self.cookie_secure:
+            raise ValueError("REVIEWER_ACCESS_REQUIRES_SECURE_COOKIES")
+        if not self.development_protected:
+            raise ValueError("REVIEWER_ACCESS_REQUIRES_API_PROTECTION")
+        if not self.web_service_secret:
+            raise ValueError("REVIEWER_ACCESS_REQUIRES_WEB_SERVICE_SECRET")
         return self

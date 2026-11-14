@@ -1,6 +1,15 @@
 import type { Handle } from '@sveltejs/kit/hooks';
-import { assertAccessConfigured, protectedMode, sessionIsValid } from './lib/auth/guard.server';
+import {
+  assertAccessConfigured,
+  protectedMode,
+  reviewerMode,
+  reviewerSessionPresent,
+  sessionIsValid,
+} from './lib/auth/guard.server';
+import { isReviewerPublicPath } from './lib/auth/reviewer';
 
+// Reviewer invitations are an additive door, not a replacement for the shared
+// token. When they are off, the #142 gate below behaves exactly as before.
 assertAccessConfigured();
 
 const PUBLIC_PATHS = new Set(['/healthz', '/logout', '/favicon.ico', '/favicon.svg', '/favicon.png', '/robots.txt']);
@@ -53,7 +62,19 @@ export const handle: Handle = async ({ event, resolve }) => {
   const { pathname, search } = event.url;
   if (isPublic(pathname)) return secure(await resolve(event));
 
+  // Precedence: the signed token session is checked first, then the reviewer
+  // identity. Either one opens the shell; the API still authorises every
+  // `/v1/*` call from the reviewer cookie, so this edge decision never grants
+  // data access on its own.
   if (sessionIsValid(event.cookies)) return secure(await resolve(event));
+
+  if (reviewerMode) {
+    // `/review` carries the invitation and the exchange route sets the cookie,
+    // so both stay open before the visitor holds any credential.
+    if (isReviewerPublicPath(pathname) || reviewerSessionPresent(event.cookies)) {
+      return secure(await resolve(event));
+    }
+  }
 
   // The root is the door: GET/HEAD render it, and a native form POST (and only
   // that) may exchange a manually entered token. Other methods are not a door.

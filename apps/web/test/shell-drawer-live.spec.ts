@@ -108,7 +108,7 @@ async function waitForShell(page: Page) {
 async function startCall(page: Page) {
   await page.goto('/');
   await waitForShell(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 }
 
@@ -206,7 +206,7 @@ test.describe('mobile overlay drawer during a live call', () => {
     await page.locator('#shell-left').getByRole('button', { name: 'Work ideas', exact: true }).click();
     await dialog.getByRole('button', { name: 'End & switch' }).click();
     await expect.poll(() => api.ends.some((url) => url.endsWith('/sess-1/end'))).toBe(true);
-    await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+    await expect(page.locator('.orb-button')).toBeVisible();
     await expect(page.locator('#shell-left')).toBeHidden();
     await expect(trigger).toBeFocused();
     await expect(page.locator('.stage-dialog [role="dialog"]')).toHaveCount(0);
@@ -227,7 +227,7 @@ test.describe('mobile overlay drawer during a live call', () => {
 
     await dialog.getByRole('button', { name: 'End & start' }).click();
     await expect.poll(() => api.created()).toBe(1);
-    await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+    await expect(page.locator('.orb-button')).toBeVisible();
   });
 
   test('Mute/End stay reachable and operable while the drawer is modal', async ({ page }) => {
@@ -290,7 +290,7 @@ test('Escape closes the open dock that holds focus, not the most recently opened
   // Mirror: reopen the left dock, focus the right dock, Escape closes right.
   await left.click();
   await expect(left).toHaveAttribute('aria-expanded', 'true');
-  await page.locator('#shell-right').getByRole('tab', { name: 'Voice' }).focus();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).focus();
   await page.keyboard.press('Escape');
   await expect(right).toHaveAttribute('aria-expanded', 'false');
   await expect(left).toHaveAttribute('aria-expanded', 'true');

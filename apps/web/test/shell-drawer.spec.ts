@@ -93,7 +93,7 @@ test('opening a drawer moves focus inside, makes the shell inert and Escape rest
 
     // Focus landed on the first meaningful control inside the drawer, not on
     // the drawer container itself and not on <body>.
-    await expect(drawer.getByRole('tab', { name: 'Voice' })).toBeFocused();
+    await expect(drawer.getByRole('tab', { name: 'Controls' })).toBeFocused();
     expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
     expect(await drawer.evaluate((el) => el === document.activeElement)).toBe(false);
 
@@ -221,14 +221,14 @@ test('resizing across the dock breakpoint keeps focus inside the drawer or resto
   await right.click();
   const drawer = page.locator('#shell-right');
   await expect(drawer).toHaveAttribute('role', 'dialog');
-  await drawer.getByRole('tab', { name: 'Appearance' }).click();
-  await expect(drawer.getByRole('tab', { name: 'Appearance' })).toBeFocused();
+  await drawer.getByRole('tab', { name: 'Context' }).click();
+  await expect(drawer.getByRole('tab', { name: 'Context' })).toBeFocused();
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(right).toHaveAttribute('aria-expanded', 'true');
   await expect(drawer).toBeVisible();
   await expect(drawer).not.toHaveAttribute('role', 'dialog');
-  await expect(drawer.getByRole('tab', { name: 'Appearance' })).toBeFocused();
+  await expect(drawer.getByRole('tab', { name: 'Context' })).toBeFocused();
   expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
   expect(await isInert(page, '.topbar')).toBe(false);
   expect(await isInert(page, '.stage-content')).toBe(false);

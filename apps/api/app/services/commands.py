@@ -23,6 +23,7 @@ from app.domain.commands import (
     parse_exact_command,
     parse_exclusion_confirmation,
     parse_memory_exclusion_target,
+    parse_voice_gender,
     parse_voice_selection,
     unknown_result,
     unsupported_command,
@@ -34,6 +35,7 @@ from app.domain.contracts import (
     SelectApprovedVoice,
     SetCaptionsVisible,
     SetSpeakingSpeed,
+    SetTheme,
     UserSettings,
 )
 from app.services.actions import dispatch_action, dispatch_setting
@@ -103,23 +105,11 @@ async def handle_finalized_utterance(
     action = parse_exact_command(text)
     voice_name: str | None = None
     if action is None:
-        voice_name = parse_voice_selection(text)
-        if voice_name is not None:
-            resolved = await _resolve_voice(catalog, voice_name)
-            if resolved is None:
-                return unsupported_result(
-                    request_id=request_id,
-                    detail="VOICE_NOT_FOUND",
-                    spoken=f"I couldn't find an approved voice called {voice_name}.",
-                )
-            if approved_voice_ids is not None and resolved.id not in approved_voice_ids:
-                return unsupported_result(
-                    request_id=request_id,
-                    detail="VOICE_NOT_APPROVED",
-                    spoken=f"The voice called {resolved.name} isn't approved.",
-                )
-            voice_name = resolved.name
-            action = SelectApprovedVoice(voice_id=resolved.id)
+        voice = await _voice_selection(text, request_id, catalog, approved_voice_ids)
+        if isinstance(voice, CommandResult):
+            return voice
+        if voice is not None:
+            action, voice_name = voice
     if action is None:
         return await _unsupported_result(
             db,
@@ -129,18 +119,28 @@ async def handle_finalized_utterance(
             text=text,
         )
 
-    # Truthful routing for an effect that is not wired end-to-end yet. Speed is
-    # stored but never reaches the TTS voice settings (#44), so no success is
-    # claimed and nothing is mutated.
-    if isinstance(action, (AdjustSpeakingSpeed, SetSpeakingSpeed)):
-        return unsupported_result(
-            request_id=request_id,
-            detail="SPEED_APPLICATION_UNAVAILABLE",
-            spoken="I can't change speaking speed in the call yet. Nothing was changed.",
-        )
+    # Theme is presentation-only and belongs to one browser, so there is nothing
+    # to persist server-side. The result carries the hint; the client applies it
+    # once through the shell's theme session, which owns storage and resolution.
+    if isinstance(action, SetTheme):
+        return command_result(request_id=request_id, action=action, theme=action.theme)
 
-    # Captions and voice are owner-scoped preferences: exactly one writer,
-    # POST /v1/settings/actions, never the conversation-scoped dispatcher.
+    # Speed, captions and voice are owner-scoped preferences: exactly one writer,
+    # POST /v1/settings/actions, never the conversation-scoped dispatcher. The
+    # worker reads the frozen snapshot at the next turn, so a committed speed is
+    # heard from the next reply, not mid-sentence.
+    if isinstance(action, (AdjustSpeakingSpeed, SetSpeakingSpeed)):
+        amount = f"{action.delta:+.1f}" if isinstance(action, AdjustSpeakingSpeed) else f"{action.speed:.1f}"
+        return await _run_setting(
+            db,
+            owner_id=owner_id,
+            request_id=f"speed:{settings_revision}:{amount}",
+            settings_revision=settings_revision,
+            action=action,
+            catalog=catalog,
+            approved_voice_ids=approved_voice_ids,
+            spoken=None,
+        )
     if isinstance(action, SetCaptionsVisible):
         setting_request = f"captions:{settings_revision}:{'on' if action.visible else 'off'}"
         return await _run_setting(
@@ -322,6 +322,57 @@ def _http_failure(*, request_id: str, action: Action, exc: HTTPException) -> Com
     if exc.status_code < 500:
         return failed_result(request_id=request_id, detail=detail, action=action)
     return unknown_result(request_id=request_id, detail=detail, action=action)
+
+
+async def _voice_selection(
+    text: str, request_id: str, catalog, approved: frozenset[str] | None
+) -> tuple[SelectApprovedVoice, str] | CommandResult | None:
+    """Resolve a spoken voice request to an approved id, or an honest refusal.
+
+    ``None`` means the text names no voice. A gender request is checked before a
+    name so "a male" is never searched as a voice called "a male".
+    """
+    gender = parse_voice_gender(text)
+    if gender is not None:
+        found = await _resolve_gendered_voice(catalog, gender, approved)
+        if found is None:
+            return unsupported_result(
+                request_id=request_id,
+                detail="VOICE_GENDER_NOT_FOUND",
+                spoken=f"I don't have an approved {gender} voice, so nothing was changed.",
+            )
+        return SelectApprovedVoice(voice_id=found.id), found.name
+    name = parse_voice_selection(text)
+    if name is None:
+        return None
+    resolved = await _resolve_voice(catalog, name)
+    if resolved is None:
+        return unsupported_result(
+            request_id=request_id,
+            detail="VOICE_NOT_FOUND",
+            spoken=f"I couldn't find an approved voice called {name}.",
+        )
+    if approved is not None and resolved.id not in approved:
+        return unsupported_result(
+            request_id=request_id,
+            detail="VOICE_NOT_APPROVED",
+            spoken=f"The voice called {resolved.name} isn't approved.",
+        )
+    return SelectApprovedVoice(voice_id=resolved.id), resolved.name
+
+
+async def _resolve_gendered_voice(catalog, gender: str, approved: frozenset[str] | None):
+    find = getattr(catalog, "find_by_trait", None)
+    if find is None or not approved:
+        return None
+    try:
+        voice = await find("gender", gender, approved)
+    except VoiceCatalogError:
+        return None
+    # Defence in depth: the id must be approved and carry the requested label.
+    if voice is None or voice.id not in approved or voice.gender != gender:
+        return None
+    return voice
 
 
 async def _resolve_voice(catalog, name: str):

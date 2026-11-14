@@ -5,8 +5,8 @@ from typing import Annotated, Literal
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from app.domain.commands import CommandResult
-from app.domain.contracts import Action, SelectApprovedVoice, UserSettings, parse_action
+from app.domain.commands import CommandResult, command_result
+from app.domain.contracts import Action, SelectApprovedVoice, SetTheme, UserSettings, parse_action
 from app.infrastructure.database import UserSetting
 from app.services.actions import dispatch_action, dispatch_setting, settings_value
 from app.services.commands import handle_finalized_utterance
@@ -129,6 +129,12 @@ def register_action_routes(app, database, identity, owned, catalog, approved_voi
                 return {"handled": False}
             return {"handled": True, "result": command}
         action = body.action
+        if isinstance(action, SetTheme):
+            # Browser-local presentation: no conversation dispatch and no write.
+            return {
+                "handled": True,
+                "result": command_result(request_id=body.request_id, action=action, theme=action.theme),
+            }
         try:
             if isinstance(action, SelectApprovedVoice):
                 # Preferences have exactly one writer, even when submitted from a conversation.

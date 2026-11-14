@@ -3,6 +3,7 @@
   import type { VoiceRuntime } from '../lib/audio/voice-runtime';
   import { activateOrb } from '../lib/orb/orbActions';
   import type { ResolvedTheme } from '../lib/ui/theme';
+  import type { ThemeControl } from '../lib/ui/themeSession.svelte';
   import AppShell from '../lib/ui/AppShell.svelte';
   import ConversationList from '../lib/chat/ConversationList.svelte';
   import VoiceStage from '../lib/chat/VoiceStage.svelte';
@@ -60,7 +61,10 @@
   // Panel state is a top-level reactive object so the shell bindings and the
   // command store share one source of truth.
   const panels = $state({ history: false, memory_explorer: false });
-  const commands = createCommandSession(catalog, panels);
+  // The shell owns the theme session and hands back its setter; a voice theme
+  // command applies through it once and persists in this browser only.
+  let shellTheme: ThemeControl | null = null;
+  const commands = createCommandSession(catalog, panels, { setTheme: (preference) => shellTheme?.set(preference) });
 
   // One projection owns the phase, copy and orb presentation; the orb button
   // dispatches whatever action that presentation advertises.
@@ -175,6 +179,7 @@
   leftLabel={arabic ? 'المحادثات' : 'Conversations'}
   rightLabel={arabic ? 'الذاكرة والإعدادات' : 'Memory and settings'}
   onthemechange={(value) => (theme = value)}
+  onthemeready={(control) => (shellTheme = control)}
 >
   {#snippet left()}
     <ConversationList
@@ -236,10 +241,8 @@
       oncancel={() => run(() => connection!.cancelConnect(), onVoiceError)}
       ontoggle={toggleMute}
       oninterrupt={interrupt}
-      onconnect={startConnect}
     />
     <Composer bind:draft placeholder={words.placeholder} sendLabel={words.send} disabled={busy} onsend={send} />
-    <small class="attribution"><a href="https://open-meteo.com/">Weather data: Open-Meteo</a></small>
   {/snippet}
 
   {#snippet right()}
@@ -252,10 +255,12 @@
       {selectedVoice}
       {sessionVoice}
       live={voice.live !== null}
+      speakingSpeed={commands.state.settings.speaking_speed}
       captionsVisible={commands.state.settings.captions_visible}
       onsearch={() => void catalogStore!.load()}
       onloadmore={() => void catalogStore!.load(true)}
       onremember={() => void catalogStore!.remember()}
+      onspeed={(speed) => commands.setSpeakingSpeed(speed)}
       ontoggleCaptions={() => void commands.setCaptions(!commands.state.settings.captions_visible)}
     />
   {/snippet}
