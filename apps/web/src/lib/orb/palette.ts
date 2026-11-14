@@ -162,6 +162,7 @@ export function orbStateColors(theme: ThemeName): OrbStateColors {
 
 /** Page background per theme (`--bg-app`), for contrast/fallback decisions. */
 export const THEME_BACKGROUND: Record<ThemeName, string> = {
-  light: '#eaf6ff',
+  // Deliberately deeper than the kit's #eaf6ff: the orb washed out against it.
+  light: '#dceaf7',
   dark: '#080f29',
 };

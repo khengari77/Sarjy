@@ -17,7 +17,8 @@ const KIT: Record<ThemeName, { palette: readonly string[]; memory: string; error
       memory: '#ffd37e',
       error: '#c94767',
       muted: '#516b8f',
-      bg: '#eaf6ff',
+      // Kit value is #eaf6ff; deepened for orb contrast (see tokens.css).
+      bg: '#dceaf7',
     },
     dark: {
       palette: ['#548fff', '#3b6fff', '#9a74f7', '#baa7ff', '#57d7d2', '#f67c9f'],
