@@ -80,6 +80,41 @@ test('theme control cycles light/dark/system without creating a voice session or
   ).toBe(true);
 });
 
+test('the orb derives from the shell-resolved theme, not its own preference', async ({ page }) => {
+  await page.goto('/');
+  await waitForOrb(page);
+  const html = page.locator('html');
+  const orb = page.locator('.orb-button');
+  const colour = () => orb.locator('canvas').getAttribute('data-color');
+  const dotColour = () =>
+    page.locator('.status-line .status-dot').evaluate((el) => getComputedStyle(el).backgroundColor);
+
+  await expect(html).toHaveAttribute('data-theme', 'dark');
+  await expect(orb).toHaveAttribute('data-theme', 'dark');
+  const darkColour = await colour();
+  const darkDot = await dotColour();
+
+  // system → light: the presentation colour and the status dot both change,
+  // so the theme reaches the renderer state rather than only a prop.
+  await themeButton(page).click();
+  await expect(html).toHaveAttribute('data-theme', 'light');
+  await expect(orb).toHaveAttribute('data-theme', 'light');
+  await expect.poll(colour).not.toBe(darkColour);
+  await expect.poll(dotColour).not.toBe(darkDot);
+
+  // light → dark → system, then let the OS decide. A locally re-derived theme
+  // could not follow this change.
+  await themeButton(page).click();
+  await themeButton(page).click();
+  await expect(html).toHaveAttribute('data-theme-preference', 'system');
+  await expect(orb).toHaveAttribute('data-theme', 'dark');
+
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(html).toHaveAttribute('data-theme', 'light');
+  await expect(orb).toHaveAttribute('data-theme', 'light');
+  await expect.poll(colour).not.toBe(darkColour);
+});
+
 test('a saved theme applies before paint on reload and SSR never stores it', async ({ page, request }) => {
   const serverHtml = await (await request.get('/')).text();
   expect(serverHtml).toMatch(/<html lang="en"/);
@@ -261,9 +296,10 @@ test('the right drawer exposes the four tabs, closes on Escape and returns focus
   const tabs = page.locator('#shell-right').getByRole('tab');
   await expect(tabs).toHaveText(['Memories', 'Voice', 'Appearance', 'Context']);
   await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
-  await expect(page.locator('#shell-right')).toContainText('memory explorer arrives in #43');
+  await expect(page.locator('#shell-right').getByTestId('memory-panel')).toBeVisible();
+  await expect(page.locator('#shell-right')).toContainText('Memory & context');
   await page.locator('#shell-right').getByRole('tab', { name: 'Context' }).click();
-  await expect(page.locator('#shell-right')).toContainText('context inspector arrives in #43/#46');
+  await expect(page.locator('#shell-right')).toContainText('general context inspector arrives in #46');
 
   await page.keyboard.press('Escape');
   await expect(trigger).toHaveAttribute('aria-expanded', 'false');

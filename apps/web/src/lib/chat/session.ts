@@ -31,17 +31,13 @@ export async function fetchSettings(): Promise<UserSettings> {
   return request<UserSettings>('settings');
 }
 
-export async function startVoiceSession(
-  conversationId: string,
-  language: 'ar' | 'en',
-  voiceId?: string,
-): Promise<SessionConfig> {
-  // Omit the voice when the user has no saved selection: the server then applies
-  // its approved default, so a fresh browser can start without opening the picker.
+export async function startVoiceSession(conversationId: string, language: 'ar' | 'en'): Promise<SessionConfig> {
+  // Never send a voice id here: the server owns resolution (saved -> default) and
+  // the saved voice's language. An explicit per-call override needs a distinct
+  // user intent and must not be inferred from whatever the picker happens to show.
   const body = {
     conversation_id: conversationId,
     language,
-    ...(voiceId ? { voice_id: voiceId } : {}),
     response_preference: 'automatic',
   } satisfies StartVoice;
   return request<SessionConfig>('voice/sessions', body);
@@ -62,6 +58,16 @@ export async function saveVoiceSelection(voiceId: string, expectedRevision: numb
     action: { kind: 'SelectApprovedVoice', voice_id: voiceId || null },
   });
   return result.settings;
+}
+
+/** Persist the captions preference owner-side; the server snapshot is authoritative. */
+export async function saveCaptionSelection(visible: boolean, expectedRevision: number): Promise<SettingsActionResult> {
+  const requestId = `captions:${expectedRevision}:${visible ? 'on' : 'off'}`;
+  return request<SettingsActionResult>('settings/actions', {
+    request_id: requestId,
+    expected_revision: expectedRevision,
+    action: { kind: 'SetCaptionsVisible', visible },
+  });
 }
 
 export async function endVoiceSession(session: SessionConfig | null): Promise<void> {

@@ -1,6 +1,7 @@
 import { request } from '../api';
 import type { VoiceRuntime } from '../audio/voice-runtime';
 import { createVoiceRuntime } from '../audio/runtime-factory';
+import type { CommandResult, SettingsSnapshot } from '../commands/commandStore';
 import type { CatalogState } from './catalog';
 import { createCatalogStore } from './catalog';
 import type { VoiceState } from './connection';
@@ -19,7 +20,8 @@ export interface StudioBoot {
   conversation: ConversationState;
   restoreLanguage: boolean;
   setArabic(value: boolean): void;
-  setCaptions(value: boolean): void;
+  hydrateSettings(settings: Partial<SettingsSnapshot>): void;
+  applyCommand(result: CommandResult): void;
   setDevOverlay(value: DevOverlay): void;
   run(work: () => Promise<void>, onError?: (error: unknown) => void): Promise<void>;
   getLanguage(): 'ar' | 'en';
@@ -43,7 +45,6 @@ export function bootStudio(options: StudioBoot) {
   if (options.restoreLanguage) options.setArabic(storage?.getItem('sarjy-language') === 'ar');
   // Voice selection is server-owned; the retired local-only key is ignored.
   storage?.removeItem('sarjy-voice-id');
-  options.setCaptions(storage?.getItem('sarjy-captions') !== 'off');
 
   const runtime: VoiceRuntime = createVoiceRuntime();
   const meters = createMeterController(
@@ -52,13 +53,18 @@ export function bootStudio(options: StudioBoot) {
     () => voice.live !== null,
     () => voice.muted,
   );
-  const catalogStore = createCatalogStore(catalog);
+  const catalogStore = createCatalogStore(catalog, {
+    onSettings: (settings) => options.hydrateSettings(settings),
+    onVoiceSaved: (result) => options.applyCommand(result),
+  });
   const connection = createVoiceConnection(voice, {
     ensureConversation: () => conversations!.ensureConversation(),
     getConversationId: () => conversation.current,
     refresh: () => conversations!.refresh(),
     getRuntime: () => runtime,
     getLanguage: () => options.getLanguage(),
+    applyCommand: (result) => options.applyCommand(result),
+    resyncSettings: () => void catalogStore.loadSettings(),
     // The server fell back from a dead or unreachable saved voice: adopt its settings.
     onVoiceFallback: () => void catalogStore.loadSettings(),
     getVoice: () => {

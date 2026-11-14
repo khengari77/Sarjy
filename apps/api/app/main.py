@@ -5,8 +5,9 @@ persistence, providers and middleware together.
 """
 
 import asyncio
+import logging
 import re
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException
@@ -47,8 +48,20 @@ async def _stop_refresh_task(task) -> None:
     if task is None:
         return
     task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+    try:
+        await asyncio.wait_for(task, timeout=5)
+    except (asyncio.CancelledError, TimeoutError):
+        pass
+    except Exception:  # noqa: BLE001 - a failed refresh task must not block shutdown
+        logging.getLogger(__name__).exception("wordle refresh task failed")
+
+
+async def _shutdown(refresh_task, engine) -> None:
+    """Always dispose the engine, whatever the refresh task did."""
+    try:
+        await _stop_refresh_task(refresh_task)
+    finally:
+        await engine.dispose()
 
 
 REVIEWER_CLEANUP_PATH = re.compile(r"^/v1/voice/sessions/[^/]+/end$")
@@ -153,8 +166,7 @@ def create_app(
                         await db.commit()
             yield
         finally:
-            await _stop_refresh_task(refresh_task)
-            await engine.dispose()
+            await _shutdown(refresh_task, engine)
 
     app = FastAPI(
         title="Sarjy API",
@@ -175,13 +187,14 @@ def create_app(
 
     from app.routes.actions import register_action_routes
 
+    approved = approved_voice_ids(config.approved_voice_ids, config.default_voice_id)
     register_action_routes(
         app,
         database,
         identity,
         owned,
         catalog,
-        approved_voice_ids=approved_voice_ids(config.approved_voice_ids, config.default_voice_id),
+        approved_voice_ids=approved,
     )
 
     embedder = embedding_adapter or OpenAIEmbedder(config.openai_api_key)
@@ -214,7 +227,7 @@ def create_app(
 
     app.include_router(memory_router(database, identity, embedder))
 
-    from app.routes.context import register_context_routes
+    from app.routes.context import register_context_routes, register_exclusion_routes
     from app.routes.system import register_system_routes
     from app.routes.voice import register_voice_routes
     from app.routes.wordle import register_wordle_routes
@@ -232,8 +245,11 @@ def create_app(
         cleanup_identity=cleanup_user,
         owned=owned,
     )
-    register_worker_routes(app, config=config, database=database, embedder=embedder)
+    register_worker_routes(
+        app, config=config, database=database, embedder=embedder, catalog=catalog, approved_voice_ids=approved
+    )
     register_context_routes(app, config=config, database=database, identity=identity, semantic_search=semantic_search)
+    register_exclusion_routes(app, config=config, database=database, identity=identity)
     register_wordle_routes(app, config=config, database=database, identity=identity, source=source)
     if config.reviewer_access_enabled:
         from app.routes.reviewer import register_reviewer_routes

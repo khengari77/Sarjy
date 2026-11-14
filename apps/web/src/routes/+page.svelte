@@ -1,30 +1,28 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { VoiceRuntime } from '../lib/audio/voice-runtime';
-  import {
-    friendlyVoiceError,
-    isFatalVoiceError,
-    phaseFromAgentState,
-    phaseFromTransportStatus,
-  } from '../lib/audio/livekitAdapter';
-  import { deriveOrbPresentation, INITIAL_STATE, type VoicePhase } from '../lib/orb/orbState';
+  import { activateOrb } from '../lib/orb/orbActions';
+  import type { ResolvedTheme } from '../lib/ui/theme';
   import AppShell from '../lib/ui/AppShell.svelte';
   import ConversationList from '../lib/chat/ConversationList.svelte';
   import VoiceStage from '../lib/chat/VoiceStage.svelte';
   import type { PendingIntent } from '../lib/chat/intent';
   import CallControls from '../lib/chat/CallControls.svelte';
   import Composer from '../lib/chat/Composer.svelte';
-  import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
   import { selectedVoiceOption } from '../lib/chat/voice-state';
-  import RightDrawer from '../lib/ui/RightDrawer.svelte';
+  import AppRightDrawer from '../lib/ui/AppRightDrawer.svelte';
   import { createAnnouncement } from '../lib/chat/announcement.svelte';
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
   import { errorCode } from '../lib/voice/errors';
+  import { storeLanguage } from '../lib/preferences';
   import { createCatalogStore, initialCatalogState } from '../lib/voice/catalog';
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
+  import { deriveStage } from '../lib/voice/stageView';
   import { bootStudio } from '../lib/voice/studio';
   import { createSelectionController } from '../lib/voice/selection';
+  import { createCommandSession } from '../lib/commands/commandSession.svelte';
+  import CommandStatus from '../lib/commands/CommandStatus.svelte';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -37,12 +35,13 @@
   let pendingIntent = $state<PendingIntent>(null);
   let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none');
   let busy = $state(false);
-  let captionsVisible = $state(true);
+  // The shell owns storage and OS-preference resolution and reports the answer
+  // through onthemechange. `dark` matches the tokens.css SSR fallback, so the
+  // server and the first client frame agree before the boot script resolves.
+  let theme = $state<ResolvedTheme>('dark');
   let voice = $state(initialVoiceState());
-  let runtime: VoiceRuntime | undefined;
-  let connection: VoiceConnection | undefined;
-  let conversations: ConversationStore | undefined;
-  let catalogStore: ReturnType<typeof createCatalogStore> | undefined;
+  let runtime: VoiceRuntime | undefined, connection: VoiceConnection | undefined;
+  let conversations: ConversationStore | undefined, catalogStore: ReturnType<typeof createCatalogStore> | undefined;
   const selection = createSelectionController({
     voice,
     getPending: () => pendingIntent,
@@ -55,27 +54,20 @@
   const words = $derived(wordsFor(arabic));
   const selectedVoice = $derived(selectedVoiceOption(catalog.voices, catalog.voiceId));
   const sessionVoice = $derived(voice.live?.voice ?? null);
+  // Any finalised turn can save a memory server-side; the panel uses this to
+  // invalidate a list it loaded before the save.
+  const memoryRevision = $derived(`${conversation.current ?? ''}:${conversation.turns.length}`);
+  // Panel state is a top-level reactive object so the shell bindings and the
+  // command store share one source of truth.
+  const panels = $state({ history: false, memory_explorer: false });
+  const commands = createCommandSession(catalog, panels);
 
-  const phase = $derived<VoicePhase>(
-    (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
-      phaseFromTransportStatus(voice.transportStatus) ??
-      'idle',
-  );
-  const canInterrupt = $derived(phase === 'thinking' || phase === 'speaking');
-  const fatalError = $derived(voice.voiceErrorCode !== '' && isFatalVoiceError(voice.voiceErrorCode));
-  const voiceErrorText = $derived(voice.voiceErrorCode ? friendlyVoiceError(voice.voiceErrorCode, arabic) : '');
-  const presentation = $derived(
-    deriveOrbPresentation({
-      ...INITIAL_STATE,
-      phase,
-      overlay: devOverlay !== 'none' ? devOverlay : fatalError ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
-      micActive: voice.live !== null && !voice.muted,
-      sessionId: voice.live?.id ?? null,
-      connectionReady: voice.live !== null && !voice.connectionLost,
-      micLevel: voice.micLevel,
-      outputLevel: voice.outputLevel,
-    }),
-  );
+  // One projection owns the phase, copy and orb presentation; the orb button
+  // dispatches whatever action that presentation advertises.
+  const stage = $derived(deriveStage(voice, arabic, devOverlay, theme));
+  const canInterrupt = $derived(stage.canInterrupt);
+  const voiceErrorText = $derived(stage.errorText);
+  const presentation = $derived(stage.presentation);
 
   async function run(work: () => Promise<void>, onError?: (error: unknown) => void) {
     busy = true;
@@ -94,12 +86,19 @@
   }
 
   function handleOrb() {
-    if (voice.live) {
-      if (voice.muted) void toggleMute();
-      else if (canInterrupt) void interrupt();
-      return;
-    }
-    if (!voice.connecting) startConnect();
+    activateOrb(presentation, {
+      start: startConnect,
+      cancel: () => void run(() => connection!.cancelConnect(), onVoiceError),
+      mute: () => void toggleMute(),
+      interrupt: () => void interrupt(),
+      retry: () => (voice.live ? reconnect() : startConnect()),
+      reconnect,
+      end: () => void run(() => connection!.end(), onVoiceError),
+    });
+  }
+
+  function reconnect() {
+    void run(() => connection!.reconnect(), onVoiceError);
   }
 
   function startConnect() {
@@ -132,14 +131,9 @@
     }, onVoiceError);
   }
 
-  function toggleCaptions() {
-    captionsVisible = !captionsVisible;
-    localStorage.setItem('sarjy-captions', captionsVisible ? 'on' : 'off');
-  }
-
   function toggleLanguage() {
     arabic = !arabic;
-    localStorage.setItem('sarjy-language', arabic ? 'ar' : 'en');
+    storeLanguage(arabic);
   }
 
   const announcement = createAnnouncement(() => (arabic ? presentation.statusLabel.ar : presentation.statusLabel.en));
@@ -151,7 +145,8 @@
       conversation,
       restoreLanguage: LANGUAGE_SWITCH_ENABLED,
       setArabic: (value) => (arabic = value),
-      setCaptions: (value) => (captionsVisible = value),
+      hydrateSettings: (settings) => commands.hydrate(settings),
+      applyCommand: commands.apply,
       setDevOverlay: (value) => (devOverlay = value),
       getLanguage: () => (arabic ? 'ar' : 'en'),
       run: (work, onError) => run(work, onError),
@@ -171,12 +166,15 @@
 </svelte:head>
 
 <AppShell
+  bind:leftOpen={panels.history}
+  bind:rightOpen={panels.memory_explorer}
   dir={arabic ? 'rtl' : 'ltr'}
   stageDialogOpen={pendingIntent !== null}
   languageLabel={arabic ? 'English' : 'العربية'}
   onLanguage={LANGUAGE_SWITCH_ENABLED ? toggleLanguage : undefined}
   leftLabel={arabic ? 'المحادثات' : 'Conversations'}
   rightLabel={arabic ? 'الذاكرة والإعدادات' : 'Memory and settings'}
+  onthemechange={(value) => (theme = value)}
 >
   {#snippet left()}
     <ConversationList
@@ -208,7 +206,7 @@
       turns={conversation.turns}
       provisional={voice.provisional}
       tools={conversation.toolCalls}
-      {captionsVisible}
+      captionsVisible={commands.state.settings.captions_visible}
       {busy}
       {words}
       onretrymic={startConnect}
@@ -231,7 +229,9 @@
       muted={voice.muted}
       connectionLost={voice.connectionLost}
       {canInterrupt}
+      cleanupRequired={voice.pendingCleanup !== null}
       {words}
+      onretrycleanup={() => run(() => connection!.retryCleanup(), onVoiceError)}
       onend={() => run(() => connection!.end(), onVoiceError)}
       oncancel={() => run(() => connection!.cancelConnect(), onVoiceError)}
       ontoggle={toggleMute}
@@ -243,30 +243,23 @@
   {/snippet}
 
   {#snippet right()}
-    <RightDrawer {arabic}>
-      {#snippet voicePanel()}
-        <VoiceSettings
-          {arabic}
-          voices={catalog.voices}
-          bind:voiceId={catalog.voiceId}
-          bind:voiceSearch={catalog.search}
-          nextVoicePage={catalog.nextPage}
-          voiceLoading={catalog.loading}
-          voiceError={catalog.error}
-          voiceSaving={catalog.saving}
-          settingsError={catalog.settingsError}
-          live={voice.live !== null}
-          {selectedVoice}
-          {sessionVoice}
-          {captionsVisible}
-          onsearch={() => void catalogStore!.load()}
-          onloadmore={() => void catalogStore!.load(true)}
-          onremember={() => void catalogStore!.remember()}
-          ontoggleCaptions={toggleCaptions}
-        />
-      {/snippet}
-    </RightDrawer>
+    <AppRightDrawer
+      {arabic}
+      conversationId={conversation.current}
+      {memoryRevision}
+      bind:activeTab={commands.state.panelTab}
+      {catalog}
+      {selectedVoice}
+      {sessionVoice}
+      live={voice.live !== null}
+      captionsVisible={commands.state.settings.captions_visible}
+      onsearch={() => void catalogStore!.load()}
+      onloadmore={() => void catalogStore!.load(true)}
+      onremember={() => void catalogStore!.remember()}
+      ontoggleCaptions={() => void commands.setCaptions(!commands.state.settings.captions_visible)}
+    />
   {/snippet}
 </AppShell>
 
 <p class="sr-only" aria-live="polite" aria-atomic="true">{announcement.message}</p>
+<CommandStatus session={commands} />

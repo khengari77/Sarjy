@@ -152,7 +152,7 @@ test('starting and ending a session releases the exact session id', async ({ pag
 });
 
 test('cancelling a pending connection ends the session it already created', async ({ page }) => {
-  const { ends } = await mockSessions(page);
+  const { sessions, ends } = await mockSessions(page);
   await allowMicrophone(page);
   await installFakeRuntime(page, 1500);
 
@@ -161,6 +161,11 @@ test('cancelling a pending connection ends the session it already created', asyn
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   const cancel = page.getByRole('button', { name: 'Cancel connecting', exact: true });
   await expect(cancel).toBeVisible();
+  // Cancel is offered as soon as admission starts, but admission creates the
+  // session after the conversation bootstrap (POST conversations, then turns
+  // and tool-calls). Cancelling inside that window correctly creates and ends
+  // nothing, so wait for the admitted session this test claims to release.
+  await expect.poll(() => sessions.length).toBe(1);
   await cancel.click();
 
   await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();

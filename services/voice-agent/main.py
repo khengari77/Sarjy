@@ -5,6 +5,7 @@ import json
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 from uuid import uuid4
 
@@ -33,7 +34,7 @@ from livekit.agents import (
 )
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
-from provider_factory import build_providers
+from provider_factory import SpeakingSpeedController, build_providers
 from snapshot_request import snapshot_request
 
 server = AgentServer()
@@ -203,17 +204,26 @@ async def _playout_result(handle) -> tuple[str, str]:
 
 class SarjyAgent(Agent):
     def __init__(
-        self, backend: httpx.AsyncClient, pipeline: Mapping[str, Any], instructions: str, notify=None, fallback_llm=None
+        self,
+        backend: httpx.AsyncClient,
+        pipeline: Mapping[str, Any],
+        instructions: str,
+        notify=None,
+        fallback_llm=None,
+        publish=None,
     ):
         super().__init__(instructions=instructions)
         self.backend = backend
         self.pipeline = pipeline
         self.notify = notify
         self.fallback_llm = fallback_llm
+        self.publish = publish
         self.prepared: dict[str, dict] = {}
+        self.commands: dict[str, dict | None] = {}
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
+        self.speaking_speed_control = SpeakingSpeedController()
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
         self.memory_message: str | None = None
@@ -224,6 +234,11 @@ class SarjyAgent(Agent):
         # is not evidence that the user heard it.
         self.memory_prompted_key: tuple[Any, Any] | None = None
         self.memory_question_key: tuple[Any, Any] | None = None
+        # A consent decision owns its turn: the command path must not speak a
+        # second, contradictory outcome for the same utterance.
+        self.command_blocked_turn: str | None = None
+        # Set when a committed command result could not be published to the UI.
+        self.command_resync_required = False
 
     @staticmethod
     def _proposal_key(proposal: Mapping[str, Any] | None) -> tuple[Any, Any]:
@@ -240,6 +255,8 @@ class SarjyAgent(Agent):
             self.prepared[message.id] = response.json()
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
+        await self._publish_resync()
+        self._apply_speaking_speed(result["context"])
         decided = False
         # A confirmation/rejection utterance is never itself a capture, with or
         # without a pending proposal.
@@ -269,8 +286,9 @@ class SarjyAgent(Agent):
                         await self._resolve_memory(decision)
                         # One turn, one decision: the utterance that resolved the
                         # pending proposal must not also be enqueued as a new
-                        # capture candidate for the same turn.
+                        # capture candidate, nor reclassified as a command.
                         decided = True
+                        self.command_blocked_turn = message.id
                     else:
                         # A proposal is a one-shot for the next user turn; never stay armed
                         # across unrelated acknowledgements.
@@ -294,6 +312,25 @@ class SarjyAgent(Agent):
             self.memory_proposal = proposal
             self.memory_question_turn = result["turn_id"]
         return result["context"]
+
+    def _apply_speaking_speed(self, context):
+        """Apply the turn's stored pace before this turn's reply is synthesized.
+
+        ``speaking_speed`` is part of the frozen turn snapshot, so a change made
+        during the previous turn is picked up at this turn's synthesis boundary.
+        Legacy snapshots without a model request keep the provider default.
+        """
+        request = context.get("model_request") if isinstance(context, Mapping) else None
+        settings = request.get("settings") if isinstance(request, Mapping) else None
+        speed = settings.get("speaking_speed") if isinstance(settings, Mapping) else None
+        try:
+            session = self.session
+        except RuntimeError:
+            # Unit callers may compile outside a running session; nothing to configure.
+            return
+        tts = getattr(session, "tts", None)
+        if tts is not None:
+            self.speaking_speed_control.apply(tts, speed)
 
     async def _resolve_memory(self, decision: str) -> None:
         proposal = self.memory_proposal
@@ -390,12 +427,77 @@ class SarjyAgent(Agent):
     async def on_user_turn_completed(self, turn_ctx, new_message):
         await self.compile(new_message)
 
+    async def command_for(self, message) -> dict | None:
+        """Ask the API to interpret one finalized turn, once per turn.
+
+        A transport/5xx failure is retried once: the request id derives from the
+        source turn and the endpoint replays a committed result, so the retry
+        cannot double-apply. If both attempts fail, the turn continues through
+        the guarded conversational path; no success is spoken for it.
+        """
+        if message.id not in self.commands:
+            result = None
+            for attempt in range(2):
+                try:
+                    response = await self.backend.post(
+                        "/internal/agent/command", json={"turn_id": self.prepared[message.id]["turn_id"]}
+                    )
+                    response.raise_for_status()
+                    result = response.json().get("command")
+                    break
+                except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                    retryable = isinstance(exc, httpx.TransportError) or (
+                        isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
+                    )
+                    if attempt == 0 and retryable:
+                        continue
+                    logging.error("Finalized command resolution failed; continuing conversationally")
+                    break
+            self.commands[message.id] = result if isinstance(result, dict) else None
+        return self.commands[message.id]
+
+    async def _publish_command(self, command: Mapping[str, Any]) -> None:
+        if self.publish is None:
+            return
+        for attempt in range(2):
+            try:
+                await self.publish(dict(command))
+                return
+            except Exception:
+                if attempt == 1:
+                    break
+        # The effect is committed but the UI did not receive it. Never retry the
+        # command; ask the next turn boundary to resync the server snapshot.
+        self.command_resync_required = True
+        logging.error("Finalized command result publication failed; resync required")
+
+    async def _publish_resync(self) -> None:
+        """At most once per turn boundary: tell the UI to refetch settings."""
+        if not self.command_resync_required or self.publish is None:
+            return
+        try:
+            await self.publish({"resync": True})
+        except Exception:
+            logging.error("Command resync publication failed; will retry next turn")
+            return
+        self.command_resync_required = False
+
     async def llm_node(self, chat_ctx, tools, model_settings):
         # Also covers typed input and repeated inference after tool calls.
         user = _user_message(chat_ctx)
         if user is None:
             return
         snapshot = await self.compile(user)
+        command = None if self.command_blocked_turn == user.id else await self.command_for(user)
+        if command is not None:
+            await self._publish_command(command)
+            # Exact commands bypass conversational generation entirely; TTS
+            # remains budgeted and the deterministic spoken line is the whole
+            # assistant turn.
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=command["spoken"]))
+            handle = self.session.current_speech
+            self._schedule_persistence(user, handle)
+            return
         proposal = self.memory_proposal
         key = self._proposal_key(proposal)
         if proposal is not None and self.memory_question_key != key:
@@ -582,6 +684,11 @@ class SarjyAgent(Agent):
         return result.json()
 
 
+async def publish_command(room, command: Mapping[str, Any]) -> None:
+    """One authoritative result for the shared UI store (effect already committed)."""
+    await room.local_participant.publish_data(json.dumps(dict(command)).encode(), reliable=True, topic="sarjy.command")
+
+
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
     values = read_worker_environment()
@@ -606,7 +713,12 @@ async def entrypoint(ctx: JobContext):
         providers = build_providers(config, provider_credentials(values, config["llm"]["provider"]))
         fallback_llm = providers.pop("fallback_llm", None)
         agent = SarjyAgent(
-            backend, config, instructions=bootstrap["instructions"], notify=notify, fallback_llm=fallback_llm
+            backend,
+            config,
+            instructions=bootstrap["instructions"],
+            notify=notify,
+            fallback_llm=fallback_llm,
+            publish=partial(publish_command, ctx.room),
         )
         session = AgentSession(
             **providers,

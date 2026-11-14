@@ -40,6 +40,19 @@
   --orb-error: #f25565;
   --orb-offline: #5e7189;
 
+  /* Living Cloud render palette (design kit v2.1 `themes.*.orbPalette`).
+     orb/palette.ts reads this file directly, so the renderer, the CSS and
+     the design tokens cannot drift apart. Order is stable: slots 1-2 are the
+     dominant pair, 3-6 are accents. */
+  --orb-palette-1: #548fff;
+  --orb-palette-2: #3b6fff;
+  --orb-palette-3: #9a74f7;
+  --orb-palette-4: #baa7ff;
+  --orb-palette-5: #57d7d2;
+  --orb-palette-6: #f67c9f;
+  /* Kit amber: memory/confirmation accents in both themes. */
+  --orb-amber: #ffd37e;
+
   --radius-control: 12px;
   --radius-panel: 18px;
   --radius-composer: 28px;
@@ -93,6 +106,16 @@
      clears 3:1 for status glyphs. */
   --status-success: #13976d;
   --status-error: #c94767;
+
+  /* Sky Prism Living Cloud palette: same slots and intent as the dark theme,
+     with the kit's pastel values. */
+  --orb-palette-1: #9cdbff;
+  --orb-palette-2: #7cdcc7;
+  --orb-palette-3: #ffd37e;
+  --orb-palette-4: #ff9ab0;
+  --orb-palette-5: #b5a0ff;
+  --orb-palette-6: #d6f6ff;
+  --orb-amber: #ffd37e;
 }
 
 /* System preference applies only until the resolver stamps data-theme. */
@@ -112,6 +135,13 @@
     --focus-ring: #185ac4;
     --status-success: #13976d;
     --status-error: #c94767;
+    --orb-palette-1: #9cdbff;
+    --orb-palette-2: #7cdcc7;
+    --orb-palette-3: #ffd37e;
+    --orb-palette-4: #ff9ab0;
+    --orb-palette-5: #b5a0ff;
+    --orb-palette-6: #d6f6ff;
+    --orb-amber: #ffd37e;
   }
 }
 

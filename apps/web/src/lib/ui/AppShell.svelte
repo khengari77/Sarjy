@@ -1,33 +1,11 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
-  import { onMount, tick } from 'svelte';
-  import {
-    applyTheme,
-    nextThemePreference,
-    readStoredTheme,
-    resolveTheme,
-    storeTheme,
-    themeName,
-    type ThemePreference,
-  } from './theme';
+  import { onMount, setContext, tick } from 'svelte';
+  import { nextThemePreference, themeName } from './theme';
+  import type { ShellProps } from './shellTypes';
   import { createDrawerSession } from './drawerSession.svelte';
-  import { browserStorage } from '../storage';
+  import { createThemeSession } from './themeSession.svelte';
+  import { wrapTab } from './drawerFocus';
   import './shell.css';
-
-  interface Props {
-    dir?: 'ltr' | 'rtl';
-    languageLabel?: string;
-    onLanguage?: () => void;
-    leftLabel?: string;
-    rightLabel?: string;
-    left?: Snippet;
-    stage?: Snippet;
-    /** Always-reachable control surface (call controls, composer). */
-    controls?: Snippet;
-    right?: Snippet;
-    /** A dialog inside the stage has taken over modal ownership. */
-    stageDialogOpen?: boolean;
-  }
 
   let {
     dir = 'ltr',
@@ -40,7 +18,10 @@
     controls,
     right,
     stageDialogOpen = false,
-  }: Props = $props();
+    leftOpen = $bindable(false),
+    rightOpen = $bindable(false),
+    onthemechange,
+  }: ShellProps = $props();
 
   // The document ships as English; follow the UI language on the client.
   $effect(() => {
@@ -49,8 +30,6 @@
 
   // SSR renders both panels closed. The saved theme was already stamped on
   // <html> by the inline boot script, so hydration never reads storage.
-  let leftOpen = $state(false);
-  let rightOpen = $state(false);
   // ≥1200px docks the panels side by side; below that they share the overlay
   // layer, so only one can be open at a time.
   let docked = $state(false);
@@ -63,42 +42,36 @@
   let leftPanel = $state<HTMLElement | null>(null);
   let rightPanel = $state<HTMLElement | null>(null);
   let controlsRegion = $state<HTMLElement | null>(null);
+  let dialogRegion = $state<HTMLElement | null>(null);
+
+  // The stage dialog (end-call confirmation) is rendered by VoiceStage but
+  // belongs to the shell's modal layer: it is portalled into this sibling
+  // region so it is never inside the inert stage. Modal focus belongs to it.
+  setContext<() => HTMLElement | null>('shell-dialog-region', () => dialogRegion);
 
   // A panel below the dock breakpoint is a modal drawer: the rest of the shell
   // leaves the accessibility tree and the tab order (see `inert` below), and
   // focus lives inside the drawer until it closes. Docked panels are ordinary
   // complementary regions and never trap focus.
   const overlayPanel = $derived(leftOpen && !docked ? 'left' : rightOpen && !docked ? 'right' : null);
-  // A stage dialog (e.g. the end-call confirmation the drawer itself triggers)
-  // owns the modal layer, so the drawer's inert background must not cover it.
-  const backgroundInert = $derived(overlayPanel !== null && !stageDialogOpen);
+  // A stage dialog (e.g. the end-call confirmation) owns the modal layer: the
+  // header, the stage body and the control strip go inert, and only the dialog
+  // region stays interactive. The drawer has already handed off (see below).
+  const backgroundInert = $derived(overlayPanel !== null || stageDialogOpen);
 
-  // Theme is cosmetic: the preference lives per browser and switching it
-  // never touches the voice session, canvas or orb.
-  let preference = $state<ThemePreference>('system');
-  let systemDark = $state(false);
-  const resolvedTheme = $derived(resolveTheme(preference, systemDark));
-
-  function cycleTheme() {
-    preference = nextThemePreference(preference);
-    storeTheme(browserStorage(), preference);
-    applyTheme(document.documentElement, preference, systemDark);
-  }
-
-  function triggerFor(panel: 'left' | 'right'): HTMLButtonElement | null {
-    return panel === 'left' ? leftButton : rightButton;
-  }
-
-  function panelFor(panel: 'left' | 'right'): HTMLElement | null {
-    return panel === 'left' ? leftPanel : rightPanel;
-  }
+  // Theme is cosmetic and owned by the shell; the orb subscribes to `resolved`.
+  const theme = createThemeSession((value) => onthemechange?.(value));
 
   const session = createDrawerSession({
     overlay: () => overlayPanel,
-    panel: panelFor,
-    trigger: triggerFor,
+    panel: (panel) => (panel === 'left' ? leftPanel : rightPanel),
+    trigger: (panel) => (panel === 'left' ? leftButton : rightButton),
     controls: () => controlsRegion,
     openState: (panel) => (panel === 'left' ? leftOpen : rightOpen),
+    setOpen: (panel, open) => {
+      if (panel === 'left') leftOpen = open;
+      else rightOpen = open;
+    },
     dialogOpen: () => stageDialogOpen,
     closeOverlays: () => {
       leftOpen = false;
@@ -106,19 +79,23 @@
     },
   });
 
+  // Invalidates a pending closePanel() focus restore when the panel is
+  // reopened inside the same tick (open → close → open must not steal focus).
+  let focusRestoreToken = 0;
+
   function opening(panel: 'left' | 'right') {
-    if (panel === 'left') {
-      leftOpen = true;
-      if (!docked) rightOpen = false;
-    } else {
-      rightOpen = true;
-      if (!docked) leftOpen = false;
+    focusRestoreToken += 1;
+    if (panel === 'left') leftOpen = true;
+    else rightOpen = true;
+    // Below the dock breakpoint only one overlay drawer can be open at a time.
+    if (!docked) {
+      if (panel === 'left') rightOpen = false;
+      else leftOpen = false;
     }
   }
 
   function toggle(panel: 'left' | 'right') {
-    const isOpen = panel === 'left' ? leftOpen : rightOpen;
-    if (isOpen) void closePanel(panel);
+    if (panel === 'left' ? leftOpen : rightOpen) void closePanel(panel);
     else opening(panel);
   }
 
@@ -129,73 +106,46 @@
    * `.focus()` is a no-op, dropping focus to <body>.
    */
   async function closePanel(panel: 'left' | 'right') {
+    const token = ++focusRestoreToken;
     if (panel === 'left') leftOpen = false;
     else rightOpen = false;
     await tick();
-    triggerFor(panel)?.focus({ preventScroll: true });
+    if (token !== focusRestoreToken) return;
+    (panel === 'left' ? leftButton : rightButton)?.focus({ preventScroll: true });
   }
 
   function onViewportChange(event: MediaQueryListEvent) {
-    const active = document.activeElement as HTMLElement | null;
-    const focusInLeft = !!active && !!leftPanel?.contains(active);
-    const focusInRight = !!active && !!rightPanel?.contains(active);
-    const leftWasOpen = leftOpen;
-    const rightWasOpen = rightOpen;
-
     docked = event.matches;
-
-    if (event.matches) {
-      // Overlay drawer → docked panel. Keep the panel the user is in open and
-      // docked instead of unmounting the element that currently holds focus.
-      // With nothing open, fall back to the desktop default (left dock open).
-      leftOpen = leftWasOpen || !rightWasOpen;
-      rightOpen = rightWasOpen;
-      // No focus move needed: the focused element stays rendered and visible.
-      return;
-    }
-
-    // Docked panel → overlay. Collapsing the docks removes the focused element
-    // from the layout, so deliberately restore focus to the panel's trigger.
-    leftOpen = false;
-    rightOpen = false;
-    void tick().then(() => {
-      if (focusInLeft) leftButton?.focus({ preventScroll: true });
-      else if (focusInRight) rightButton?.focus({ preventScroll: true });
-    });
+    session.onBreakpoint(event.matches);
   }
 
   onMount(() => {
     const wide = window.matchMedia('(min-width: 1200px)');
-    const system = window.matchMedia('(prefers-color-scheme: dark)');
-
-    preference = readStoredTheme(browserStorage());
-    systemDark = system.matches;
+    const stopTheme = theme.start();
     docked = wide.matches;
     leftOpen = wide.matches;
-    applyTheme(document.documentElement, preference, systemDark);
     hydrated = true;
 
-    const onSchemeChange = (event: MediaQueryListEvent) => {
-      systemDark = event.matches;
-      if (preference === 'system') applyTheme(document.documentElement, preference, systemDark);
-    };
     const onKeydown = (event: KeyboardEvent) => {
       if (event.key === 'Tab') {
-        session.onTab(event);
+        // One trap at a time: the stage dialog wins over the drawer.
+        if (stageDialogOpen && dialogRegion) wrapTab(event, [dialogRegion]);
+        else session.onTab(event);
         return;
       }
-      if (event.key !== 'Escape') return;
+      // The dialog owns Escape while it is open, wherever focus currently is;
+      // VoiceStage dismisses it on the same key event.
+      if (event.key !== 'Escape' || stageDialogOpen) return;
       const panel = session.escapeTarget();
       if (panel) void closePanel(panel);
     };
 
     wide.addEventListener('change', onViewportChange);
-    system.addEventListener('change', onSchemeChange);
     window.addEventListener('keydown', onKeydown);
     return () => {
       wide.removeEventListener('change', onViewportChange);
-      system.removeEventListener('change', onSchemeChange);
       window.removeEventListener('keydown', onKeydown);
+      stopTheme();
     };
   });
 </script>
@@ -222,15 +172,15 @@
     <div class="header-actions">
       <button
         class="ghost-button theme-button"
-        data-resolved-theme={resolvedTheme}
-        aria-label={`Theme: ${themeName(preference)}. Activate to switch to ${themeName(nextThemePreference(preference))}.`}
-        title={`Theme: ${themeName(preference)}`}
-        onclick={cycleTheme}
+        data-resolved-theme={theme.resolved}
+        aria-label={`Theme: ${themeName(theme.preference)}. Activate to switch to ${themeName(nextThemePreference(theme.preference))}.`}
+        title={`Theme: ${themeName(theme.preference)}`}
+        onclick={theme.cycle}
       >
         <span aria-hidden="true" class="theme-glyph"
-          >{preference === 'dark' ? '☾' : preference === 'light' ? '☀' : '◐'}</span
+          >{theme.preference === 'dark' ? '☾' : theme.preference === 'light' ? '☀' : '◐'}</span
         >
-        <span class="theme-label" aria-hidden="true">{themeName(preference)}</span>
+        <span class="theme-label" aria-hidden="true">{themeName(theme.preference)}</span>
       </button>
       {#if onLanguage}
         <button class="ghost-button" onclick={onLanguage} lang={dir === 'rtl' ? 'en' : 'ar'}>
@@ -274,8 +224,13 @@
         {#if stage}{@render stage()}{/if}
       </div>
       {#if controls}
-        <div class="stage-controls" bind:this={controlsRegion}>{@render controls()}</div>
+        <div class="stage-controls" bind:this={controlsRegion} inert={stageDialogOpen ? true : undefined}>
+          {@render controls()}
+        </div>
       {/if}
+      <!-- Portal target for stage dialogs (VoiceStage moves the confirmation
+           here). Never inert, so aria-modal="true" is true. -->
+      <div class="stage-dialog" bind:this={dialogRegion}></div>
     </main>
 
     {#if right}
