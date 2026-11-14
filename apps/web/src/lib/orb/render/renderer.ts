@@ -3,7 +3,7 @@ import { nextRendererTier, selectRendererTier, type RendererTier } from '../orbS
 import { createBackingSizer, type CssSize } from './backingSize';
 import { startCanvasDrawing } from './canvasLoop';
 import { hexToRgb } from './colors';
-import type { OrbRendererHooks, OrbRenderState, Rgb } from './types';
+import type { OrbRendererHooks, OrbRenderState, OrbTierState, Rgb } from './types';
 import { setupWebgl } from './webgl';
 
 function createSizer(canvas: HTMLCanvasElement) {
@@ -29,12 +29,15 @@ export function startOrbRenderer(
   canvas: HTMLCanvasElement,
   renderState: OrbRenderState,
   hooks: OrbRendererHooks,
-  startTier?: RendererTier,
+  tierState: OrbTierState,
 ): () => void {
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
   const probe = document.createElement('canvas');
   const webglAvailable = Boolean(probe.getContext('webgl2'));
-  let tier: RendererTier = startTier ?? selectRendererTier({ reducedMotion: reduced.matches, webglAvailable });
+  const environment = () => ({ reducedMotion: reduced.matches, webglAvailable });
+  const selected = selectRendererTier(environment());
+  // A demoted renderer restarts one step down even on a fresh surface.
+  let tier: RendererTier = tierState.demoted && selected === 'enhanced' ? 'light' : selected;
   hooks.onTier(tier);
 
   let disposed = false;
@@ -49,6 +52,12 @@ export function startOrbRenderer(
     hooks.onTier(next);
   }
 
+  /** Downward-only transition: remember it so a remount cannot undo it. */
+  function demote(next: RendererTier) {
+    tierState.demoted = true;
+    setTier(next);
+  }
+
   function monitorFps(delta: number) {
     if (tier === 'static' || disposed || document.hidden) return;
     fpsSamples += 1;
@@ -59,7 +68,7 @@ export function startOrbRenderer(
     fpsElapsed = 0;
     const next = nextRendererTier(tier, fps);
     if (next === tier) return;
-    setTier(next);
+    demote(next);
     if (next === 'static') hooks.onFailed();
     void tick().then(() => setup());
   }
@@ -98,7 +107,7 @@ export function startOrbRenderer(
         onFailed: hooks.onFailed,
         onContextLost: () => {
           hooks.onFailed();
-          setTier('static');
+          demote('static');
           stopDrawing?.();
         },
       });
@@ -106,11 +115,11 @@ export function startOrbRenderer(
         stopDrawing = stop;
         return;
       }
-      setTier('light');
+      demote('light');
     }
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      setTier('static');
+      demote('static');
       return;
     }
     stopDrawing = startCanvasDrawing({
@@ -127,10 +136,10 @@ export function startOrbRenderer(
   }
 
   const onMotionChange = () => {
-    const resolved = selectRendererTier({ reducedMotion: reduced.matches, webglAvailable });
-    // The tier ladder is downward-only: a renderer restarted on the 2D tier
-    // must not promote itself back to WebGL when motion preferences change.
-    const next = startTier === 'light' && resolved === 'enhanced' ? 'light' : resolved;
+    const resolved = selectRendererTier(environment());
+    // Demotion is sticky state, not a tier passed into this constructor: once
+    // the ladder has dropped, a preference change cannot climb back to WebGL.
+    const next = tierState.demoted && resolved === 'enhanced' ? 'light' : resolved;
     setTier(next);
     void tick().then(() => setup());
   };

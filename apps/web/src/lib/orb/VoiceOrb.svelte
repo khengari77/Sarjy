@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { selectRendererTier, type OrbPresentation, type RendererTier } from './orbState';
+  import { ORB_PALETTES } from './palette';
   import { startOrbRenderer } from './render/renderer';
-  import type { OrbRenderState } from './render/types';
+  import type { OrbRenderState, OrbTierState } from './render/types';
 
   interface Props {
     presentation: OrbPresentation;
@@ -31,10 +32,15 @@
   let starting = false;
   let surfaceGeneration = 0;
   let stopRenderer: (() => void) | undefined;
+  // Survives canvas remounts: the renderer records here that it was demoted,
+  // so the replacement surface starts one step down instead of re-probing up.
+  const tierState: OrbTierState = { demoted: false };
 
   // Plain mutable bridge read by the animation loop; updated by the effect below.
   const renderState: OrbRenderState = {
-    color: '#4cc9b6',
+    // First frame before the presentation effect runs; dark matches the
+    // tokens.css SSR fallback and still comes from the shared palette.
+    color: ORB_PALETTES.dark[0],
     accent: null,
     motion: {
       breath: 0.2,
@@ -64,7 +70,7 @@
     };
   });
 
-  function begin(startTier?: RendererTier) {
+  function begin() {
     const token = ++surfaceGeneration;
     void tick().then(() => {
       // A newer remount or unmount wins over this pending start.
@@ -79,7 +85,7 @@
           onTier: handleTier,
           onFailed: () => (failed = true),
         },
-        startTier,
+        tierState,
       );
       starting = false;
     });
@@ -101,7 +107,7 @@
     stopRenderer?.();
     stopRenderer = undefined;
     surfaceKey += 1;
-    begin(value);
+    begin();
   }
 
   $effect(() => {

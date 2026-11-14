@@ -220,6 +220,13 @@ test('a low-FPS downgrade reaches the Canvas2D tier instead of collapsing to sta
   expect(stats.center, 'Canvas2D downgrade must still draw a filled cloud').toBeGreaterThan(10);
   expect(stats.center).toBeGreaterThan(stats.rim * 0.5);
   await expect(page.locator('.status-line')).toHaveText(/Ready/);
+
+  // Demotion is remembered as state, not as a tier passed to a fresh
+  // renderer: a reduced-motion round trip must not promote back to WebGL.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(orb).toHaveAttribute('data-renderer', 'static');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await expect(orb, 'a demoted orb stays on Canvas2D').toHaveAttribute('data-renderer', 'light');
 });
 
 test('reduced-motion static fallback stays filled and labelled', async ({ page }) => {
