@@ -267,6 +267,9 @@ def _restriction_reason(
 ) -> str | None:
     if allowed_kinds is not None and action.kind not in allowed_kinds:
         return "UNSUPPORTED_ACTION"
+    # A spoken selection must name an approved voice. ``None`` is the explicit
+    # clear used by the owner-scoped settings endpoint, not a spoken action, so
+    # it is deliberately treated as unsupported here.
     if isinstance(action, SelectApprovedVoice) and action.voice_id not in set(approved_voice_ids):
         return "UNSUPPORTED_VOICE"
     if isinstance(action, RestoreContextOperation) and action.operation_id not in set(allowed_operation_ids):

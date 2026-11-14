@@ -323,3 +323,16 @@ class SettingRevision(Base):
     revision: Mapped[int] = mapped_column(Integer)
     settings: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
+class SettingWriteRequest(Base):
+    """Owner-scoped replay record for settings writes; no conversation is needed."""
+
+    __tablename__ = "setting_write_requests"
+    __table_args__ = (UniqueConstraint("owner_id", "request_key", name="uq_setting_write_owner_request"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    request_key: Mapped[str] = mapped_column(String(100))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    result: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[str] = mapped_column(String(40), default=now)

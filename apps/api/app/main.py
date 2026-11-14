@@ -26,7 +26,7 @@ from app.services.reviewer_access import (
     ReviewerSessionRequired,
     authorize,
 )
-from app.services.voices import ElevenLabsVoices
+from app.services.voices import ElevenLabsVoices, approved_voice_ids
 from app.services.wordle import HttpWordleSource, wordle_refresh_loop
 
 
@@ -175,7 +175,14 @@ def create_app(
 
     from app.routes.actions import register_action_routes
 
-    register_action_routes(app, database, identity, owned, catalog)
+    register_action_routes(
+        app,
+        database,
+        identity,
+        owned,
+        catalog,
+        approved_voice_ids=approved_voice_ids(config.approved_voice_ids, config.default_voice_id),
+    )
 
     embedder = embedding_adapter or OpenAIEmbedder(config.openai_api_key)
 

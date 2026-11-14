@@ -1,9 +1,10 @@
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.domain.budget import DEEPSEEK_MINIMUM_REQUEST_MICRO_USD
+from app.domain.voices import parse_voice_ids
 
 
 class Settings(BaseSettings):
@@ -22,6 +23,9 @@ class Settings(BaseSettings):
     deepseek_daily_micro_usd: int = 250_000
     deepseek_request_micro_usd: int = 7_000
     eleven_api_key: str = ""
+    approved_voice_ids: str = ""
+    default_voice_id: str = Field(default="", pattern=r"^$|^[A-Za-z0-9_-]{1,100}$")
+    default_voice_language: Literal["ar", "en"] = "en"
     livekit_url: str = ""
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
@@ -41,6 +45,21 @@ class Settings(BaseSettings):
     # Optional pre-warm hour (0-23) in ``wordle_timezone``.  When unset only
     # the protected refresh endpoint and lazy request-time fetch run.
     wordle_refresh_hour: int | None = Field(default=None, ge=0, le=23)
+
+    @field_validator("approved_voice_ids")
+    @classmethod
+    def validate_approved_voice_ids(cls, value: str) -> str:
+        # Fail at startup rather than admitting a malformed allow-list later.
+        parse_voice_ids(value)
+        return value
+
+    @model_validator(mode="after")
+    def validate_voice_configuration(self):
+        # Fail at startup, not on the first demo tap: with voice configured but no
+        # approved or default voice, every session request would fail at runtime.
+        if self.eleven_api_key and not (self.approved_voice_ids.strip() or self.default_voice_id):
+            raise ValueError("APPROVED_VOICE_IDS or DEFAULT_VOICE_ID is required when ELEVEN_API_KEY is set")
+        return self
 
     @model_validator(mode="after")
     def validate_deepseek_budget(self):
