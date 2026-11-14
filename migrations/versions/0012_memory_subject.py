@@ -7,8 +7,8 @@ handled by a bounded legacy fallback; this migration rewrites no memory data.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0011_memory_subject"
-down_revision = "0010_context_retrieval_indexes"
+revision = "0012_memory_subject"
+down_revision = "0011_wordle"
 
 
 def upgrade():
