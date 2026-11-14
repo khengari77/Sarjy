@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import {
+  friendlyListError,
   friendlyMemoryError,
   labelsFor,
   loadMemories,
@@ -155,4 +156,14 @@ it('creates bounded idempotency keys', () => {
   const key = newIdempotencyKey('memory-exclude');
   expect(key.startsWith('memory-exclude-')).toBe(true);
   expect(key.length).toBeLessThanOrEqual(100);
+});
+
+it('keeps read failures read-shaped so they never contradict a confirmed change', () => {
+  for (const code of ['API_UNAVAILABLE', 'HTTP_503', 'API_RESPONSE_INVALID']) {
+    const message = friendlyListError(code);
+    expect(message).toContain('could not be reloaded');
+    expect(message).toContain('Any confirmed change still stands');
+    expect(message).not.toContain('Nothing was changed');
+  }
+  expect(friendlyListError('WEB_AUTH_REQUIRED')).toContain('session expired');
 });

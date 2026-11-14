@@ -23,6 +23,44 @@
         }
       }
     },
+    "/v1/settings/actions": {
+      "post": {
+        "summary": "Update Settings",
+        "operationId": "update_settings_v1_settings_actions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsActionResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/actions": {
       "post": {
         "summary": "Submit",
@@ -784,6 +822,45 @@
         }
       }
     },
+    "/internal/agent/command": {
+      "post": {
+        "summary": "Finalized Command",
+        "description": "The one worker entry for a finalized user utterance.\n\nReads the already-persisted source turn and its frozen revisions; it\nnever accepts a client-supplied revision or transcript.  Returns\n``{\"command\": null}`` when the utterance is ordinary conversation.",
+        "operationId": "finalized_command_internal_agent_command_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/agent/tool/weather": {
       "post": {
         "summary": "Agent Weather",
@@ -1423,6 +1500,131 @@
         ],
         "title": "BudgetReservation"
       },
+      "CommandInput": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Turn Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "turn_id"
+        ],
+        "title": "CommandInput"
+      },
+      "CommandKind": {
+        "type": "string",
+        "enum": [
+          "executed",
+          "unchanged",
+          "needs_confirmation",
+          "unsupported",
+          "failed",
+          "unknown"
+        ],
+        "title": "CommandKind"
+      },
+      "CommandResponse": {
+        "properties": {
+          "command": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CommandResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "CommandResponse"
+      },
+      "CommandResult": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CommandKind"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "navigation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "history",
+                  "memory_explorer"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Navigation"
+          },
+          "changed": {
+            "type": "boolean",
+            "title": "Changed",
+            "default": false
+          },
+          "spoken": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Spoken"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "kind",
+          "spoken"
+        ],
+        "title": "CommandResult",
+        "description": "The single result the UI applies and the worker speaks once."
+      },
       "ContextAmbiguity": {
         "properties": {
           "id": {
@@ -1999,6 +2201,9 @@
               },
               {
                 "$ref": "#/components/schemas/NavigationActionResult"
+              },
+              {
+                "$ref": "#/components/schemas/CommandResult"
               },
               {
                 "additionalProperties": {
@@ -2674,6 +2879,76 @@
           "changed"
         ],
         "title": "SettingsActionResult"
+      },
+      "SettingsSubmission": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "action": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdjustSpeakingSpeed"
+              },
+              {
+                "$ref": "#/components/schemas/SetSpeakingSpeed"
+              },
+              {
+                "$ref": "#/components/schemas/SelectApprovedVoice"
+              },
+              {
+                "$ref": "#/components/schemas/ShowConversationHistory"
+              },
+              {
+                "$ref": "#/components/schemas/OpenMemoryExplorer"
+              },
+              {
+                "$ref": "#/components/schemas/SetCaptionsVisible"
+              },
+              {
+                "$ref": "#/components/schemas/SearchMemory"
+              },
+              {
+                "$ref": "#/components/schemas/ProposeContextExclusion"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreContextOperation"
+              }
+            ],
+            "title": "Action",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "AdjustSpeakingSpeed": "#/components/schemas/AdjustSpeakingSpeed",
+                "OpenMemoryExplorer": "#/components/schemas/OpenMemoryExplorer",
+                "ProposeContextExclusion": "#/components/schemas/ProposeContextExclusion",
+                "RestoreContextOperation": "#/components/schemas/RestoreContextOperation",
+                "SearchMemory": "#/components/schemas/SearchMemory",
+                "SelectApprovedVoice": "#/components/schemas/SelectApprovedVoice",
+                "SetCaptionsVisible": "#/components/schemas/SetCaptionsVisible",
+                "SetSpeakingSpeed": "#/components/schemas/SetSpeakingSpeed",
+                "ShowConversationHistory": "#/components/schemas/ShowConversationHistory"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_revision",
+          "action"
+        ],
+        "title": "SettingsSubmission",
+        "description": "Owner-scoped settings change; no conversation is needed or created."
       },
       "ShowConversationHistory": {
         "additionalProperties": false,

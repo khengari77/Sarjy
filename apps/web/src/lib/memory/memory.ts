@@ -97,6 +97,18 @@ export function provenance(item: MemoryListItem): string {
   return parts.join(' · ');
 }
 
+/**
+ * Read-side failure copy. A list refresh that fails must never borrow a
+ * mutation's "Nothing was changed" line: a confirmed exclusion is still in
+ * effect even when the refresh does not come back.
+ */
+export function friendlyListError(code: string): string {
+  if (code === 'WEB_AUTH_REQUIRED') {
+    return 'Saved facts could not be reloaded: the session expired. Sign in again; any confirmed change still stands.';
+  }
+  return 'Saved facts could not be reloaded. Any confirmed change still stands; retry to refresh the list.';
+}
+
 export function friendlyMemoryError(code: string): string {
   switch (code) {
     case 'EMBEDDINGS_NOT_CONFIGURED':
