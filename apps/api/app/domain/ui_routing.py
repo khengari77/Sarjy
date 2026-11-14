@@ -1,8 +1,9 @@
 """Pure Jev UI-command question wording, response validation and decision tree.
 
 One request carries six small choice questions; code walks the answers.  An
-action is produced only when the ``route`` answer, the ``family`` answer and the
-family's detail answer are each at least :data:`CONFIDENCE_THRESHOLD` and agree.
+action is produced only when the ``family`` answer and that family's detail answer
+are each at least :data:`CONFIDENCE_THRESHOLD` and agree, and ``route`` is not a
+confident ``conversation`` (``multiple_commands`` needs a confident route).
 Anything else yields ``None`` so the turn falls through to the main model.  No
 provider I/O happens here.
 """
@@ -251,12 +252,19 @@ def _detail_decision(family: str, detail: UiAnswer) -> UiDecision | None:
 
 
 def evaluate_ui_classification(result: UiClassification) -> UiDecision | None:
-    """Walk the tree; ``None`` means fall through to the main model."""
-    if not _confident(result.route):
+    """Walk the tree; ``None`` means fall through to the main model.
+
+    Live evidence showed ``route`` is the weakest answer for polite requests
+    ("Can you make it dark?"), so an action needs a confident family and detail
+    that agree, and a route that is not a confident ``conversation``.  Only the
+    compound clarification still requires a confident route.
+    """
+    route = result.route
+    if route.choice == "multiple_commands":
+        return UiClarificationDecision() if _confident(route) else None
+    if route.choice == "conversation" and _confident(route):
         return None
-    if result.route.choice == "multiple_commands":
-        return UiClarificationDecision()
-    if result.route.choice != "ui_command" or not _confident(result.family):
+    if not _confident(result.family):
         return None
     family = result.family.choice
     if family not in ("theme", "captions", "speed", "voice"):

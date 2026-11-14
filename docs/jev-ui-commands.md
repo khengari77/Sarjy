@@ -4,7 +4,7 @@ Paraphrased UI requests ("could you brighten this up", "talk a bit quicker") tha
 
 Order inside `handle_finalized_utterance`: memory handling, exact grammar, voice-name/gender grammar, then Jev, then the unsupported fallback. An exact match never calls Jev. Text over 160 characters or 25 words, and yes/no confirmations, never call Jev.
 
-One `POST /v1/systemone` carries seven choice questions (`route`, `family`, `theme`, `captions`, `speed`, `voice`, `memory_op`), defined in `app/domain/ui_routing.py`. The pure evaluator acts only when `route=ui_command`, the `family` and that family's detail answer are each at least 0.85 probable and agree:
+One `POST /v1/systemone` carries seven choice questions (`route`, `family`, `theme`, `captions`, `speed`, `voice`, `memory_op`), defined in `app/domain/ui_routing.py`. The pure evaluator acts only when the `family` and that family's detail answer are each at least 0.85 probable and agree, and `route` is not a confident (>= 0.85) `conversation`. Live evaluation showed `route` is weak for polite phrasings, so it only vetoes; `multiple_commands` still needs route >= 0.85:
 
 - theme / captions / speed produce `SetTheme` / `SetCaptionsVisible` / `AdjustSpeakingSpeed` (+-0.1) and reuse the exact-command effect path.
 - voice male/female reuses the gendered-voice path; `named`/`other` fall through.

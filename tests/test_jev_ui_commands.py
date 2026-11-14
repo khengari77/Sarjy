@@ -90,7 +90,7 @@ TABLE = [
     (classification(family="voice", voice="female"), UiVoiceGenderDecision(gender="female")),
     (classification(family="voice", voice="male"), UiVoiceGenderDecision(gender="male")),
     (classification(route="multiple_commands", family="theme", theme="dark"), UiClarificationDecision()),
-    (classification(route="conversation", family="theme", theme="dark"), None),
+    (classification(route="conversation", family="theme", theme="dark"), None),  # confident chat vetoes
     (classification(family="none", theme="dark"), None),
     (classification(family="theme", theme="none"), None),
     (classification(family="theme", captions="show"), None),
@@ -106,17 +106,77 @@ def test_evaluator_table(result, expected):
     assert evaluate_ui_classification(result) == expected
 
 
-def test_threshold_is_inclusive_and_each_level_gates_independently():
+def test_threshold_is_inclusive_and_family_and_detail_gate_independently():
     ok = {"family": "theme", "theme": "dark"}
     assert evaluate_ui_classification(classification(p=CONFIDENCE_THRESHOLD, **ok)) is not None
     low = CONFIDENCE_THRESHOLD - 0.01
-    for level in ("route", "family", "theme"):
+    for level in ("family", "theme"):
         built = classification(**ok).model_dump()
         built[level]["probability"] = low
         assert evaluate_ui_classification(UiClassification(**built)) is None
+    weak_route = classification(**ok).model_dump()
+    weak_route["route"]["probability"] = low
+    assert evaluate_ui_classification(UiClassification(**weak_route)) is not None
     clarification = classification(route="multiple_commands").model_dump()
     clarification["route"]["probability"] = low
     assert evaluate_ui_classification(UiClassification(**clarification)) is None
+
+
+def recorded(route, family, detail, memory_op="none"):
+    """Build a classification from (choice, probability) pairs as recorded live."""
+
+    def answer(pair):
+        return UiAnswer(choice=pair[0], probability=pair[1])
+
+    none = ("none", 0.9)
+    detail_name, detail_pair = detail
+    fields = {"theme": none, "captions": none, "speed": none, "voice": none}
+    fields[detail_name] = detail_pair
+    return UiClassification(
+        route=answer(route),
+        family=answer(family),
+        memory_op=answer((memory_op, 0.9)),
+        **{name: answer(pair) for name, pair in fields.items()},
+    )
+
+
+RECORDED = [
+    (
+        "Can you make it dark?",
+        recorded(("conversation", 0.54), ("theme", 0.94), ("theme", ("dark", 0.88))),
+        UiActionDecision(action=SetTheme(theme="dark")),
+    ),
+    (
+        "It's too bright in here, can you fix that?",
+        recorded(("ui_command", 0.76), ("theme", 0.90), ("theme", ("dark", 0.78))),
+        None,
+    ),
+    (
+        "You're talking too fast",
+        recorded(("ui_command", 0.51), ("speed", 0.99), ("speed", ("slower", 0.91))),
+        UiActionDecision(action=AdjustSpeakingSpeed(delta=-0.1)),
+    ),
+    (
+        "Could you turn the captions off?",
+        recorded(("ui_command", 0.67), ("captions", 0.99), ("captions", ("hide", 0.99))),
+        UiActionDecision(action=SetCaptionsVisible(visible=False)),
+    ),
+    (
+        "I want a woman to read this to me",
+        recorded(("ui_command", 0.82), ("voice", 1.0), ("voice", ("female", 1.0))),
+        UiVoiceGenderDecision(gender="female"),
+    ),
+    (
+        "Show me what you're saying",
+        recorded(("conversation", 0.87), ("none", 0.89), ("captions", ("none", 0.5))),
+        None,
+    ),
+]
+
+
+@pytest.mark.parametrize(("text", "result", "expected"), RECORDED, ids=[row[0] for row in RECORDED])
+def test_recorded_live_answers(text, result, expected):
+    assert evaluate_ui_classification(result) == expected
 
 
 def test_results_are_immutable():
@@ -145,14 +205,15 @@ answers_strategy = st.builds(
 
 
 @given(answers_strategy)
-def test_action_only_when_route_family_and_detail_are_confident_and_agree(result):
+def test_action_only_when_family_and_detail_are_confident_and_agree_and_route_is_not_confident_chat(result):
     decision = evaluate_ui_classification(result)
     if not isinstance(decision, (UiActionDecision, UiVoiceGenderDecision)):
         return
     detail_name = result.family.choice
     detail = getattr(result, detail_name)
-    assert result.route.choice == "ui_command"
-    assert min(result.route.probability, result.family.probability, detail.probability) >= CONFIDENCE_THRESHOLD
+    assert not (result.route.choice == "conversation" and result.route.probability >= CONFIDENCE_THRESHOLD)
+    assert result.route.choice != "multiple_commands"
+    assert min(result.family.probability, detail.probability) >= CONFIDENCE_THRESHOLD
     assert detail.choice != "none"
     if isinstance(decision, UiActionDecision):
         assert detail_name in ("theme", "captions", "speed")
