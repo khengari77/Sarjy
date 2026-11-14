@@ -11,6 +11,8 @@
     "format:check": "prettier --check .",
     "test:unit": "svelte-kit sync && vitest run",
     "test:browser": "playwright test",
+    "test:evidence": "playwright test --config playwright.evidence.config.ts",
+    "profile:resources": "SARJY_RESOURCE_PROFILE=1 playwright test --config playwright.evidence.config.ts --grep \"resource profile\"",
     "test:deadline": "playwright test --config playwright.deadline.config.ts",
     "test:proxy": "playwright test --config playwright.proxy.config.ts",
     "test:videos": "playwright test --config playwright.recording.config.ts --grep \"demo session|voice picker\" --workers 1"
