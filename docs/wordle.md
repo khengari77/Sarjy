@@ -21,19 +21,23 @@ falls back to another date or a fabricated answer.
 ## Fetch-once guarantee
 
 `wordle_puzzles.puzzle_date` is the primary key. `ensure_today()` resolves the
-live date from the ingested source schedule (the publisher's publication zone,
-never the player's local clock); the clock is only a logged fallback when no
-schedule row exists or the next day has not been published yet, in which case
-the last stored answer remains current. `ensure_today()` inserts a
+live date from the publisher's schedule zone, with any ingested row acting only
+as an upper bound (a future-dated row is never served). The clock is only a
+logged fallback when no schedule row exists. `ensure_today()` inserts a
 short-lived claim row (`answer` is null) with `INSERT ... ON CONFLICT DO
 NOTHING`; only the claimant calls the source. Concurrent requests poll the
-stored row for a bounded time instead of calling out. Each source attempt is
-hard-capped by `asyncio.timeout`, and the lease is asserted at import to exceed
-the whole retry budget, so a slow source cannot be reclaimed mid-fetch. An
-expired in-flight claim can be reclaimed atomically; a released claim records
-its cooldown separately in `retry_after` and cannot be stolen before it
-elapses. The database uniqueness guarantee, not the scheduler, is
-authoritative.
+stored row with capped exponential backoff (SQLite only: ending the read
+snapshot) instead of calling out. Each source attempt is hard-capped by
+`asyncio.timeout`, and the lease is asserted at import to exceed the whole
+retry budget, so a slow source cannot be reclaimed mid-fetch. An expired
+in-flight claim can be reclaimed atomically; a released claim records its
+cooldown separately in `retry_after` and cannot be stolen before it elapses.
+The database uniqueness guarantee, not the scheduler, is authoritative.
+
+A `404` or a response for another date is `NOT_PUBLISHED`: the last ingested
+answer is served as an explicitly logged degraded state. A `5xx`, timeout or
+network failure is `BROKEN`: the API reports `WORDLE_UNAVAILABLE` instead of
+masking the outage with a stale playable puzzle.
 
 Refresh paths:
 

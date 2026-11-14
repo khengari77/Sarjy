@@ -64,7 +64,10 @@ RETRY_COOLDOWN = timedelta(seconds=60)
 # inside its bounded fetch makes every concurrent tab fail during network lag.
 CLAIM_WAIT_SECONDS = CLAIM_LEASE_SECONDS + 5.0
 CLAIM_POLL_SECONDS = 0.05
+CLAIM_POLL_MAX_SECONDS = 1.0
 SUBMIT_RETRIES = 4
+SOURCE_NOT_PUBLISHED = "WORDLE_SOURCE_NOT_PUBLISHED"
+SOURCE_FAILED = "WORDLE_SOURCE_FAILED"
 
 
 class WordleSourceError(Exception):
@@ -158,13 +161,24 @@ class HttpWordleSource:
                 response = await client.get(url)
                 response.raise_for_status()
                 payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise WordleSourceError(SOURCE_NOT_PUBLISHED) from exc
+            raise WordleSourceError(SOURCE_FAILED) from exc
         except (httpx.HTTPError, ValueError) as exc:
-            raise WordleSourceError("WORDLE_SOURCE_FAILED") from exc
+            raise WordleSourceError(SOURCE_FAILED) from exc
+        # A response that still names another date means the requested puzzle
+        # has not been published; that is a delay, not an outage.
+        returned_date = payload.get("print_date", payload.get("date")) if isinstance(payload, dict) else None
+        if returned_date != puzzle_date.isoformat():
+            raise WordleSourceError(SOURCE_NOT_PUBLISHED)
         return parse_source_payload(payload, puzzle_date, source=self.label)
 
 
 def _iso(instant: datetime) -> str:
     """Fixed-width UTC strings so lease/cooldown comparisons are monotonic."""
+    if instant.tzinfo is None:
+        raise ValueError("WORDLE_TIMESTAMP_NAIVE")
     return instant.astimezone(UTC).isoformat(timespec="microseconds")
 
 
@@ -185,24 +199,38 @@ async def _latest_ingested_puzzle(db: AsyncSession) -> WordlePuzzle | None:
     )
 
 
-async def scheduled_puzzle_date(db: AsyncSession, instant: datetime, timezone: str) -> date:
-    """The live puzzle date according to the ingested source schedule.
+def _servable_date(latest_date: date | None, wall_date: date) -> date:
+    """The schedule is an upper bound: never serve a date after the clock."""
+    if latest_date is None or latest_date > wall_date:
+        return wall_date
+    return latest_date
 
-    The publisher's schedule, not the wall clock, decides what is current: a
-    stored row for a date at or after the timezone-derived date wins (the
-    source may publish early or DST may move the boundary).  Only when the
-    schedule has nothing for the derived date do we fall back to the clock and
-    let ingestion advance the schedule.
+
+async def scheduled_puzzle_date(db: AsyncSession, instant: datetime, timezone: str) -> date:
+    """The date to fetch/advance to, bounded by the publisher-schedule clock.
+
+    The clock decides when to attempt the next publication; an ingested row can
+    never pull the live date forward.  Any served *fallback* is clamped with
+    ``_servable_date`` so an early publication, manual refresh, DST shift or
+    clock skew cannot expose a future answer.
     """
-    wall_date = resolve_puzzle_date(instant, timezone)
+    return resolve_puzzle_date(instant, timezone)
+
+
+async def _servable_ingested_puzzle(db: AsyncSession, wall_date: date) -> WordlePuzzle | None:
+    """Newest stored answer that is not in the future relative to the schedule."""
     latest = await _latest_ingested_puzzle(db)
     if latest is None:
-        logger.info("wordle schedule absent date=%s; using publisher timezone", wall_date.isoformat())
-        return wall_date
-    latest_date = date.fromisoformat(latest.puzzle_date)
-    if latest_date >= wall_date:
-        return latest_date
-    return wall_date
+        return None
+    try:
+        latest_date = date.fromisoformat(latest.puzzle_date)
+    except ValueError:
+        logger.warning("wordle schedule row is corrupt date=%s; ignoring", latest.puzzle_date)
+        return None
+    if _servable_date(latest_date, wall_date) != latest_date:
+        logger.warning("wordle future-dated row ignored date=%s", latest.puzzle_date)
+        return None
+    return latest
 
 
 async def ensure_today(
@@ -215,9 +243,9 @@ async def ensure_today(
 ) -> WordlePuzzle:
     """Return the live stored puzzle, keyed on the source publication schedule.
 
-    ``timezone`` is the publisher's schedule zone, never the player's local
-    zone.  When the schedule is behind the clock (publication delay or a gap),
-    the last ingested answer remains current and is served instead of failing.
+    A not-yet-published next date serves the last ingested answer as an
+    explicitly logged degraded state.  A broken source (5xx/network/timeout)
+    raises ``WORDLE_UNAVAILABLE``; a stale answer must never mask an outage.
     """
     instant = now or datetime.now(UTC)
     try:
@@ -226,12 +254,14 @@ async def ensure_today(
         raise WordleServiceError(exc.code, 503) from exc
     try:
         return await ensure_puzzle(db, day, source=source, now=instant, sleep=sleep)
-    except WordleServiceError:
-        fallback = await _latest_ingested_puzzle(db)
-        if fallback is None:
+    except WordleServiceError as exc:
+        if exc.code != "WORDLE_NOT_PUBLISHED":
             raise
+        fallback = await _servable_ingested_puzzle(db, day)
+        if fallback is None:
+            raise WordleServiceError("WORDLE_UNAVAILABLE", 503) from exc
         logger.warning(
-            "wordle schedule behind clock; serving stored date=%s instead of date=%s",
+            "wordle date not published; serving stored date=%s degraded (wanted date=%s)",
             fallback.puzzle_date,
             day.isoformat(),
         )
@@ -280,9 +310,11 @@ async def ensure_puzzle(
         if contended is not None:
             return contended
 
-    fetched = await _fetch_with_retries(source, day, sleep)
+    fetched, failure = await _fetch_with_retries(source, day, sleep)
     if fetched is None:
         await _release_claim(db, key, claim_id=claim_id, instant=instant, now_iso=now_iso)
+        if failure == SOURCE_NOT_PUBLISHED:
+            raise WordleServiceError("WORDLE_NOT_PUBLISHED", 503)
         raise WordleServiceError("WORDLE_UNAVAILABLE", 503)
 
     completed = await db.execute(
@@ -382,12 +414,20 @@ async def _fetch_with_retries(
     source: WordleSource,
     day: date,
     sleep: Callable[[float], Awaitable[object]],
-) -> FetchedPuzzle | None:
+) -> tuple[FetchedPuzzle | None, str | None]:
+    """Fetch once per attempt; report why it ultimately failed.
+
+    "Not published" is terminal and never retried: it is a normal schedule
+    delay.  Every other failure is retried within the bounded retry budget and
+    reported as broken.
+    """
+    failure = SOURCE_FAILED
     for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
         try:
             async with asyncio.timeout(FETCH_TIMEOUT_SECONDS):
-                return await source.fetch(day)
+                return await source.fetch(day), None
         except TimeoutError:
+            failure = SOURCE_FAILED
             logger.warning(
                 "wordle fetch timed out date=%s source=%s attempt=%s budget=%ss",
                 day.isoformat(),
@@ -403,9 +443,13 @@ async def _fetch_with_retries(
                 attempt,
                 exc.code,
             )
+            if exc.code == SOURCE_NOT_PUBLISHED:
+                return None, SOURCE_NOT_PUBLISHED
+            failure = SOURCE_FAILED
         # Injected test doubles can fail in other ways; treat any boundary
         # failure as unavailable instead of propagating an internal 500.
         except Exception as exc:  # noqa: BLE001 - external boundary
+            failure = SOURCE_FAILED
             logger.warning(
                 "wordle fetch failed date=%s source=%s attempt=%s error=%s",
                 day.isoformat(),
@@ -415,7 +459,7 @@ async def _fetch_with_retries(
             )
         if attempt < MAX_FETCH_ATTEMPTS:
             await sleep(BACKOFF_SECONDS[attempt - 1])
-    return None
+    return None, failure
 
 
 async def _release_claim(
@@ -443,21 +487,36 @@ async def _release_claim(
     await db.commit()
 
 
+def poll_delays(
+    deadline: float,
+    *,
+    initial: float = CLAIM_POLL_SECONDS,
+    maximum: float = CLAIM_POLL_MAX_SECONDS,
+):
+    """Exponential backoff between stored-answer polls, capped at ``maximum``."""
+    elapsed = 0.0
+    delay = initial
+    while elapsed < deadline:
+        yield delay
+        elapsed += delay
+        delay = min(delay * 2, maximum)
+
+
 async def _wait_for_answer(
     db: AsyncSession, key: str, sleep: Callable[[float], Awaitable[object]]
 ) -> WordlePuzzle | None:
-    iterations = max(1, int(CLAIM_WAIT_SECONDS / CLAIM_POLL_SECONDS))
-    row: WordlePuzzle | None = None
-    for _ in range(iterations):
-        # End the read transaction before each poll so a commit made by the
-        # fetching process becomes visible (SQLite holds a read snapshot for
-        # the life of an open transaction; PostgreSQL uses read committed).
-        await db.commit()
+    # SQLite holds a read snapshot for the life of an open transaction, so end
+    # it before each poll.  PostgreSQL is READ COMMITTED and needs no commit.
+    is_sqlite = db.bind is not None and db.bind.dialect.name == "sqlite"
+    for delay in poll_delays(CLAIM_WAIT_SECONDS):
+        if is_sqlite:
+            await db.commit()
         row = await _load_puzzle(db, key)
         if row is not None and row.answer:
             return row
-        await sleep(CLAIM_POLL_SECONDS)
-    await db.commit()
+        await sleep(delay)
+    if is_sqlite:
+        await db.commit()
     row = await _load_puzzle(db, key)
     return row if row is not None and row.answer else None
 

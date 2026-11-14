@@ -25,6 +25,7 @@ from app.services.wordle import (
     ensure_puzzle,
     ensure_today,
     parse_source_payload,
+    poll_delays,
     validate_claim_lease,
 )
 from sqlalchemy import select
@@ -42,9 +43,12 @@ class FixtureSource:
     calls: list[str] = field(default_factory=list)
     failures: int = 0
     always_fail: bool = False
+    not_published: bool = False
 
     async def fetch(self, puzzle_date: date):
         self.calls.append(puzzle_date.isoformat())
+        if self.not_published:
+            raise WordleSourceError("WORDLE_SOURCE_NOT_PUBLISHED")
         if self.always_fail or self.failures:
             if self.failures:
                 self.failures -= 1
@@ -335,6 +339,29 @@ def test_claim_lease_strictly_exceeds_the_retry_budget():
         validate_claim_lease(timedelta(seconds=1), timedelta(seconds=RETRY_BUDGET_SECONDS))
 
 
+def test_wait_polling_uses_capped_exponential_backoff():
+    delays = list(poll_delays(63.7, initial=0.05, maximum=1.0))
+    # 0.05 + 0.1 + 0.2 + 0.4 + 0.8 = 1.55s, then ~1s polls.
+    assert len(delays) < 80
+    assert delays[:5] == [0.05, 0.1, 0.2, 0.4, 0.8]
+    assert all(delay <= 1.0 for delay in delays)
+    assert sum(delays) >= 63.7
+
+
+def test_http_source_404_is_not_published_and_5xx_is_broken():
+    def handler(request):
+        status = 404 if request.url.path.endswith("2026-11-13.json") else 503
+        return httpx.Response(status)
+
+    source = HttpWordleSource("https://wordle.example/v2/{date}.json", transport=httpx.MockTransport(handler))
+    with pytest.raises(WordleSourceError) as missing:
+        asyncio.run(source.fetch(DAY))
+    assert missing.value.code == "WORDLE_SOURCE_NOT_PUBLISHED"
+    with pytest.raises(WordleSourceError) as broken:
+        asyncio.run(source.fetch(DAY.replace(day=14)))
+    assert broken.value.code == "WORDLE_SOURCE_FAILED"
+
+
 def test_released_claim_is_not_stealable_before_the_retry_cooldown(tmp_path):
     async def run():
         engine = _memory_engine(tmp_path)
@@ -372,12 +399,14 @@ def test_released_claim_is_not_stealable_before_the_retry_cooldown(tmp_path):
     asyncio.run(run())
 
 
-def test_stored_schedule_wins_when_it_disagrees_with_the_wall_clock(tmp_path):
+def test_stored_future_puzzle_is_never_served(tmp_path):
+    """The ingested schedule is an upper bound; an early row must not leak."""
+
     async def run():
         engine = _memory_engine(tmp_path)
         await _create_schema(engine)
         sessions = async_sessionmaker(engine, expire_on_commit=False)
-        source = FixtureSource()
+        source = FixtureSource(not_published=True)
         try:
             async with sessions() as db:
                 db.add(
@@ -391,21 +420,58 @@ def test_stored_schedule_wins_when_it_disagrees_with_the_wall_clock(tmp_path):
                 )
                 await db.commit()
             async with sessions() as db:
-                puzzle = await ensure_today(
-                    db,
-                    source=source,
-                    timezone="America/New_York",
-                    now=FIXED_NOW,
-                )
-            assert puzzle.puzzle_date == "2026-11-15"
-            assert source.calls == []
+                with pytest.raises(WordleServiceError) as error:
+                    await ensure_today(
+                        db,
+                        source=source,
+                        timezone="America/New_York",
+                        now=FIXED_NOW,
+                    )
+            assert error.value.code == "WORDLE_UNAVAILABLE"
+            assert source.calls == ["2026-11-13"]
         finally:
             await engine.dispose()
 
     asyncio.run(run())
 
 
-def test_publication_delay_serves_the_last_ingested_puzzle(tmp_path):
+def test_not_published_serves_the_last_ingested_puzzle_degraded(tmp_path):
+    async def run():
+        engine = _memory_engine(tmp_path)
+        await _create_schema(engine)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        source = FixtureSource(not_published=True)
+        try:
+            async with sessions() as db:
+                db.add(
+                    WordlePuzzle(
+                        puzzle_date="2026-11-13",
+                        answer="CRANE",
+                        source="fixture",
+                        fetched_at=FIXED_NOW.isoformat(),
+                        payload_hash="hash",
+                    )
+                )
+                await db.commit()
+            # 2026-11-14T01:00 New York: the 14th should be live, but the
+            # source has not published it yet.  Not-published is not retried.
+            async with sessions() as db:
+                puzzle = await ensure_today(
+                    db,
+                    source=source,
+                    timezone="America/New_York",
+                    now=datetime(2026, 11, 14, 6, 0, tzinfo=UTC),
+                )
+            assert puzzle.puzzle_date == "2026-11-13"
+            assert puzzle.answer == "CRANE"
+            assert source.calls == ["2026-11-14"]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_broken_source_does_not_serve_a_stale_playable_game(tmp_path):
     async def run():
         engine = _memory_engine(tmp_path)
         await _create_schema(engine)
@@ -423,17 +489,15 @@ def test_publication_delay_serves_the_last_ingested_puzzle(tmp_path):
                     )
                 )
                 await db.commit()
-            # 2026-11-14T01:00 New York: the 14th should be live, but the
-            # source has not published it yet.
             async with sessions() as db:
-                puzzle = await ensure_today(
-                    db,
-                    source=source,
-                    timezone="America/New_York",
-                    now=datetime(2026, 11, 14, 6, 0, tzinfo=UTC),
-                )
-            assert puzzle.puzzle_date == "2026-11-13"
-            assert puzzle.answer == "CRANE"
+                with pytest.raises(WordleServiceError) as error:
+                    await ensure_today(
+                        db,
+                        source=source,
+                        timezone="America/New_York",
+                        now=datetime(2026, 11, 14, 6, 0, tzinfo=UTC),
+                    )
+            assert error.value.code == "WORDLE_UNAVAILABLE"
             assert source.calls == ["2026-11-14"] * 3
         finally:
             await engine.dispose()
