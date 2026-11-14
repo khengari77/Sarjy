@@ -38,6 +38,12 @@ def _snippet(text: str, limit: int) -> str:
     return collapsed if len(collapsed) <= limit else collapsed[: limit - 1].rstrip() + "…"
 
 
+async def _already_saved(db: AsyncSession, owner_id: str, content: str) -> bool:
+    wanted = " ".join(content.split()).casefold()
+    rows = await db.scalars(select(Memory.content).where(Memory.owner_id == owner_id, Memory.status == "active"))
+    return any(" ".join(row.split()).casefold() == wanted for row in rows)
+
+
 async def memory_propose_tool(
     db: AsyncSession, *, owner_id: str, conversation_id: str, turn_id: str, fact: str, secret: str
 ) -> dict:
@@ -47,6 +53,12 @@ async def memory_propose_tool(
             "status": "rejected",
             "error": "MEMORY_FACT_NOT_REMEMBERABLE",
             "message": "That is not a durable fact the user stated, so nothing was saved. Do not claim it was saved.",
+        }
+    if await _already_saved(db, owner_id, capture.text):
+        return {
+            "status": "rejected",
+            "error": "MEMORY_ALREADY_SAVED",
+            "message": "That is already saved. Tell the user it is already saved; do not propose it again.",
         }
     proposal = proposal_for_capture(
         capture, owner_id=owner_id, conversation_id=conversation_id, source_turn_id=turn_id, secret=secret
