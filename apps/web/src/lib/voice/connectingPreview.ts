@@ -22,8 +22,12 @@ export interface ConnectingPreviewController {
 export function createConnectingPreview(levels: { micLevel: number }): ConnectingPreviewController {
   let preview: ConnectingPreview | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
+  // A stop that lands while getUserMedia is pending must win over the late
+  // resolution, otherwise an unmounted page would attach an analyser.
+  let stopped = false;
 
   function stop() {
+    stopped = true;
     if (timer !== null) clearInterval(timer);
     timer = null;
     preview?.stop();
@@ -32,8 +36,9 @@ export function createConnectingPreview(levels: { micLevel: number }): Connectin
   }
 
   async function start(isCurrent: () => boolean): Promise<boolean> {
+    stopped = false;
     const opened = await openConnectingPreview();
-    if (!isCurrent()) {
+    if (stopped || !isCurrent()) {
       opened.stop();
       return false;
     }

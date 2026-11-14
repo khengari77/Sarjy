@@ -213,4 +213,23 @@ describe('connecting microphone preview consent boundary', () => {
     connection.disposePreview();
     expect(fake.stop).toHaveBeenCalledTimes(1);
   });
+
+  it('releases a capture that resolves after unmount', async () => {
+    vi.useFakeTimers();
+    mocks.start.mockReturnValue(new Promise<SessionConfig>(() => {}));
+    let resolveOpen!: (value: ReturnType<typeof preview>) => void;
+    mocks.openPreview.mockReturnValue(new Promise((resolve) => (resolveOpen = resolve)));
+    const { state, connection } = harness();
+
+    void connection.connect(true);
+    await vi.advanceTimersByTimeAsync(1);
+    connection.disposePreview();
+    const late = preview(0.42);
+    resolveOpen(late);
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(mocks.openPreview).toHaveBeenCalledTimes(1);
+    expect(late.stop).toHaveBeenCalledTimes(1);
+    expect(state.micLevel).toBe(0);
+  });
 });
