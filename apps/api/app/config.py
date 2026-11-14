@@ -32,6 +32,18 @@ class Settings(BaseSettings):
     agent_service_secret: str = ""
     demo_session_budget: int = 80
     demo_calls_per_identity: int = 3
+    # Daily Wordle kill switch.  Off by default so an unconfigured deployment
+    # never reaches the external source.
+    wordle_enabled: bool = False
+    wordle_source_url: str = "https://www.nytimes.com/svc/wordle/v2/{date}.json"
+    # The *publisher's* publication schedule, not the player's local zone.  The
+    # answer for date D is only published once D begins in this zone; resolving
+    # "today" in a player zone would request an unpublished future date for the
+    # first hours of every local day.
+    wordle_timezone: str = "America/New_York"
+    # Optional pre-warm hour (0-23) in ``wordle_timezone``.  When unset only
+    # the protected refresh endpoint and lazy request-time fetch run.
+    wordle_refresh_hour: int | None = Field(default=None, ge=0, le=23)
 
     @field_validator("approved_voice_ids")
     @classmethod
