@@ -1854,3 +1854,143 @@ def test_lease_expiry_is_compared_as_time_not_text():
     assert lease_expired(lease_expiry(seconds=-1)) is True
     assert lease_expired(None) is True
     assert lease_expired("not-a-timestamp") is True
+
+
+def test_referential_content_is_never_stored(tmp_path):
+    from app.domain.memory_capture import is_referential
+
+    assert is_referential("it")
+    assert is_referential("that thing")
+    assert is_referential("this one")
+    assert is_referential("something")
+    assert not is_referential("I prefer tea")
+    assert not is_referential("to renew the passport")
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        # The worker may be offered a referential candidate, but confirming it
+        # must be refused rather than stored as a bare reference.
+        proposal = turn(client, headers, "remember it", "referential-1").json()["memory_proposal"]
+        assert proposal is not None
+        refused = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": proposal["token"], "decision": "save"},
+        )
+        assert refused.status_code == 422
+        assert refused.json()["detail"]["code"] == "MEMORY_REFERENTIAL_CAPTURE"
+
+        # The REST write path refuses the same bare reference.
+        direct = client.post(
+            f"/v1/conversations/{chat}/memories",
+            json={"content": "it", "idempotency_key": "referential-2"},
+        )
+        assert direct.status_code == 422
+        assert direct.json()["detail"]["code"] == "REFERENTIAL_MEMORY_CONTENT"
+
+    assert memory_rows(file) == []
+
+
+@pytest.mark.parametrize(
+    ("reply", "outcome", "contents"),
+    [
+        ("remember it", "save", ["I prefer tea"]),
+        ("yes", "not_saved", []),
+        ("no", "discard", []),
+        ("that", "not_saved", []),
+        ("it", "not_saved", []),
+        ("remember this", "not_saved", []),
+        ("remember that", "not_saved", []),
+    ],
+)
+def test_worker_confirmation_reply_is_never_also_a_new_capture(tmp_path, reply, outcome, contents):
+    """Real worker + real API: a decision turn cannot enqueue another capture."""
+    import asyncio
+    from types import SimpleNamespace
+
+    import httpx
+    from main import SarjyAgent
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        async def run():
+            def backend(request):
+                response = client.post(request.url.path, headers=headers, json=json.loads(request.content or b"{}"))
+                return httpx.Response(response.status_code, json=response.json())
+
+            async with httpx.AsyncClient(base_url="http://fixture", transport=httpx.MockTransport(backend)) as real:
+                agent = SarjyAgent(real, {"llm": {"provider": "deepseek_direct"}}, "Rules")
+                await agent.compile(SimpleNamespace(id="fact", text_content="I prefer tea"))
+                assert agent.memory_proposal is not None
+                assert agent.memory_proposal["text"] == "I prefer tea"
+                agent.memory_prompted_key = agent._proposal_key(agent.memory_proposal)
+
+                await agent.compile(SimpleNamespace(id="reply-1", text_content=reply))
+                assert agent.memory_outcome == outcome
+                assert agent.memory_proposal is None, "the decision turn must not enqueue a new capture"
+
+                # Repeating the reply has nothing left to confirm and must not
+                # regenerate the same referential question.
+                await agent.compile(SimpleNamespace(id="reply-2", text_content=reply))
+                assert agent.memory_proposal is None, "a repeat reply must not regenerate a capture"
+
+        asyncio.run(run())
+
+    rows = memory_rows(file)
+    assert [row[0] for row in rows] == contents
+    assert all(row[0].casefold() not in {"it", "that", "this"} for row in rows)
+
+
+def test_decision_turn_does_not_adopt_a_proposal_offered_by_the_server():
+    """Worker contract: even if the server proposes on a decision turn, ignore it."""
+    import asyncio
+    from types import SimpleNamespace
+
+    import httpx
+    from main import SarjyAgent
+
+    confirms = []
+
+    def backend(request):
+        if request.url.path.endswith("/memory/confirm"):
+            confirms.append(json.loads(request.content))
+            return httpx.Response(200, json={"status": "saved"})
+        return httpx.Response(
+            200,
+            json={
+                "turn_id": "turn",
+                "context": {},
+                "memory_proposal": {
+                    "token": "new",
+                    "text": "it",
+                    "confirmation_id": "new-cid",
+                    "confirmation_revision": 1,
+                    "question": "Should I remember this: it?",
+                },
+            },
+        )
+
+    async def run():
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = SarjyAgent(client, {"llm": {"provider": "deepseek_direct"}}, "Rules")
+            agent.memory_proposal = {
+                "token": "signed",
+                "text": "I prefer tea",
+                "confirmation_id": "cid",
+                "confirmation_revision": 1,
+            }
+            agent.memory_prompted_key = ("cid", 1)
+            await agent.compile(SimpleNamespace(id="confirm", text_content="remember it"))
+            assert agent.memory_outcome == "save"
+            assert agent.memory_proposal is None
+
+    asyncio.run(run())
+    assert confirms == [{"token": "signed", "decision": "save"}]

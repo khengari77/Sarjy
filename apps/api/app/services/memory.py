@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, a
 from sqlalchemy.pool import StaticPool
 
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
-from app.domain.memory_capture import resolve_subject
+from app.domain.memory_capture import is_referential, resolve_subject
 from app.infrastructure.database import Memory, MemoryWriteRequest, Turn, now
 from app.infrastructure.upsert import insert_ignore
 from app.services.authorization import owned_conversation, owned_memory
@@ -163,6 +163,9 @@ def _validate_write(content, key, previous_id, expected_version) -> None:
         or not 1 <= len(key) <= 100
     ):
         raise HTTPException(422, detail={"code": "INVALID_MEMORY_REQUEST"})
+    if is_referential(content):
+        # A bare back-reference ("it", "that thing") carries no fact of its own.
+        raise HTTPException(422, detail={"code": "REFERENTIAL_MEMORY_CONTENT"})
     if previous_id is not None and (not isinstance(expected_version, int) or expected_version < 1):
         raise HTTPException(422, detail={"code": "INVALID_MEMORY_VERSION"})
 

@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from app.domain.context_operations import sign_proposal, verify_proposal
-from app.domain.memory_capture import MemoryCapture, parse_capture, resolve_subject
+from app.domain.memory_capture import MemoryCapture, is_referential, parse_capture, resolve_subject
 from app.infrastructure.database import Memory, now
 from app.services.leases import lease_expired, lease_expiry
 from app.services.memory import MemoryService, memory_result
@@ -669,6 +669,9 @@ async def confirm_memory(
     if not secret:
         raise MemoryCaptureError("MEMORY_CAPTURE_NOT_CONFIGURED", 503)
     capture, payload = _verified(token, secret, owner_id, conversation_id)
+    if is_referential(capture.text):
+        # A confirmation/rejection may never also be stored as a bare reference.
+        raise MemoryCaptureError("MEMORY_REFERENTIAL_CAPTURE", 422)
     proposed_turn = payload.get("source_turn_id")
     if not isinstance(proposed_turn, str) or not proposed_turn:
         raise MemoryCaptureError("PROPOSAL_INVALID", 400)

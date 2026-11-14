@@ -22,6 +22,30 @@ _REPLACEMENT = re.compile(
     re.IGNORECASE,
 )
 _PRONOUN_VALUES = frozenset({"it", "this", "that", "them", "him", "her", "those", "these", "something", "anything"})
+_REFERENTIAL_WORDS = frozenset(
+    {
+        "it",
+        "this",
+        "that",
+        "these",
+        "those",
+        "them",
+        "him",
+        "her",
+        "one",
+        "ones",
+        "thing",
+        "things",
+        "something",
+        "anything",
+        "everything",
+        "nothing",
+        "stuff",
+    }
+)
+_REFERENTIAL_FILLERS = frozenset(
+    {"a", "an", "the", "my", "our", "your", "his", "its", "their", "some", "any", "please", "again", "too", "also"}
+)
 _SLOT_STOPWORDS = frozenset(
     {"a", "an", "the", "my", "our", "your", "his", "her", "its", "their", "now", "instead", "actually", "please"}
 )
@@ -158,6 +182,17 @@ def resolve_subject(content: str) -> str:
     if capture is not None and capture.subject:
         return capture.subject
     return _explicit_subject(_normalize(content) or content)
+
+
+def is_referential(content: str) -> bool:
+    """True when the content carries no fact of its own, only a back-reference.
+
+    ``remember it`` / ``remember that thing`` can acknowledge a pending
+    proposal but must never be stored as a fact on its own.
+    """
+    words = [word.strip(".,;:!?\"'()").casefold() for word in content.split()]
+    significant = [word for word in words if word and word not in _REFERENTIAL_FILLERS]
+    return not significant or all(word in _REFERENTIAL_WORDS for word in significant)
 
 
 def _capture_for(content: str, *, explicit: bool) -> MemoryCapture | None:

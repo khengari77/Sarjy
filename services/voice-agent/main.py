@@ -11,6 +11,7 @@ from uuid import uuid4
 import httpx
 from app.domain.budget import DEEPSEEK_MAX_REQUEST_BYTES
 from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolItem, ToolSpec
+from app.domain.memory_capture import is_referential
 from app.domain.tool_operations import operation_key
 from config import provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
@@ -229,6 +230,12 @@ class SarjyAgent(Agent):
             self.prepared[message.id] = response.json()
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
+        decided = False
+        # A confirmation/rejection utterance is never itself a capture, with or
+        # without a pending proposal.
+        decision_utterance = (
+            _memory_decision(message.text_content) is not None or _clarify_decision(message.text_content) is not None
+        )
         if message.id != self.memory_message:
             # The SDK compiles a user message twice (turn hook + llm_node); decide once.
             self.memory_message = message.id
@@ -250,6 +257,10 @@ class SarjyAgent(Agent):
                     )
                     if decision is not None:
                         await self._resolve_memory(decision)
+                        # One turn, one decision: the utterance that resolved the
+                        # pending proposal must not also be enqueued as a new
+                        # capture candidate for the same turn.
+                        decided = True
                     else:
                         # A proposal is a one-shot for the next user turn; never stay armed
                         # across unrelated acknowledgements.
@@ -258,8 +269,13 @@ class SarjyAgent(Agent):
                         self.memory_prompted_key = None
                         self.memory_question_key = None
                         self.memory_outcome = "not_saved"
-        if result.get("memory_proposal") is not None:
-            proposal = result["memory_proposal"]
+        proposal = result.get("memory_proposal")
+        if (
+            not decided
+            and not decision_utterance
+            and proposal is not None
+            and not is_referential(proposal.get("text") or "")
+        ):
             if self._proposal_key(proposal) != self._proposal_key(self.memory_proposal):
                 # Only a new proposal identity re-arms the question. Repeated
                 # compiles of the same proposal must not re-emit or re-arm it.
