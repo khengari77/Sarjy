@@ -25,6 +25,7 @@
   import { createSelectionController } from '../lib/voice/selection';
   import { createCommandSession } from '../lib/commands/commandSession.svelte';
   import CommandStatus from '../lib/commands/CommandStatus.svelte';
+  import WordleLauncher from '../lib/wordle/WordleLauncher.svelte';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -198,6 +199,7 @@
   {/snippet}
 
   {#snippet stage()}
+    <WordleLauncher compact />
     <VoiceStage
       {presentation}
       micLevel={voice.micLevel}
