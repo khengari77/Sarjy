@@ -526,18 +526,17 @@ def poll_delays(
 async def _wait_for_answer(
     db: AsyncSession, key: str, sleep: Callable[[float], Awaitable[object]]
 ) -> WordlePuzzle | None:
-    # SQLite holds a read snapshot for the life of an open transaction, so end
-    # it before each poll.  PostgreSQL is READ COMMITTED and needs no commit.
-    is_sqlite = db.bind is not None and db.bind.dialect.name == "sqlite"
+    # End the transaction before each poll on BOTH dialects.  On SQLite that
+    # makes the winner's commit visible past the read snapshot; on PostgreSQL
+    # (READ COMMITTED visibility is already fine) it returns the pooled
+    # connection instead of pinning it across the whole backoff window.
     for delay in poll_delays(CLAIM_WAIT_SECONDS):
-        if is_sqlite:
-            await db.commit()
+        await db.commit()
         row = await _load_puzzle(db, key)
         if row is not None and row.answer:
             return row
         await sleep(delay)
-    if is_sqlite:
-        await db.commit()
+    await db.commit()
     row = await _load_puzzle(db, key)
     return row if row is not None and row.answer else None
 

@@ -26,8 +26,9 @@ as an upper bound (a future-dated row is never served). The clock is only a
 logged fallback when no schedule row exists. `ensure_today()` inserts a
 short-lived claim row (`answer` is null) with `INSERT ... ON CONFLICT DO
 NOTHING`; only the claimant calls the source. Concurrent requests poll the
-stored row with capped exponential backoff (SQLite only: ending the read
-snapshot) instead of calling out. Each source attempt is hard-capped by
+stored row with capped exponential backoff, ending the transaction before every
+poll on both dialects so the pooled connection is released instead of held
+across the wait. Each source attempt is hard-capped by
 `asyncio.timeout`, and the lease is asserted at import to exceed the whole
 retry budget, so a slow source cannot be reclaimed mid-fetch. An expired
 in-flight claim can be reclaimed atomically; a released claim records its

@@ -22,6 +22,7 @@ from app.services.wordle import (
     HttpWordleSource,
     WordleServiceError,
     WordleSourceError,
+    _wait_for_answer,
     ensure_puzzle,
     ensure_today,
     parse_source_payload,
@@ -346,6 +347,38 @@ def test_wait_polling_uses_capped_exponential_backoff():
     assert delays[:5] == [0.05, 0.1, 0.2, 0.4, 0.8]
     assert all(delay <= 1.0 for delay in delays)
     assert sum(delays) >= 63.7
+
+
+def test_wait_for_answer_releases_the_transaction_between_polls():
+    class Row:
+        answer = "CRANE"
+        puzzle_date = "2026-11-13"
+
+    class FakeSession:
+        def __init__(self):
+            self.events: list[str] = []
+            self.reads = 0
+
+        async def commit(self):
+            self.events.append("commit")
+
+        async def scalar(self, statement):
+            self.events.append("select")
+            self.reads += 1
+            return None if self.reads == 1 else Row()
+
+    slept: list[float] = []
+
+    async def fake_sleep(delay):
+        slept.append(delay)
+
+    db = FakeSession()
+    row = asyncio.run(_wait_for_answer(db, "2026-11-13", fake_sleep))
+    assert row is not None and row.answer == "CRANE"
+    # A commit (and therefore a connection release) precedes every read, on
+    # both SQLite and PostgreSQL.
+    assert db.events == ["commit", "select", "commit", "select"]
+    assert slept == [0.05]
 
 
 def test_http_source_classifies_missing_vs_broken():
