@@ -4,7 +4,11 @@ import type { SessionConfig } from '../api';
 interface FakeRoom {
   connectResolve: (() => void) | null;
   connectReject: ((error: Error) => void) | null;
-  remoteParticipants: Map<string, { isAgent: boolean; attributes: Record<string, string> }>;
+  remoteParticipants: Map<string, { isAgent: boolean; identity: string; attributes: Record<string, string> }>;
+  localParticipant: {
+    performRpc?: (options: Record<string, unknown>) => Promise<string>;
+    publishData?: (data: Uint8Array, options: Record<string, unknown>) => Promise<void>;
+  };
   emit(event: string, ...args: unknown[]): void;
   disconnect: () => Promise<void>;
 }
@@ -13,8 +17,8 @@ vi.mock('livekit-client', () => {
   const rooms: FakeRoom[] = [];
   class Room {
     listeners = new Map<string, Set<(...args: unknown[]) => void>>();
-    remoteParticipants = new Map<string, { isAgent: boolean; attributes: Record<string, string> }>();
-    localParticipant = {};
+    remoteParticipants = new Map<string, { isAgent: boolean; identity: string; attributes: Record<string, string> }>();
+    localParticipant: FakeRoom['localParticipant'] = {};
     canPlaybackAudio = true;
     connectResolve: (() => void) | null = null;
     connectReject: ((error: Error) => void) | null = null;
@@ -71,6 +75,7 @@ const config: SessionConfig = {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   rooms().length = 0;
 });
 
@@ -97,7 +102,11 @@ describe('startup terminal disconnection', () => {
     await vi.advanceTimersByTimeAsync(0);
     room.emit('reconnecting');
     room.emit('reconnected');
-    room.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
+    room.remoteParticipants.set('agent', {
+      isAgent: true,
+      identity: 'agent',
+      attributes: { 'lk.agent.state': 'listening' },
+    });
     await vi.advanceTimersByTimeAsync(100);
     await expect(connecting).resolves.toBeUndefined();
   });
@@ -115,4 +124,85 @@ describe('startup terminal disconnection', () => {
     await expect(connecting).resolves.toBeUndefined();
     expect(runtime.epoch).toBeGreaterThan(1);
   });
+});
+
+async function connected() {
+  vi.useFakeTimers();
+  const runtime = new LiveKitVoiceRuntime();
+  const connecting = runtime.connect(config);
+  await vi.advanceTimersByTimeAsync(1);
+  const room = rooms().at(-1)!;
+  room.connectResolve!();
+  await vi.advanceTimersByTimeAsync(0);
+  room.remoteParticipants.set('agent', {
+    isAgent: true,
+    identity: 'agent',
+    attributes: { 'lk.agent.state': 'listening' },
+  });
+  await vi.advanceTimersByTimeAsync(100);
+  await connecting;
+  return { runtime, room };
+}
+
+describe('exact command speech', () => {
+  it('sends the exact text to the agent sarjy.say RPC', async () => {
+    const { runtime, room } = await connected();
+    const performRpc = vi.fn().mockResolvedValue('{"ok":true}');
+    room.localParticipant.performRpc = performRpc;
+    await runtime.say('The answer was PLANT.');
+    expect(performRpc).toHaveBeenCalledTimes(1);
+    expect(performRpc).toHaveBeenCalledWith({
+      destinationIdentity: 'agent',
+      method: 'sarjy.say',
+      payload: JSON.stringify({ text: 'The answer was PLANT.' }),
+    });
+  });
+
+  it('refuses to speak without a live room', async () => {
+    const runtime = new LiveKitVoiceRuntime();
+    await expect(runtime.say('Hello')).rejects.toThrow('CALL_REQUIRED');
+  });
+
+  it('publishes control flags on the existing data channel and ignores no-room calls', async () => {
+    const { runtime, room } = await connected();
+    const publishData = vi.fn().mockResolvedValue(undefined);
+    room.localParticipant.publishData = publishData;
+    await runtime.sendControl({ type: 'wordle.reveal_pending', value: true });
+    expect(publishData).toHaveBeenCalledTimes(1);
+    const [data, options] = publishData.mock.calls[0];
+    expect(JSON.parse(new TextDecoder().decode(data))).toEqual({ type: 'wordle.reveal_pending', value: true });
+    expect(options).toEqual({ reliable: true, topic: 'sarjy.control' });
+
+    const offline = new LiveKitVoiceRuntime();
+    await expect(offline.sendControl({ type: 'wordle.reveal_pending', value: false })).resolves.toBeUndefined();
+  });
+});
+
+it('releases audio even when room disconnect rejects', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
+  const runtime = new LiveKitVoiceRuntime();
+  const connecting = runtime.connect(config);
+  await vi.advanceTimersByTimeAsync(1);
+  const room = rooms().at(-1)!;
+  room.remoteParticipants.set('agent', {
+    isAgent: true,
+    identity: 'agent',
+    attributes: { 'lk.agent.state': 'listening' },
+  });
+  room.connectResolve!();
+  await vi.advanceTimersByTimeAsync(100);
+  await connecting;
+  const audio = { pause: vi.fn(), remove: vi.fn(), srcObject: {} };
+  room.emit('trackSubscribed', { kind: 'audio', attach: () => audio });
+  room.disconnect = async () => {
+    throw new Error('disconnect failed');
+  };
+  await expect(runtime.disconnect()).rejects.toThrow('disconnect failed');
+  expect(audio.pause).toHaveBeenCalledOnce();
+  expect(audio.remove).toHaveBeenCalledOnce();
+  expect(audio.srcObject).toBeNull();
+  await runtime.disconnect();
+  expect(audio.pause).toHaveBeenCalledOnce();
 });

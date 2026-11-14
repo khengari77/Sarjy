@@ -22,6 +22,7 @@
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
   import { bootStudio } from '../lib/voice/studio';
   import { createSelectionController } from '../lib/voice/selection';
+  import WordleLauncher from '../lib/wordle/WordleLauncher.svelte';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -38,7 +39,7 @@
   let busy = $state(false);
   let captionsVisible = $state(true);
   let voice = $state(initialVoiceState());
-  let runtime: VoiceRuntime | undefined;
+  let runtime = $state<VoiceRuntime>();
   let connection: VoiceConnection | undefined;
   let conversations: ConversationStore | undefined;
   let catalogStore: ReturnType<typeof createCatalogStore> | undefined;
@@ -198,6 +199,7 @@
   {/snippet}
 
   {#snippet stage()}
+    <WordleLauncher compact {runtime} />
     <VoiceStage
       {presentation}
       micLevel={voice.micLevel}

@@ -18,6 +18,8 @@ def packaging(tmp_path):
         "services/voice-agent/main.py": "import app.domain.contracts\n",
         "apps/api/app/domain/contracts.py": "VALUE = 1\n",
         "apps/api/app/domain/nested/module.py": "VALUE = 2\n",
+        "packages/contracts/wordle_commands.json": '{"version": 1}\n',
+        "packages/contracts/wordle_command_fixtures.json": '{"cases": []}\n',
     }
     for name, content in files.items():
         path = root / name
@@ -55,7 +57,9 @@ def test_context_contains_exact_runtime_sources_and_replaces_stale_output(packag
     assert not list(destination.parent.glob("worker-staging-*"))
 
 
-@pytest.mark.parametrize("missing", ["uv.lock", "apps/api/app/domain/contracts.py"])
+@pytest.mark.parametrize(
+    "missing", ["uv.lock", "apps/api/app/domain/contracts.py", "packages/contracts/wordle_commands.json"]
+)
 def test_failed_preparation_preserves_previous_output(packaging, missing):
     root, destination, prepare, _ = packaging
     destination.mkdir(parents=True)

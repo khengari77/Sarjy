@@ -1,6 +1,7 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
 import { waitForAgent, type StartupSignal } from './agentStartup';
+import { RemoteAudioAnalysers } from './remoteAudio';
 
 type VoiceEventBody =
   | { type: 'status'; source: 'transport' | 'agent'; text: string }
@@ -17,6 +18,10 @@ export interface VoiceRuntime {
   stopMicrophone(): Promise<void>;
   interrupt(): Promise<void>;
   sendText(text: string): Promise<void>;
+  /** Ask the worker to speak exact text without invoking the conversational LLM. */
+  say(text: string): Promise<void>;
+  /** Publish a validated control flag to the worker (no conversation turn). */
+  sendControl(event: Record<string, unknown>): Promise<void>;
   disconnect(): Promise<void>;
   cancelConnect(): Promise<void>;
   subscribe(handler: (event: VoiceEvent) => void): () => void;
@@ -28,11 +33,7 @@ export interface VoiceRuntime {
 export class LiveKitVoiceRuntime implements VoiceRuntime {
   private room: Room | null = null;
   private audio = new Set<HTMLMediaElement>();
-  private audioContext: AudioContext | null = null;
-  private analysers = new Map<
-    HTMLMediaElement,
-    { source: MediaElementAudioSourceNode; analyser: AnalyserNode; data: Float32Array }
-  >();
+  private analysers = new RemoteAudioAnalysers();
   private handlers = new Set<(event: VoiceEvent) => void>();
   private sessionEpoch = 0;
   private sawTranscriptionSegments = false;
@@ -73,12 +74,12 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
       const element = track.attach();
       this.audio.add(element);
       document.body.appendChild(element);
-      this.attachAnalyser(element);
+      this.analysers.attach(element);
     });
     room.on(RoomEvent.TrackUnsubscribed, (track) => {
       if (!this.active(room, epoch)) return;
       for (const element of track.detach()) {
-        this.detachAnalyser(element);
+        this.analysers.detach(element);
         element.remove();
         this.audio.delete(element);
       }
@@ -173,44 +174,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
 
   /** Smoothed agent-output level for the orb; 0 when audio analysis is unavailable. */
   remoteAudioLevel(): number {
-    if (!this.analysers.size) return 0;
-    let total = 0;
-    for (const { analyser, data } of this.analysers.values()) {
-      analyser.getFloatTimeDomainData(data as Float32Array<ArrayBuffer>);
-      let sum = 0;
-      for (const sample of data) sum += sample * sample;
-      total += Math.sqrt(sum / data.length);
-    }
-    return Math.min(1, (total / this.analysers.size) * 4);
-  }
-
-  private attachAnalyser(element: HTMLMediaElement) {
-    try {
-      const AudioCtor =
-        window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtor) return;
-      this.audioContext ??= new AudioCtor();
-      const source = this.audioContext.createMediaElementSource(element);
-      const analyser = this.audioContext.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      analyser.connect(this.audioContext.destination);
-      this.analysers.set(element, { source, analyser, data: new Float32Array(analyser.fftSize) });
-    } catch {
-      // Analysis is cosmetic: never let it stop remote audio playback.
-    }
-  }
-
-  private detachAnalyser(element: HTMLMediaElement) {
-    const entry = this.analysers.get(element);
-    if (!entry) return;
-    try {
-      entry.source.disconnect();
-      entry.analyser.disconnect();
-    } catch {
-      /* already disconnected */
-    }
-    this.analysers.delete(element);
+    return this.analysers.level();
   }
 
   microphoneStream(): MediaStream | null {
@@ -231,8 +195,30 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     await this.room.localParticipant.sendText(text, { topic: 'lk.chat' });
   }
 
+  async say(text: string) {
+    const agent = this.agentParticipant();
+    if (!this.room || !agent) throw new Error('CALL_REQUIRED');
+    await this.room.localParticipant.performRpc({
+      destinationIdentity: agent.identity,
+      method: 'sarjy.say',
+      payload: JSON.stringify({ text }),
+    });
+  }
+
+  async sendControl(event: Record<string, unknown>) {
+    if (!this.room) return;
+    await this.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(event)), {
+      reliable: true,
+      topic: 'sarjy.control',
+    });
+  }
+
+  private agentParticipant() {
+    return [...(this.room?.remoteParticipants.values() || [])].find((participant) => participant.isAgent);
+  }
+
   async interrupt() {
-    const agent = [...(this.room?.remoteParticipants.values() || [])].find((participant) => participant.isAgent);
+    const agent = this.agentParticipant();
     if (agent && this.room) {
       await this.room.localParticipant.performRpc({
         destinationIdentity: agent.identity,
@@ -258,20 +244,17 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     this.startup = null;
     const room = this.room;
     this.room = null;
-    if (room) {
-      await room.disconnect();
-      room.removeAllListeners();
-    }
-    for (const element of this.audio) {
-      this.detachAnalyser(element);
-      element.pause();
-      element.srcObject = null;
-      element.remove();
-    }
-    this.audio.clear();
-    if (this.audioContext) {
-      void this.audioContext.close().catch(() => {});
-      this.audioContext = null;
+    // Detach resource ownership before awaiting the old room. A replacement
+    // connection may start while disconnect is pending or rejecting.
+    const audio = this.audio;
+    const analysers = this.analysers;
+    this.audio = new Set();
+    this.analysers = new RemoteAudioAnalysers();
+    analysers.dispose(audio);
+    try {
+      await room?.disconnect();
+    } finally {
+      room?.removeAllListeners();
     }
   }
 }
