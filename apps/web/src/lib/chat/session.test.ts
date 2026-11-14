@@ -24,10 +24,10 @@ describe('startVoiceSession', () => {
     expect(body).toEqual({ conversation_id: 'chat-1', language: 'en', response_preference: 'automatic' });
   });
 
-  it('sends an explicitly selected approved voice', async () => {
+  it('never sends a voice id, even when the picker has a saved value', async () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({ id: 'session' }));
     vi.stubGlobal('fetch', fetch);
-    await startVoiceSession('chat-1', 'ar', 'voice-1');
-    expect(JSON.parse(fetch.mock.calls[0][1].body).voice_id).toBe('voice-1');
+    await startVoiceSession('chat-1', 'ar');
+    expect(JSON.parse(fetch.mock.calls[0][1].body).voice_id).toBeUndefined();
   });
 });

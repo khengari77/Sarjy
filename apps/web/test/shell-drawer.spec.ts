@@ -85,6 +85,11 @@ test('opening a drawer moves focus inside, makes the shell inert and Escape rest
     await expect(drawer).toHaveAttribute('role', 'dialog');
     await expect(drawer).toHaveAttribute('aria-modal', 'true');
     await expect(right).toHaveAttribute('aria-expanded', 'true');
+    // Pointer-only dismissal, never a Tab stop.
+    await expect(page.locator('.scrim')).toHaveAttribute('tabindex', '-1');
+    // No stage dialog is open: the modal region holds nothing, so it is not a
+    // stray focus stop.
+    await expect(page.locator('.stage-dialog [role="dialog"]')).toHaveCount(0);
 
     // Focus landed on the first meaningful control inside the drawer, not on
     // the drawer container itself and not on <body>.

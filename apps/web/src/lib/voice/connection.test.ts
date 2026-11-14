@@ -130,6 +130,18 @@ afterEach(() => {
   rooms().length = 0;
 });
 
+describe('server-owned voice resolution', () => {
+  it('starts a call without resending the saved voice', async () => {
+    vi.useFakeTimers();
+    mocks.start.mockResolvedValue(config);
+    const { connection } = harness();
+    void connection.connect(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mocks.start).toHaveBeenCalledWith('c1', 'en');
+    await connection.cancelConnect();
+  });
+});
+
 describe('terminal startup failure cleanup', () => {
   it('releases the exact failed session once and clears the attempt state', async () => {
     vi.useFakeTimers();
