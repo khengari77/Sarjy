@@ -12,8 +12,28 @@ from dataclasses import dataclass
 MAX_CAPTURE_CHARS = 4000
 _WHITESPACE = re.compile(r"\s+")
 _EXPLICIT = (
-    re.compile(r"^\s*(?:please\s+)?remember(?:\s+that)?\s+(?P<content>.+?)\s*$", re.IGNORECASE),
-    re.compile(r"^\s*(?:please\s+)?(?:don't|do not)\s+forget(?:\s+that)?\s+(?P<content>.+?)\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:please\s+)?remember(?:\s+that)?[\s,:;]+(?P<content>.+?)\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:please\s+)?(?:don't|do not)\s+forget(?:\s+that)?[\s,:;]+(?P<content>.+?)\s*$", re.IGNORECASE),
+    # "Save this fact. My name is X." needs a noun or a clear separator so "save this file" never captures.
+    re.compile(
+        r"^\s*(?:please\s+)?(?:save|store|note|record)\s+(?:this|that)\s+(?:fact|memory|information|info|down)"
+        r"\s*[.,:;\-]*\s*(?P<content>.+?)\s*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*(?:please\s+)?(?:save|store|note|record)\s+(?:this|that)\s*[.:;,\-]\s*(?P<content>.+?)\s*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*(?:please\s+)?(?:make\s+a\s+note|note|keep\s+in\s+mind)\s+that[\s,:;]+(?P<content>.+?)\s*$",
+        re.IGNORECASE,
+    ),
+)
+# "Could you remember that my name is X?" is a request to save; "can you remember my name?" is a question.
+# Only the polite forms that carry "that" (or "save this ...") are requests, so the question never saves.
+_POLITE_REQUEST = re.compile(
+    r"^\s*(?:can|could|would|will)\s+you\s+(?:please\s+)?(?=remember\s+that\b|(?:save|store|note|record)\s+(?:this|that)\b)",
+    re.IGNORECASE,
 )
 _HYPOTHETICAL = re.compile(r"\b(?:if|would|could|suppose|supposing|imagine|maybe|perhaps)\b", re.IGNORECASE)
 _REPLACEMENT = re.compile(
@@ -246,7 +266,10 @@ def _capture_for(content: str, *, explicit: bool) -> MemoryCapture | None:
 
 def parse_capture(text: str) -> MemoryCapture | None:
     """Return a candidate for an explicit or ordinary first-person statement."""
-    if text.strip().endswith("?"):
+    polite = _POLITE_REQUEST.match(text)
+    if polite is not None:
+        text = text[polite.end() :].rstrip().rstrip("?")
+    elif text.strip().endswith("?"):
         return None
     candidate = _normalize(text)
     if not candidate or len(candidate) > MAX_CAPTURE_CHARS:
