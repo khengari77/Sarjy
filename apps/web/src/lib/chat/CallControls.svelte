@@ -16,7 +16,6 @@
     oncancel,
     ontoggle,
     oninterrupt,
-    onconnect,
   }: {
     live: SessionConfig | null;
     connecting: boolean;
@@ -31,7 +30,6 @@
     oncancel: () => void;
     ontoggle: () => void;
     oninterrupt: () => void;
-    onconnect: () => void;
   } = $props();
 </script>
 
@@ -48,6 +46,5 @@
     {#if cleanupRequired}
       <button class="ghost-button" disabled={busy} onclick={onretrycleanup}>{words.retryCleanup}</button>
     {/if}
-    <button class="primary-button" disabled={busy} onclick={onconnect}>{words.call}</button>
   {/if}
 </div>
