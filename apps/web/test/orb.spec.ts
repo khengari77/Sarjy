@@ -212,13 +212,21 @@ test('a lost WebGL context falls back to Canvas2D without breaking the session',
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
   const orb = page.locator('.orb-button');
+  // This scenario only exists on the WebGL tier. When the probe or the first
+  // context creation fell back to Canvas2D there is no context to lose, so
+  // skip rather than assert a weaker "not static" claim.
   await expect(orb).not.toHaveAttribute('data-renderer', 'static');
+  const tier = await orb.getAttribute('data-renderer');
+  test.skip(tier !== 'enhanced', `WebGL2 is unavailable; the orb is on the ${tier} tier`);
 
-  await page.evaluate(() => {
-    const canvas = document.querySelector('canvas');
+  const lost = await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('.orb-button canvas');
     const gl = canvas?.getContext('webgl2');
-    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    if (!gl) return false;
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return true;
   });
+  test.skip(!lost, 'the orb canvas has no WebGL2 context to lose');
 
   // A canvas that has owned a WebGL2 context cannot hand out 2d, so the only
   // correct fallback is the fresh element the tier remount builds: the orb
