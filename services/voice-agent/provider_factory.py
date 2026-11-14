@@ -1,9 +1,25 @@
 """Native provider construction; only called after backend capability validation."""
 
+from typing import Any
+
 import httpx
 import openai as openai_sdk
 from livekit.plugins import deepgram, elevenlabs, openai
 from stream_completion import ObservedTransport
+
+# ElevenLabs exposes pace as a voice setting, not a synthesis parameter. The
+# installed plugin (livekit-plugins-elevenlabs 1.8.11, VoiceSettings.speed)
+# documents the interval as [0.8 - 1.2]; anything outside it is rejected by the
+# provider. Keep this worker-side clamp independent of the stored settings so a
+# stale or tampered snapshot can never send an unsupported value.
+SPEAKING_SPEED_MIN = 0.8
+SPEAKING_SPEED_MAX = 1.2
+SPEAKING_SPEED_DEFAULT = 1.0
+# ElevenLabs' documented defaults for the two required voice settings. They are
+# materialised whenever this worker sets pace, so the default character of the
+# voice is unchanged for a voice that had no explicit settings.
+VOICE_STABILITY_DEFAULT = 0.5
+VOICE_SIMILARITY_BOOST_DEFAULT = 0.75
 
 
 class OwnedClientMixin:
@@ -19,6 +35,47 @@ class OwnedClientMixin:
         finally:
             if self.application_client is not None:
                 await self.application_client.close()
+
+
+def clamp_speaking_speed(value: object) -> float:
+    """Clamp an untrusted settings value to the provider's supported interval."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return SPEAKING_SPEED_DEFAULT
+    return min(max(float(value), SPEAKING_SPEED_MIN), SPEAKING_SPEED_MAX)
+
+
+class SpeakingSpeedController:
+    """Apply pace to ElevenLabs without reading the plugin's private options.
+
+    The plugin exposes no public accessor for current voice settings, and its
+    private option shape may change on upgrade. This controller therefore owns
+    the last value it applied and treats a different TTS instance as
+    unconfigured. It calls ``update_options`` only when a write is needed,
+    because that invalidates the live TTS connection.
+    """
+
+    def __init__(self) -> None:
+        self._tts: Any = None
+        self._applied: float | None = None
+
+    def apply(self, tts: Any, value: object) -> float:
+        """Apply the clamped speed and return it; repeated calls are no-ops."""
+        speed = clamp_speaking_speed(value)
+        if tts is self._tts and speed == self._applied:
+            return speed
+        # An untouched provider already speaks at 1.0; do not reconnect for it.
+        if speed == SPEAKING_SPEED_DEFAULT and (tts is not self._tts or self._applied is None):
+            self._tts, self._applied = tts, speed
+            return speed
+        tts.update_options(
+            voice_settings=elevenlabs.VoiceSettings(
+                stability=VOICE_STABILITY_DEFAULT,
+                similarity_boost=VOICE_SIMILARITY_BOOST_DEFAULT,
+                speed=speed,
+            )
+        )
+        self._tts, self._applied = tts, speed
+        return speed
 
 
 class OwnedDeepSeekLLM(OwnedClientMixin, openai.LLM):

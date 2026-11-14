@@ -1,4 +1,5 @@
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -58,6 +59,18 @@ class Settings(BaseSettings):
         # approved or default voice, every session request would fail at runtime.
         if self.eleven_api_key and not (self.approved_voice_ids.strip() or self.default_voice_id):
             raise ValueError("APPROVED_VOICE_IDS or DEFAULT_VOICE_ID is required when ELEVEN_API_KEY is set")
+        return self
+
+    @model_validator(mode="after")
+    def validate_wordle_timezone(self):
+        # A disabled feature must never prevent boot; an empty value is the
+        # ordinary compose/TZ interpolation case.
+        if not self.wordle_enabled:
+            return self
+        try:
+            ZoneInfo(self.wordle_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("WORDLE_TIMEZONE_INVALID") from exc
         return self
 
     @model_validator(mode="after")
