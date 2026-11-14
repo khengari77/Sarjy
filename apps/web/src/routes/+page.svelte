@@ -14,13 +14,13 @@
   import type { PendingIntent } from '../lib/chat/intent';
   import CallControls from '../lib/chat/CallControls.svelte';
   import Composer from '../lib/chat/Composer.svelte';
-  import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
   import { selectedVoiceOption } from '../lib/chat/voice-state';
-  import RightDrawer from '../lib/ui/RightDrawer.svelte';
+  import AppRightDrawer from '../lib/ui/AppRightDrawer.svelte';
   import { createAnnouncement } from '../lib/chat/announcement.svelte';
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
   import { errorCode } from '../lib/voice/errors';
+  import { storeLanguage } from '../lib/preferences';
   import { createCatalogStore, initialCatalogState } from '../lib/voice/catalog';
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
   import { bootStudio } from '../lib/voice/studio';
@@ -54,7 +54,11 @@
     getConversations: () => conversations!,
   });
   const words = $derived(wordsFor(arabic));
-
+  const selectedVoice = $derived(selectedVoiceOption(catalog.voices, catalog.voiceId));
+  const sessionVoice = $derived(voice.live?.voice ?? null);
+  // Any finalised turn can save a memory server-side; the panel uses this to
+  // invalidate a list it loaded before the save.
+  const memoryRevision = $derived(`${conversation.current ?? ''}:${conversation.turns.length}`);
   // GUI controls and backend-authored voice results both write this store.
   const commands = createCommandSession(catalog);
 
@@ -136,7 +140,7 @@
 
   function toggleLanguage() {
     arabic = !arabic;
-    localStorage.setItem('sarjy-language', arabic ? 'ar' : 'en');
+    storeLanguage(arabic);
   }
 
   const announcement = createAnnouncement(() => (arabic ? presentation.statusLabel.ar : presentation.statusLabel.en));
@@ -231,7 +235,9 @@
       muted={voice.muted}
       connectionLost={voice.connectionLost}
       {canInterrupt}
+      cleanupRequired={voice.pendingCleanup !== null}
       {words}
+      onretrycleanup={() => run(() => connection!.retryCleanup(), onVoiceError)}
       onend={() => run(() => connection!.end(), onVoiceError)}
       oncancel={() => run(() => connection!.cancelConnect(), onVoiceError)}
       ontoggle={toggleMute}
@@ -243,29 +249,21 @@
   {/snippet}
 
   {#snippet right()}
-    <RightDrawer {arabic} bind:activeTab={commands.state.panelTab}>
-      {#snippet voicePanel()}
-        <VoiceSettings
-          {arabic}
-          voices={catalog.voices}
-          bind:voiceId={catalog.voiceId}
-          bind:voiceSearch={catalog.search}
-          nextVoicePage={catalog.nextPage}
-          voiceLoading={catalog.loading}
-          voiceError={catalog.error}
-          voiceSaving={catalog.saving}
-          settingsError={catalog.settingsError}
-          live={voice.live !== null}
-          selectedVoice={selectedVoiceOption(catalog.voices, catalog.voiceId)}
-          sessionVoice={voice.live?.voice ?? null}
-          captionsVisible={commands.state.settings.captions_visible}
-          onsearch={() => void catalogStore!.load()}
-          onloadmore={() => void catalogStore!.load(true)}
-          onremember={() => void catalogStore!.remember()}
-          ontoggleCaptions={() => void commands.setCaptions(!commands.state.settings.captions_visible)}
-        />
-      {/snippet}
-    </RightDrawer>
+    <AppRightDrawer
+      {arabic}
+      conversationId={conversation.current}
+      {memoryRevision}
+      bind:activeTab={commands.state.panelTab}
+      {catalog}
+      {selectedVoice}
+      {sessionVoice}
+      live={voice.live !== null}
+      captionsVisible={commands.state.settings.captions_visible}
+      onsearch={() => void catalogStore!.load()}
+      onloadmore={() => void catalogStore!.load(true)}
+      onremember={() => void catalogStore!.remember()}
+      ontoggleCaptions={() => void commands.setCaptions(!commands.state.settings.captions_visible)}
+    />
   {/snippet}
 </AppShell>
 

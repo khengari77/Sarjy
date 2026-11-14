@@ -28,12 +28,27 @@ from app.domain.contracts import (
 # previous conversations" while the earlier typed command used "Show".
 _EXACT_COMMANDS: dict[str, Action] = {
     "speak slower": AdjustSpeakingSpeed(delta=-0.1),
+    "speak more slowly": AdjustSpeakingSpeed(delta=-0.1),
     "speak faster": AdjustSpeakingSpeed(delta=0.1),
+    "speak more quickly": AdjustSpeakingSpeed(delta=0.1),
     "hide captions": SetCaptionsVisible(visible=False),
+    "hide the captions": SetCaptionsVisible(visible=False),
+    "turn off captions": SetCaptionsVisible(visible=False),
+    "turn the captions off": SetCaptionsVisible(visible=False),
+    "turn off the captions": SetCaptionsVisible(visible=False),
+    "disable captions": SetCaptionsVisible(visible=False),
     "show captions": SetCaptionsVisible(visible=True),
+    "show the captions": SetCaptionsVisible(visible=True),
+    "turn on captions": SetCaptionsVisible(visible=True),
+    "turn the captions on": SetCaptionsVisible(visible=True),
+    "turn on the captions": SetCaptionsVisible(visible=True),
+    "enable captions": SetCaptionsVisible(visible=True),
     "show my previous conversations": ShowConversationHistory(),
     "open my previous conversations": ShowConversationHistory(),
+    "open the conversation history": ShowConversationHistory(),
+    "show my conversations": ShowConversationHistory(),
     "open the memory explorer": OpenMemoryExplorer(),
+    "show the memory explorer": OpenMemoryExplorer(),
 }
 
 # "Use the British female voice." is an argument-bearing row (PR 1b, behind
@@ -48,17 +63,29 @@ _VOICE_SELECTION = re.compile(
 # conversational model that cannot perform it.
 _UNSUPPORTED_COMMANDS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (
-        re.compile(r"^(?:show|find|search)(?: me)?(?: my| the)? memories(?: about .+)?$"),
+        re.compile(
+            r"^(?:(?:show|find|search)(?: me)?(?: my| the)? memories(?: about .+)?"
+            r"|(?:what do you|do you) remember(?: about .+)?"
+            r"|(?:look up|find|search)(?: my| the)? memories (?:about|for) .+)$"
+        ),
         "MEMORY_SEARCH_UNSUPPORTED",
         "I can't search your memories by voice yet.",
     ),
     (
-        re.compile(r"^(?:forget|exclude|remove|delete) .+$"),
+        re.compile(
+            r"^(?:(?:forget|exclude|remove|delete) .+"
+            r"|don't remember .+"
+            r"|(?:delete|remove) (?:the )?memory of .+)$"
+        ),
         "MEMORY_MUTATION_UNSUPPORTED",
         "I can't change or delete memories by voice yet. Nothing was changed.",
     ),
     (
-        re.compile(r"^restore (?:the |my )?(?:excluded )?memories\b.*$"),
+        re.compile(
+            r"^(?:restore (?:the |my )?(?:excluded )?memories\b.*"
+            r"|bring back (?:the )?memories\b.*"
+            r"|undo (?:that |the )?memory exclusion.*)$"
+        ),
         "MEMORY_RESTORE_UNSUPPORTED",
         "I can't restore excluded memories by voice yet. Nothing was changed.",
     ),
@@ -70,7 +97,10 @@ _UNSUPPORTED_COMMANDS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (
         re.compile(
             r"^(?:give (?:me )?(?:shorter|longer|more detailed|more brief) answers"
-            r"|(?:use|give) (?:shorter|longer) answers)\b.*$"
+            r"|(?:use|give) (?:shorter|longer) answers"
+            r"|make (?:your )?answers (?:shorter|longer|more detailed|more brief)"
+            r"|keep (?:your )?answers (?:short|brief)"
+            r"|be (?:more )?(?:concise|brief))\b.*$"
         ),
         "RESPONSE_PREFERENCE_UNSUPPORTED",
         "I can't change answer length by voice yet.",

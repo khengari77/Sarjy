@@ -4,10 +4,19 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+const locale = process.argv.find((arg) => arg.startsWith('--locale='))?.slice(9) ?? 'en';
+if (locale !== 'en') throw new Error('UNSUPPORTED_SMOKE_LOCALE');
 const origin = 'http://127.0.0.1:5173';
 const weather = process.argv.includes('--weather');
 const recording = process.argv.includes('--record');
 const microphone = process.argv.includes('--microphone');
+// The microphone guard precedes --check-options so no microphone invocation can
+// report success without an English fixture, including --check-options --microphone.
+if (microphone) throw new Error('ENGLISH_MICROPHONE_FIXTURE_REQUIRED');
+if (process.argv.includes('--check-options')) {
+  console.log(JSON.stringify({ locale, callLabel: 'Start call', voiceLabel: 'Choose voice' }));
+  process.exit(0);
+}
 const directory = resolve(dirname(fileURLToPath(import.meta.url)), '../../../artifacts/test-videos');
 if (recording) await mkdir(directory, { recursive: true });
 const browser = await chromium.launch({
@@ -49,10 +58,10 @@ await page.addInitScript(
         caption.textContent =
           'LIVE PROVIDERS · ' +
           (microphone
-            ? 'VOICE-TO-VOICE · prerecorded Arabic clip through browser microphone → real STT → reply'
+            ? 'VOICE-TO-VOICE · prerecorded English clip through browser microphone → real STT → reply'
             : weather
-              ? 'Arabic weather + real Open-Meteo tool'
-              : 'Short Arabic reply') +
+              ? 'English weather + real Open-Meteo tool'
+              : 'Short English reply') +
           ' · bounded development budget';
         caption.dir = 'ltr';
         caption.style.cssText =
@@ -140,34 +149,34 @@ page.on('response', async (response) => {
 });
 try {
   await page.goto(origin);
-  await page.getByRole('button', { name: 'بدء مكالمة', exact: true }).waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'Start call', exact: true }).waitFor({ state: 'visible' });
   await page.waitForFunction(() => !document.querySelector('textarea')?.disabled);
   const voicesResponse = await page.request.get(origin + '/api/v1/voices');
   if (!voicesResponse.ok()) throw new Error('VOICE_CATALOG_UNAVAILABLE');
   const voices = (await voicesResponse.json()).voices;
   const chosen = voices.find((voice) =>
-    voice.languages?.some((language) => ['ar', 'arabic'].includes(language.toLowerCase())),
+    voice.languages?.some((language) => ['en', 'english'].includes(language.toLowerCase())),
   );
   if (!chosen) throw new Error('NO_TEST_VOICE_AVAILABLE');
   // This choice is only for this isolated test browser, not a production default.
   console.log(
     JSON.stringify({
       test_voice: chosen.name,
-      arabic_label: chosen.languages?.some((language) => ['ar', 'arabic'].includes(language.toLowerCase())) || false,
+      english_label: chosen.languages?.some((language) => ['en', 'english'].includes(language.toLowerCase())) || false,
     }),
   );
-  await page.getByRole('button', { name: 'تحميل الأصوات / بحث', exact: true }).click();
+  await page.getByRole('button', { name: 'Load voices / Search', exact: true }).click();
   await page.waitForFunction((id) => Boolean(document.querySelector(`option[value="${id}"]`)), chosen.id);
-  await page.getByLabel('اختر الصوت', { exact: true }).selectOption(chosen.id);
+  await page.getByLabel('Choose voice', { exact: true }).selectOption(chosen.id);
   const chats = await (await page.request.get(origin + '/api/v1/conversations')).json();
   conversationId = chats[0].id;
   if (microphone) {
-    await page.getByRole('button', { name: 'بدء مكالمة', exact: true }).click();
+    await page.getByRole('button', { name: 'Start call', exact: true }).click();
   } else {
     await page
-      .getByRole('textbox', { name: 'اكتب رسالتك…' })
-      .fill(weather ? 'ما درجة الحرارة الآن في طرابلس ليبيا؟ أجب بجملة قصيرة.' : 'قل فقط: مرحبًا بك.');
-    await page.getByRole('button', { name: 'إرسال ↗', exact: true }).click();
+      .getByRole('textbox', { name: 'Write a message…' })
+      .fill(weather ? 'What is the temperature in Tripoli, Libya? Answer briefly.' : 'Say only: Hello.');
+    await page.getByRole('button', { name: 'Send ↗', exact: true }).click();
   }
   const deadline = Date.now() + 75000;
   let reply;
@@ -180,7 +189,7 @@ try {
     const turns = await result.json();
     transcript = turns.find((turn) => turn.role === 'user');
     if (microphone && transcript && !micStopped) {
-      const mute = page.getByRole('button', { name: 'كتم الصوت', exact: true });
+      const mute = page.getByRole('button', { name: 'Mute', exact: true });
       if (await mute.count()) {
         await mute.click();
         micStopped = true;
@@ -196,7 +205,7 @@ try {
     console.log(
       JSON.stringify({
         microphone_transcript: transcript.text,
-        input_source: 'reused prerecorded Arabic clip; real browser microphone/STT path',
+        input_source: 'reused prerecorded English clip; real browser microphone/STT path',
       }),
     );
   }
@@ -259,7 +268,7 @@ try {
   try {
     if (recording) {
       const name =
-        (microphone ? '05-live-voice-to-voice' : weather ? '03-live-arabic-weather' : '04-live-arabic-reply') +
+        (microphone ? '05-live-voice-to-voice' : weather ? '03-live-english-weather' : '04-live-english-reply') +
         (failed ? '-failed' : '');
       const video = resolve(directory, name + '.webm');
       await page.video().saveAs(video);

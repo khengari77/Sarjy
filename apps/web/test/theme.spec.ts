@@ -261,9 +261,10 @@ test('the right drawer exposes the four tabs, closes on Escape and returns focus
   const tabs = page.locator('#shell-right').getByRole('tab');
   await expect(tabs).toHaveText(['Memories', 'Voice', 'Appearance', 'Context']);
   await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
-  await expect(page.locator('#shell-right')).toContainText('memory explorer arrives in #43');
+  await expect(page.locator('#shell-right').getByTestId('memory-panel')).toBeVisible();
+  await expect(page.locator('#shell-right')).toContainText('Memory & context');
   await page.locator('#shell-right').getByRole('tab', { name: 'Context' }).click();
-  await expect(page.locator('#shell-right')).toContainText('context inspector arrives in #43/#46');
+  await expect(page.locator('#shell-right')).toContainText('general context inspector arrives in #46');
 
   await page.keyboard.press('Escape');
   await expect(trigger).toHaveAttribute('aria-expanded', 'false');

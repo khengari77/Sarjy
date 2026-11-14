@@ -220,18 +220,50 @@ def test_duplicate_finalized_navigation_applies_one_effect(tmp_path):
         assert counts(path) == (0, 1, 0)
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Use the British female voice.",
-        "Show my memories about Paris.",
+UNSUPPORTED_ROWS = [
+    ("Show my memories about Paris.", "MEMORY_SEARCH_UNSUPPORTED", "I can't search your memories by voice yet."),
+    ("What do you remember about Paris?", "MEMORY_SEARCH_UNSUPPORTED", "I can't search your memories by voice yet."),
+    (
         "Forget the Paris trip but keep the budget.",
+        "MEMORY_MUTATION_UNSUPPORTED",
+        "I can't change or delete memories by voice yet. Nothing was changed.",
+    ),
+    (
+        "Delete the memory of the Paris trip.",
+        "MEMORY_MUTATION_UNSUPPORTED",
+        "I can't change or delete memories by voice yet. Nothing was changed.",
+    ),
+    (
         "Restore the memories I excluded.",
+        "MEMORY_RESTORE_UNSUPPORTED",
+        "I can't restore excluded memories by voice yet. Nothing was changed.",
+    ),
+    (
+        "Bring back the memories I excluded.",
+        "MEMORY_RESTORE_UNSUPPORTED",
+        "I can't restore excluded memories by voice yet. Nothing was changed.",
+    ),
+    (
         "Give shorter answers from now on.",
+        "RESPONSE_PREFERENCE_UNSUPPORTED",
+        "I can't change answer length by voice yet.",
+    ),
+    (
+        "Make your answers shorter.",
+        "RESPONSE_PREFERENCE_UNSUPPORTED",
+        "I can't change answer length by voice yet.",
+    ),
+    ("Be more concise.", "RESPONSE_PREFERENCE_UNSUPPORTED", "I can't change answer length by voice yet."),
+    (
         "Clear context.",
-    ],
-)
-def test_unwired_parity_rows_are_unsupported_and_mutate_nothing(tmp_path, text):
+        "MEMORY_SCOPE_REQUIRED",
+        "Clearing context needs an explicit scope and is not available by voice yet. Nothing was changed.",
+    ),
+]
+
+
+@pytest.mark.parametrize(("text", "detail", "spoken"), UNSUPPORTED_ROWS)
+def test_unwired_rows_refuse_with_the_exact_sentence_and_mutate_nothing(tmp_path, text, detail, spoken):
     app, path = app_for(tmp_path)
     with TestClient(app) as client:
         conversation = chat(client)
@@ -240,12 +272,59 @@ def test_unwired_parity_rows_are_unsupported_and_mutate_nothing(tmp_path, text):
         body = response.json()
         assert body["handled"] is True
         assert body["result"]["kind"] == "unsupported"
+        assert body["result"]["detail"] == detail
+        assert body["result"]["spoken"] == spoken
+        assert "I searched your memories" not in body["result"]["spoken"]
         assert body["result"]["action"] is None
         assert body["result"]["settings"] is None
         assert body["result"]["changed"] is False
-        assert body["result"]["spoken"]
         assert client.get("/v1/settings").json()["revision"] == 0
         assert counts(path) == (0, 0, 0)
+
+
+def test_unknown_spoken_voice_is_refused_with_the_exact_sentence(tmp_path):
+    app, path = app_for(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        result = voice(client, conversation, "Use the British female voice.").json()["result"]
+        assert result["kind"] == "unsupported"
+        assert result["detail"] == "VOICE_NOT_FOUND"
+        assert result["spoken"] == "I couldn't find an approved voice called British female."
+        assert counts(path) == (0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Hide the captions.", "Captions hidden."),
+        ("Turn off captions.", "Captions hidden."),
+        ("Turn the captions off.", "Captions hidden."),
+        ("Show the captions.", "Captions shown."),
+        ("Turn on captions.", "Captions shown."),
+    ],
+)
+def test_caption_paraphrases_are_handled_instead_of_falling_through(tmp_path, text, expected):
+    app, _ = app_for(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        request, revision = "r1", 0
+        if text.startswith("Show") or text.startswith("Turn on"):
+            # Start from the opposite state so the paraphrase is a real change.
+            voice(client, conversation, "Hide captions.")
+            request, revision = "r2", 1
+        result = voice(client, conversation, text, request=request, revision=revision).json()["result"]
+        assert result["kind"] == "executed"
+        assert result["spoken"] == expected
+        assert result["settings"] is not None
+
+
+def test_history_paraphrase_navigates_instead_of_falling_through(tmp_path):
+    app, _ = app_for(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        result = voice(client, conversation, "Open the conversation history.").json()["result"]
+        assert result["kind"] == "executed"
+        assert result["navigation"] == "history"
 
 
 @pytest.mark.parametrize(

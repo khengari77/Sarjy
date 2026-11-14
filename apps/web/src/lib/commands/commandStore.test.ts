@@ -61,6 +61,15 @@ describe('one shared store for GUI and voice', () => {
     expect(state.applied).toEqual(['command:abc']);
   });
 
+  it('ignores a stale settings replay instead of rewinding the store', () => {
+    const { store, state } = harness();
+    store.hydrate(settings({ captions_visible: true, revision: 2 }));
+    const applied = store.apply(voiceCaptions({ settings: settings({ captions_visible: false, revision: 1 }) }));
+    expect(applied).toBe(false);
+    expect(state.settings).toMatchObject({ captions_visible: true, revision: 2 });
+    expect(state.trace).toEqual([]);
+  });
+
   it('a late bootstrap read cannot clobber a newer revision', () => {
     const { store, state } = harness();
     store.hydrate(settings({ captions_visible: false, revision: 2 }));

@@ -123,6 +123,9 @@ export function normalizeCommandResult(value: unknown): CommandResult | null {
 export function createCommandStore(state: CommandState) {
   function apply(result: CommandResult): boolean {
     if (state.applied.includes(result.request_id)) return false;
+    // A stale settings snapshot must never rewind the authoritative state. The
+    // worker may replay an old request id whose result predates another surface.
+    if (result.settings && result.settings.revision < state.settings.revision) return false;
     state.applied.push(result.request_id);
     if (result.settings) state.settings = result.settings;
     if (result.navigation === 'history') state.panels.history = true;

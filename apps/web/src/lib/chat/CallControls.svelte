@@ -9,8 +9,10 @@
     muted,
     connectionLost,
     canInterrupt,
+    cleanupRequired,
     words,
     onend,
+    onretrycleanup,
     oncancel,
     ontoggle,
     oninterrupt,
@@ -22,8 +24,10 @@
     muted: boolean;
     connectionLost: boolean;
     canInterrupt: boolean;
+    cleanupRequired: boolean;
     words: Words;
     onend: () => void;
+    onretrycleanup: () => void;
     oncancel: () => void;
     ontoggle: () => void;
     oninterrupt: () => void;
@@ -41,6 +45,9 @@
     </button>
     <button class="ghost-button" disabled={busy || !canInterrupt} onclick={oninterrupt}> Stop </button>
   {:else}
+    {#if cleanupRequired}
+      <button class="ghost-button" disabled={busy} onclick={onretrycleanup}>{words.retryCleanup}</button>
+    {/if}
     <button class="primary-button" disabled={busy} onclick={onconnect}>{words.call}</button>
   {/if}
 </div>

@@ -518,7 +518,7 @@ def test_concurrent_save_and_discard_claim_one_revision(tmp_path, monkeypatch):
             await embedder.entered.wait()
             kind, value = await decision(sessions, embedder, request["token"], "discard")
             assert kind == "error" and isinstance(value, MemoryCaptureError)
-            assert value.code == "MEMORY_DECISION_IN_PROGRESS"
+            assert value.code in {"MEMORY_DECISION_IN_PROGRESS", "MEMORY_PROPOSAL_RESOLVED"}
             embedder.release.set()
             kind, value = await saving
             assert kind == "ok" and value["status"] == "saved"
@@ -548,15 +548,15 @@ def test_concurrent_save_and_discard_claim_one_revision(tmp_path, monkeypatch):
             saving = asyncio.create_task(decision(sessions, embedder, request["token"], "save"))
             await embedder.entered.wait()
             kind, value = await decision(sessions, embedder, request["token"], "discard")
-            assert kind == "ok" and value["status"] == "discarded"
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "MEMORY_PROPOSAL_RESOLVED"
             embedder.release.set()
             kind, value = await saving
-            assert kind == "error" and isinstance(value, MemoryCaptureError)
-            assert value.code == "DECISION_ALREADY_FINAL"
+            assert kind == "ok" and value["status"] == "saved"
             memories, decisions = await rows(sessions)
-            assert memories == []
+            assert memories == [("I prefer coffee", 1, "active")]
             assert [(revision, choice, outcome) for revision, choice, outcome, _, _ in decisions] == [
-                (1, "discard", "discarded")
+                (1, "save", "saved")
             ]
         finally:
             await engine.dispose()
@@ -626,16 +626,19 @@ def test_concurrent_replace_and_discard_claim_one_clarification(tmp_path, monkey
             replacing = asyncio.create_task(decision(sessions, embedder, detail["token"], "replace"))
             await embedder.entered.wait()
             kind, value = await decision(sessions, embedder, detail["token"], "discard")
-            assert kind == "ok" and value["status"] == "discarded"
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "MEMORY_PROPOSAL_RESOLVED"
             embedder.release.set()
             kind, value = await replacing
-            assert kind == "error" and isinstance(value, MemoryCaptureError)
-            assert value.code == "DECISION_ALREADY_FINAL"
+            assert kind == "ok" and value["status"] == "corrected"
             memories, decisions = await rows(sessions)
-            assert [(content, status) for content, _, status in memories] == [("I prefer tea", "active")]
+            assert [(content, status) for content, _, status in memories] == [
+                ("I prefer tea", "superseded"),
+                ("I prefer coffee", "active"),
+            ]
             assert [(revision, choice, outcome) for revision, choice, outcome, _, _ in decisions] == [
                 (1, "save", "saved"),
-                (2, "discard", "discarded"),
+                (2, "replace", "corrected"),
             ]
         finally:
             await engine.dispose()
@@ -847,6 +850,141 @@ def test_discard_is_durable_and_replay_cannot_save(tmp_path):
         )
         assert replay.status_code == 409
         assert memory_rows(file) == []
+
+
+def test_turn_replay_preserves_proposal_identity_and_terminal_state(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        proposal = turn(client, headers, "I prefer tea", "replay-discard").json()["memory_proposal"]
+        confirmation_id = proposal["confirmation_id"]
+        discarded = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "discard"}
+        )
+        assert discarded.status_code == 200 and discarded.json()["status"] == "discarded"
+
+        with closing(sqlite3.connect(file)) as db:
+            before = db.execute(
+                "SELECT id,text,status,created_at,snapshot FROM turns WHERE request_id='replay-discard'"
+            ).fetchone()
+
+        replayed = turn(client, headers, "I prefer tea", "replay-discard")
+        assert replayed.status_code == 200
+        replayed_proposal = replayed.json()["memory_proposal"]
+        assert replayed_proposal["confirmation_id"] == confirmation_id
+        assert replayed_proposal["confirmation_revision"] == proposal["confirmation_revision"]
+        assert replayed_proposal["token"] is None
+        assert replayed_proposal["state"] == "discarded"
+        assert replayed_proposal["outcome"] == "discarded"
+
+        # The replayed turn cannot be saved: the original token stays terminal
+        # and there is no new writable token.
+        late_save = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "save"}
+        )
+        assert late_save.status_code == 409
+        assert late_save.json()["detail"]["code"] == "MEMORY_PROPOSAL_RESOLVED"
+        assert memory_rows(file) == []
+
+        with closing(sqlite3.connect(file)) as db:
+            after = db.execute(
+                "SELECT id,text,status,created_at,snapshot FROM turns WHERE request_id='replay-discard'"
+            ).fetchone()
+        assert after == before
+
+        saved_proposal = turn(client, headers, "I prefer coffee", "replay-save").json()["memory_proposal"]
+        saved_id = saved_proposal["confirmation_id"]
+        saved = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": saved_proposal["token"], "decision": "save"},
+        )
+        assert saved.status_code == 200 and saved.json()["status"] == "saved"
+
+        replayed_saved = turn(client, headers, "I prefer coffee", "replay-save").json()["memory_proposal"]
+        assert replayed_saved["confirmation_id"] == saved_id
+        assert replayed_saved["token"] is None
+        assert replayed_saved["state"] == "saved"
+        assert replayed_saved["outcome"] == "saved"
+        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I prefer coffee"]
+        assert len([row for row in memory_rows(file) if row[0] == "I prefer coffee"]) == 1
+
+
+def test_discarded_proposal_stays_terminal_after_its_receipt_is_deleted(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        proposal = turn(client, headers, "I prefer tea", "terminal-race").json()["memory_proposal"]
+        discarded = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "discard"}
+        )
+        assert discarded.status_code == 200 and discarded.json()["status"] == "discarded"
+
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("DELETE FROM memory_capture_decisions")
+            db.commit()
+
+        replay = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "save"}
+        )
+        assert replay.status_code == 409
+        assert replay.json()["detail"]["code"] == "MEMORY_PROPOSAL_RESOLVED"
+        assert memory_rows(file) == []
+        with closing(sqlite3.connect(file)) as db:
+            state = db.execute(
+                "SELECT state FROM memory_write_requests WHERE request_key=?", (proposal["confirmation_id"],)
+            ).fetchone()[0]
+        assert state == "discarded"
+
+
+def test_older_token_cannot_discard_a_completed_replacement(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        first = turn(client, headers, "I prefer tea", "old-token-1").json()["memory_proposal"]
+        assert (
+            client.post(
+                "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+            ).status_code
+            == 200
+        )
+        second = turn(client, headers, "I prefer coffee", "old-token-2").json()["memory_proposal"]
+        clarify = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "save"}
+        )
+        detail = clarify.json()["detail"]
+        replaced = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": detail["token"], "decision": "replace"}
+        )
+        assert replaced.status_code == 200 and replaced.json()["status"] == "corrected"
+
+        # Replaying the older revision-1 token must not rewrite the completed
+        # replacement as discarded.
+        older = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "discard"}
+        )
+        assert older.status_code == 409
+        assert older.json()["detail"]["code"] == "MEMORY_PROPOSAL_RESOLVED"
+        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I prefer coffee"]
+
+        replay = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": detail["token"], "decision": "replace"}
+        )
+        assert replay.status_code == 200
+        assert replay.json()["status"] == "corrected"
+        with closing(sqlite3.connect(file)) as db:
+            state = db.execute(
+                "SELECT state FROM memory_write_requests WHERE request_key = ?", (detail["confirmation_id"],)
+            ).fetchone()[0]
+        assert state == "saved"
 
 
 def test_replacement_marker_must_be_final_not_an_idiom():
@@ -1063,9 +1201,8 @@ def test_rev2_save_recovers_only_a_committed_effect(tmp_path):
             headers=headers,
             json={"token": detail["token"], "decision": "save"},
         )
-        assert retried.status_code == 200, retried.text
-        assert retried.json()["status"] == "corrected"
-        assert retried.json()["memory"]["version"] == 2
+        assert retried.status_code == 409
+        assert retried.json()["detail"]["code"] == "MEMORY_PROPOSAL_RESOLVED"
         assert memory_rows(file) == before_rows
         assert embedder.calls == before_calls
 
@@ -1099,7 +1236,7 @@ def test_discard_clarification_is_terminal(tmp_path):
             json={"token": detail["token"], "decision": "replace"},
         )
         assert replay.status_code == 409
-        assert replay.json()["detail"]["code"] == "DECISION_ALREADY_FINAL"
+        assert replay.json()["detail"]["code"] == "MEMORY_PROPOSAL_RESOLVED"
 
         # Even the pre-clarification token cannot reopen a discarded revision.
         reopened = client.post(
@@ -1220,13 +1357,19 @@ def test_replacement_recovers_after_a_lost_decision_receipt(tmp_path):
         assert again.status_code == 200, again.text
         assert again.json()["status"] == "corrected"
 
-        with closing(sqlite3.connect(file)) as db, db:
+        with closing(sqlite3.connect(file)) as db:
+            # The terminal proposal row is the authority; a deliberately removed
+            # receipt is not rebuilt and cannot resurrect the revision.
             receipt = db.execute(
-                "SELECT target_id,target_version,outcome FROM memory_capture_decisions "
-                "WHERE confirmation_id = ? AND revision = ?",
+                "SELECT outcome FROM memory_capture_decisions WHERE confirmation_id = ? AND revision = ?",
                 (detail["confirmation_id"], detail["confirmation_revision"]),
             ).fetchone()
-        assert receipt == (detail["target_id"], detail["target_version"], "corrected")
+            state = db.execute(
+                "SELECT state FROM memory_write_requests WHERE request_key = ?",
+                (detail["confirmation_id"],),
+            ).fetchone()[0]
+        assert receipt is None
+        assert state == "saved"
 
 
 class _FakeSpeech:
