@@ -151,7 +151,7 @@ test('reduced-motion orb shows a state glyph and label, not just colour', async 
   await expect(orb.locator('.orb-state-text')).toHaveText('Ready');
 });
 
-test('a lost WebGL context falls back without breaking the session', async ({ page }) => {
+test('a lost WebGL context falls back to Canvas2D without breaking the session', async ({ page }) => {
   await page.addInitScript(() => {
     const stream = { getTracks: () => [] } as unknown as MediaStream;
     Object.defineProperty(navigator, 'mediaDevices', {
@@ -220,7 +220,11 @@ test('a lost WebGL context falls back without breaking the session', async ({ pa
     gl?.getExtension('WEBGL_lose_context')?.loseContext();
   });
 
-  await expect(orb).toHaveAttribute('data-renderer', 'static');
+  // A canvas that has owned a WebGL2 context cannot hand out 2d, so the only
+  // correct fallback is the fresh element the tier remount builds: the orb
+  // must keep drawing, and the call must stay alive.
+  await expect(orb).toHaveAttribute('data-renderer', 'light');
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
-  await expect(orb.locator('.orb-static-state')).toBeVisible();
+  await expect(orb.locator('canvas.orb-canvas')).toHaveCount(1);
+  await expect(orb.locator('.orb-static-state')).toHaveCount(0);
 });
