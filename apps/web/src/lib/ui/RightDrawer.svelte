@@ -12,8 +12,9 @@
     arabic?: boolean;
     /** Existing voice controls stay reachable in the Voice tab (#41 owns their contents). */
     voicePanel?: Snippet;
-    /** Transparent memory/context explorer (#43). Rendered in its own tab. */
-    memoryPanel?: Snippet;
+    /** Transparent memory/context explorer (#43). Rendered in its own tab;
+     *  the argument is true while that tab is visible. */
+    memoryPanel?: Snippet<[boolean]>;
   }
 
   let { arabic = false, voicePanel, memoryPanel }: Props = $props();
@@ -109,7 +110,7 @@
         </section>
       {:else if tab.id === 'memories'}
         {#if memoryPanel}
-          {@render memoryPanel()}
+          {@render memoryPanel(active === 'memories')}
         {:else}
           <section class="placeholder-block">
             <h2>Memories</h2>

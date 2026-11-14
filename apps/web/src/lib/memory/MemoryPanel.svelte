@@ -9,6 +9,7 @@
     friendlyMemoryError,
     labelsFor,
     loadMemories,
+    mutationFailure,
     newIdempotencyKey,
     previewExclusion,
     retrievedIds,
@@ -25,9 +26,13 @@
 
   interface Props {
     conversationId: string | null;
+    /** The Memories tab is visible; opening it refreshes a stale list. */
+    active?: boolean;
+    /** Changes when a turn finalises (memory capture) or the chat changes. */
+    revision?: string;
   }
 
-  let { conversationId }: Props = $props();
+  let { conversationId, active = false, revision = '' }: Props = $props();
 
   let items = $state<MemoryListItem[]>([]);
   let total = $state(0);
@@ -51,6 +56,9 @@
   let undoError = $state('');
   let undoResult = $state<ContextUndoResult | null>(null);
   let loadedFor = $state<string | null | undefined>(undefined);
+  // A panel can sit mounted in a hidden tab while a voice turn saves facts.
+  // Activation and finalised-turn revisions both invalidate the list.
+  let lastSignal = $state<string | null>(null);
 
   const retrieved = $derived(retrievedIds(searchResults));
   const rows = $derived<MemoryRow[]>(items.map((item) => ({ item, labels: labelsFor(item, retrieved.has(item.id)) })));
@@ -68,6 +76,17 @@
     confirmation = null;
     undoResult = null;
     void reload();
+  });
+
+  $effect(() => {
+    const signal = `${active}:${revision}`;
+    if (lastSignal === null) {
+      lastSignal = signal;
+      return;
+    }
+    if (signal === lastSignal) return;
+    lastSignal = signal;
+    if (active) void reload();
   });
 
   async function reload() {
@@ -175,7 +194,7 @@
       selected = null;
       await reload();
     } catch (error) {
-      applyError = friendlyMemoryError(errorCode(error));
+      applyError = mutationFailure(error).message;
     } finally {
       applying = false;
     }
@@ -195,7 +214,7 @@
       confirmation = null;
       await reload();
     } catch (error) {
-      undoError = friendlyMemoryError(errorCode(error));
+      undoError = mutationFailure(error).message;
     } finally {
       undoBusy = false;
     }
@@ -210,9 +229,15 @@
 
   {#if !conversationId}
     <p class="memory-notice" role="status">
-      Select a conversation to see whether a fact is included or excluded. Stored facts are listed below.
+      Select a conversation to see whether a fact is a candidate for its next compiled context or excluded from it.
+      Stored facts are listed below.
     </p>
   {/if}
+
+  <p class="memory-muted">
+    “Candidate” means the fact is inside the set the compiler builds the next prompt from. The final prompt can still
+    trim it to fit its character budget, so this is candidacy, not a promise the model received it.
+  </p>
 
   <MemorySearch
     bind:query

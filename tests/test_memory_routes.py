@@ -76,7 +76,13 @@ def test_memory_list_is_owner_scoped_paginated_and_carries_provenance(tmp_path):
         scoped = client.get("/v1/memories", params={"conversation_id": chat, "limit": 100}).json()
         assert {item["id"] for item in scoped["items"]} == {item["id"] for item in created}
         assert all(item["included_in_conversation"] is True for item in scoped["items"])
+        assert all(item["candidate_eligible"] is True for item in scoped["items"])
         assert all(item["excluded_in_conversation"] is False for item in scoped["items"])
+        # Ordinary facts are not money policy; only the budget-classified row is.
+        kinds = {item["content"]: item["kind"] for item in scoped["items"]}
+        assert kinds["Tripoli"] == "memory"
+        assert kinds["Window seat"] == "memory"
+        assert kinds["Budget 500 USD"] == "budget"
 
         with closing(TestClient(client.app)) as other:
             other.post("/v1/demo-session")

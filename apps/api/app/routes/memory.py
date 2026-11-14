@@ -43,6 +43,12 @@ class MemoryListItem(BaseModel):
     # Present only when the caller supplies a conversation scope. ``None``
     # means "not evaluated", never "stored but unused".
     excluded_in_conversation: bool | None = None
+    # Active and not blocked by exclusion lineage. Distinct from the next
+    # compiled context's bounded candidate window below.
+    candidate_eligible: bool | None = None
+    # Membership in the compiler's bounded candidate set. This is still not a
+    # guarantee of final prompt inclusion (history/tool budgets can trim it),
+    # so the UI presents this as candidacy, never as "included".
     included_in_conversation: bool | None = None
 
 

@@ -1,5 +1,6 @@
 import type { components } from '../../../../../packages/contracts/api';
 import { request } from '../api';
+import { errorCode } from '../voice/errors';
 
 export type MemoryList = components['schemas']['MemoryList'];
 export type MemoryListItem = components['schemas']['MemoryListItem'];
@@ -15,7 +16,10 @@ export interface MemorySearchHit extends MemorySearchResult {
 export interface MemoryLabels {
   stored: true;
   retrieved: boolean;
-  included: boolean;
+  /** In the compiler's bounded candidate set for the next turn. */
+  candidate: boolean;
+  /** Active and not excluded, but not necessarily inside the candidate window. */
+  eligible: boolean;
   excluded: boolean;
   summary: string;
 }
@@ -42,24 +46,32 @@ export function statusLabel(status: string): string {
 }
 
 /**
- * The explorer must never conflate persistence, retrieval, actual context
- * inclusion and conversation exclusions. Every dimension is returned
+ * The explorer must never conflate persistence, retrieval, candidate
+ * eligibility and conversation exclusions. Every dimension is returned
  * separately; the summary only names the strongest true state.
+ *
+ * "Candidate" is deliberately not "included": the compiler builds its prompt
+ * from this candidate set and can still trim it with the character budget, so
+ * the UI must not promise the fact reached the model.
  */
 export function labelsFor(item: MemoryListItem, retrieved: boolean): MemoryLabels {
   const excluded = item.excluded_in_conversation === true;
-  const included = !excluded && item.status === 'active' && item.included_in_conversation === true;
+  const active = item.status === 'active';
+  const candidate = !excluded && active && item.included_in_conversation === true;
+  const eligible = !excluded && active && item.candidate_eligible === true;
   let summary: string;
-  if (item.status !== 'active') {
+  if (!active) {
     summary = statusLabel(item.status);
   } else if (excluded) {
     summary = 'Excluded from this conversation';
-  } else if (included) {
-    summary = 'Included in the next compiled context';
+  } else if (candidate) {
+    summary = 'Candidate for the next compiled context';
+  } else if (eligible) {
+    summary = 'Eligible, but outside the current context candidates';
   } else {
     summary = 'Stored only';
   }
-  return { stored: true, retrieved, included, excluded, summary };
+  return { stored: true, retrieved, candidate, eligible, excluded, summary };
 }
 
 export function retrievedIds(results: readonly MemorySearchResult[]): Set<string> {
@@ -103,6 +115,52 @@ export function friendlyMemoryError(code: string): string {
     default:
       return 'The memory service did not confirm the change. Nothing was changed.';
   }
+}
+
+/**
+ * A mutation may fail in two very different ways. A confirmed rejection (the
+ * server answered with a known 4xx code) means nothing changed. An unknown
+ * outcome (timeout, dropped connection, 5xx, unparseable body) means the
+ * request may have committed before the response was lost, so claiming
+ * "nothing changed" would be a lie.
+ */
+export type MutationFailureKind = 'rejected' | 'unknown';
+
+export interface MutationFailure {
+  kind: MutationFailureKind;
+  code: string;
+  message: string;
+}
+
+const CONFIRMED_REJECTION_CODES = new Set([
+  'REVISION_CONFLICT',
+  'OPERATION_ALREADY_RESTORED',
+  'OPERATION_NOT_FOUND',
+  'MEMORY_NOT_FOUND',
+  'IDEMPOTENCY_KEY_REUSED',
+  'CONTEXT_PROPOSALS_NOT_CONFIGURED',
+  'CONTEXT_REVISION_INVALID',
+  'DAILY_BUDGET_EXHAUSTED',
+  'INVALID_MEMORY_QUERY',
+  'INVALID_CONTEXT_PROPOSAL',
+  'PROPOSAL_INVALID',
+  'PROPOSAL_EXPIRED',
+  'EXCLUSION_NOT_AUTHORIZED',
+]);
+
+export function mutationFailure(error: unknown): MutationFailure {
+  const code = errorCode(error);
+  const confirmed = /^HTTP_4\d\d$/.test(code) || CONFIRMED_REJECTION_CODES.has(code);
+  if (confirmed) {
+    return { kind: 'rejected', code, message: friendlyMemoryError(code) };
+  }
+  return {
+    kind: 'unknown',
+    code,
+    message:
+      'The memory service did not confirm whether the change was applied. Nothing is claimed either way. ' +
+      'Check the conversation, then retry or reload before excluding again.',
+  };
 }
 
 export async function loadMemories(conversationId: string | null, offset = 0, limit = 50): Promise<MemoryList> {

@@ -792,6 +792,8 @@ export interface components {
             updated_at: string;
             /** Excluded In Conversation */
             excluded_in_conversation?: boolean | null;
+            /** Candidate Eligible */
+            candidate_eligible?: boolean | null;
             /** Included In Conversation */
             included_in_conversation?: boolean | null;
         };

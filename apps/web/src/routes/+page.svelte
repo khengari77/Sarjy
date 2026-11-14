@@ -53,6 +53,9 @@
     getConversations: () => conversations!,
   });
   const words = $derived(wordsFor(arabic));
+  // Any finalised turn can save a memory server-side; the panel uses this to
+  // invalidate a list it loaded before the save.
+  const memoryRevision = $derived(`${conversation.current ?? ''}:${conversation.turns.length}`);
 
   const phase = $derived<VoicePhase>(
     (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
@@ -242,8 +245,8 @@
 
   {#snippet right()}
     <RightDrawer {arabic}>
-      {#snippet memoryPanel()}
-        <MemoryPanel conversationId={conversation.current} />
+      {#snippet memoryPanel(active)}
+        <MemoryPanel conversationId={conversation.current} {active} revision={memoryRevision} />
       {/snippet}
       {#snippet voicePanel()}
         <VoiceSettings

@@ -61,13 +61,18 @@
     {/if}
     <ul class="memory-rows">
       {#each rows as row (row.item.id)}
-        <li class="memory-row" data-excluded={row.labels.excluded} data-included={row.labels.included}>
+        <li
+          class="memory-row"
+          data-excluded={row.labels.excluded}
+          data-included={row.labels.candidate}
+          data-eligible={row.labels.eligible}
+        >
           <p class="memory-content">{row.item.content}</p>
           <p class="memory-summary">{row.labels.summary}</p>
           <ul class="memory-chips" aria-label="States for this fact">
             <li class="chip chip-stored">Stored</li>
             {#if row.labels.retrieved}<li class="chip chip-retrieved">Matched search</li>{/if}
-            {#if row.labels.included}<li class="chip chip-included">Included</li>{/if}
+            {#if row.labels.candidate}<li class="chip chip-included">Candidate</li>{/if}
             {#if row.labels.excluded}<li class="chip chip-excluded">Excluded</li>{/if}
           </ul>
           <p class="memory-provenance">

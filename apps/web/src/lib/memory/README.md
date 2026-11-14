@@ -32,13 +32,29 @@ The Context tab points at the Memories tab for the inclusion/exclusion
 projection; it does not mount a second copy of the panel.
 
 `conversation.current` may be `null`; the panel then shows the owner's stored
-facts without included/excluded annotations and disables exclusion actions.
+facts without candidates/exclusion annotations and disables exclusion actions.
 
 ## Behaviour
 
 - `GET /v1/memories?conversation_id=…&limit=…&offset=…` is owner-scoped and
   paginated. `conversation_id` is optional and only adds the
-  `included_in_conversation` / `excluded_in_conversation` annotations.
+  `candidate_eligible` / `included_in_conversation` / `excluded_in_conversation`
+  annotations.
+- The list's projection comes from the compiler's own reader
+  (`orm_memory_candidates`), so exclusion *lineage* applies: a correction that
+  supersedes an excluded fact is excluded too, and the bounded candidate window
+  is not backfilled after exclusions.
+- **Candidate, not included.** `included_in_conversation` means "inside the
+  candidate set the next prompt is built from". The compiler can still trim
+  that prompt to its character budget, so the UI calls this a *candidate* and
+  never claims the model received the fact. `candidate_eligible` is weaker
+  still: active and not excluded, but possibly outside the candidate window.
+- `kind` is `budget` only when the classifier returns exactly `budget`; an
+  ordinary fact is `memory`.
+- The panel reloads when the conversation changes, when a finalised turn
+  changes the memory revision, and when the Memories tab is (re)opened while
+  the list is stale — a voice save made while the tab was hidden shows up
+  without switching conversations.
 - Search uses the existing `POST /v1/memories/search`; results are labelled
   approximate and "matched search", never conflated with actual model input.
 - "Exclude…" calls `POST /v1/conversations/{id}/context/exclusions` to sign a
@@ -47,10 +63,19 @@ facts without included/excluded annotations and disables exclusion actions.
   token and known revision. The applied diff comes from the server response.
 - Undo calls the existing `POST …/context/undo`; it restores only that
   operation and shows the new revision.
+- A mutation whose response is lost (timeout, dropped connection, 5xx) is
+  reported as an **unknown outcome**, never as "nothing was changed".
 - Exclusions are conversation-scoped and reversible. They omit the fact from
   the next compiled context (verified by
   `tests/test_context_exclusion_policy.py`), but do not rewrite history and do
   not delete the stored fact.
+
+## Deferred (recorded on #122)
+
+- Operation results are not yet fenced to their originating conversation: a
+  confirmation that resolves after a conversation switch, and a retry that
+  reuses a fresh idempotency key after an unknown outcome. Repro and intended
+  fix are in the PR body.
 
 ## Tests
 

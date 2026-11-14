@@ -3,6 +3,7 @@ import {
   friendlyMemoryError,
   labelsFor,
   loadMemories,
+  mutationFailure,
   newIdempotencyKey,
   previewExclusion,
   provenance,
@@ -25,28 +26,56 @@ function item(overrides: Partial<MemoryListItem> = {}): MemoryListItem {
     created_at: '2026-11-13T10:00:00+00:00',
     updated_at: '2026-11-13T10:00:00+00:00',
     excluded_in_conversation: false,
+    candidate_eligible: true,
     included_in_conversation: true,
     ...overrides,
   };
 }
 
-it('keeps stored, retrieved, included and excluded as separate states', () => {
-  const included = labelsFor(item(), false);
-  expect(included).toMatchObject({ stored: true, retrieved: false, included: true, excluded: false });
-  expect(included.summary).toBe('Included in the next compiled context');
+it('calls a next-context fact a candidate, never an included fact', () => {
+  const candidate = labelsFor(item(), false);
+  expect(candidate).toMatchObject({
+    stored: true,
+    retrieved: false,
+    candidate: true,
+    eligible: true,
+    excluded: false,
+  });
+  expect(candidate.summary).toBe('Candidate for the next compiled context');
+  // The compiler can still trim the prompt to its character budget; the panel
+  // must never promise the model received the fact.
+  expect(candidate.summary).not.toContain('Included in the next');
 
   const retrievedOnly = labelsFor(item({ included_in_conversation: false }), true);
-  expect(retrievedOnly).toMatchObject({ retrieved: true, included: false, excluded: false });
-  expect(retrievedOnly.summary).toBe('Stored only');
+  expect(retrievedOnly).toMatchObject({ retrieved: true, candidate: false, eligible: true, excluded: false });
+  expect(retrievedOnly.summary).toBe('Eligible, but outside the current context candidates');
+
+  const storedOnly = labelsFor(item({ candidate_eligible: false, included_in_conversation: false }), false);
+  expect(storedOnly.summary).toBe('Stored only');
 
   const excluded = labelsFor(item({ excluded_in_conversation: true, included_in_conversation: false }), false);
-  expect(excluded).toMatchObject({ excluded: true, included: false });
+  expect(excluded).toMatchObject({ excluded: true, candidate: false });
   expect(excluded.summary).toBe('Excluded from this conversation');
 });
 
+it('treats an excluded correction lineage descendant as excluded, not a candidate', () => {
+  // The server flags the descendant through exclusion lineage; a stale or
+  // hand-built row that only carries the exclusion bit must still not claim
+  // candidacy.
+  const descendant = labelsFor(
+    item({ id: 'memory-2', supersedes_id: 'memory-1', excluded_in_conversation: true, candidate_eligible: false, included_in_conversation: false }),
+    false,
+  );
+  expect(descendant).toMatchObject({ excluded: true, candidate: false, eligible: false });
+  expect(descendant.summary).toBe('Excluded from this conversation');
+});
+
 it('describes corrected history instead of pretending an old fact is current', () => {
-  const corrected = labelsFor(item({ status: 'superseded', included_in_conversation: false }), false);
-  expect(corrected.included).toBe(false);
+  const corrected = labelsFor(
+    item({ status: 'superseded', candidate_eligible: false, included_in_conversation: false }),
+    false,
+  );
+  expect(corrected.candidate).toBe(false);
   expect(corrected.summary).toBe('Earlier version (corrected)');
 });
 
@@ -93,10 +122,27 @@ it('previews an exact-id exclusion and sends no client-side ids to confirmation'
   );
 });
 
-it('reports unconfirmed changes honestly and never names a provider', () => {
-  const message = friendlyMemoryError('API_UNAVAILABLE');
-  expect(message).toContain('Nothing was changed');
-  expect(message.toLowerCase()).not.toContain('openai');
+it('never claims nothing changed when a mutation outcome is unknown', () => {
+  const unknown = mutationFailure(new TypeError('network down'));
+  expect(unknown.kind).toBe('unknown');
+  expect(unknown.message).toContain('did not confirm whether the change was applied');
+  expect(unknown.message).not.toContain('Nothing was changed');
+  expect(unknown.message.toLowerCase()).not.toContain('openai');
+
+  const serverError = mutationFailure(new Error('HTTP_503'));
+  expect(serverError.kind).toBe('unknown');
+
+  const rejected = mutationFailure(new Error('REVISION_CONFLICT'));
+  expect(rejected.kind).toBe('rejected');
+  expect(rejected.message).toContain('Nothing was excluded');
+
+  const notFound = mutationFailure(new Error('HTTP_404'));
+  expect(notFound.kind).toBe('rejected');
+});
+
+it('keeps read failures truthful without promising an outcome', () => {
+  expect(friendlyMemoryError('API_UNAVAILABLE').length).toBeGreaterThan(0);
+  expect(friendlyMemoryError('API_UNAVAILABLE').toLowerCase()).not.toContain('openai');
 });
 
 it('creates bounded idempotency keys', () => {

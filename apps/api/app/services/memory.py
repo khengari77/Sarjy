@@ -20,11 +20,11 @@ from sqlalchemy.pool import StaticPool
 from app.domain.context_operations import classify as _classify
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 from app.domain.memory_capture import is_referential, resolve_subject
-from app.infrastructure.database import ContextExclusion, Memory, MemoryWriteRequest, Turn, now
+from app.infrastructure.database import Memory, MemoryWriteRequest, Turn, now
 from app.infrastructure.upsert import insert_ignore
 from app.services.authorization import owned_conversation, owned_memory
 from app.services.budget import guarded_openai_request, reserve_in_transaction
-from app.services.context_assembly import MEMORY_CANDIDATE_LIMIT
+from app.services.context_assembly import orm_memory_candidates
 from app.services.memory_eligibility import blocked_memory_ids
 
 EMBEDDING_TIMEOUT_SECONDS = 20
@@ -139,9 +139,13 @@ def memory_result(row: Memory, distance=None) -> MemoryResult:
 class MemoryListItem:
     """One stored fact with the provenance the explorer must show.
 
-    ``included_in_conversation`` mirrors the next compiled context's bounded
-    candidate view for a conversation: active, not excluded, and inside the
-    newest candidate window. It is not a claim about past model input.
+    ``excluded_in_conversation`` follows the compiler's exclusion *lineage*,
+    so a correction that supersedes an excluded fact is excluded too.
+    ``candidate_eligible`` means active and not excluded.
+    ``included_in_conversation`` mirrors the compiler's bounded candidate
+    window (``orm_memory_candidates``); it is candidacy for the next compiled
+    context, not a claim about past model input or a promise that character
+    budgeting will keep it.
     """
 
     id: str
@@ -155,6 +159,7 @@ class MemoryListItem:
     created_at: str
     updated_at: str
     excluded_in_conversation: bool | None = None
+    candidate_eligible: bool | None = None
     included_in_conversation: bool | None = None
 
 
@@ -533,8 +538,10 @@ class MemoryService:
 
         Pagination is ordered by ``updated_at`` then id so callers can page
         deterministically while corrections move a fact to the front. When a
-        conversation is supplied, active exclusions and the next compiled
-        context's bounded candidate view are projected onto the page.
+        conversation is supplied, the projection is taken from the *same*
+        reader the compiler uses (:func:`orm_memory_candidates`), so exclusion
+        lineage, the bounded candidate window and correction descendants can
+        never drift from what a turn actually compiles.
         """
         if not isinstance(limit, int) or not 1 <= limit <= 100 or not isinstance(offset, int) or offset < 0:
             raise HTTPException(422, detail={"code": "INVALID_MEMORY_QUERY"})
@@ -557,34 +564,19 @@ class MemoryService:
             has_more = len(rows) > limit
             rows = rows[:limit]
             excluded_ids: set[str] = set()
-            included_ids: set[str] = set()
-            if conversation_id is not None and rows:
-                excluded_ids = set(
-                    await db.scalars(
-                        select(ContextExclusion.memory_id).where(
-                            ContextExclusion.owner_id == owner_id,
-                            ContextExclusion.conversation_id == conversation_id,
-                            ContextExclusion.active.is_(True),
-                        )
-                    )
-                )
-                included_ids = set(
-                    await db.scalars(
-                        select(Memory.id)
-                        .where(
-                            Memory.owner_id == owner_id,
-                            Memory.status == "active",
-                            Memory.id.not_in(excluded_ids),
-                        )
-                        .order_by(Memory.updated_at.desc(), Memory.id.desc())
-                        .limit(MEMORY_CANDIDATE_LIMIT)
-                    )
-                )
+            candidate_ids: set[str] = set()
+            if conversation_id is not None:
+                # One authoritative read: the compiler's own candidate view.
+                # ``denied`` is exclusion lineage (the excluded fact *and* any
+                # correction that supersedes it), not just direct exclusion rows.
+                compiled = await orm_memory_candidates(db, owner_id=owner_id, conversation_id=conversation_id)
+                excluded_ids = {candidate.id for candidate in compiled.denied}
+                candidate_ids = {candidate.id for candidate in compiled.included}
             items = tuple(
                 MemoryListItem(
                     id=row.id,
                     content=row.content,
-                    kind="budget" if _classify(row.content) else "memory",
+                    kind="budget" if _classify(row.content) == "budget" else "memory",
                     version=row.version,
                     status=row.status,
                     source_conversation_id=row.source_conversation_id,
@@ -593,11 +585,13 @@ class MemoryService:
                     created_at=row.created_at,
                     updated_at=row.updated_at,
                     excluded_in_conversation=(row.id in excluded_ids) if conversation_id is not None else None,
-                    included_in_conversation=(
-                        row.id in included_ids if conversation_id is not None and row.status == "active" else False
-                    )
-                    if conversation_id is not None
-                    else None,
+                    # A fact can be eligible (active, not excluded) yet still
+                    # fall outside the compiler's bounded candidate window, so
+                    # eligibility and next-context candidacy stay separate.
+                    candidate_eligible=(
+                        row.status == "active" and row.id not in excluded_ids if conversation_id is not None else None
+                    ),
+                    included_in_conversation=(row.id in candidate_ids) if conversation_id is not None else None,
                 )
                 for row in rows
             )

@@ -524,3 +524,102 @@ def test_explorer_exact_id_exclusion_is_previewed_applied_compiled_and_undone(tm
         assert restored.json()["restored_ids"] == [memory_id]
         undone_context = start_turn(client, headers, request_id="undone", text="What do I remember?")
         assert memory_id in undone_context["included_record_ids"]
+
+
+def test_explorer_projection_follows_exclusion_lineage_through_corrections(tmp_path):
+    """A correction of an excluded fact stays excluded in the list and the prompt.
+
+    The compiler blocks the whole correction lineage. The explorer must report
+    the same thing; labelling the descendant as an included candidate would
+    promise the model a fact the compiler deliberately omits.
+    """
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        original = client.post(
+            f"/v1/conversations/{chat}/memories",
+            json={"content": "Hotel in Rome, 3 nights", "idempotency_key": "lineage-seed"},
+        )
+        assert original.status_code == 201, original.text
+        memory_id = original.json()["id"]
+
+        proposal = client.post(f"/v1/conversations/{chat}/context/exclusions", json={"memory_ids": [memory_id]})
+        assert proposal.status_code == 200, proposal.text
+        applied = confirm(client, chat, proposal.json(), "lineage-exclude")
+        assert applied.status_code == 200, applied.text
+
+        corrected = client.post(
+            f"/v1/memories/{memory_id}/correct",
+            json={"content": "Hotel in Paris, 2 nights", "expected_version": 1, "idempotency_key": "lineage-fix"},
+        )
+        assert corrected.status_code == 200, corrected.text
+        descendant_id = corrected.json()["id"]
+        assert descendant_id != memory_id
+
+        listed = client.get("/v1/memories", params={"conversation_id": chat, "limit": 100}).json()
+        by_id = {item["id"]: item for item in listed["items"]}
+        descendant = by_id[descendant_id]
+        assert descendant["excluded_in_conversation"] is True
+        assert descendant["included_in_conversation"] is False
+        assert descendant["candidate_eligible"] is False
+        assert descendant["kind"] == "memory"
+
+        headers = add_turn_session(file, chat)
+        context = start_turn(client, headers, request_id="lineage", text="Where am I staying?")
+        assert descendant_id not in context["included_record_ids"]
+        assert descendant_id in context["excluded_record_ids"]
+
+
+def test_explorer_projection_matches_the_compiled_candidate_bound(tmp_path, monkeypatch):
+    """No backfill past the compiler's bounded candidate window.
+
+    The compiler takes the newest N active facts and only then drops excluded
+    ids; it never refills the window. The list must use that same view, so a
+    fact outside the window is eligible but not a next-context candidate.
+    """
+    monkeypatch.setattr("app.services.context_assembly.MEMORY_CANDIDATE_LIMIT", 2)
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        created = []
+        for index, content in enumerate(("Fact one", "Fact two", "Fact three")):
+            response = client.post(
+                f"/v1/conversations/{chat}/memories",
+                json={"content": content, "idempotency_key": f"bound-{index}"},
+            )
+            assert response.status_code == 201, response.text
+            created.append(response.json()["id"])
+
+        listed = client.get("/v1/memories", params={"conversation_id": chat, "limit": 100}).json()
+        by_id = {item["id"]: item for item in listed["items"]}
+        candidates = [memory_id for memory_id in created if by_id[memory_id]["included_in_conversation"]]
+        outside = [memory_id for memory_id in created if not by_id[memory_id]["included_in_conversation"]]
+        assert len(candidates) == 2
+        assert len(outside) == 1
+        assert by_id[outside[0]]["candidate_eligible"] is True
+        assert by_id[outside[0]]["excluded_in_conversation"] is False
+
+        headers = add_turn_session(file, chat)
+        context = start_turn(client, headers, request_id="bound", text="What do I remember?")
+        assert set(candidates) <= set(context["included_record_ids"])
+        assert outside[0] not in context["included_record_ids"]
+
+
+def test_ordinary_facts_are_not_classified_as_budget(tmp_path):
+    """A currency-ish word must not turn every stored fact into money policy."""
+    _file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        for index, content in enumerate(("I prefer tea over coffee", "Budget 500 USD for the trip")):
+            response = client.post(
+                f"/v1/conversations/{chat}/memories",
+                json={"content": content, "idempotency_key": f"kind-{index}"},
+            )
+            assert response.status_code == 201, response.text
+        listed = client.get("/v1/memories", params={"conversation_id": chat, "limit": 100}).json()
+        kinds = {item["content"]: item["kind"] for item in listed["items"]}
+        assert kinds["I prefer tea over coffee"] == "memory"
+        assert kinds["Budget 500 USD for the trip"] == "budget"

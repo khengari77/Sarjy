@@ -820,6 +820,42 @@
         }
       }
     },
+    "/internal/agent/memory/confirm": {
+      "post": {
+        "summary": "Confirm Memory Route",
+        "operationId": "confirm_memory_route_internal_agent_memory_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/conversations/{conversation_id}/context": {
       "get": {
         "summary": "Get Context",
@@ -1088,6 +1124,90 @@
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/wordle/today": {
+      "get": {
+        "summary": "Today",
+        "operationId": "today_v1_wordle_today_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/wordle/guesses": {
+      "post": {
+        "summary": "Guess",
+        "operationId": "guess_v1_wordle_guesses_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuessInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/wordle/stats": {
+      "get": {
+        "summary": "Stats",
+        "operationId": "stats_v1_wordle_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/wordle/refresh": {
+      "post": {
+        "summary": "Refresh",
+        "operationId": "refresh_internal_wordle_refresh_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           }
@@ -1829,6 +1949,29 @@
         ],
         "title": "ContextUndoResult"
       },
+      "GuessInput": {
+        "properties": {
+          "guess": {
+            "type": "string",
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Guess"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "guess",
+          "request_id"
+        ],
+        "title": "GuessInput"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1875,6 +2018,31 @@
         "title": "HandledAction"
       },
       "JsonValue": {},
+      "MemoryConfirm": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Token"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "save",
+              "discard",
+              "replace"
+            ],
+            "title": "Decision"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "decision"
+        ],
+        "title": "MemoryConfirm"
+      },
       "MemoryCorrection": {
         "properties": {
           "content": {
@@ -2018,6 +2186,17 @@
               }
             ],
             "title": "Excluded In Conversation"
+          },
+          "candidate_eligible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Eligible"
           },
           "included_in_conversation": {
             "anyOf": [

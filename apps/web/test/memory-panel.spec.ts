@@ -21,6 +21,7 @@ const FACTS = [
     created_at: '2026-11-01T10:00:00Z',
     updated_at: '2026-11-02T10:00:00Z',
     excluded_in_conversation: false,
+    candidate_eligible: true,
     included_in_conversation: true,
   },
   {
@@ -35,6 +36,7 @@ const FACTS = [
     created_at: '2026-11-01T09:00:00Z',
     updated_at: '2026-11-01T09:00:00Z',
     excluded_in_conversation: true,
+    candidate_eligible: false,
     included_in_conversation: false,
   },
 ];
@@ -46,10 +48,21 @@ interface Calls {
   previews: number;
   confirms: Array<Record<string, unknown>>;
   undos: Array<Record<string, unknown>>;
+  /** Simulate a save that lands while the panel is mounted but hidden. */
+  setFacts(next: typeof FACTS): void;
 }
 
-async function mockApi(page: Page): Promise<Calls> {
-  const calls: Calls = { memories: [], previews: 0, confirms: [], undos: [] };
+async function mockApi(page: Page, initialFacts = FACTS): Promise<Calls> {
+  const facts = [...initialFacts];
+  const calls: Calls = {
+    memories: [],
+    previews: 0,
+    confirms: [],
+    undos: [],
+    setFacts: (next) => {
+      facts.splice(0, facts.length, ...next);
+    },
+  };
 
   await page.route('**/api/v1/demo-session', (route) => route.fulfill({ json: { id: 'owner' } }));
   await page.route('**/api/v1/conversations', (route) => {
@@ -64,7 +77,7 @@ async function mockApi(page: Page): Promise<Calls> {
 
   await page.route('**/api/v1/memories?*', (route) => {
     calls.memories.push(route.request().url());
-    return route.fulfill({ json: { items: FACTS, total: FACTS.length, next_offset: null } });
+    return route.fulfill({ json: { items: facts, total: facts.length, next_offset: null } });
   });
 
   await page.route('**/api/v1/conversations/c1/context/exclusions', (route) => {
@@ -181,10 +194,13 @@ test('the memory explorer mounts in the drawer, scopes the list to the conversat
 
   // The inclusion projection is the acceptance point: one fact is in the next
   // compiled context, one is already excluded from it.
-  await expect(panel.locator('[data-included="true"]')).toContainText('Included in the next compiled context');
+  // The panel must call this candidacy, not inclusion: the compiler can still
+  // trim the prompt to its character budget.
+  await expect(panel.locator('[data-included="true"]')).toContainText('Candidate for the next compiled context');
   await expect(panel.locator('[data-excluded="true"]')).toContainText('Excluded from this conversation');
-  await expect(panel.locator('[data-included="true"]')).toContainText('Included');
+  await expect(panel.locator('[data-included="true"]')).toContainText('Candidate');
   await expect(panel.locator('[data-excluded="true"]')).toContainText('Excluded');
+  await expect(panel).not.toContainText('Included in the next compiled context');
 
   // Owner scoping is enforced by the API; the UI must at least ask for the
   // selected conversation rather than an unscoped dump.
@@ -223,7 +239,7 @@ test('excluding previews without writing, then confirms and undoes through the s
   expect(calls.previews).toBe(1);
   expect(calls.confirms).toHaveLength(0);
   // The stored row is unchanged while the preview is open.
-  await expect(includedRow).toContainText('Included in the next compiled context');
+  await expect(includedRow).toContainText('Candidate for the next compiled context');
   await expect(panel.getByTestId('exclusion-confirmed')).toHaveCount(0);
 
   await review.getByRole('button', { name: 'Confirm exclusion' }).click();
@@ -240,4 +256,28 @@ test('excluding previews without writing, then confirms and undoes through the s
   expect(calls.undos).toHaveLength(1);
   expect(calls.undos[0].operation_id).toBe('op-1');
   expect(calls.undos[0].expected_revision).toBe(4);
+});
+
+test('a fact saved while the panel was hidden appears when the tab is reopened', async ({ page }) => {
+  // P1-2: the panel stays mounted inside the hidden tab, so a list loaded
+  // before a voice save must not keep claiming "No saved facts yet".
+  const calls = await mockApi(page, []);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/');
+  await waitForShell(page);
+
+  await page.locator('#shell-left').getByRole('button', { name: 'Trip to Paris', exact: true }).click();
+  const panel = await openMemoryTab(page);
+  await expect(panel).toContainText('No saved facts yet.');
+
+  // Hide the tab, then let a save land server-side (a voice turn finalising).
+  await page.locator('#shell-right').getByRole('tab', { name: 'Voice' }).click();
+  calls.setFacts([FACTS[0]]);
+
+  // Reopening the tab refreshes the stale list without a conversation switch.
+  await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
+  await expect(panel).toContainText('Prefers tea over coffee');
+  await expect(panel).not.toContainText('No saved facts yet.');
+  const reopened = calls.memories.slice(-1)[0];
+  expect(new URL(reopened).searchParams.get('conversation_id')).toBe('c1');
 });
