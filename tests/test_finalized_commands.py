@@ -239,16 +239,6 @@ UNSUPPORTED_ROWS = [
         "I can't change or delete memories by voice yet. Nothing was changed.",
     ),
     (
-        "Restore the memories I excluded.",
-        "MEMORY_RESTORE_UNSUPPORTED",
-        "I can't restore excluded memories by voice yet. Nothing was changed.",
-    ),
-    (
-        "Bring back the memories I excluded.",
-        "MEMORY_RESTORE_UNSUPPORTED",
-        "I can't restore excluded memories by voice yet. Nothing was changed.",
-    ),
-    (
         "Give shorter answers from now on.",
         "RESPONSE_PREFERENCE_UNSUPPORTED",
         "I can't change answer length by voice yet.",

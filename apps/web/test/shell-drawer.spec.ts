@@ -113,7 +113,7 @@ test('opening a drawer moves focus inside, makes the shell inert and Escape rest
     }
 
     // Programmatic focus on an inert background control is refused too.
-    await page.locator('.theme-button').evaluate((el) => (el as HTMLElement).focus());
+    await page.getByRole('button', { name: 'Theme: Light', exact: true }).evaluate((el) => (el as HTMLElement).focus());
     expect(await insideDrawer(page, 'shell-right')).toBe(true);
 
     await page.keyboard.press('Escape');
@@ -125,8 +125,8 @@ test('opening a drawer moves focus inside, makes the shell inert and Escape rest
 
     // Complement assertion: the background is interactive again, not merely
     // "not hidden". A control that was inert a moment ago now takes focus.
-    await page.locator('.theme-button').evaluate((el) => (el as HTMLElement).focus());
-    expect(await page.evaluate(() => document.activeElement?.className)).toContain('theme-button');
+    await page.getByRole('button', { name: 'Theme: Light', exact: true }).evaluate((el) => (el as HTMLElement).focus());
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Theme: Light');
     await page.locator('#voice-stage').getByRole('button').first().focus();
     expect(await page.evaluate(() => document.activeElement?.closest('#voice-stage') !== null)).toBe(true);
     await right.focus();
@@ -159,10 +159,17 @@ test('every drawer trigger exposes aria-controls that resolves to its own live r
     await page.goto('/');
     await waitForShell(page);
 
-    for (const [accessibleName, id] of [
-      [LEFT_TRIGGER, 'shell-left'],
-      [RIGHT_TRIGGER, 'shell-right'],
-    ] as const) {
+    // At the dock breakpoint the left rail is permanently docked, so the
+    // header intentionally has no left trigger; only the right one remains.
+    const triggers =
+      viewport.width < 1200
+        ? ([
+            [LEFT_TRIGGER, 'shell-left'],
+            [RIGHT_TRIGGER, 'shell-right'],
+          ] as const)
+        : ([[RIGHT_TRIGGER, 'shell-right']] as const);
+
+    for (const [accessibleName, id] of triggers) {
       const trigger = page.getByRole('button', { name: accessibleName });
       await expect(trigger).toHaveAttribute('aria-controls', id);
 
@@ -184,6 +191,14 @@ test('every drawer trigger exposes aria-controls that resolves to its own live r
       // aria-expanded tracks the live data-open state in both layouts.
       const open = await page.locator(`#${id}`).getAttribute('data-open');
       await expect(trigger).toHaveAttribute('aria-expanded', open === 'true' ? 'true' : 'false');
+    }
+
+    if (viewport.width >= 1200) {
+      // The docked rail is present while the obsolete hamburger is gone from
+      // both the layout and the accessibility tree.
+      await expect(page.locator('.menu-button')).toBeHidden();
+      await expect(page.locator('#shell-left')).toBeVisible();
+      await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
     }
 
     // No dangling aria-controls anywhere in the shell.
@@ -241,12 +256,15 @@ test('resizing across the dock breakpoint keeps focus inside the drawer or resto
   await expect(drawer).not.toBeVisible();
   expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
 
-  // Same contract for the left dock, which starts open on desktop.
+  // Same contract for the left rail: it is permanently docked on desktop, and
+  // shrinking across the breakpoint restores focus to the menu button that
+  // takes over drawer duty.
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await waitForShell(page);
-  const left = leftTrigger(page);
-  await expect(left).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.menu-button')).toBeHidden();
+  await expect(page.locator('#shell-left')).toBeVisible();
+  await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
   // The boot reload disables the new-chat button for a moment; retry until
   // focus actually lands inside the dock before shrinking the viewport.
   await expect
@@ -260,6 +278,8 @@ test('resizing across the dock breakpoint keeps focus inside the drawer or resto
     .toBe(true);
 
   await page.setViewportSize({ width: 800, height: 900 });
+  const left = leftTrigger(page);
+  await expect(left).toBeVisible();
   await expect(left).toHaveAttribute('aria-expanded', 'false');
   await expect(left).toBeFocused();
   await expect(page.locator('#shell-left')).not.toBeVisible();
@@ -275,8 +295,16 @@ test('Escape in the stage does not close a docked panel behind a stage dialog', 
   await page.goto('/');
   await waitForShell(page);
 
-  const left = leftTrigger(page);
-  await expect(left).toHaveAttribute('aria-expanded', 'true');
+  // The left rail has no trigger at this width: it is always docked.
+  await expect(page.locator('.menu-button')).toBeHidden();
+  await expect(page.locator('#shell-left')).toBeVisible();
+
+  const right = rightTrigger(page);
+  await right.click();
+  await expect(right).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#shell-right')).toBeVisible();
+  await expect(page.locator('#shell-left')).toBeVisible();
+
   const composer = page.locator('#voice-stage textarea').first();
   // The boot reload leaves controls disabled for a moment; retry until the
   // composer itself holds focus so the Escape assertion is meaningful.
@@ -288,13 +316,13 @@ test('Escape in the stage does not close a docked panel behind a stage dialog', 
     .toBe(true);
 
   await page.keyboard.press('Escape');
-  await expect(left).toHaveAttribute('aria-expanded', 'true');
-  await expect(page.locator('#shell-left')).toBeVisible();
+  await expect(right).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#shell-right')).toBeVisible();
   await expect(composer).toBeFocused();
 
-  // ... but Escape from the trigger itself still closes the dock.
-  await left.focus();
+  // ... but Escape from the visible trigger itself still closes that dock.
+  await right.focus();
   await page.keyboard.press('Escape');
-  await expect(left).toHaveAttribute('aria-expanded', 'false');
-  await expect(left).toBeFocused();
+  await expect(right).toHaveAttribute('aria-expanded', 'false');
+  await expect(right).toBeFocused();
 });

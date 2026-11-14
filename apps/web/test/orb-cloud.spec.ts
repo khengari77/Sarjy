@@ -199,7 +199,7 @@ test('flipping the theme reaches the orb and the renderer palette', async ({ pag
   await expect(orb).toHaveAttribute('data-theme', 'dark');
   await expect(canvas).toHaveAttribute('data-renderer-theme', 'dark');
 
-  await page.getByRole('button', { name: /^Theme:/ }).click();
+  await page.getByRole('button', { name: 'Theme: Light', exact: true }).click();
   await expect(html).toHaveAttribute('data-theme', 'light');
   // Both the orb's own attribute and the renderer's applied palette follow the
   // shell-resolved theme; neither is re-derived inside the orb.

@@ -82,7 +82,10 @@ test('the token lands in the app and leaves no token in the URL', async ({ brows
 test('a tampered cookie is treated as no session', async ({ browser }) => {
   const response = await exchange();
   const value = (response.headers.getSetCookie()[0] ?? '').split(';')[0].split('=')[1];
-  const tampered = `${value.slice(0, -1)}${value.endsWith('A') ? 'B' : 'A'}`;
+  // Flip a character in the middle: the final base64 character can carry unused
+  // bits, so changing only that one occasionally decodes to the same signature.
+  const mid = Math.floor(value.length / 2);
+  const tampered = `${value.slice(0, mid)}${value[mid] === 'A' ? 'B' : 'A'}${value.slice(mid + 1)}`;
   const context = await browser.newContext();
   await context.addCookies([{ name: 'sarjy_review_session', value: tampered, url: BASE }]);
   const page = await context.newPage();
