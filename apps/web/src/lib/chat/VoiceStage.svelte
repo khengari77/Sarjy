@@ -76,6 +76,9 @@
     };
   }
 
+  // The only Escape handler for the dialog: the shell yields Escape while
+  // `stageDialogOpen`, and a window listener fires wherever focus is. Keeping
+  // it off the dialog element avoids one keypress cancelling twice.
   function onDialogEscape(event: KeyboardEvent) {
     if (event.key === 'Escape') oncancelintent();
   }
@@ -107,16 +110,7 @@
 <section class="voice-stage" dir={arabic ? 'rtl' : 'ltr'}>
   {#if pendingIntent}
     <div class="confirm-scrim" role="presentation" use:portal>
-      <div
-        class="confirm-dialog"
-        role="dialog"
-        aria-modal="true"
-        tabindex="-1"
-        aria-labelledby="switch-title"
-        onkeydown={(event) => {
-          if (event.key === 'Escape') oncancelintent();
-        }}
-      >
+      <div class="confirm-dialog" role="dialog" aria-modal="true" tabindex="-1" aria-labelledby="switch-title">
         <h2 id="switch-title">{arabic ? 'إنهاء المكالمة الحالية؟' : 'End the current voice session?'}</h2>
         <p>
           {pendingIntent.type === 'create'

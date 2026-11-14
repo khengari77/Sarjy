@@ -159,6 +159,8 @@ test.describe('mobile overlay drawer during a live call', () => {
     await expect(page.locator('#shell-left')).toBeHidden();
     expect(await dialog.evaluate((el) => el.closest('[inert]') === null)).toBe(true);
     expect(await isInert(page, '.stage-dialog')).toBe(false);
+    // No stray focus stop: the modal region holds only the dialog.
+    await expect(page.locator('.stage-dialog [role="dialog"]')).toHaveCount(1);
     expect(await isInert(page, '.stage-content')).toBe(true);
     expect(await isInert(page, '.topbar')).toBe(true);
     expect(await isInert(page, '.stage-controls')).toBe(true);
@@ -186,18 +188,28 @@ test.describe('mobile overlay drawer during a live call', () => {
     expect(await isInert(page, '.topbar')).toBe(false);
     expect(await isInert(page, '.stage-controls')).toBe(false);
     await expect(trigger).toBeFocused();
+    // A single Escape cancelled once: the session is still live and nothing
+    // was released twice (a double cancel would end the call).
+    await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
+    expect(api.ends).toHaveLength(0);
+    // The modal region is emptied, so it is not a stray focus stop.
+    await expect(page.locator('.stage-dialog [role="dialog"]')).toHaveCount(0);
+    // Previously-inert controls are operable again, not merely non-inert.
     const mute = page.getByRole('button', { name: 'Mute', exact: true });
     await mute.focus();
     await expect(mute).toBeFocused();
-    await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
+    await mute.click();
+    await expect(page.getByRole('button', { name: 'Enable microphone', exact: true })).toBeVisible();
 
-    // Same flow through the confirm path.
+    // Same flow through the confirm path; focus still returns to the trigger.
     await openLeftDrawer(page);
     await page.locator('#shell-left').getByRole('button', { name: 'Work ideas', exact: true }).click();
     await dialog.getByRole('button', { name: 'End & switch' }).click();
     await expect.poll(() => api.ends.some((url) => url.endsWith('/sess-1/end'))).toBe(true);
     await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
     await expect(page.locator('#shell-left')).toBeHidden();
+    await expect(trigger).toBeFocused();
+    await expect(page.locator('.stage-dialog [role="dialog"]')).toHaveCount(0);
   });
 
   test('creating a conversation from the drawer keeps the confirmation reachable', async ({ page }) => {
