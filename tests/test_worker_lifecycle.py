@@ -22,7 +22,7 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
             return self
 
         def register_rpc_method(self, name):
-            events.append("rpc")
+            events.append(f"rpc:{name}")
             return lambda function: function
 
     room = Room()
@@ -44,7 +44,8 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
             pass
 
         async def start(self, agent, **kwargs):
-            assert events.index("connected") < events.index("rpc")
+            rpc_events = [index for index, event in enumerate(events) if event.startswith("rpc:")]
+            assert rpc_events and events.index("connected") < min(rpc_events)
             assert kwargs["room_options"].close_on_disconnect is False
             events.append("session-start")
 
@@ -81,4 +82,11 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
         },
     )
     asyncio.run(worker.entrypoint(ctx))
-    assert events == ["connected", "rpc", "session-start", "session-close", "shutdown"]
+    assert events == [
+        "connected",
+        "rpc:sarjy.interrupt",
+        "rpc:sarjy.say",
+        "session-start",
+        "session-close",
+        "shutdown",
+    ]

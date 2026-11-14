@@ -11,6 +11,23 @@ export interface WordleVoiceDeps {
   speak(text: string): void;
   /** Stable per-install scope for guess request ids. */
   scope(): string;
+  /** Tells the worker whether a spoiler confirmation is pending (yes/no). */
+  onRevealPending?(pending: boolean): void;
+}
+
+/** Deliver one command reply to the visible announcer and the non-LLM TTS RPC. */
+export async function speakWordleReply(
+  text: string,
+  deps: { announce(text: string): void; say?(text: string): Promise<unknown> },
+): Promise<void> {
+  deps.announce(text);
+  if (!deps.say) return;
+  try {
+    await deps.say(text);
+  } catch {
+    // No live session (or the worker cannot speak): the reply stays visible
+    // and in the polite live region instead of failing the command.
+  }
 }
 
 export interface VoiceResult {
@@ -134,8 +151,13 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
     }
   }
 
+  function setPendingReveal(pending: boolean) {
+    pendingReveal = pending;
+    deps.onRevealPending?.(pending);
+  }
+
   function askReveal(): string {
-    pendingReveal = true;
+    setPendingReveal(true);
     return say('Revealing the answer ends the surprise. Say yes to reveal it, or no to keep playing.');
   }
 
@@ -162,11 +184,11 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
         return { handled: true, command: command.kind, spoken: askReveal() };
       case 'confirm':
         if (!pendingReveal) return { handled: false, ignored: 'nothing-pending' };
-        pendingReveal = false;
+        setPendingReveal(false);
         return { handled: true, command: command.kind, spoken: await confirmRevealCommand(deps, say) };
       case 'cancel':
         if (!pendingReveal) return { handled: false, ignored: 'nothing-pending' };
-        pendingReveal = false;
+        setPendingReveal(false);
         return { handled: true, command: command.kind, spoken: say("Okay, I won't reveal it.") };
       case 'ambiguous':
         // Ambiguity mutates nothing and never reaches the game service.
@@ -181,12 +203,12 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
 
     const command = parseWordleCommand(input.text);
     if (!command) {
-      pendingReveal = false;
+      if (pendingReveal) setPendingReveal(false);
       return { handled: false, ignored: 'unrecognized' };
     }
     // Any new instruction supersedes a pending spoiler confirmation.
     if (pendingReveal && command.kind !== 'confirm' && command.kind !== 'cancel' && command.kind !== 'reveal') {
-      pendingReveal = false;
+      setPendingReveal(false);
     }
     return execute(command);
   }

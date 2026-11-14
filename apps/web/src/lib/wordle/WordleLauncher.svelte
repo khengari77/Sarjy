@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
   import { createWordleGame, type WordleGame } from './wordleGame.svelte';
-  import { createWordleVoice, type WordleVoice } from './wordleVoice';
+  import { createWordleVoice, speakWordleReply, type WordleVoice } from './wordleVoice';
   import WordleEntry from './WordleEntry.svelte';
   import WordleStage from './WordleStage.svelte';
 
@@ -31,13 +31,24 @@
   let scope = readScope();
 
   function speak(text: string) {
-    // Voice replies render in the stage and in the single polite live region.
-    // They never enter the conversation/LLM path and never call sendText.
-    game.state.voiceReply = text;
-    game.state.announcement = text;
+    // The worker speaks the exact command result through sarjy.say; the same
+    // text stays visible and in the single polite live region. Neither path
+    // touches the conversational LLM or conversation history.
+    void speakWordleReply(text, {
+      announce: (reply) => {
+        game.state.voiceReply = reply;
+        game.state.announcement = reply;
+      },
+      say: runtime ? (reply) => runtime.say(reply) : undefined,
+    });
   }
 
-  const voice: WordleVoice = createWordleVoice({ game, speak, scope: () => scope });
+  function revealPending(pending: boolean) {
+    if (!runtime) return;
+    void runtime.sendControl({ type: 'wordle.reveal_pending', value: pending }).catch(() => {});
+  }
+
+  const voice: WordleVoice = createWordleVoice({ game, speak, scope: () => scope, onRevealPending: revealPending });
 
   function handleVoiceEvent(event: VoiceEvent) {
     // The adapter itself re-checks final/speaker; the runtime also emits

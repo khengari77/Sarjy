@@ -203,3 +203,57 @@ test('writes no guesses to conversation or memory endpoints', async ({ page }) =
   expect(writes.filter((path) => path.includes('/conversations') || path.includes('/memor'))).toEqual([]);
   expect(writes.filter((path) => path.includes('/wordle/'))).toEqual(['/api/v1/wordle/guesses']);
 });
+
+test('sends the exact command reply through the voice runtime say RPC', async ({ page }) => {
+  await page.addInitScript(() => {
+    const hosted = window as unknown as {
+      __sarjySay: string[];
+      __sarjyControl: unknown[];
+      __SARJY_VOICE_RUNTIME_FACTORY__: () => unknown;
+    };
+    hosted.__sarjySay = [];
+    hosted.__sarjyControl = [];
+    hosted.__SARJY_VOICE_RUNTIME_FACTORY__ = () => ({
+      epoch: 1,
+      connect: async () => {},
+      startMicrophone: async () => {},
+      stopMicrophone: async () => {},
+      interrupt: async () => {},
+      sendText: async () => {},
+      say: async (text: string) => {
+        hosted.__sarjySay.push(text);
+      },
+      sendControl: async (event: unknown) => {
+        hosted.__sarjyControl.push(event);
+      },
+      disconnect: async () => {},
+      cancelConnect: async () => {},
+      subscribe: () => () => {},
+      resumeAudio: async () => {},
+      microphoneStream: () => null,
+      remoteAudioLevel: () => 0,
+    });
+  });
+  await mockWordle(page, { status: 'in_progress', answer: 'PLANT', leakAnswer: true });
+  const voice = await wordleVoice(page);
+
+  await voice.finalize({ text: 'play wordle', segmentId: 's1', epoch: 1 });
+  await voice.finalize({ text: 'guess crane', segmentId: 's2', epoch: 1 });
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __sarjySay: string[] }).__sarjySay))
+    .toHaveLength(2);
+  const said = await page.evaluate(() => (window as unknown as { __sarjySay: string[] }).__sarjySay);
+  expect(said[0]).toContain("Today's Wordle is ready");
+  expect(said[1]).toContain('CRANE');
+  expect(said[1]).toContain('5 guesses left.');
+  expect(said.join(' ')).not.toContain('PLANT');
+
+  await voice.finalize({ text: 'reveal the answer', segmentId: 's3', epoch: 1 });
+  await voice.finalize({ text: 'no', segmentId: 's4', epoch: 1 });
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __sarjyControl: unknown[] }).__sarjyControl))
+    .toEqual([
+      { type: 'wordle.reveal_pending', value: true },
+      { type: 'wordle.reveal_pending', value: false },
+    ]);
+});

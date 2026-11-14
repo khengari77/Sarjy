@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import fixturesFile from '../../../../../packages/contracts/wordle_command_fixtures.json';
 import type { WordleGuess } from './wordleApi';
 import { alreadyGuessed, guessRequestId, normalizeUtterance, parseWordleCommand } from './wordleCommands';
 
@@ -99,5 +100,13 @@ describe('alreadyGuessed', () => {
     const guesses: WordleGuess[] = [{ word: 'CRANE', marks: ['absent', 'absent', 'absent', 'absent', 'absent'] }];
     expect(alreadyGuessed([...guesses], 'crane')).toBe(true);
     expect(alreadyGuessed([...guesses], 'SLATE')).toBe(false);
+  });
+});
+
+describe('shared allowlist parity fixtures', () => {
+  const fixtures = fixturesFile.cases as { text: string; client: string | null; worker: boolean }[];
+
+  it.each(fixtures)('parses the shared fixture: $text', ({ text, client }) => {
+    expect(parseWordleCommand(text)?.kind ?? null).toBe(client);
   });
 });

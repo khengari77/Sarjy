@@ -92,14 +92,38 @@ Design notes:
   `releasedAnswer()` helper returns it only for `won`/`lost`, and the stage and
   voice reply read from that helper; an answer supplied early by a buggy server
   is dropped by `normalizeToday`.
-- Replies are delivered through the injected `speak` sink, which currently
-  mirrors them into the stage's single polite live region. Audible delivery via
-  the agent voice requires a non-LLM `say` channel in
-  `apps/web/src/lib/audio/voice-runtime.ts` (out of scope here); until then the
-  existing agent TTS remains the audible path and is not fed the answer.
+- Replies are delivered twice from one string: the stage's single polite live
+  region for sighted/screen-reader users, and `runtime.say(text)` which invokes
+  the worker's `sarjy.say` RPC. The worker validates the caller is a human room
+  participant, caps the payload at 300 characters, and calls
+  `session.say(text, allow_interruptions=True, add_to_chat_ctx=False)`. The
+  audible reply is therefore the exact command result, produced by TTS only,
+  and never becomes a conversation-history turn.
+- The worker suppresses the conversational reply for recognized commands. It
+  loads the **same** allowlist from `packages/contracts/wordle_commands.json`
+  (the web parser imports that file), and both `wordleCommands.test.ts` and
+  `test_wordle_voice_worker.py` execute
+  `packages/contracts/wordle_command_fixtures.json`. A recognized finalized
+  transcript is neither compiled (`/internal/agent/turn/start`) nor streamed to
+  the LLM. Contextual confirmation ("yes"/"no") is suppressed only while the
+  client has published `{type: "wordle.reveal_pending"}` on the existing
+  `sarjy.control` data channel; ordinary "yes" stays conversational.
 
 The command path is covered by `apps/web/src/lib/wordle/wordleCommands.test.ts`,
-`wordleVoice.test.ts` and the mocked-contract Playwright spec
+`wordleVoice.test.ts`, `apps/web/src/lib/audio/voice-runtime.test.ts`,
+`tests/test_wordle_voice_worker.py` and the mocked-contract Playwright spec
 `apps/web/test/wordle-voice.spec.ts`. A DEV-only `window.__sarjyWordleVoice`
 seam injects finalized/partial transcript events in browser tests without a
-LiveKit room; it is compiled out of production builds.
+LiveKit room; it is compiled out of production builds. Those tests also inject
+a fake runtime through `window.__SARJY_VOICE_RUNTIME_FACTORY__` to observe the
+exact `say`/`sendControl` payloads.
+
+### Merge overlap
+
+This change adds `say`/`sendControl` to `apps/web/src/lib/audio/voice-runtime.ts`
+and moves the remote-audio analyser bookkeeping into
+`apps/web/src/lib/audio/remoteAudio.ts`. #115/#116 also touch the runtime's
+teardown and transcription paths: keep their teardown ordering and re-apply
+`analysers.detach`/`analysers.close` to the new helper when resolving conflicts.
+`voice/connection.ts`, `voice/sessionAttempt.ts`, `orb/*` and the shell are not
+changed by this slice.

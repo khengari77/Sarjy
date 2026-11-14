@@ -11,6 +11,7 @@ export interface FakeWordle {
   calls: { open: number; close: number; load: number; ensureLoaded: number; guesses: { word: string; id: string }[] };
   state: WordleGameState;
   guessResult: (word: string, requestId: string) => GuessOutcome;
+  pendingFlags: boolean[];
 }
 
 export function fakeGame(overrides: Partial<WordleGameState> = {}, guess?: FakeWordle['guessResult']): FakeWordle {
@@ -62,6 +63,7 @@ export function fakeGame(overrides: Partial<WordleGameState> = {}, guess?: FakeW
     calls,
     state,
     guessResult: guess ?? ((word) => ({ status: 'ok', guess: { word, marks: ZERO_MARKS } })),
+    pendingFlags: [],
   };
   return fake;
 }
@@ -71,7 +73,14 @@ export function setup(
   guess?: FakeWordle['guessResult'],
 ): { fake: FakeWordle; voice: WordleVoice } {
   const fake = fakeGame(overrides, guess);
-  const voice = createWordleVoice({ game: fake.port, speak: (text) => fake.spoken.push(text), scope: () => 'scope1' });
+  const pendingFlags: boolean[] = [];
+  const voice = createWordleVoice({
+    game: fake.port,
+    speak: (text) => fake.spoken.push(text),
+    scope: () => 'scope1',
+    onRevealPending: (pending) => pendingFlags.push(pending),
+  });
+  fake.pendingFlags = pendingFlags;
   return { fake, voice };
 }
 
