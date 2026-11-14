@@ -2,12 +2,25 @@
 
 import { saveCaptionSelection, saveSpeakingSpeed } from '../chat/session';
 import type { CatalogState } from '../voice/catalog';
+import type { ThemePreference } from '../ui/theme';
 import { createCommandStore, initialCommandState, type CommandResult } from './commandStore';
 
-export function createCommandSession(catalog?: CatalogState, panels?: { history: boolean; memory_explorer: boolean }) {
+export interface CommandSessionOptions {
+  /**
+   * Applies a browser-local theme through the shell's theme session. The
+   * server never stores a theme, so this is the only effect for `SetTheme`.
+   */
+  setTheme?: (preference: ThemePreference) => void;
+}
+
+export function createCommandSession(
+  catalog?: CatalogState,
+  panels?: { history: boolean; memory_explorer: boolean },
+  options: CommandSessionOptions = {},
+) {
   const state = $state(initialCommandState());
   if (panels) state.panels = panels;
-  const store = createCommandStore(state);
+  const store = createCommandStore(state, { applyTheme: options.setTheme });
 
   function apply(result: CommandResult): boolean {
     if (!store.apply(result)) return false;
@@ -34,6 +47,7 @@ export function createCommandSession(catalog?: CatalogState, panels?: { history:
         action: 'SetCaptionsVisible',
         settings: result.settings,
         navigation: null,
+        theme: null,
         changed: result.changed,
         spoken: result.settings.captions_visible
           ? result.changed
@@ -65,6 +79,7 @@ export function createCommandSession(catalog?: CatalogState, panels?: { history:
         action: 'SetSpeakingSpeed',
         settings: result.settings,
         navigation: null,
+        theme: null,
         changed: result.changed,
         spoken: result.changed
           ? `Speaking speed set to ${result.settings.speaking_speed.toFixed(1)} for the next turn.`

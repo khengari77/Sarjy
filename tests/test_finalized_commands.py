@@ -192,20 +192,25 @@ def test_settings_rows_converge_for_voice_and_gui(tmp_path, text, action):
     assert spoken["settings"] == manual["settings"]
 
 
-@pytest.mark.parametrize("text", ["Speak slower.", "Speak faster."])
-def test_speed_is_unsupported_until_it_reaches_the_voice(tmp_path, text):
+@pytest.mark.parametrize(
+    ("text", "speed", "spoken"),
+    [("Speak slower.", 0.9, "Slower from my next reply."), ("Speak faster.", 1.1, "Faster from my next reply.")],
+)
+def test_speed_is_committed_for_the_next_turn_at_the_settings_writer(tmp_path, text, speed, spoken):
     app, path = app_for(tmp_path)
     with TestClient(app) as client:
         conversation = chat(client)
         response = voice(client, conversation, text)
         assert response.status_code == 200
         result = response.json()["result"]
-        assert result["kind"] == "unsupported"
-        assert result["detail"] == "SPEED_APPLICATION_UNAVAILABLE"
-        assert "Nothing was changed" in result["spoken"]
-        assert result["settings"] is None
-        assert client.get("/v1/settings").json()["speaking_speed"] == 1.0
-        assert counts(path) == (0, 0, 0)
+        assert result["kind"] == "executed"
+        assert result["action"] == "AdjustSpeakingSpeed"
+        assert result["settings"]["speaking_speed"] == speed
+        assert result["settings"]["revision"] == 1
+        assert result["spoken"] == spoken
+        assert client.get("/v1/settings").json()["speaking_speed"] == speed
+        # One settings revision and one durable write receipt: nothing else.
+        assert counts(path) == (1, 0, 1)
 
 
 def test_duplicate_finalized_navigation_applies_one_effect(tmp_path):

@@ -28,8 +28,18 @@ export function createThemeSession(onResolved?: (theme: ResolvedTheme) => void) 
   });
 
   function cycle() {
-    preference = nextThemePreference(preference);
-    storeTheme(browserStorage(), preference);
+    set(nextThemePreference(preference));
+  }
+
+  /**
+   * Apply one explicit preference (the header cycle target or a voice command).
+   * Persistence and OS resolution stay here so callers never touch storage or
+   * `data-theme` directly. Out-of-range values cannot occur: the command
+   * contract only carries the three supported preferences.
+   */
+  function set(next: ThemePreference) {
+    preference = next;
+    storeTheme(browserStorage(), next);
     applyTheme(document.documentElement, preference, systemDark);
   }
 
@@ -56,6 +66,12 @@ export function createThemeSession(onResolved?: (theme: ResolvedTheme) => void) 
       return preference;
     },
     cycle,
+    set,
     start,
   };
 }
+
+export type ThemeSession = ReturnType<typeof createThemeSession>;
+
+/** The one imperative surface a voice theme command is allowed to use. */
+export type ThemeControl = Pick<ThemeSession, 'set'>;

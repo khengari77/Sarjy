@@ -368,6 +368,21 @@ class SetCaptionsVisible(Contract):
     visible: bool
 
 
+ThemeName = Literal["light", "dark", "system"]
+
+
+class SetTheme(Contract):
+    """A browser-local theme choice.
+
+    Deliberately absent from :class:`UserSettings`: a theme belongs to one
+    browser's presentation, so the server records no preference and the result
+    only carries the hint the client applies.
+    """
+
+    kind: Literal["SetTheme"] = "SetTheme"
+    theme: Literal["light", "dark", "system"]
+
+
 class SearchMemory(Contract):
     kind: Literal["SearchMemory"] = "SearchMemory"
     query: str = Field(min_length=1, max_length=200)
@@ -393,6 +408,7 @@ ActionType = (
     | ShowConversationHistory
     | OpenMemoryExplorer
     | SetCaptionsVisible
+    | SetTheme
     | SearchMemory
     | ProposeContextExclusion
     | RestoreContextOperation
@@ -483,8 +499,10 @@ __all__ = [
     "SelectApprovedVoice",
     "SetCaptionsVisible",
     "SetSpeakingSpeed",
+    "SetTheme",
     "ShowConversationHistory",
     "TIER_CAPS",
+    "ThemeName",
     "ToolSpec",
     "UserSettings",
     "apply_settings_action",

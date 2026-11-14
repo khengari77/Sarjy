@@ -64,7 +64,7 @@ def test_catalog_projection_is_pure_and_exposes_only_voice_choices(entries):
     assert result == public_catalog(payload)
     assert [(voice.id, voice.name) for voice in result.voices] == entries
     for voice in result.model_dump()["voices"]:
-        assert set(voice) == {"id", "name", "languages"}
+        assert set(voice) == {"id", "name", "languages", "gender", "accent", "age", "description"}
 
 
 def configured(tmp_path):
@@ -116,7 +116,17 @@ def test_authenticated_catalog_search_and_safe_response(tmp_path):
         client.post("/v1/demo-session")
         response = client.get("/v1/voices?search=Arabic")
         assert response.json() == {
-            "voices": [{"id": "arabic-voice", "name": "Arabic voice", "languages": []}],
+            "voices": [
+                {
+                    "id": "arabic-voice",
+                    "name": "Arabic voice",
+                    "languages": [],
+                    "gender": None,
+                    "accent": None,
+                    "age": None,
+                    "description": None,
+                }
+            ],
             "next_page_token": "next",
         }
         assert "do not expose" not in response.text
@@ -165,7 +175,15 @@ def test_fresh_browser_starts_with_the_catalog_validated_default(tmp_path, livek
         response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
         assert response.status_code == 201
         body = response.json()
-        assert body["voice"] == {"id": "arabic-voice", "name": "Arabic voice", "languages": ["ar"]}
+        assert body["voice"] == {
+            "id": "arabic-voice",
+            "name": "Arabic voice",
+            "languages": ["ar"],
+            "gender": None,
+            "accent": None,
+            "age": None,
+            "description": None,
+        }
         assert (body["voice_source"], body["voice_language"]) == ("default", "ar")
         with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
             pipeline = json.loads(

@@ -119,6 +119,7 @@ export function command(overrides: Record<string, unknown> = {}) {
     action: 'SetCaptionsVisible',
     settings: HIDDEN_SETTINGS,
     navigation: null,
+    theme: null,
     changed: true,
     spoken: 'Captions hidden.',
     detail: null,
