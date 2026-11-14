@@ -942,6 +942,51 @@ def test_discarded_proposal_stays_terminal_after_its_receipt_is_deleted(tmp_path
         assert state == "discarded"
 
 
+def test_older_token_cannot_discard_a_completed_replacement(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        first = turn(client, headers, "I prefer tea", "old-token-1").json()["memory_proposal"]
+        assert (
+            client.post(
+                "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+            ).status_code
+            == 200
+        )
+        second = turn(client, headers, "I prefer coffee", "old-token-2").json()["memory_proposal"]
+        clarify = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "save"}
+        )
+        detail = clarify.json()["detail"]
+        replaced = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": detail["token"], "decision": "replace"}
+        )
+        assert replaced.status_code == 200 and replaced.json()["status"] == "corrected"
+
+        # Replaying the older revision-1 token must not rewrite the completed
+        # replacement as discarded.
+        older = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "discard"}
+        )
+        assert older.status_code == 409
+        assert older.json()["detail"]["code"] == "MEMORY_PROPOSAL_RESOLVED"
+        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I prefer coffee"]
+
+        replay = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": detail["token"], "decision": "replace"}
+        )
+        assert replay.status_code == 200
+        assert replay.json()["status"] == "corrected"
+        with closing(sqlite3.connect(file)) as db:
+            state = db.execute(
+                "SELECT state FROM memory_write_requests WHERE request_key = ?", (detail["confirmation_id"],)
+            ).fetchone()[0]
+        assert state == "saved"
+
+
 def test_replacement_marker_must_be_final_not_an_idiom():
     assert parse_capture("I prefer tea now").replaces is True
     assert parse_capture("I prefer tea instead").replaces is True
