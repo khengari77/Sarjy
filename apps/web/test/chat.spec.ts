@@ -75,6 +75,7 @@ test('voice picker search, pagination, saved preference and call payload', async
     const body = route.request().postDataJSON();
     expect(body.action.kind).toBe('SelectApprovedVoice');
     expect(body.conversation_id).toBeUndefined();
+    expect(body.request_id).toBe(`voice:${revision}:lady-voice`);
     savedVoice = body.action.voice_id;
     revision += 1;
     await route.fulfill({

@@ -21,11 +21,20 @@ from app.domain.contracts import (
     UserSettings,
     apply_settings_action,
 )
-from app.infrastructure.database import ContextOperation, Conversation, SessionGate, SettingRevision, UserSetting, now
+from app.infrastructure.database import (
+    ContextOperation,
+    Conversation,
+    SessionGate,
+    SettingRevision,
+    SettingWriteRequest,
+    UserSetting,
+    now,
+)
 from app.infrastructure.upsert import insert_ignore
 from app.services.voices import VoiceCatalogError
 
 SETTING_ACTIONS = (AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed)
+CONVERSATION_SETTING_ACTIONS = (AdjustSpeakingSpeed, SetCaptionsVisible, SetSpeakingSpeed)
 PREPARATION_LEASE_SECONDS = 120
 PREPARED_MAX_BYTES = 64 * 1024
 
@@ -115,10 +124,8 @@ async def dispatch_action(
     handler = handlers.get(action.kind)
     prepare = getattr(handler, "prepare", None) if handler is not None else None
     if isinstance(action, SelectApprovedVoice):
-        if approved_voice_ids is not None and action.voice_id not in approved_voice_ids:
-            raise VoiceCatalogError("VOICE_NOT_APPROVED", 422)
-        await catalog.require(action.voice_id)
-
+        # Voice preference has exactly one writer: the owner-scoped settings path.
+        raise HTTPException(422, detail={"code": "USE_SETTINGS_ENDPOINT"})
     prepared = None
     preparation_id = None
     preparation_lease = None
@@ -312,12 +319,14 @@ async def _delete_preparation(factory, preparation_id, lease_id):
         )
 
 
-async def dispatch_setting(db, *, owner_id, expected_revision, action, catalog, approved_voice_ids=None):
+async def dispatch_setting(db, *, owner_id, request_id, expected_revision, action, catalog, approved_voice_ids=None):
     """Apply a settings action without requiring a conversation.
 
     Preferences (voice, speed, captions) are owner-scoped. A fresh browser has no
     conversation yet, and inventing one just to persist a preference would leak
-    into history, so this path deliberately has no conversation parameter.
+    into history, so this path deliberately has no conversation parameter. A
+    duplicate ``(owner_id, request_id)`` replays the recorded outcome instead of
+    resurfacing a stale-revision conflict for a write that already committed.
     """
 
     if not isinstance(action, SETTING_ACTIONS):
@@ -326,10 +335,30 @@ async def dispatch_setting(db, *, owner_id, expected_revision, action, catalog, 
         if approved_voice_ids is not None and action.voice_id not in approved_voice_ids:
             raise VoiceCatalogError("VOICE_NOT_APPROVED", 422)
         await catalog.require(action.voice_id)
+    key = _setting_key(owner_id, request_id)
+    fingerprint = _setting_fingerprint(expected_revision, action)
     try:
         # Serialize against conversation-scoped setting writes on the same gate.
         await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
+        existing = await db.scalar(
+            select(SettingWriteRequest).where(
+                SettingWriteRequest.owner_id == owner_id, SettingWriteRequest.request_key == key
+            )
+        )
+        if existing is not None:
+            if existing.fingerprint != fingerprint:
+                raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+            return existing.result
         result = await _apply_setting(db, owner_id, expected_revision, action)
+        db.add(
+            SettingWriteRequest(
+                id=str(uuid4()),
+                owner_id=owner_id,
+                request_key=key,
+                fingerprint=fingerprint,
+                result=result,
+            )
+        )
         await db.commit()
         return result
     except BaseException:
@@ -370,7 +399,7 @@ async def _dispatch_transaction(
             prepared = (claim.payload or {}).get("prepared")
             if prepared is None:
                 raise HTTPException(409, detail={"code": "ACTION_LEASE_LOST"})
-    if isinstance(action, SETTING_ACTIONS):
+    if isinstance(action, CONVERSATION_SETTING_ACTIONS):
         result = await _apply_setting(db, owner_id, expected_revision, action)
     elif isinstance(action, (ShowConversationHistory, OpenMemoryExplorer)):
         result = _navigation_result(action)
@@ -400,6 +429,18 @@ async def _dispatch_transaction(
 
 def _dispatch_key(owner_id, request_id) -> str:
     return hashlib.sha256(("dispatch:" + owner_id + ":" + request_id).encode()).hexdigest()
+
+
+def _setting_key(owner_id, request_id) -> str:
+    return hashlib.sha256(("setting:" + owner_id + ":" + request_id).encode()).hexdigest()
+
+
+def _setting_fingerprint(expected_revision, action) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {"expected_revision": expected_revision, "action": action.model_dump(mode="json")}, sort_keys=True
+        ).encode()
+    ).hexdigest()
 
 
 def _dispatch_fingerprint(conversation_id, expected_revision, action) -> str:

@@ -9,7 +9,7 @@ import pytest
 from app.config import Settings
 from app.domain.voices import parse_voice_ids
 from app.main import create_app
-from app.services.voices import ElevenLabsVoices, public_catalog
+from app.services.voices import ElevenLabsVoices, VoiceOption, public_catalog, spoken_voice_language
 from fastapi.testclient import TestClient
 from hypothesis import given
 from hypothesis import strategies as st
@@ -29,6 +29,15 @@ def test_parse_voice_ids_rejects_malformed_identifiers(raw):
 def test_settings_reject_a_malformed_approved_voice_list():
     with pytest.raises(ValueError, match="VOICE_IDS_INVALID"):
         Settings(approved_voice_ids="good,bad id", _env_file=None)
+
+
+def test_voice_configuration_requires_an_approved_or_default_voice():
+    with pytest.raises(ValueError, match="APPROVED_VOICE_IDS"):
+        Settings(eleven_api_key="tts-test", _env_file=None)
+    # A configured default is itself approved, so it alone is enough.
+    assert Settings(eleven_api_key="tts-test", default_voice_id="voice-1", _env_file=None).default_voice_id == "voice-1"
+    # No voice provider configured: no requirement yet.
+    assert Settings(eleven_api_key="", _env_file=None).approved_voice_ids == ""
 
 
 @given(st.lists(st.tuples(st.text(min_size=1), st.text()), max_size=20))
@@ -205,7 +214,7 @@ def test_saved_server_setting_outranks_the_default_and_is_catalog_validated(tmp_
         assert (body["voice"]["id"], body["voice_source"], body["voice_language"]) == (
             "arabic-voice",
             "saved",
-            "en",
+            "ar",
         )
 
 
@@ -217,6 +226,7 @@ def test_owner_scoped_settings_save_a_voice_without_creating_a_conversation(tmp_
         response = client.post(
             "/v1/settings/actions",
             json={
+                "request_id": "first-visit",
                 "expected_revision": 0,
                 "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
             },
@@ -236,6 +246,7 @@ def test_owner_scoped_settings_enforce_approval_revision_and_action_kind(tmp_pat
         unapproved = client.post(
             "/v1/settings/actions",
             json={
+                "request_id": "unapproved",
                 "expected_revision": 0,
                 "action": {"kind": "SelectApprovedVoice", "voice_id": "account-only-voice"},
             },
@@ -245,6 +256,7 @@ def test_owner_scoped_settings_enforce_approval_revision_and_action_kind(tmp_pat
         saved = client.post(
             "/v1/settings/actions",
             json={
+                "request_id": "approved",
                 "expected_revision": 0,
                 "action": {"kind": "SelectApprovedVoice", "voice_id": "other-voice"},
             },
@@ -253,6 +265,7 @@ def test_owner_scoped_settings_enforce_approval_revision_and_action_kind(tmp_pat
         stale = client.post(
             "/v1/settings/actions",
             json={
+                "request_id": "stale",
                 "expected_revision": 0,
                 "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
             },
@@ -261,10 +274,109 @@ def test_owner_scoped_settings_enforce_approval_revision_and_action_kind(tmp_pat
         assert stale.json()["detail"]["code"] == "SETTINGS_REVISION_CONFLICT"
         not_a_setting = client.post(
             "/v1/settings/actions",
-            json={"expected_revision": 1, "action": {"kind": "OpenMemoryExplorer"}},
+            json={"request_id": "navigation", "expected_revision": 1, "action": {"kind": "OpenMemoryExplorer"}},
         )
         assert not_a_setting.status_code == 422
         assert not_a_setting.json()["detail"]["code"] == "INVALID_SETTING_ACTION"
+
+
+def test_owner_scoped_settings_replay_a_duplicate_request(tmp_path):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
+    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+        client.post("/v1/demo-session")
+        body = {
+            "request_id": "lost-response",
+            "expected_revision": 0,
+            "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+        }
+        first = client.post("/v1/settings/actions", json=body)
+        assert first.status_code == 200, first.text
+        # The client retries after losing the response: same key, same old revision.
+        retry = client.post("/v1/settings/actions", json=body)
+        assert retry.status_code == 200, retry.text
+        assert retry.json() == first.json()
+        assert retry.json()["settings"]["revision"] == 1
+        assert client.get("/v1/settings").json()["approved_voice_id"] == "arabic-voice"
+        with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
+            assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 1
+            assert db.execute("SELECT COUNT(*) FROM setting_write_requests").fetchone()[0] == 1
+
+
+def test_owner_scoped_settings_reject_a_reused_request_id_for_a_different_action(tmp_path):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
+    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+        client.post("/v1/demo-session")
+        first = client.post(
+            "/v1/settings/actions",
+            json={
+                "request_id": "reused",
+                "expected_revision": 0,
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "other-voice"},
+            },
+        )
+        assert first.status_code == 200, first.text
+        conflict = client.post(
+            "/v1/settings/actions",
+            json={
+                "request_id": "reused",
+                "expected_revision": 0,
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+            },
+        )
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
+        assert client.get("/v1/settings").json()["approved_voice_id"] == "other-voice"
+
+
+def test_conversation_voice_action_uses_the_single_owner_scoped_writer(tmp_path):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
+    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        through_conversation = client.post(
+            "/v1/actions",
+            json={
+                "conversation_id": chat,
+                "request_id": "from-conversation",
+                "expected_revision": 0,
+                "source": "ui",
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+            },
+        )
+        assert through_conversation.status_code == 200, through_conversation.text
+        conversation_result = through_conversation.json()["result"]
+        # The same action through the owner-scoped endpoint sees the same stored
+        # setting: already applied, so no further revision bump.
+        through_settings = client.post(
+            "/v1/settings/actions",
+            json={
+                "request_id": "from-settings",
+                "expected_revision": 1,
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+            },
+        )
+        assert through_settings.status_code == 200, through_settings.text
+        assert through_settings.json()["settings"] == conversation_result["settings"]
+        assert through_settings.json()["changed"] is False
+        with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
+            # One writer for voice: no conversation-scoped operation is recorded,
+            # and a single revision covers both requests.
+            assert db.execute("SELECT COUNT(*) FROM context_operations").fetchone()[0] == 0
+            assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 1
+            assert db.execute("SELECT COUNT(*) FROM setting_write_requests").fetchone()[0] == 2
+
+
+def test_saved_voice_language_is_derived_from_the_catalog():
+    arabic = VoiceOption(id="arabic-voice", name="Arabic", languages=("ar",))
+    undeclared = VoiceOption(id="other-voice", name="Other")
+    # A saved Arabic voice stays Arabic even when the browser requests English.
+    assert spoken_voice_language("saved", "en", arabic, "en") == "ar"
+    assert spoken_voice_language("saved", "ar", arabic, "en") == "ar"
+    # Undeclared catalog entries keep the request language.
+    assert spoken_voice_language("saved", "ar", undeclared, "en") == "ar"
+    # Explicit requests and the configured default keep their own rules.
+    assert spoken_voice_language("requested", "en", arabic, "ar") == "en"
+    assert spoken_voice_language("default", "en", arabic, "ar") == "ar"
 
 
 @pytest.mark.parametrize(

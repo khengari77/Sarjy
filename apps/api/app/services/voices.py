@@ -56,6 +56,23 @@ def require_approved(voice_id: str, approved: frozenset[str]) -> None:
         raise VoiceCatalogError("VOICE_NOT_APPROVED", 422)
 
 
+def spoken_voice_language(source: str | None, requested: str, option: VoiceOption, default_language: str) -> str:
+    """Pick the TTS language belonging to the resolved voice.
+
+    The configured default speaks its configured language. An explicit request
+    names its own language. A saved preference stores only the voice id, so its
+    language comes from the catalog: the requested language when the catalog
+    declares support for it, otherwise the voice's single declared language.
+    Undeclared or ambiguous catalog entries keep the requested language.
+    """
+
+    if source == "default":
+        return default_language
+    if source == "saved" and option.languages and requested not in option.languages and len(option.languages) == 1:
+        return option.languages[0]
+    return requested
+
+
 def public_catalog(payload: dict) -> VoiceCatalog:
     """Pure projection: never pass through samples, settings, or account metadata."""
     if not isinstance(payload, dict) or not isinstance(payload.get("voices"), list):

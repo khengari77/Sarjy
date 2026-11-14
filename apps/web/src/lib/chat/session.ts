@@ -52,7 +52,11 @@ export async function startVoiceSession(
  * browser must be able to save a preference before its first call.
  */
 export async function saveVoiceSelection(voiceId: string, expectedRevision: number): Promise<UserSettings> {
+  // Stable id for this exact intent: if the response is lost, retrying the same
+  // selection at the same revision replays the committed outcome instead of 409.
+  const requestId = `voice:${expectedRevision}:${voiceId}`;
   const result = await request<SettingsActionResult>('settings/actions', {
+    request_id: requestId,
     expected_revision: expectedRevision,
     action: { kind: 'SelectApprovedVoice', voice_id: voiceId },
   });

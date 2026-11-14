@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from app.domain.commands import parse_exact_command
-from app.domain.contracts import Action, UserSettings, parse_action
+from app.domain.contracts import Action, SelectApprovedVoice, UserSettings, parse_action
 from app.infrastructure.database import UserSetting
 from app.services.actions import dispatch_action, dispatch_setting, settings_value
 from app.services.context_operations import ContextOperationError
@@ -46,6 +46,7 @@ class SettingsSubmission(BaseModel):
     """Owner-scoped settings change; no conversation is needed or created."""
 
     model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=1, max_length=200)
     expected_revision: int = Field(ge=0)
     action: Action
 
@@ -94,6 +95,7 @@ def register_action_routes(app, database, identity, owned, catalog, approved_voi
             return await dispatch_setting(
                 db,
                 owner_id=user.id,
+                request_id=body.request_id,
                 expected_revision=body.expected_revision,
                 action=body.action,
                 catalog=catalog,
@@ -112,6 +114,18 @@ def register_action_routes(app, database, identity, owned, catalog, approved_voi
         else:
             action = body.action
         try:
+            if isinstance(action, SelectApprovedVoice):
+                # Preferences have exactly one writer, even when submitted from a conversation.
+                result = await dispatch_setting(
+                    db,
+                    owner_id=user.id,
+                    request_id=body.request_id,
+                    expected_revision=body.expected_revision,
+                    action=action,
+                    catalog=catalog,
+                    approved_voice_ids=approved_voice_ids,
+                )
+                return {"handled": True, "result": result}
             result = await dispatch_action(
                 db,
                 owner_id=user.id,

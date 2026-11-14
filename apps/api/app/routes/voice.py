@@ -23,6 +23,7 @@ from app.services.voices import (
     approved_voice_ids,
     require_approved,
     resolve_voice,
+    spoken_voice_language,
 )
 
 
@@ -61,7 +62,7 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
             )
         settings_row = await db.get(UserSetting, user.id)
         saved_voice_id = settings_row.approved_voice_id if settings_row else None
-        voice_source = ""
+        voice_source: str | None = None
         try:
             voice_id, voice_source = resolve_voice(body.voice_id, saved_voice_id, config.default_voice_id)
             require_approved(voice_id, approved_voice_ids(config.approved_voice_ids, config.default_voice_id))
@@ -73,7 +74,9 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
                 else exc.code
             )
             raise HTTPException(exc.status, detail={"code": code}) from exc
-        voice_language = config.default_voice_language if voice_source == "default" else body.language
+        voice_language = spoken_voice_language(
+            voice_source, body.language, selected_voice, config.default_voice_language
+        )
         pipeline = pipeline.model_copy(
             update={"tts": pipeline.tts.model_copy(update={"voice_id": voice_id, "language": voice_language})}
         )

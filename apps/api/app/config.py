@@ -41,6 +41,14 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
+    def validate_voice_configuration(self):
+        # Fail at startup, not on the first demo tap: with voice configured but no
+        # approved or default voice, every session request would fail at runtime.
+        if self.eleven_api_key and not (self.approved_voice_ids.strip() or self.default_voice_id):
+            raise ValueError("APPROVED_VOICE_IDS or DEFAULT_VOICE_ID is required when ELEVEN_API_KEY is set")
+        return self
+
+    @model_validator(mode="after")
     def validate_deepseek_budget(self):
         if self.deepseek_budget_enabled and not (
             DEEPSEEK_MINIMUM_REQUEST_MICRO_USD <= self.deepseek_request_micro_usd <= self.deepseek_daily_micro_usd
