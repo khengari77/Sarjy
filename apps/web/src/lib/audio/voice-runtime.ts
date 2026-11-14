@@ -2,6 +2,7 @@ import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
 import { waitForAgent, type StartupSignal } from './agentStartup';
 import { disposeAudioResources } from './disposeAudio';
+import { bindRoomEvents, disconnectRoomInBackground } from './roomLifecycle';
 
 type VoiceEventBody =
   | { type: 'status'; source: 'transport' | 'agent'; text: string }
@@ -38,6 +39,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   private sessionEpoch = 0;
   private sawTranscriptionSegments = false;
   private startup: StartupSignal | null = null;
+  private releaseBindings: (() => void) | null = null;
 
   get epoch() {
     return this.sessionEpoch;
@@ -68,15 +70,17 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     this.startup = startup;
     const room = new Room();
     this.room = room;
+    const bindings = bindRoomEvents(room);
+    this.releaseBindings = () => bindings.dispose();
 
-    room.on(RoomEvent.TrackSubscribed, (track) => {
+    bindings.on(RoomEvent.TrackSubscribed, (track) => {
       if (!this.active(room, epoch) || track.kind !== Track.Kind.Audio) return;
       const element = track.attach();
       this.audio.add(element);
       document.body.appendChild(element);
       this.attachAnalyser(element);
     });
-    room.on(RoomEvent.TrackUnsubscribed, (track) => {
+    bindings.on(RoomEvent.TrackUnsubscribed, (track) => {
       if (!this.active(room, epoch)) return;
       for (const element of track.detach()) {
         this.detachAnalyser(element);
@@ -84,17 +88,17 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
         this.audio.delete(element);
       }
     });
-    room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+    bindings.on(RoomEvent.AudioPlaybackStatusChanged, () => {
       if (this.active(room, epoch) && !room.canPlaybackAudio)
         this.emit({ type: 'audio-blocked', code: 'AUDIO_PLAYBACK_BLOCKED' });
     });
-    room.on(RoomEvent.Reconnecting, () => {
+    bindings.on(RoomEvent.Reconnecting, () => {
       if (this.active(room, epoch)) this.emit({ type: 'status', source: 'transport', text: 'reconnecting' });
     });
-    room.on(RoomEvent.Reconnected, () => {
+    bindings.on(RoomEvent.Reconnected, () => {
       if (this.active(room, epoch)) this.emit({ type: 'status', source: 'transport', text: 'connected' });
     });
-    room.on(RoomEvent.Disconnected, () => {
+    bindings.on(RoomEvent.Disconnected, () => {
       if (!this.active(room, epoch)) return;
       this.emit({ type: 'status', source: 'transport', text: 'disconnected' });
       if (this.startup === startup) {
@@ -103,11 +107,11 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
         startup.wake = null;
       }
     });
-    room.on(RoomEvent.ParticipantAttributesChanged, (attributes) => {
+    bindings.on(RoomEvent.ParticipantAttributesChanged, (attributes) => {
       const state = attributes['lk.agent.state'];
       if (this.active(room, epoch) && state) this.emit({ type: 'status', source: 'agent', text: state });
     });
-    room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+    bindings.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
       if (!this.active(room, epoch) || topic !== 'sarjy.error' || !participant?.isAgent) return;
       try {
         const event = JSON.parse(new TextDecoder().decode(payload));
@@ -118,13 +122,13 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
         /* malformed control payload: ignore rather than crash the session */
       }
     });
-    room.on(RoomEvent.MediaDevicesError, () => {
+    bindings.on(RoomEvent.MediaDevicesError, () => {
       if (this.active(room, epoch)) this.emit({ type: 'error', code: 'MICROPHONE_UNAVAILABLE' });
     });
     // LiveKit exposes real partial/final segments. Prefer them and keep the
     // text-stream reader only as a fallback for publishers that send no
     // segments; mixing both would duplicate each utterance.
-    room.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
+    bindings.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
       if (!this.active(room, epoch)) return;
       this.sawTranscriptionSegments = true;
       for (const segment of segments) {
@@ -254,7 +258,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     await this.disconnectRoom();
   }
 
-  private async disconnectRoom() {
+  private disconnectRoom() {
     this.startup?.wake?.();
     this.startup = null;
     const room = this.room;
@@ -268,10 +272,8 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     this.analysers = new Map();
     this.audioContext = null;
     disposeAudioResources(audio, analysers, audioContext);
-    try {
-      await room?.disconnect();
-    } finally {
-      room?.removeAllListeners();
-    }
+    this.releaseBindings?.();
+    this.releaseBindings = null;
+    disconnectRoomInBackground(room);
   }
 }

@@ -14,7 +14,7 @@ vi.mock('livekit-client', () => {
   class Room {
     listeners = new Map<string, Set<(...args: unknown[]) => void>>();
     remoteParticipants = new Map<string, { isAgent: boolean; attributes: Record<string, string> }>();
-    localParticipant = {};
+    localParticipant = { getTrackPublication: () => undefined };
     canPlaybackAudio = true;
     connectResolve: (() => void) | null = null;
     connectReject: ((error: Error) => void) | null = null;
@@ -25,6 +25,10 @@ vi.mock('livekit-client', () => {
       if (!this.listeners.has(event)) this.listeners.set(event, new Set());
       this.listeners.get(event)!.add(handler);
     }
+    off(event: string, handler: (...args: unknown[]) => void) {
+      this.listeners.get(event)?.delete(handler);
+    }
+    unregisterTextStreamHandler() {}
     emit(event: string, ...args: unknown[]) {
       for (const handler of this.listeners.get(event) ?? []) handler(...args);
     }
@@ -56,7 +60,7 @@ vi.mock('livekit-client', () => {
       MediaDevicesError: 'mediaDevicesError',
       TranscriptionReceived: 'transcriptionReceived',
     },
-    Track: { Kind: { Audio: 'audio' } },
+    Track: { Kind: { Audio: 'audio' }, Source: { Microphone: 'microphone' } },
   };
 });
 
@@ -135,7 +139,7 @@ it('releases audio even when room disconnect rejects', async () => {
   room.disconnect = async () => {
     throw new Error('disconnect failed');
   };
-  await expect(runtime.disconnect()).rejects.toThrow('disconnect failed');
+  await expect(runtime.disconnect()).resolves.toBeUndefined();
   expect(audio.pause).toHaveBeenCalledOnce();
   expect(audio.remove).toHaveBeenCalledOnce();
   expect(audio.srcObject).toBeNull();

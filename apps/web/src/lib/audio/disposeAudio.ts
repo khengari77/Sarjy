@@ -7,7 +7,7 @@ function attempt(cleanup: () => void) {
   try {
     cleanup();
   } catch {
-    /* Continue releasing other resources. */
+    console.debug('[Sarjy] Local audio resource disposal failed');
   }
 }
 
@@ -30,6 +30,6 @@ export function disposeAudioResources(
   analysers.clear();
   // Playback is stopped above. Browser context closure must not gate teardown.
   attempt(() => {
-    void context?.close().catch(() => {});
+    void context?.close().catch(() => console.debug('[Sarjy] Audio context closure failed'));
   });
 }
