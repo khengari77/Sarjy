@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 import time
-from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -31,25 +30,21 @@ from app.infrastructure.database import (
     now,
 )
 from app.infrastructure.upsert import insert_ignore
+from app.services.leases import LEASE_SECONDS, lease_expired, lease_expiry
 from app.services.voices import VoiceCatalogError
 
 SETTING_ACTIONS = (AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed)
 CONVERSATION_SETTING_ACTIONS = (AdjustSpeakingSpeed, SetCaptionsVisible, SetSpeakingSpeed)
-PREPARATION_LEASE_SECONDS = 120
+PREPARATION_LEASE_SECONDS = LEASE_SECONDS
 PREPARED_MAX_BYTES = 64 * 1024
 
 
 def _lease_expiry() -> str:
-    return (datetime.now(UTC) + timedelta(seconds=PREPARATION_LEASE_SECONDS)).isoformat()
+    return lease_expiry(seconds=PREPARATION_LEASE_SECONDS)
 
 
 def _lease_expired(value: str | None) -> bool:
-    if not value:
-        return True
-    try:
-        return datetime.fromisoformat(value) <= datetime.now(UTC)
-    except ValueError:
-        return True
+    return lease_expired(value)
 
 
 def settings_value(row):

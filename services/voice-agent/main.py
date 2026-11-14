@@ -11,6 +11,7 @@ from uuid import uuid4
 import httpx
 from app.domain.budget import DEEPSEEK_MAX_REQUEST_BYTES
 from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolItem, ToolSpec
+from app.domain.memory_capture import is_referential
 from app.domain.tool_operations import operation_key
 from config import provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
@@ -56,6 +57,87 @@ def openai_request_within_bounds(serialized: bytes, tools: list, max_output_toke
     )
 
 
+def _memory_decision(text: str) -> str | None:
+    lowered = " ".join(text.casefold().replace(",", " ").split()).strip(" .!?;:")
+    affirmative = {
+        "yes",
+        "yeah",
+        "yep",
+        "sure",
+        "ok",
+        "okay",
+        "please do",
+        "go ahead",
+        "remember it",
+        "yes save it",
+        "yes please save it",
+        "save it",
+        "please save it",
+        "yes remember it",
+        "confirm",
+    }
+    negative = {
+        "no",
+        "nope",
+        "don't",
+        "do not",
+        "not now",
+        "skip",
+        "no thanks",
+        "don't save",
+        "don't save that",
+        "do not save that",
+        "no thank you",
+        "no, wait",
+        "no wait",
+        "cancel",
+        "discard",
+        "forget it",
+        "forget that",
+    }
+    if lowered in negative:
+        return "discard"
+    if lowered in affirmative:
+        return "save"
+    return None
+
+
+def _clarify_decision(text: str) -> str | None:
+    lowered = " ".join(text.casefold().replace(",", " ").replace("\u2019", "'").split()).strip(" .!?;:")
+    if lowered in {
+        "yes replace it",
+        "yes replace",
+        "replace",
+        "replace it",
+        "replace the old one",
+        "replace the old fact",
+        "use the new one",
+        "update it",
+        "yes update it",
+        "change it",
+    }:
+        return "replace"
+    if lowered in {
+        "no",
+        "nope",
+        "no thanks",
+        "no thank you",
+        "cancel",
+        "don't",
+        "do not",
+        "discard",
+        "keep",
+        "keep it",
+        "keep the old one",
+        "keep the old fact",
+        "no keep it",
+        "no keep the old one",
+        "decline",
+    }:
+        return "discard"
+    return None
+
+
 def _user_message(chat_ctx):
     return next(
         (item for item in reversed(chat_ctx.items) if isinstance(item, llm.ChatMessage) and item.role == "user"),
@@ -97,6 +179,20 @@ def _with_continuation(request: ModelRequest, continuation, schemas) -> ModelReq
     )
 
 
+def _with_memory_note(request: ModelRequest, note: str) -> ModelRequest:
+    """Append an outcome note where the provider will actually see it.
+
+    ``instructions`` mirrors ``messages[0]``; adapters build the provider
+    request from ``messages``. Updating only ``instructions`` (and bypassing
+    validation with ``model_copy``) makes the note dead data.
+    """
+    payload = request.model_dump(mode="json")
+    messages = payload["messages"]
+    messages[0]["content"] = f"{messages[0]['content']}\n\n{note}"
+    payload["instructions"] = messages[0]["content"]
+    return ModelRequest.model_validate(payload)
+
+
 async def _playout_result(handle) -> tuple[str, str]:
     await handle.wait_for_playout()
     messages = [item for item in handle.chat_items if isinstance(item, llm.ChatMessage) and item.role == "assistant"]
@@ -118,6 +214,22 @@ class SarjyAgent(Agent):
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
+        self.memory_proposal: dict | None = None
+        self.memory_outcome: str | None = None
+        self.memory_message: str | None = None
+        self.memory_clarify = False
+        self.memory_question_turn: str | None = None
+        # Consent is bound to the exact proposal identity. Playout marking and
+        # question delivery are tracked separately: having yielded the question
+        # is not evidence that the user heard it.
+        self.memory_prompted_key: tuple[Any, Any] | None = None
+        self.memory_question_key: tuple[Any, Any] | None = None
+
+    @staticmethod
+    def _proposal_key(proposal: Mapping[str, Any] | None) -> tuple[Any, Any]:
+        if proposal is None:
+            return (None, None)
+        return (proposal.get("confirmation_id"), proposal.get("confirmation_revision"))
 
     async def compile(self, message):
         if message.id not in self.prepared:
@@ -128,7 +240,120 @@ class SarjyAgent(Agent):
             self.prepared[message.id] = response.json()
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
+        decided = False
+        # A confirmation/rejection utterance is never itself a capture, with or
+        # without a pending proposal.
+        decision_utterance = (
+            _memory_decision(message.text_content) is not None or _clarify_decision(message.text_content) is not None
+        )
+        if message.id != self.memory_message:
+            # The SDK compiles a user message twice (turn hook + llm_node); decide once.
+            self.memory_message = message.id
+            self.memory_outcome = None
+            if self.memory_proposal is not None:
+                if self._proposal_key(self.memory_proposal) != self.memory_prompted_key:
+                    # The specific question for this proposal was never
+                    # delivered; the utterance cannot be consent for it.
+                    self.memory_proposal = None
+                    self.memory_clarify = False
+                    self.memory_prompted_key = None
+                    self.memory_question_key = None
+                    self.memory_outcome = "not_saved"
+                else:
+                    decision = (
+                        _clarify_decision(message.text_content)
+                        if self.memory_clarify
+                        else _memory_decision(message.text_content)
+                    )
+                    if decision is not None:
+                        await self._resolve_memory(decision)
+                        # One turn, one decision: the utterance that resolved the
+                        # pending proposal must not also be enqueued as a new
+                        # capture candidate for the same turn.
+                        decided = True
+                    else:
+                        # A proposal is a one-shot for the next user turn; never stay armed
+                        # across unrelated acknowledgements.
+                        self.memory_proposal = None
+                        self.memory_clarify = False
+                        self.memory_prompted_key = None
+                        self.memory_question_key = None
+                        self.memory_outcome = "not_saved"
+        proposal = result.get("memory_proposal")
+        if (
+            not decided
+            and not decision_utterance
+            and proposal is not None
+            and not is_referential(proposal.get("text") or "")
+        ):
+            if self._proposal_key(proposal) != self._proposal_key(self.memory_proposal):
+                # Only a new proposal identity re-arms the question. Repeated
+                # compiles of the same proposal must not re-emit or re-arm it.
+                self.memory_prompted_key = None
+                self.memory_question_key = None
+            self.memory_proposal = proposal
+            self.memory_question_turn = result["turn_id"]
         return result["context"]
+
+    async def _resolve_memory(self, decision: str) -> None:
+        proposal = self.memory_proposal
+        try:
+            response = await self.backend.post(
+                "/internal/agent/memory/confirm",
+                json={"token": proposal["token"], "decision": decision},
+            )
+        except httpx.HTTPError:
+            self.memory_proposal = None
+            self.memory_clarify = False
+            self.memory_question_turn = None
+            self.memory_outcome = "failed"
+            if self.notify:
+                await self.notify("MEMORY_SAVE_FAILED")
+            return
+        detail: dict = {}
+        if not response.is_success:
+            try:
+                raw = response.json().get("detail", {})
+                detail = raw if isinstance(raw, dict) else {}
+            except (ValueError, AttributeError):
+                detail = {}
+            if self.notify:
+                await self.notify(detail.get("code") or "MEMORY_SAVE_FAILED")
+        if response.is_success:
+            self.memory_proposal = None
+            self.memory_clarify = False
+            self.memory_question_turn = None
+            self.memory_prompted_key = None
+            self.memory_question_key = None
+            try:
+                status = response.json().get("status", "")
+            except (ValueError, AttributeError):
+                status = ""
+            self.memory_outcome = "replace" if status in {"corrected", "retracted"} else decision
+        elif detail.get("code") == "MEMORY_CLARIFICATION_REQUIRED" and isinstance(detail.get("token"), str):
+            # Adopt the server-issued clarification revision. The old token can
+            # never authorize a replacement, and the replacement question must
+            # name the existing fact rather than asking the initial save question.
+            self.memory_proposal = {
+                **proposal,
+                "token": detail["token"],
+                "confirmation_id": detail.get("confirmation_id"),
+                "confirmation_revision": detail.get("confirmation_revision"),
+                "target_id": detail.get("target_id"),
+                "target_version": detail.get("target_version"),
+                "question": detail.get("question") or proposal.get("question"),
+            }
+            self.memory_clarify = True
+            self.memory_prompted_key = None
+            self.memory_question_key = None
+            self.memory_outcome = "clarify"
+        else:
+            self.memory_proposal = None
+            self.memory_clarify = False
+            self.memory_question_turn = None
+            self.memory_prompted_key = None
+            self.memory_question_key = None
+            self.memory_outcome = "failed"
 
     async def reserve(self, provider: str, characters: int = 0):
         if provider == "elevenlabs" and characters > 500:
@@ -171,19 +396,67 @@ class SarjyAgent(Agent):
         if user is None:
             return
         snapshot = await self.compile(user)
+        proposal = self.memory_proposal
+        key = self._proposal_key(proposal)
+        if proposal is not None and self.memory_question_key != key:
+            # Deliver the exact confirmation question deterministically. Merely
+            # yielding the text proves nothing: consent is armed only once the
+            # resulting speech has fully played out.
+            question = proposal.get("question") or f"Should I remember this: {proposal.get('text', '')}?"
+            self.memory_question_key = key
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=question))
+            handle = self.session.current_speech
+            if handle is not None:
+                self._schedule_prompt_confirmation(key, handle)
+                # The deterministic question is the turn's spoken answer, so it
+                # must still be persisted like any other assistant turn.
+                self._schedule_persistence(user, handle)
+            return
         handle = self.session.current_speech
-        if handle and handle.id not in self.speeches:
-            self.speeches.add(handle.id)
-            self._schedule_persistence(user, handle)
+        self._schedule_persistence(user, handle)
         request = snapshot_request(snapshot, self.current_turn)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
         request = _with_continuation(request, _continuation(chat_ctx, user), schemas)
+        if self.memory_outcome is not None:
+            outcome, self.memory_outcome = self.memory_outcome, None
+            note = {
+                "save": "The memory save succeeded; confirm to the user that it is saved.",
+                "failed": "The memory save failed; apologise and do not claim it was saved.",
+                "discard": "The user declined the memory save; do not claim it was saved.",
+                "clarify": (
+                    "An existing saved fact conflicts with this update. Ask the user to confirm replacing it; "
+                    "do not claim it was saved until they confirm."
+                ),
+                "replace": "The pending memory was replaced; tell the user the earlier fact was updated.",
+                "not_saved": "The pending memory was not saved; do not claim it was saved.",
+            }[outcome]
+            request = _with_memory_note(request, note)
         async for chunk in self._stream_with_fallback(
             request, tools, model_settings.tool_choice if model_settings else None
         ):
             yield chunk
 
+    def _schedule_prompt_confirmation(self, key: tuple[Any, Any], handle) -> None:
+        async def mark_after_playout():
+            try:
+                await handle.wait_for_playout()
+            except Exception:
+                return
+            if handle.interrupted or handle.exception() is not None:
+                return
+            if self._proposal_key(self.memory_proposal) != key:
+                return
+            self.memory_prompted_key = key
+
+        task = asyncio.create_task(mark_after_playout())
+        self.pending.add(task)
+        task.add_done_callback(self.pending.discard)
+
     def _schedule_persistence(self, user, handle):
+        if handle is None or handle.id in self.speeches:
+            # One finalize per spoken handle, even across repeated inference.
+            return
+        self.speeches.add(handle.id)
         turn_id = self.prepared[user.id]["turn_id"]
 
         async def persist_playout():

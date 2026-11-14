@@ -3,6 +3,7 @@ import type { SessionConfig } from '../api';
 import { waitForAgent, type StartupSignal } from './agentStartup';
 import { disposeAudioResources } from './disposeAudio';
 import { bindRoomEvents, disconnectRoomInBackground } from './roomLifecycle';
+import { transcriptMetadata } from './transcriptSpeaker';
 
 type VoiceEventBody =
   | { type: 'status'; source: 'transport' | 'agent'; text: string }
@@ -148,7 +149,8 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
       try {
         const text = await reader.readAll();
         if (!this.active(room, epoch) || this.sawTranscriptionSegments) return;
-        this.emit({ type: 'transcript', text, final: true, segmentId: 'stream', speaker: 'assistant' });
+        const { final, segmentId, speaker } = transcriptMetadata(room, reader.info);
+        this.emit({ type: 'transcript', text, final, segmentId, speaker });
       } catch {
         if (this.active(room, epoch)) this.emit({ type: 'error', code: 'TRANSCRIPT_UNAVAILABLE' });
       }
