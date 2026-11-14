@@ -55,14 +55,19 @@ export interface ConnectionDeps {
   meters: MeterController;
 }
 
-function handleVoiceEvent(state: VoiceState, deps: ConnectionDeps, event: VoiceEvent, isEnding: () => boolean) {
+function handleVoiceEvent(
+  state: VoiceState,
+  deps: ConnectionDeps,
+  event: VoiceEvent,
+  isEnding: (sessionId: string) => boolean,
+) {
   if (event.type === 'status') {
     if (event.source === 'agent') {
       state.agentState = event.text;
     } else {
       state.agentState = null;
       state.transportStatus = event.text;
-      if (event.text === 'disconnected' && state.live && !isEnding()) {
+      if (event.text === 'disconnected' && state.live && !isEnding(state.live.id)) {
         deps.meters.teardownMeters();
         state.muted = true;
         state.connectionLost = true;
@@ -118,34 +123,31 @@ async function cancelConnection(ctx: CancelContext): Promise<void> {
   // released too: leaving it admitted while its transport is torn down would
   // present a dead session as live to the next connect().
   const session = ctx.takeSession();
-  let replacedByLive = false;
-  if (session) {
-    clearOwnedLive(state, deps, session.id);
-    const releasedOk = await ctx.releaseSession(session);
-    // A replacement can become live while the release is in flight. Never
-    // overwrite it with the failed old session.
-    replacedByLive = state.live !== null && state.live.id !== session.id;
-    if (!releasedOk && replacedByLive) {
-      console.warn('[Sarjy] Voice session release failed; replacement kept live', { sessionId: session.id });
-    } else if (!releasedOk) {
-      state.live = session;
-      state.muted = true;
-      state.voiceErrorCode = 'SESSION_RELEASE_FAILED';
-      state.transportStatus = 'disconnected';
-    }
-  }
-  // A stale cancel must not tear down the transport of a session that replaced
-  // the one it was cancelling.
-  if (replacedByLive) return;
+  if (session) clearOwnedLive(state, deps, session.id);
+  // Local media stops before any backend await: a pending release must never
+  // keep the outgoing transport (or its microphone) alive.
   await deps
     .getRuntime()
     .cancelConnect()
     .catch(() => {});
+  if (!session) return;
+  const releasedOk = await ctx.releaseSession(session);
+  // A replacement can become live while the release is in flight. Never
+  // overwrite it with the failed old session.
+  const replacedByLive = state.live !== null && state.live.id !== session.id;
+  if (!releasedOk && replacedByLive) {
+    console.warn('[Sarjy] Voice session release failed; replacement kept live', { sessionId: session.id });
+  } else if (!releasedOk) {
+    state.live = session;
+    state.muted = true;
+    state.voiceErrorCode = 'SESSION_RELEASE_FAILED';
+    state.transportStatus = 'disconnected';
+  }
 }
 
 export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   let attemptCounter = 0;
-  let ending = false;
+  const endingSessions = new Set<string>();
   let pendingSession: SessionConfig | null = null;
   const releaseSession = createSessionReleaser();
   async function connect(microphone: boolean) {
@@ -210,10 +212,12 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   }
 
   async function end() {
-    if (ending) return;
-    ending = true;
-    attemptCounter += 1;
     const session: SessionConfig | null = state.live ?? pendingSession;
+    // Teardown ownership follows the session, not the module: ending call A
+    // must never make End a no-op for a replacement call B.
+    if (session && endingSessions.has(session.id)) return;
+    if (session) endingSessions.add(session.id);
+    attemptCounter += 1;
     pendingSession = null;
     deps.meters.teardownMeters();
     state.live = null;
@@ -246,7 +250,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
       }
       await deps.refresh().catch(() => {});
     } finally {
-      ending = false;
+      if (session) endingSessions.delete(session.id);
     }
   }
 
@@ -259,7 +263,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   }
 
   function handleEvent(event: VoiceEvent) {
-    handleVoiceEvent(state, deps, event, () => ending);
+    handleVoiceEvent(state, deps, event, (sessionId) => endingSessions.has(sessionId));
   }
 
   return {

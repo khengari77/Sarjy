@@ -5,13 +5,15 @@ import { endVoiceSession } from '../chat/session';
 const RELEASED_MEMORY = 32;
 
 /**
- * Release a server session exactly once after the backend acknowledges it.
+ * Release a server session after the backend acknowledges it.
  *
- * A failed release stays retryable: marking it released up front (and
- * swallowing the error) silently leaves admission occupied while End reports
- * idle. Concurrent calls for the same session share one in-flight attempt.
- * Failures are reported with the session id and the failure name so an
- * occupied admission can be diagnosed and retried.
+ * Successful ids are remembered (bounded, oldest evicted) so a repeat call is a
+ * no-op while its id is still remembered; an evicted id can be released again,
+ * and the server release is expected to be idempotent. A failed release is
+ * never marked released and stays retryable. Concurrent calls for the same
+ * session share one in-flight attempt. Failures are reported with the session
+ * id and the failure name so an occupied admission can be diagnosed and
+ * retried.
  */
 export function createSessionReleaser() {
   const released = new Set<string>();
