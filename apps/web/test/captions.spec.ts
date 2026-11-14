@@ -133,12 +133,18 @@ test('collapsed captions show two lines, keep the orb and open a transcript', as
   await expect(drawer).toHaveCount(0);
 });
 
-test('tool results render as a compact chip, never raw payloads', async ({ page }) => {
+test('tool results render only in the transcript, never on the stage or as raw payloads', async ({ page }) => {
   await mockData(page);
   await page.goto('/');
-  const chip = page.getByText('Checked weather · Riyadh');
-  await expect(chip).toBeVisible();
+
+  // Audit detail belongs in the full transcript, not under the live answer.
+  await expect(page.getByText('Checked weather · Riyadh')).toHaveCount(0);
   await expect(page.locator('pre')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Show full transcript' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Conversation transcript' });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByText('Checked weather · Riyadh')).toBeVisible();
 });
 
 test('provisional transcript replaces the final line and clears without commands', async ({ page }) => {
