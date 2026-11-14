@@ -174,7 +174,7 @@ it.each([false, true])('old cleanup preserves replacement resources (reject=%s)'
   const contexts: { close: ReturnType<typeof vi.fn> }[] = [];
   class AudioContext {
     destination = {};
-    close = vi.fn(async () => {});
+    close = vi.fn(() => (contexts[0] === this ? new Promise<void>(() => {}) : Promise.resolve()));
     constructor() {
       contexts.push(this);
     }
@@ -204,6 +204,11 @@ it.each([false, true])('old cleanup preserves replacement resources (reject=%s)'
   await vi.advanceTimersByTimeAsync(100);
   expect(state.voiceErrorCode).toBe('MICROPHONE_PERMISSION_DENIED');
   await connection.cancelConnect();
+  // The room disconnect and old context closure are both still unresolved.
+  expect(oldAudio.pause).toHaveBeenCalledOnce();
+  expect(oldAudio.remove).toHaveBeenCalledOnce();
+  expect(oldAudio.srcObject).toBeNull();
+  expect(contexts[0].close).toHaveBeenCalledOnce();
   const next = connection.connect(true);
   await vi.advanceTimersByTimeAsync(1);
   const replacement = rooms().at(-1)!;

@@ -267,14 +267,11 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     this.audio = new Set();
     this.analysers = new Map();
     this.audioContext = null;
+    disposeAudioResources(audio, analysers, audioContext);
     try {
       await room?.disconnect();
     } finally {
-      try {
-        room?.removeAllListeners();
-      } finally {
-        await disposeAudioResources(audio, analysers, audioContext);
-      }
+      room?.removeAllListeners();
     }
   }
 }

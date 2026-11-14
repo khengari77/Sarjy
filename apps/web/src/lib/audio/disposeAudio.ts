@@ -11,11 +11,11 @@ function attempt(cleanup: () => void) {
   }
 }
 
-export async function disposeAudioResources(
+export function disposeAudioResources(
   audio: Set<HTMLMediaElement>,
   analysers: Map<HTMLMediaElement, AudioNodes>,
   context: AudioContext | null,
-): Promise<void> {
+): void {
   for (const element of audio) {
     const entry = analysers.get(element);
     attempt(() => entry?.source.disconnect());
@@ -28,5 +28,8 @@ export async function disposeAudioResources(
   }
   audio.clear();
   analysers.clear();
-  if (context) await context.close().catch(() => {});
+  // Playback is stopped above. Browser context closure must not gate teardown.
+  attempt(() => {
+    void context?.close().catch(() => {});
+  });
 }
