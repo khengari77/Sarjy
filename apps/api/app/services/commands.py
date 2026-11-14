@@ -38,8 +38,16 @@ from app.domain.contracts import (
     SetTheme,
     UserSettings,
 )
+from app.domain.ui_routing import (
+    UiActionDecision,
+    UiClarificationDecision,
+    UiVoiceGenderDecision,
+    evaluate_ui_classification,
+    ui_text_is_eligible,
+)
 from app.services.actions import dispatch_action, dispatch_setting
 from app.services.context_operations import ContextOperationError, MemorySearcher, keyword_search
+from app.services.jev_ui import UiClassifier
 from app.services.voice_exclusions import (
     discard_pending,
     global_retraction_refusal,
@@ -70,6 +78,7 @@ async def handle_finalized_utterance(
     handlers,
     secret: str = "",
     search: MemorySearcher = keyword_search,
+    ui_classifier: UiClassifier | None = None,
 ) -> CommandResult | None:
     """Interpret and, when deterministic, execute exactly one action.
 
@@ -102,14 +111,10 @@ async def handle_finalized_utterance(
     # later "yes" to some other question can never apply it.
     await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
 
-    action = parse_exact_command(text)
-    voice_name: str | None = None
-    if action is None:
-        voice = await _voice_selection(text, request_id, catalog, approved_voice_ids)
-        if isinstance(voice, CommandResult):
-            return voice
-        if voice is not None:
-            action, voice_name = voice
+    resolved = await _resolve_action(text, request_id, catalog, approved_voice_ids, ui_classifier)
+    if isinstance(resolved, CommandResult):
+        return resolved
+    action, voice_name = resolved
     if action is None:
         return await _unsupported_result(
             db,
@@ -176,6 +181,43 @@ async def handle_finalized_utterance(
         catalog=catalog,
         handlers=handlers,
     )
+
+
+async def _resolve_action(
+    text: str, request_id: str, catalog, approved: frozenset[str] | None, ui_classifier: UiClassifier | None
+) -> tuple[Action | None, str | None] | CommandResult:
+    """Exact grammar first, then voice names, then Jev (only on a full miss)."""
+    action = parse_exact_command(text)
+    if action is not None:
+        return action, None
+    voice = await _voice_selection(text, request_id, catalog, approved)
+    if voice is None and ui_classifier is not None:
+        voice = await _jev_ui_action(ui_classifier, text, request_id, catalog, approved)
+    if voice is None or isinstance(voice, CommandResult):
+        return voice if voice is not None else (None, None)
+    return voice
+
+
+async def _jev_ui_action(
+    classifier: UiClassifier, text: str, request_id: str, catalog, approved: frozenset[str] | None
+) -> tuple[Action, str | None] | CommandResult | None:
+    """Ask Jev only after every deterministic path missed; any failure is a miss."""
+    if not ui_text_is_eligible(text) or parse_exclusion_confirmation(text) is not None:
+        return None
+    try:
+        classification = await classifier.classify(request_id=request_id, instruction=text)
+    except Exception:
+        return None
+    if classification is None:
+        return None
+    decision = evaluate_ui_classification(classification)
+    if isinstance(decision, UiClarificationDecision):
+        return unsupported_result(request_id=request_id, detail="UI_MULTIPLE_COMMANDS", spoken=decision.spoken)
+    if isinstance(decision, UiActionDecision):
+        return decision.action, None
+    if isinstance(decision, UiVoiceGenderDecision):
+        return await _gendered_voice(decision.gender, request_id, catalog, approved)
+    return None
 
 
 async def _unsupported_result(
@@ -334,14 +376,7 @@ async def _voice_selection(
     """
     gender = parse_voice_gender(text)
     if gender is not None:
-        found = await _resolve_gendered_voice(catalog, gender, approved)
-        if found is None:
-            return unsupported_result(
-                request_id=request_id,
-                detail="VOICE_GENDER_NOT_FOUND",
-                spoken=f"I don't have an approved {gender} voice, so nothing was changed.",
-            )
-        return SelectApprovedVoice(voice_id=found.id), found.name
+        return await _gendered_voice(gender, request_id, catalog, approved)
     name = parse_voice_selection(text)
     if name is None:
         return None
@@ -359,6 +394,19 @@ async def _voice_selection(
             spoken=f"The voice called {resolved.name} isn't approved.",
         )
     return SelectApprovedVoice(voice_id=resolved.id), resolved.name
+
+
+async def _gendered_voice(
+    gender: str, request_id: str, catalog, approved: frozenset[str] | None
+) -> tuple[SelectApprovedVoice, str] | CommandResult:
+    found = await _resolve_gendered_voice(catalog, gender, approved)
+    if found is None:
+        return unsupported_result(
+            request_id=request_id,
+            detail="VOICE_GENDER_NOT_FOUND",
+            spoken=f"I don't have an approved {gender} voice, so nothing was changed.",
+        )
+    return SelectApprovedVoice(voice_id=found.id), found.name
 
 
 async def _resolve_gendered_voice(catalog, gender: str, approved: frozenset[str] | None):

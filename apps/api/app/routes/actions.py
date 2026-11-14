@@ -124,6 +124,7 @@ def register_action_routes(app, database, identity, owned, catalog, approved_voi
                 approved_voice_ids=approved_voice_ids,
                 handlers=app.state.action_handlers,
                 secret=app.state.settings.context_proposal_secret or app.state.settings.agent_service_secret,
+                ui_classifier=getattr(app.state, "ui_classifier", None),
             )
             if command is None:
                 return {"handled": False}

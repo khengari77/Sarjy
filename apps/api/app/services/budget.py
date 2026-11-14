@@ -7,6 +7,7 @@ from app.domain.budget import (
     DEEPSEEK_DAILY_MICRO_USD,
     DEEPSEEK_REQUEST_MICRO_USD,
     ELEVENLABS_DAILY_CHARACTERS,
+    JEV_DAILY_REQUESTS,
     OPENAI_DAILY_MICRO_USD,
     OPENAI_REQUEST_MICRO_USD,
     budget_day,
@@ -14,12 +15,14 @@ from app.domain.budget import (
 from app.infrastructure.database import DevelopmentBudget
 from app.infrastructure.upsert import insert_ignore
 
-REQUEST_UNITS = {"openai": OPENAI_REQUEST_MICRO_USD, "deepseek": DEEPSEEK_REQUEST_MICRO_USD}
+REQUEST_UNITS = {"openai": OPENAI_REQUEST_MICRO_USD, "deepseek": DEEPSEEK_REQUEST_MICRO_USD, "jev": 1}
 DAILY_LIMITS = {
     "openai": OPENAI_DAILY_MICRO_USD,
     "deepseek": DEEPSEEK_DAILY_MICRO_USD,
     "elevenlabs": ELEVENLABS_DAILY_CHARACTERS,
+    "jev": JEV_DAILY_REQUESTS,
 }
+UNIT_LABELS = {"elevenlabs": "characters", "jev": "requests"}
 
 
 async def reserve_in_transaction(
@@ -62,7 +65,7 @@ async def reserve_in_transaction(
         "provider": provider,
         "reserved_units": total,
         "remaining_units": limit - total,
-        "unit": "characters" if provider == "elevenlabs" else "micro_usd",
+        "unit": UNIT_LABELS.get(provider, "micro_usd"),
     }
 
 
@@ -101,3 +104,17 @@ async def guarded_openai_request(db_or_factory, request):
     async with factory() as budget_db, budget_db.begin():
         await reserve_in_transaction(budget_db, "openai")
     return await request()
+
+
+async def reserve_jev_request(factory, *, limit: int) -> bool:
+    """Reserve one Jev request in its own committed session; never raises.
+
+    ``False`` means denied (budget exhausted or the ledger is unavailable), in
+    which case the caller must not send the request.
+    """
+    try:
+        async with factory() as budget_db, budget_db.begin():
+            await reserve_in_transaction(budget_db, "jev", units=1, limit=limit)
+    except Exception:
+        return False
+    return True
