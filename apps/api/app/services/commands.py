@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from app.domain.commands import (
     CommandKind,
     CommandResult,
+    captions_result,
     command_result,
     failed_result,
     parse_exact_command,
@@ -25,9 +26,12 @@ from app.domain.commands import (
 )
 from app.domain.contracts import (
     Action,
+    AdjustSpeakingSpeed,
+    SetCaptionsVisible,
+    SetSpeakingSpeed,
     UserSettings,
 )
-from app.services.actions import SETTING_ACTIONS, dispatch_action
+from app.services.actions import dispatch_action
 from app.services.context_operations import ContextOperationError
 from app.services.voices import VoiceCatalogError
 
@@ -45,7 +49,6 @@ async def handle_finalized_utterance(
     conversation_id: str,
     request_id: str,
     expected_revision: int,
-    settings_revision: int,
     text: str,
     catalog,
     handlers,
@@ -65,14 +68,27 @@ async def handle_finalized_utterance(
             return unsupported_result(request_id=request_id, detail=detail, spoken=spoken)
         return None
 
-    revision = settings_revision if isinstance(action, SETTING_ACTIONS) else expected_revision
+    # Truthful routing for effects that are not wired end-to-end yet. Speed is
+    # stored but never reaches the TTS voice settings (#44), so no success is
+    # claimed and nothing is mutated.
+    if isinstance(action, (AdjustSpeakingSpeed, SetSpeakingSpeed)):
+        return unsupported_result(
+            request_id=request_id,
+            detail="SPEED_APPLICATION_UNAVAILABLE",
+            spoken="I can't change speaking speed in the call yet. Nothing was changed.",
+        )
+    if isinstance(action, SetCaptionsVisible):
+        # Captions are applied by the client store; the server settings field is
+        # not read by the UI, so this path makes no server write.
+        return captions_result(request_id=request_id, visible=action.visible)
+
     try:
         raw = await dispatch_action(
             db,
             owner_id=owner_id,
             conversation_id=conversation_id,
             request_id=request_id,
-            expected_revision=revision,
+            expected_revision=expected_revision,
             action=action,
             catalog=catalog,
             handlers=handlers,

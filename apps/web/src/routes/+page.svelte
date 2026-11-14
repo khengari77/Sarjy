@@ -55,7 +55,7 @@
   const words = $derived(wordsFor(arabic));
 
   // GUI controls and backend-authored voice results both write this store.
-  const commands = createCommandSession(() => conversation.current);
+  const commands = createCommandSession();
 
   const phase = $derived<VoicePhase>(
     (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
@@ -170,7 +170,8 @@
 <AppShell
   bind:leftOpen={commands.state.panels.history}
   bind:rightOpen={commands.state.panels.memory_explorer}
-  dir={arabic ? 'rtl' : 'ltr'}  stageDialogOpen={pendingIntent !== null}
+  dir={arabic ? 'rtl' : 'ltr'}
+  stageDialogOpen={pendingIntent !== null}
   languageLabel={arabic ? 'English' : 'العربية'}
   onLanguage={LANGUAGE_SWITCH_ENABLED ? toggleLanguage : undefined}
   leftLabel={arabic ? 'المحادثات' : 'Conversations'}
@@ -254,12 +255,10 @@
           live={voice.live}
           activeVoiceName={voice.activeVoiceName}
           captionsVisible={commands.state.settings.captions_visible}
-          speakingSpeed={commands.state.settings.speaking_speed}
           onsearch={() => void catalogStore!.load()}
           onloadmore={() => void catalogStore!.load(true)}
           onremember={() => catalogStore!.remember()}
-          ontoggleCaptions={commands.toggleCaptions}
-          onspeed={commands.setSpeed}
+          ontoggleCaptions={() => commands.setCaptions(!commands.state.settings.captions_visible)}
         />
       {/snippet}
     </RightDrawer>

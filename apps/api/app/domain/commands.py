@@ -100,6 +100,9 @@ class CommandResult(Contract):
     kind: CommandKind
     action: str | None = Field(default=None, max_length=64)
     settings: UserSettings | None = None
+    # A purely client-applied effect (captions) carries the requested value and
+    # makes no claim about a server settings write.
+    captions_visible: bool | None = None
     navigation: Literal["history", "memory_explorer"] | None = None
     changed: bool = False
     spoken: str = Field(min_length=1, max_length=300)
@@ -156,6 +159,18 @@ def unsupported_result(*, request_id: str, detail: str, spoken: str) -> CommandR
     )
 
 
+def captions_result(*, request_id: str, visible: bool) -> CommandResult:
+    """Captions are a client effect; no server settings write is claimed."""
+    return CommandResult(
+        request_id=request_id,
+        kind=CommandKind.EXECUTED,
+        action="SetCaptionsVisible",
+        captions_visible=visible,
+        changed=True,
+        spoken="Captions shown." if visible else "Captions hidden.",
+    )
+
+
 def failed_result(*, request_id: str, detail: str, action: Action | None = None) -> CommandResult:
     return CommandResult(
         request_id=request_id,
@@ -200,6 +215,7 @@ def spoken_outcome(
 __all__ = [
     "CommandKind",
     "CommandResult",
+    "captions_result",
     "command_result",
     "failed_result",
     "parse_exact_command",

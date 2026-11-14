@@ -44,11 +44,7 @@ export function bootStudio(options: StudioBoot) {
   const storage = browserStorage();
   if (options.restoreLanguage) options.setArabic(storage?.getItem('sarjy-language') === 'ar');
   catalog.voiceId = storage?.getItem('sarjy-voice-id') || '';
-  const storedSpeed = Number(storage?.getItem('sarjy-speaking-speed'));
-  options.hydrateSettings({
-    captions_visible: storage?.getItem('sarjy-captions') !== 'off',
-    speaking_speed: Number.isFinite(storedSpeed) && storedSpeed > 0 ? storedSpeed : 1,
-  });
+  options.hydrateSettings({ captions_visible: storage?.getItem('sarjy-captions') !== 'off' });
 
   const runtime: VoiceRuntime = createVoiceRuntime();
   const meters = createMeterController(
@@ -84,7 +80,10 @@ export function bootStudio(options: StudioBoot) {
         await conversations.reload();
         if (conversation.conversations.length) await conversations.select(conversation.conversations[0].id);
         try {
-          options.hydrateSettings(await request<SettingsSnapshot>('settings'));
+          const saved = await request<SettingsSnapshot>('settings');
+          // Captions are client-owned in this slice; the unused server field
+          // must not overwrite the local preference on reload.
+          options.hydrateSettings({ revision: saved.revision });
         } catch {
           // The saved preference is a presentation setting; the local mirror
           // stays usable when the settings read is unavailable.

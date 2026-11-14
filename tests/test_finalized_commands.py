@@ -73,21 +73,16 @@ def handler_trace(path):
 
 
 ROWS = [
-    ("Speak slower.", {"kind": "AdjustSpeakingSpeed", "delta": -0.1}, "executed"),
-    ("Speak faster.", {"kind": "AdjustSpeakingSpeed", "delta": 0.1}, "executed"),
-    ("Hide captions.", {"kind": "SetCaptionsVisible", "visible": False}, "executed"),
-    # Captions start visible, so the exact command reports an unchanged state
-    # instead of claiming a change that did not happen.
-    ("Show captions.", {"kind": "SetCaptionsVisible", "visible": True}, "unchanged"),
     ("Show my previous conversations.", {"kind": "ShowConversationHistory"}, "executed"),
     ("Open my previous conversations.", {"kind": "ShowConversationHistory"}, "executed"),
     ("Open the memory explorer.", {"kind": "OpenMemoryExplorer"}, "executed"),
 ]
-SETTING_KINDS = {"AdjustSpeakingSpeed", "SetCaptionsVisible"}
 
 
 @pytest.mark.parametrize(("text", "action", "expected_kind"), ROWS)
-def test_voice_and_gui_fixtures_converge_on_one_state_and_handler_trace(tmp_path, text, action, expected_kind):
+def test_navigation_voice_and_gui_fixtures_converge_on_one_state_and_handler_trace(
+    tmp_path, text, action, expected_kind
+):
     spoken_app, spoken_path = app_for(tmp_path, "spoken")
     with TestClient(spoken_app) as client:
         conversation = chat(client)
@@ -110,33 +105,63 @@ def test_voice_and_gui_fixtures_converge_on_one_state_and_handler_trace(tmp_path
 
     assert spoken["handled"] is True and manual["handled"] is True
     assert spoken["result"]["kind"] == expected_kind
-    assert spoken["result"]["changed"] is (expected_kind == "executed")
+    assert spoken["result"]["changed"] is True
     assert spoken_settings == gui_settings
     assert spoken_counts == gui_counts
     assert spoken_trace == gui_trace == [action["kind"]]
     assert spoken["result"]["action"] == action["kind"]
+    assert spoken["result"]["navigation"] == manual["result"]["navigation"]
     assert spoken["result"]["spoken"]
-    if action["kind"] in SETTING_KINDS:
-        assert spoken["result"]["settings"] == gui_settings
-    else:
-        assert spoken["result"]["navigation"] == manual["result"]["navigation"]
 
 
-def test_duplicate_finalized_transcript_applies_one_effect(tmp_path):
+def test_captions_is_a_client_effect_and_writes_no_server_settings(tmp_path):
     app, path = app_for(tmp_path)
     with TestClient(app) as client:
         conversation = chat(client)
-        first = voice(client, conversation, "Speak slower.")
-        # A replayed final transcript carries the same source request id.
-        duplicate = voice(client, conversation, " Speak   slower. ")
-        assert duplicate.json() == first.json()
-        assert client.get("/v1/settings").json()["speaking_speed"] == 0.9
-        (revisions, operations) = counts(path)
-        assert (revisions, operations) == (1, 1)
+        first = voice(client, conversation, "Hide captions.")
+        result = first.json()["result"]
+        assert result["kind"] == "executed"
+        assert result["action"] == "SetCaptionsVisible"
+        assert result["captions_visible"] is False
+        assert result["settings"] is None
+        assert result["spoken"] == "Captions hidden."
+        assert counts(path) == (0, 0)
 
-        # A genuinely new utterance is a new command and applies again.
-        second = voice(client, conversation, "Speak slower.", request="r2", revision=1)
-        assert second.json()["result"]["settings"]["speaking_speed"] == 0.8
+        duplicate = voice(client, conversation, " Hide   captions. ")
+        assert duplicate.json() == first.json()
+        assert counts(path) == (0, 0)
+
+        shown = voice(client, conversation, "Show captions.", request="r2", revision=0)
+        assert shown.json()["result"]["captions_visible"] is True
+        assert shown.json()["result"]["spoken"] == "Captions shown."
+
+
+@pytest.mark.parametrize("text", ["Speak slower.", "Speak faster."])
+def test_speed_is_unsupported_until_it_reaches_the_voice(tmp_path, text):
+    app, path = app_for(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        response = voice(client, conversation, text)
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["kind"] == "unsupported"
+        assert result["detail"] == "SPEED_APPLICATION_UNAVAILABLE"
+        assert "Nothing was changed" in result["spoken"]
+        assert result["settings"] is None
+        assert client.get("/v1/settings").json()["speaking_speed"] == 1.0
+        assert counts(path) == (0, 0)
+
+
+def test_duplicate_finalized_navigation_applies_one_effect(tmp_path):
+    app, path = app_for(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        first = voice(client, conversation, "Show my previous conversations.")
+        # A replayed final transcript carries the same source request id.
+        duplicate = voice(client, conversation, " Show   my previous conversations. ")
+        assert duplicate.json() == first.json()
+        assert handler_trace(path) == ["ShowConversationHistory"]
+        assert counts(path) == (0, 1)
 
 
 @pytest.mark.parametrize(
@@ -187,17 +212,15 @@ def test_non_commands_fall_through_without_effects(tmp_path, text):
         assert counts(path) == (0, 0)
 
 
-def test_stale_revision_reports_failure_without_claiming_success(tmp_path):
+def test_stale_revision_does_not_block_navigation(tmp_path):
     app, _ = app_for(tmp_path)
     with TestClient(app) as client:
         conversation = chat(client)
-        response = voice(client, conversation, "Hide captions.", revision=9)
+        response = voice(client, conversation, "Show my previous conversations.", revision=9)
         assert response.status_code == 200
         result = response.json()["result"]
-        assert result["kind"] == "failed"
-        assert result["action"] == "SetCaptionsVisible"
-        assert "couldn't apply" in result["spoken"]
-        assert client.get("/v1/settings").json()["captions_visible"] is True
+        assert result["kind"] == "executed"
+        assert result["navigation"] == "history"
 
 
 def _voice_session(client, file, conversation):
@@ -236,11 +259,13 @@ def test_worker_command_uses_the_stored_final_turn_once(tmp_path):
         assert first.status_code == 200
         command = first.json()["command"]
         assert command["kind"] == "executed" and command["action"] == "SetCaptionsVisible"
+        assert command["captions_visible"] is False
         assert command["spoken"] == "Captions hidden."
         duplicate = client.post("/internal/agent/command", headers=headers, json={"turn_id": turn_id})
         assert duplicate.json() == first.json()
-        assert client.get("/v1/settings").json()["captions_visible"] is False
-        assert counts(file) == (1, 1)
+        # Captions are a client effect in this slice: no server settings write.
+        assert client.get("/v1/settings").json()["captions_visible"] is True
+        assert counts(file) == (0, 0)
         assert owner
 
         ordinary = client.post(

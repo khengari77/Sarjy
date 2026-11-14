@@ -2,9 +2,9 @@
  * One shared command/settings store for the GUI and finalized voice commands.
  *
  * The backend interprets a finalized transcript and publishes a CommandResult;
- * the GUI control sends the same typed action through `/v1/actions`. Both
- * funnel into `apply`, which sets absolute state (never applies a delta twice)
- * and ignores a repeated request id. The UI never parses a transcript.
+ * GUI controls apply the same typed-action result locally. Both funnel into
+ * `apply`, which sets absolute state (never re-applies a delta) and ignores a
+ * repeated request id. The UI never parses a transcript.
  */
 
 export type CommandKind = 'executed' | 'unchanged' | 'needs_confirmation' | 'unsupported' | 'failed' | 'unknown';
@@ -22,6 +22,8 @@ export interface CommandResult {
   kind: CommandKind;
   action: string | null;
   settings: SettingsSnapshot | null;
+  /** Client-applied effect; no server settings write is implied. */
+  captions_visible: boolean | null;
   navigation: 'history' | 'memory_explorer' | null;
   changed: boolean;
   spoken: string;
@@ -42,11 +44,6 @@ export interface CommandState {
   applied: string[];
 }
 
-export type ActionPayload =
-  | { kind: 'AdjustSpeakingSpeed'; delta: number }
-  | { kind: 'SetSpeakingSpeed'; speed: number }
-  | { kind: 'SetCaptionsVisible'; visible: boolean };
-
 const KINDS: ReadonlySet<string> = new Set([
   'executed',
   'unchanged',
@@ -55,9 +52,6 @@ const KINDS: ReadonlySet<string> = new Set([
   'failed',
   'unknown',
 ]);
-
-const SPEED_MIN = 0.8;
-const SPEED_MAX = 1.2;
 
 export function initialSettings(): SettingsSnapshot {
   return {
@@ -106,6 +100,13 @@ export function normalizeCommandResult(value: unknown): CommandResult | null {
   if (typeof value.changed !== 'boolean') return null;
   if (value.action !== null && typeof value.action !== 'string') return null;
   if (value.detail !== null && value.detail !== undefined && typeof value.detail !== 'string') return null;
+  if (
+    value.captions_visible !== null &&
+    value.captions_visible !== undefined &&
+    typeof value.captions_visible !== 'boolean'
+  ) {
+    return null;
+  }
   const navigation = value.navigation;
   if (navigation !== null && navigation !== undefined && navigation !== 'history' && navigation !== 'memory_explorer') {
     return null;
@@ -116,6 +117,7 @@ export function normalizeCommandResult(value: unknown): CommandResult | null {
     kind: value.kind as CommandKind,
     action: value.action ?? null,
     settings: isSettings(value.settings) ? value.settings : null,
+    captions_visible: typeof value.captions_visible === 'boolean' ? value.captions_visible : null,
     navigation: (navigation as CommandResult['navigation']) ?? null,
     changed: value.changed,
     spoken: value.spoken,
@@ -123,58 +125,24 @@ export function normalizeCommandResult(value: unknown): CommandResult | null {
   };
 }
 
-/**
- * Map the existing typed-action REST result to the same contract the worker
- * publishes. The GUI half of parity therefore uses one shape with voice.
- */
-export function resultFromUiResponse(requestId: string, body: unknown): CommandResult | null {
-  if (!isRecord(body) || body.handled !== true || !isRecord(body.result)) return null;
-  const raw = body.result;
-  if (isSettings(raw.settings) && typeof raw.changed === 'boolean' && typeof raw.kind === 'string') {
-    return {
-      request_id: requestId,
-      kind: raw.changed ? 'executed' : 'unchanged',
-      action: raw.kind,
-      settings: raw.settings,
-      navigation: null,
-      changed: raw.changed,
-      spoken: raw.changed ? 'Done.' : 'No change.',
-      detail: null,
-    };
-  }
-  const navigation = raw.navigation;
-  if (navigation === 'history' || navigation === 'memory_explorer') {
-    return {
-      request_id: requestId,
-      kind: 'executed',
-      action: navigation === 'history' ? 'ShowConversationHistory' : 'OpenMemoryExplorer',
-      settings: null,
-      navigation,
-      changed: true,
-      spoken: navigation === 'history' ? 'Opening your previous conversations.' : 'Opening the memory explorer.',
-      detail: null,
-    };
-  }
-  return null;
-}
-
-export interface CommandTransport {
-  /** Send one typed action; throws on a transport or protocol failure. */
-  send(action: ActionPayload, requestId: string, expectedRevision: number): Promise<CommandResult | null>;
-}
-
 export interface CommandStoreDeps {
   persist(settings: SettingsSnapshot): void;
 }
 
-export function createCommandStore(state: CommandState, transport: CommandTransport, deps: CommandStoreDeps) {
-  let queue: Promise<void> = Promise.resolve();
+export function createCommandStore(state: CommandState, deps: CommandStoreDeps) {
   let requestCounter = 0;
+
+  function nextRequestId(): string {
+    return `ui:${Date.now()}:${++requestCounter}`;
+  }
 
   function apply(result: CommandResult): boolean {
     if (state.applied.includes(result.request_id)) return false;
     state.applied.push(result.request_id);
     if (result.settings) state.settings = result.settings;
+    if (result.captions_visible !== null) {
+      state.settings = { ...state.settings, captions_visible: result.captions_visible };
+    }
     if (result.navigation === 'history') state.panels.history = true;
     if (result.navigation === 'memory_explorer') state.panels.memory_explorer = true;
     state.trace.push(result.action ?? result.kind);
@@ -183,57 +151,30 @@ export function createCommandStore(state: CommandState, transport: CommandTransp
     return true;
   }
 
-  function failed(action: ActionPayload, requestId: string, detail: string): CommandResult {
-    const result: CommandResult = {
-      request_id: requestId,
-      kind: 'failed',
-      action: action.kind,
-      settings: null,
-      navigation: null,
-      changed: false,
-      spoken: "I couldn't apply that. Nothing was changed.",
-      detail,
-    };
-    state.last = result;
-    return result;
-  }
-
-  function run(action: ActionPayload): Promise<CommandResult | null> {
-    const task = queue.then(async () => {
-      const requestId = `ui:${Date.now()}:${++requestCounter}`;
-      try {
-        const result = await transport.send(action, requestId, state.settings.revision);
-        if (result) apply(result);
-        return result;
-      } catch (error) {
-        failed(action, requestId, error instanceof Error ? error.message : 'ACTION_FAILED');
-        return null;
-      }
-    });
-    queue = task.then(
-      () => undefined,
-      () => undefined,
-    );
-    return task;
-  }
-
   function hydrate(settings: Partial<SettingsSnapshot>) {
+    // A late bootstrap read must never clobber a newer applied command. A
+    // local mirror has no revision and always applies.
+    if (settings.revision !== undefined && settings.revision < state.settings.revision) return;
     state.settings = { ...state.settings, ...settings };
     deps.persist(state.settings);
   }
 
-  function setCaptions(visible: boolean): Promise<CommandResult | null> {
-    return run({ kind: 'SetCaptionsVisible', visible });
-  }
-
-  function setSpeed(speed: number): Promise<CommandResult | null> {
-    const clamped = Math.min(SPEED_MAX, Math.max(SPEED_MIN, Math.round(speed * 10) / 10));
-    const difference = Math.round((clamped - state.settings.speaking_speed) * 10) / 10;
-    if (difference === 0) return Promise.resolve(null);
-    if (Math.abs(difference) === 0.1) {
-      return run({ kind: 'AdjustSpeakingSpeed', delta: difference });
-    }
-    return run({ kind: 'SetSpeakingSpeed', speed: clamped });
+  /**
+   * Captions are a client effect. The GUI and the worker result use the same
+   * reducer, but neither claims a server settings write in this slice.
+   */
+  function setCaptions(visible: boolean): boolean {
+    return apply({
+      request_id: nextRequestId(),
+      kind: 'executed',
+      action: 'SetCaptionsVisible',
+      settings: null,
+      captions_visible: visible,
+      navigation: null,
+      changed: true,
+      spoken: visible ? 'Captions shown.' : 'Captions hidden.',
+      detail: null,
+    });
   }
 
   /** GUI navigation writes the same panel store a voice result writes. */
@@ -241,7 +182,7 @@ export function createCommandStore(state: CommandState, transport: CommandTransp
     state.panels[panel] = true;
   }
 
-  return { apply, run, hydrate, setCaptions, setSpeed, openPanel };
+  return { apply, hydrate, setCaptions, openPanel };
 }
 
 export type CommandStore = ReturnType<typeof createCommandStore>;

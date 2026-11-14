@@ -59,23 +59,16 @@ def test_quoted_negated_and_compound_commands_never_parse(command):
         assert parse_exact_command(text) is None
 
 
-def test_ui_and_final_transcript_share_persisted_settings_and_idempotency(tmp_path):
+def test_ui_settings_stay_revision_guarded_and_idempotent(tmp_path):
     app, path = setup(tmp_path)
     with TestClient(app) as client:
         conversation = chat(client)
         first = submit(client, conversation, source="ui", action={"kind": "AdjustSpeakingSpeed", "delta": -0.1})
         assert first.status_code == 200
         assert first.json()["result"]["settings"]["speaking_speed"] == 0.9
-        retry = submit(client, conversation, source="transcript", transcript=" Speak   slower. ")
-        assert retry.status_code == 200
-        assert retry.json()["result"]["settings"]["speaking_speed"] == 0.9
-        assert retry.json()["result"]["kind"] == "executed"
-        assert retry.json()["result"]["action"] == "AdjustSpeakingSpeed"
-        next_response = submit(
-            client, conversation, request="r2", revision=1, source="transcript", transcript="speak slower"
-        )
-        assert next_response.json()["result"]["settings"]["speaking_speed"] == 0.8
-        assert client.get("/v1/settings").json()["revision"] == 2
+        retry = submit(client, conversation, source="ui", action={"kind": "AdjustSpeakingSpeed", "delta": -0.1})
+        assert retry.json() == first.json()
+        assert client.get("/v1/settings").json()["speaking_speed"] == 0.9
         assert (
             submit(
                 client,
@@ -87,8 +80,23 @@ def test_ui_and_final_transcript_share_persisted_settings_and_idempotency(tmp_pa
             == 409
         )
         with closing(sqlite3.connect(path)) as db, db:
-            assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 2
-            assert db.execute("SELECT COUNT(*) FROM context_operations").fetchone()[0] == 2
+            assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 1
+            assert db.execute("SELECT COUNT(*) FROM context_operations").fetchone()[0] == 1
+
+
+def test_final_transcript_speed_is_not_falsely_applied(tmp_path):
+    app, path = setup(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        response = submit(client, conversation, source="transcript", transcript=" Speak   slower. ")
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["kind"] == "unsupported"
+        assert result["detail"] == "SPEED_APPLICATION_UNAVAILABLE"
+        assert "Nothing was changed" in result["spoken"]
+        assert client.get("/v1/settings").json()["speaking_speed"] == 1.0
+        with closing(sqlite3.connect(path)) as db, db:
+            assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 0
 
 
 def test_unsafe_inputs_noops_and_invalid_actions_have_no_effects(tmp_path):

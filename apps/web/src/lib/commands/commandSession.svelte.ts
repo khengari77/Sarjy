@@ -1,20 +1,23 @@
 /** One reactive command session: the GUI and worker results share this state. */
 
-import { createBrowserCommands } from './browserCommands';
-import { initialCommandState, type CommandResult } from './commandStore';
+import { browserStorage } from '../storage';
+import { createCommandStore, initialCommandState, type SettingsSnapshot } from './commandStore';
 
-export function createCommandSession(
-  getConversationId: () => string | null,
-  onApplied?: (result: CommandResult) => void,
-) {
+export function persistSettings(settings: SettingsSnapshot) {
+  const storage = browserStorage();
+  if (!storage) return;
+  storage.setItem('sarjy-captions', settings.captions_visible ? 'on' : 'off');
+}
+
+export function createCommandSession() {
   const state = $state(initialCommandState());
-  const commands = createBrowserCommands(state, getConversationId, onApplied);
+  const store = createCommandStore(state, { persist: persistSettings });
   return {
     state,
-    apply: commands.apply,
-    hydrate: commands.store.hydrate,
-    toggleCaptions: commands.toggleCaptions,
-    setSpeed: commands.setSpeed,
+    apply: store.apply,
+    hydrate: store.hydrate,
+    setCaptions: store.setCaptions,
+    openPanel: store.openPanel,
   };
 }
 

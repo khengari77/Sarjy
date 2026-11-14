@@ -229,24 +229,6 @@ select {
   color: var(--text-muted);
 }
 
-.speed-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.speed-row input {
-  flex: 1;
-  min-height: 44px;
-  accent-color: var(--orb-idle);
-}
-
-.speed-row output {
-  min-width: 42px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-primary);
-}
-
 .voice-error {
   margin: 0;
   color: #ffb3bb;

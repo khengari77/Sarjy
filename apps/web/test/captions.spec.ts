@@ -26,25 +26,6 @@ async function mockData(
       },
     }),
   );
-  await page.route('**/api/v1/actions', async (route) => {
-    const body = route.request().postDataJSON() as { action: { kind: string; visible?: boolean } };
-    await route.fulfill({
-      json: {
-        handled: true,
-        result: {
-          kind: body.action.kind,
-          settings: {
-            speaking_speed: 1,
-            captions_visible: body.action.visible ?? true,
-            approved_voice_id: null,
-            response_preference: 'automatic',
-            revision: 1,
-          },
-          changed: true,
-        },
-      },
-    });
-  });
 }
 
 async function allowMicrophone(page: Page) {

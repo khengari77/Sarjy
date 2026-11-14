@@ -12,12 +12,10 @@
     live,
     activeVoiceName,
     captionsVisible,
-    speakingSpeed,
     onsearch,
     onloadmore,
     onremember,
     ontoggleCaptions,
-    onspeed,
   }: {
     arabic: boolean;
     voices: VoiceOption[];
@@ -29,12 +27,10 @@
     live: SessionConfig | null;
     activeVoiceName: string;
     captionsVisible: boolean;
-    speakingSpeed: number;
     onsearch: () => void;
     onloadmore: () => void;
     onremember: () => void;
     ontoggleCaptions: () => void;
-    onspeed: (speed: number) => void;
   } = $props();
 </script>
 
@@ -109,24 +105,8 @@
       <input type="checkbox" checked={captionsVisible} onchange={ontoggleCaptions} />
       <span>{arabic ? 'إظهار الترجمة' : 'Show captions'}</span>
     </label>
-    <label class="field-label" for="speaking-speed">{arabic ? 'سرعة الكلام' : 'Speaking speed'}</label>
-    <div class="speed-row">
-      <input
-        id="speaking-speed"
-        type="range"
-        min="0.8"
-        max="1.2"
-        step="0.1"
-        value={speakingSpeed}
-        aria-valuetext={`${speakingSpeed.toFixed(1)} times`}
-        oninput={(event) => onspeed(Number(event.currentTarget.value))}
-      />
-      <output for="speaking-speed">{speakingSpeed.toFixed(1)}×</output>
-    </div>
     <p class="muted-text">
-      {arabic
-        ? 'تُحفظ السرعة. تطبيقها على الصوت المدعوم قيد التنفيذ (#44).'
-        : 'The speed is saved. Applying it to supported speech is tracked in #44.'}
+      {arabic ? 'التحكم بسرعة الكلام غير متاح بعد.' : 'Speaking-speed control is not available yet.'}
     </p>
   </section>
 </div>

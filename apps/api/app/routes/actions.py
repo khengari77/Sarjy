@@ -86,7 +86,6 @@ def register_action_routes(app, database, identity, owned, catalog):
                 conversation_id=body.conversation_id,
                 request_id=body.request_id,
                 expected_revision=body.expected_revision,
-                settings_revision=body.expected_revision,
                 text=body.transcript,
                 catalog=catalog,
                 handlers=app.state.action_handlers,

@@ -431,18 +431,12 @@ def _register_command_routes(app, *, database, guard, catalog):
         expected_revision = snapshot.get("revision")
         if not isinstance(expected_revision, int):
             expected_revision = conversation.revision
-        model_request = snapshot.get("model_request")
-        settings_revision = model_request.get("settings_revision") if isinstance(model_request, dict) else None
-        if not isinstance(settings_revision, int):
-            settings_row = await db.get(UserSetting, conversation.owner_id)
-            settings_revision = settings_row.revision if settings_row is not None else 0
         result = await handle_finalized_utterance(
             db,
             owner_id=conversation.owner_id,
             conversation_id=turn.conversation_id,
             request_id=command_request_id(turn.id),
             expected_revision=expected_revision,
-            settings_revision=settings_revision,
             text=turn.text,
             catalog=catalog,
             handlers=app.state.action_handlers,

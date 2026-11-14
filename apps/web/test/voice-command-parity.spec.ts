@@ -17,27 +17,20 @@ const INITIAL_SETTINGS = {
   revision: 0,
 };
 
-const HIDDEN_SETTINGS = { ...INITIAL_SETTINGS, captions_visible: false, revision: 1 };
-const SLOWER_SETTINGS = { ...INITIAL_SETTINGS, speaking_speed: 0.9, revision: 1 };
-
 async function mockBackend(page: Page) {
+  const actions: string[] = [];
   await page.route('**/api/v1/demo-session', (route) => route.fulfill({ json: { id: 'owner' } }));
-  await page.route('**/api/v1/conversations', (route) =>
-    route.request().method() === 'GET' ? route.fulfill({ json: [CHAT] }) : route.fulfill({ json: CHAT }),
-  );
+  await page.route('**/api/v1/conversations', (route) => route.fulfill({ json: [CHAT] }));
   await page.route('**/api/v1/conversations/*/turns', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/v1/conversations/*/tool-calls', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/v1/settings', (route) => route.fulfill({ json: INITIAL_SETTINGS }));
+  // Captions are a client effect in this slice. Any settings/action write is a
+  // regression: record it and fail the request.
   await page.route('**/api/v1/actions', async (route) => {
-    const body = route.request().postDataJSON() as { action: Record<string, unknown> };
-    const next =
-      body.action.kind === 'SetCaptionsVisible'
-        ? { ...HIDDEN_SETTINGS, captions_visible: body.action.visible === true }
-        : { ...SLOWER_SETTINGS };
-    await route.fulfill({
-      json: { handled: true, result: { kind: body.action.kind, settings: next, changed: true } },
-    });
+    actions.push(route.request().url());
+    await route.fulfill({ status: 500, json: { detail: { code: 'UNEXPECTED_SETTINGS_WRITE' } } });
   });
+  return { actions };
 }
 
 async function installFakeRuntime(page: Page) {
@@ -74,14 +67,17 @@ async function installFakeRuntime(page: Page) {
 }
 
 async function boot(page: Page) {
-  await mockBackend(page);
+  const backend = await mockBackend(page);
   await installFakeRuntime(page);
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
+  const settingsLoaded = page.waitForResponse('**/api/v1/settings');
   await page.goto('/');
+  await settingsLoaded;
   await expect(page.locator('[data-command-trace]')).toHaveAttribute('data-command-trace', '');
   // Wait for hydration and the bootstrap that follows runtime subscription.
   await expect(page.getByRole('button', { name: 'Riyadh weather', exact: true })).toBeVisible();
   await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
+  return backend;
 }
 
 async function emit(page: Page, event: Record<string, unknown>) {
@@ -95,7 +91,8 @@ function command(overrides: Record<string, unknown> = {}) {
     request_id: 'command:turn-1',
     kind: 'executed',
     action: 'SetCaptionsVisible',
-    settings: HIDDEN_SETTINGS,
+    settings: null,
+    captions_visible: false,
     navigation: null,
     changed: true,
     spoken: 'Captions hidden.',
@@ -108,82 +105,50 @@ async function snapshot(page: Page) {
   const trace = await page.locator('[data-command-trace]').getAttribute('data-command-trace');
   const revision = await page.locator('[data-settings-revision]').getAttribute('data-settings-revision');
   const captions = await page.evaluate(() => localStorage.getItem('sarjy-captions'));
-  const speed = await page.evaluate(() => localStorage.getItem('sarjy-speaking-speed'));
-  return { trace, revision, captions, speed };
+  return { trace, revision, captions };
 }
 
 /** A fresh browser context so persisted state never leaks between fixtures. */
-async function withPage(browser: Browser, run: (page: Page) => Promise<void>) {
+async function withPage(browser: Browser, run: (page: Page, backend: { actions: string[] }) => Promise<void>) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
   try {
-    await boot(page);
-    await run(page);
+    const backend = await boot(page);
+    await run(page, backend);
   } finally {
     await context.close();
   }
 }
 
-test('GUI captions action and a voice result converge on one persisted state', async ({ browser }) => {
+test('GUI captions action and a voice result converge on one persisted state without a server write', async ({
+  browser,
+}) => {
   let guiState: Awaited<ReturnType<typeof snapshot>> | undefined;
   let voiceState: Awaited<ReturnType<typeof snapshot>> | undefined;
 
-  await withPage(browser, async (page) => {
+  await withPage(browser, async (page, backend) => {
     await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
     await page.getByRole('checkbox', { name: 'Show captions' }).uncheck();
     await expect(page.locator('[data-command-kind]')).toHaveAttribute('data-command-kind', 'executed');
     guiState = await snapshot(page);
+    expect(backend.actions).toHaveLength(0);
     await expect(page.locator('.captions')).toHaveCount(0);
   });
 
-  await withPage(browser, async (page) => {
+  await withPage(browser, async (page, backend) => {
     await emit(page, { type: 'command', command: command() });
     await expect(page.locator('[data-command-kind]')).toHaveAttribute('data-command-kind', 'executed');
     voiceState = await snapshot(page);
+    expect(backend.actions).toHaveLength(0);
     await expect(page.locator('.captions')).toHaveCount(0);
   });
 
   expect(voiceState).toEqual(guiState);
   expect(voiceState).toMatchObject({
     trace: 'SetCaptionsVisible',
-    revision: '1',
+    revision: '0',
     captions: 'off',
   });
-});
-
-test('GUI speed slider and a voice result converge on one persisted state', async ({ browser }) => {
-  let guiState: Awaited<ReturnType<typeof snapshot>> | undefined;
-  let voiceState: Awaited<ReturnType<typeof snapshot>> | undefined;
-
-  await withPage(browser, async (page) => {
-    await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
-    await page.locator('#speaking-speed').evaluate((element) => {
-      const input = element as HTMLInputElement;
-      input.value = '0.9';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await expect(page.locator('[data-command-kind]')).toHaveAttribute('data-command-kind', 'executed');
-    guiState = await snapshot(page);
-    await expect(page.locator('#speaking-speed')).toHaveValue('0.9');
-  });
-
-  await withPage(browser, async (page) => {
-    await emit(page, {
-      type: 'command',
-      command: command({
-        action: 'AdjustSpeakingSpeed',
-        settings: SLOWER_SETTINGS,
-        spoken: 'Speaking slower.',
-      }),
-    });
-    await expect(page.locator('[data-command-kind]')).toHaveAttribute('data-command-kind', 'executed');
-    voiceState = await snapshot(page);
-    await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
-    await expect(page.locator('#speaking-speed')).toHaveValue('0.9');
-  });
-
-  expect(voiceState).toEqual(guiState);
-  expect(voiceState).toMatchObject({ trace: 'AdjustSpeakingSpeed', revision: '1', speed: '0.9' });
 });
 
 test('a partial transcript dispatches nothing and a final transcript is not parsed in the browser', async ({
@@ -204,7 +169,7 @@ test('a duplicate finalized command result applies once', async ({ page }) => {
   await emit(page, { type: 'command', command: command() });
   await emit(page, { type: 'command', command: command() });
   await expect(page.locator('[data-command-trace]')).toHaveAttribute('data-command-trace', 'SetCaptionsVisible');
-  expect(await snapshot(page)).toMatchObject({ revision: '1', captions: 'off' });
+  expect(await snapshot(page)).toMatchObject({ revision: '0', captions: 'off' });
 });
 
 test('voice navigation opens the same panel the GUI control opens', async ({ browser }) => {
@@ -212,7 +177,6 @@ test('voice navigation opens the same panel the GUI control opens', async ({ bro
   const voiceOpen: string[] = [];
 
   await withPage(browser, async (page) => {
-    // The desktop left dock is open at this viewport; close it first.
     await page.getByRole('button', { name: 'Show conversations', exact: true }).click();
     await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'false');
     await page.getByRole('button', { name: 'Show conversations', exact: true }).click();
@@ -227,7 +191,7 @@ test('voice navigation opens the same panel the GUI control opens', async ({ bro
       type: 'command',
       command: command({
         action: 'ShowConversationHistory',
-        settings: null,
+        captions_visible: null,
         navigation: 'history',
         spoken: 'Opening your previous conversations.',
       }),
