@@ -38,11 +38,52 @@ class MemoryCaptureDecision(Base):
     expires_at: Mapped[str] = mapped_column(String(40))
 
 
+class ReviewerInvitation(Base):
+    __tablename__ = "reviewer_invitations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[str] = mapped_column(String(40))
+    # A reviewer credential is always bounded: the service rejects a missing or
+    # past expiry, and the column is NOT NULL as a second line of defence.
+    expires_at: Mapped[str] = mapped_column(String(40))
+    revoked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    max_identities: Mapped[int] = mapped_column(Integer, default=8)
+    identities_created: Mapped[int] = mapped_column(Integer, default=0)
+    max_calls: Mapped[int] = mapped_column(Integer, default=24)
+
+
+class ReviewerAttemptWindow(Base):
+    """Global admission-attempt backstop for one UTC fixed minute."""
+
+    __tablename__ = "reviewer_attempt_windows"
+    minute: Mapped[str] = mapped_column(String(40), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ReviewerSourceAttemptWindow(Base):
+    """Per-source admission-attempt counter for one UTC fixed minute."""
+
+    __tablename__ = "reviewer_source_attempt_windows"
+    source: Mapped[str] = mapped_column(String(64), primary_key=True)
+    minute: Mapped[str] = mapped_column(String(40), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ReviewerCreationWindow(Base):
+    """Per-invitation identity-creation counter for one UTC fixed hour."""
+
+    __tablename__ = "reviewer_creation_windows"
+    invitation_id: Mapped[str] = mapped_column(ForeignKey("reviewer_invitations.id"), primary_key=True)
+    hour: Mapped[str] = mapped_column(String(40), primary_key=True)
+    created: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Identity(Base):
     __tablename__ = "identities"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     expires_at: Mapped[str] = mapped_column(String(40))
+    invitation_id: Mapped[str | None] = mapped_column(ForeignKey("reviewer_invitations.id"), nullable=True, index=True)
 
 
 class Conversation(Base):
@@ -281,4 +322,17 @@ class SettingRevision(Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
     revision: Mapped[int] = mapped_column(Integer)
     settings: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
+class SettingWriteRequest(Base):
+    """Owner-scoped replay record for settings writes; no conversation is needed."""
+
+    __tablename__ = "setting_write_requests"
+    __table_args__ = (UniqueConstraint("owner_id", "request_key", name="uq_setting_write_owner_request"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    request_key: Mapped[str] = mapped_column(String(100))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    result: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[str] = mapped_column(String(40), default=now)

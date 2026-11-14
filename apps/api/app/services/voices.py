@@ -1,7 +1,11 @@
-"""Account voice discovery. Credentials and raw provider metadata stay server-side."""
+"""Account voice discovery and approval. Credentials and raw provider metadata stay server-side."""
+
+from typing import Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict
+
+from app.domain.voices import parse_voice_ids
 
 
 class VoiceOption(BaseModel):
@@ -21,6 +25,70 @@ class VoiceCatalogError(Exception):
         super().__init__(code)
         self.code = code
         self.status = status
+
+
+def approved_voice_ids(configured: str, default_voice_id: str = "") -> frozenset[str]:
+    """The server-curated allow-list. A configured default is approved by definition."""
+
+    approved = set(parse_voice_ids(configured))
+    if default_voice_id:
+        approved.add(default_voice_id)
+    return frozenset(approved)
+
+
+def resolve_voice(requested: str | None, saved: str | None, default: str) -> tuple[str, str]:
+    """Pick the call voice and record why it was chosen.
+
+    Precedence is explicit request, then the saved server setting, then the
+    configured default. Only the server setting and default are automatic, so a
+    browser never needs a local voice choice to start a call.
+    """
+
+    if requested:
+        return requested, "requested"
+    if saved:
+        return saved, "saved"
+    if default:
+        return default, "default"
+    raise VoiceCatalogError("VOICE_DEFAULT_UNCONFIGURED", 503)
+
+
+def require_approved(voice_id: str, approved: frozenset[str]) -> None:
+    if voice_id not in approved:
+        raise VoiceCatalogError("VOICE_NOT_APPROVED", 422)
+
+
+def saved_voice_outcome(code: str) -> Literal["removed", "transient"]:
+    """Classify a saved-voice catalog failure. A transient failure is not terminal.
+
+    Only ``VOICE_NOT_APPROVED`` and ``VOICE_UNAVAILABLE`` prove the voice is
+    unusable. Everything else (catalog outage, access denied, provider missing)
+    says nothing about the voice, so the preference must survive it.
+    """
+
+    return "removed" if code in {"VOICE_NOT_APPROVED", "VOICE_UNAVAILABLE"} else "transient"
+
+
+def spoken_voice_language(source: str | None, requested: str, option: VoiceOption, default_language: str) -> str:
+    """Pick the TTS language belonging to the resolved voice.
+
+    The configured default speaks its configured language. An explicit request
+    names its own language. A saved preference stores only the voice id, so its
+    language comes from the catalog; when the catalog is silent or ambiguous the
+    configured default language wins, never the request language, because the
+    saved voice is a server-owned choice and the request may be for another
+    language entirely.
+    """
+
+    if source == "default":
+        return default_language
+    if source == "saved":
+        if requested in option.languages:
+            return requested
+        if len(option.languages) == 1:
+            return option.languages[0]
+        return default_language
+    return requested
 
 
 def public_catalog(payload: dict) -> VoiceCatalog:

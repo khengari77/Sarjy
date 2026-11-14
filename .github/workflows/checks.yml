@@ -58,6 +58,13 @@ jobs:
     # merged into the branch; before that there is nothing real to verify.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # Both disposable URLs are required by tests/conftest.py for every
+    # DB-backed step. Defining them once here means a new step inherits the
+    # full environment instead of failing before collection. Steps that need a
+    # different database override the value locally (see Migration preservation).
+    env:
+      TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
+      TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -98,6 +105,12 @@ jobs:
         env:
           REQUIRE_DAY2_INTEGRATION: '1'
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
+          TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
+      - name: Reviewer admission concurrency
+        # -v prints each test as PASSED; a silent skip must never look like a gate.
+        run: uv run pytest -v tests/test_reviewer_access_postgres.py
+        env:
+          REQUIRE_DAY2_INTEGRATION: '1'
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
       - name: Memory claim concurrency
         # The write ledger's duplicate-request guarantee is only meaningful on a

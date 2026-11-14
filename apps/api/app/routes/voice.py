@@ -14,10 +14,19 @@ from app.config import Settings
 from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy
 from app.domain.pipeline import PipelineConfig, validate_pipeline
 from app.domain.sessions import admission_error
-from app.infrastructure.database import SessionGate, VoiceSession
+from app.infrastructure.database import Identity, ReviewerInvitation, SessionGate, UserSetting, VoiceSession
+from app.services.actions import clear_saved_voice
 from app.services.pipeline_settings import configured_keys, default_llm
 from app.services.session_cleanup import cleanup_room
-from app.services.voices import ElevenLabsVoices, VoiceCatalogError
+from app.services.voices import (
+    ElevenLabsVoices,
+    VoiceCatalogError,
+    approved_voice_ids,
+    require_approved,
+    resolve_voice,
+    saved_voice_outcome,
+    spoken_voice_language,
+)
 
 
 class StartVoice(BaseModel):
@@ -28,7 +37,81 @@ class StartVoice(BaseModel):
     response_preference: ResponsePreference = ResponsePreference.AUTOMATIC
 
 
-def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, owned):
+async def _invitation_calls_exhausted(db: AsyncSession, user) -> bool:
+    """Return whether this reviewer invitation has spent its lifetime calls."""
+    if user.invitation_id is None:
+        return False
+    invitation = await db.get(ReviewerInvitation, user.invitation_id)
+    calls = await db.scalar(
+        select(func.count())
+        .select_from(VoiceSession)
+        .join(Identity, Identity.id == VoiceSession.owner_id)
+        .where(Identity.invitation_id == user.invitation_id)
+    )
+    return invitation is None or calls >= invitation.max_calls
+
+
+async def _admission_rejection(db: AsyncSession, config: Settings, user, now: datetime) -> str | None:
+    # Serialize reservations across API processes on both SQLite and PostgreSQL.
+    await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
+    await db.execute(
+        update(VoiceSession)
+        .where(VoiceSession.expires_at <= now.isoformat(), VoiceSession.status.in_(["starting", "active"]))
+        .values(status="ended")
+    )
+    active = (await db.scalars(select(VoiceSession).where(VoiceSession.status.in_(["starting", "active"])))).all()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    month_calls = await db.scalar(
+        select(func.count()).select_from(VoiceSession).where(VoiceSession.expires_at >= month_start)
+    )
+    identity_calls = await db.scalar(
+        select(func.count()).select_from(VoiceSession).where(VoiceSession.owner_id == user.id)
+    )
+    if await _invitation_calls_exhausted(db, user):
+        return "REVIEWER_INVITATION_BUDGET_EXHAUSTED"
+    return admission_error(
+        tuple(v.owner_id for v in active),
+        user.id,
+        month_calls,
+        identity_calls,
+        config.demo_session_budget,
+        config.demo_calls_per_identity,
+    )
+
+
+def _voice_error(exc: VoiceCatalogError, source: str | None) -> HTTPException:
+    code = "VOICE_DEFAULT_UNAVAILABLE" if source == "default" and exc.code == "VOICE_UNAVAILABLE" else exc.code
+    return HTTPException(exc.status, detail={"code": code})
+
+
+async def _resolve_call_voice(config: Settings, catalog: ElevenLabsVoices, requested: str | None, saved: str | None):
+    """Resolve, approve and catalog-check the call voice.
+
+    A saved voice that the catalog calls unusable (or a transient catalog failure)
+    falls back to the configured default for this call. Only a definitive
+    ``removed`` outcome clears the stored preference; a ``transient`` failure
+    must never delete user state.
+    """
+    approved = approved_voice_ids(config.approved_voice_ids, config.default_voice_id)
+    source: str | None = None
+    try:
+        voice_id, source = resolve_voice(requested, saved, config.default_voice_id)
+        require_approved(voice_id, approved)
+        return await catalog.require(voice_id), source, None
+    except VoiceCatalogError as exc:
+        if source != "saved" or not config.default_voice_id:
+            raise _voice_error(exc, source) from exc
+        outcome = saved_voice_outcome(exc.code)
+    try:
+        require_approved(config.default_voice_id, approved)
+        return await catalog.require(config.default_voice_id), "default", outcome
+    except VoiceCatalogError as fallback:
+        raise _voice_error(fallback, "default") from fallback
+
+
+def register_voice_routes(
+    app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, cleanup_identity, owned
+):
     @app.post("/v1/voice/sessions", status_code=201)
     async def start_voice(body: StartVoice, user=Depends(identity), db: AsyncSession = Depends(database)):
         await owned(body.conversation_id, user, db)
@@ -53,36 +136,24 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
             raise HTTPException(
                 503, detail={"code": "PIPELINE_NOT_CONFIGURED", "missing": missing, "errors": configuration_errors}
             )
-        if not body.voice_id:
-            raise HTTPException(422, detail={"code": "VOICE_REQUIRED"})
-        try:
-            await catalog.require(body.voice_id)
-        except VoiceCatalogError as exc:
-            raise HTTPException(exc.status, detail={"code": exc.code}) from exc
+        settings_row = await db.get(UserSetting, user.id)
+        saved_voice_id = settings_row.approved_voice_id if settings_row else None
+        selected_voice, voice_source, saved_voice_unavailable = await _resolve_call_voice(
+            config, catalog, body.voice_id, saved_voice_id
+        )
+        voice_id = selected_voice.id
+        voice_language = spoken_voice_language(
+            voice_source, body.language, selected_voice, config.default_voice_language
+        )
+        pipeline = pipeline.model_copy(
+            update={"tts": pipeline.tts.model_copy(update={"voice_id": voice_id, "language": voice_language})}
+        )
         # Serialize reservations across API processes on both SQLite and PostgreSQL.
         await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
+        if saved_voice_unavailable == "removed":
+            await clear_saved_voice(db, user.id)
         now = datetime.now(UTC)
-        await db.execute(
-            update(VoiceSession)
-            .where(VoiceSession.expires_at <= now.isoformat(), VoiceSession.status.in_(["starting", "active"]))
-            .values(status="ended")
-        )
-        active = (await db.scalars(select(VoiceSession).where(VoiceSession.status.in_(["starting", "active"])))).all()
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-        month_calls = await db.scalar(
-            select(func.count()).select_from(VoiceSession).where(VoiceSession.expires_at >= month_start)
-        )
-        identity_calls = await db.scalar(
-            select(func.count()).select_from(VoiceSession).where(VoiceSession.owner_id == user.id)
-        )
-        rejection = admission_error(
-            tuple(v.owner_id for v in active),
-            user.id,
-            month_calls,
-            identity_calls,
-            config.demo_session_budget,
-            config.demo_calls_per_identity,
-        )
+        rejection = await _admission_rejection(db, config, user, now)
         if rejection:
             raise HTTPException(429, detail={"code": rejection})
         voice = VoiceSession(
@@ -120,7 +191,16 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
                 )
                 .to_jwt()
             )
-            return {"id": voice.id, "url": config.livekit_url, "token": token, "expires_at": voice.expires_at}
+            return {
+                "id": voice.id,
+                "url": config.livekit_url,
+                "token": token,
+                "expires_at": voice.expires_at,
+                "voice": selected_voice.model_dump(),
+                "voice_language": voice_language,
+                "voice_source": voice_source,
+                "saved_voice_unavailable": saved_voice_unavailable,
+            }
         except Exception:
             await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id).values(status="failed"))
             await db.commit()
@@ -132,7 +212,7 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
             raise HTTPException(503, detail={"code": "VOICE_DISPATCH_FAILED"}) from None
 
     @app.post("/v1/voice/sessions/{session_id}/end")
-    async def end_voice(session_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
+    async def end_voice(session_id: str, user=Depends(cleanup_identity), db: AsyncSession = Depends(database)):
         voice = await db.get(VoiceSession, session_id)
         if not voice or voice.owner_id != user.id:
             raise HTTPException(404)

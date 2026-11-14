@@ -9,6 +9,7 @@ import type { ConversationState } from './conversations';
 import { createConversationStore } from './conversations';
 import { bindVoicePage } from './pageLifecycle';
 import { createMeterController } from './meters';
+import { browserStorage } from '../storage';
 
 export type DevOverlay = 'none' | 'memory_work' | 'confirming' | 'muted' | 'error';
 
@@ -36,9 +37,13 @@ export function bootStudio(options: StudioBoot) {
     if (overlay === 'memory_work' || overlay === 'confirming' || overlay === 'muted' || overlay === 'error')
       options.setDevOverlay(overlay);
   }
-  if (options.restoreLanguage) options.setArabic(localStorage.getItem('sarjy-language') === 'ar');
-  catalog.voiceId = localStorage.getItem('sarjy-voice-id') || '';
-  options.setCaptions(localStorage.getItem('sarjy-captions') !== 'off');
+  // Blocked storage must not abort mount: these are presentation preferences
+  // and every default below matches the missing-storage behaviour.
+  const storage = browserStorage();
+  if (options.restoreLanguage) options.setArabic(storage?.getItem('sarjy-language') === 'ar');
+  // Voice selection is server-owned; the retired local-only key is ignored.
+  storage?.removeItem('sarjy-voice-id');
+  options.setCaptions(storage?.getItem('sarjy-captions') !== 'off');
 
   const runtime: VoiceRuntime = createVoiceRuntime();
   const meters = createMeterController(
@@ -54,6 +59,8 @@ export function bootStudio(options: StudioBoot) {
     refresh: () => conversations!.refresh(),
     getRuntime: () => runtime,
     getLanguage: () => options.getLanguage(),
+    // The server fell back from a dead or unreachable saved voice: adopt its settings.
+    onVoiceFallback: () => void catalogStore.loadSettings(),
     getVoice: () => {
       const name = catalog.voices.find((entry) => entry.id === catalog.voiceId)?.name || catalog.voiceId;
       return { id: catalog.voiceId, name };
@@ -70,6 +77,7 @@ export function bootStudio(options: StudioBoot) {
     bootstrap: () =>
       options.run(async () => {
         await request('demo-session', {});
+        await catalogStore.loadSettings();
         await conversations.reload();
         if (conversation.conversations.length) await conversations.select(conversation.conversations[0].id);
       }),
