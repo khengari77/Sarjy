@@ -71,14 +71,42 @@ test('particle field rotates over time while idle', async ({ page }) => {
 
 test('reduced-motion orb is visually stable across frames', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  // The static markup is server-rendered, so `data-renderer="static"` is true
+  // before hydration. Wait for hydration's bootstrap request to finish before
+  // sampling: while it runs the button is disabled and dimmed to 70%.
+  const boot = page.waitForResponse(
+    (response) => response.url().includes('/api/v1/demo-session') && response.request().method() === 'POST',
+    { timeout: 60000 },
+  );
   await page.goto('/');
+  await boot;
   const orb = page.getByRole('button', { name: 'Start voice conversation' });
   await expect(orb).toHaveAttribute('data-renderer', 'static');
-  await page.waitForTimeout(400);
+  await expect(orb).toBeEnabled();
+  await expect(orb.locator('canvas')).toHaveCount(0);
 
-  const first = await orb.screenshot();
+  // The static tier must not animate: no CSS animation and no transition may
+  // still be running once the shell has settled.
+  const inert = await orb.evaluate((element) => {
+    const nodes = [element, ...element.querySelectorAll('*')];
+    return nodes.every((node) => {
+      const style = getComputedStyle(node);
+      const durations = style.transitionDuration.split(',').map((value) => Number.parseFloat(value));
+      return style.animationName === 'none' && durations.every((duration) => duration === 0);
+    });
+  });
+  expect(inert, 'static tier must not run CSS animations or transitions').toBe(true);
+
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const first = await orb.screenshot({ animations: 'disabled' });
   await page.waitForTimeout(900);
-  const second = await orb.screenshot();
+  await expect(orb).toHaveAttribute('data-renderer', 'static');
+  await expect(orb.locator('canvas')).toHaveCount(0);
+  const second = await orb.screenshot({ animations: 'disabled' });
 
   expect(first.equals(second)).toBe(true);
 });

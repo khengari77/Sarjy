@@ -224,16 +224,30 @@ test('a low-FPS downgrade reaches the Canvas2D tier instead of collapsing to sta
 
 test('reduced-motion static fallback stays filled and labelled', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  // `data-renderer="static"` is server-rendered; hydration's bootstrap request
+  // disables and dims the button, so let it settle before sampling pixels.
+  const boot = page.waitForResponse(
+    (response) => response.url().includes('/api/v1/demo-session') && response.request().method() === 'POST',
+    { timeout: 60000 },
+  );
   await page.goto('/');
+  await boot;
   const orb = page.getByRole('button', { name: 'Start voice conversation' });
   await expect(orb).toHaveAttribute('data-renderer', 'static');
+  await expect(orb).toBeEnabled();
   await expect(orb.locator('.orb-static')).toHaveCount(1);
   await expect(orb.locator('.orb-state-text')).toHaveText('Ready');
-  const stats = await cloudStats(page, await orb.screenshot());
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const stats = await cloudStats(page, await orb.screenshot({ animations: 'disabled' }));
   expect(stats.center, 'static fallback must still show cloud').toBeGreaterThan(8);
 
-  const first = await orb.screenshot();
+  const first = await orb.screenshot({ animations: 'disabled' });
   await page.waitForTimeout(600);
-  const second = await orb.screenshot();
+  await expect(orb).toHaveAttribute('data-renderer', 'static');
+  await expect(orb.locator('canvas')).toHaveCount(0);
+  const second = await orb.screenshot({ animations: 'disabled' });
   expect(first.equals(second)).toBe(true);
 });
