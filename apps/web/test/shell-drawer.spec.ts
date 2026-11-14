@@ -215,11 +215,17 @@ test('resizing across the dock breakpoint keeps focus inside the drawer or resto
   await waitForShell(page);
   const left = leftTrigger(page);
   await expect(left).toHaveAttribute('aria-expanded', 'true');
-  await page
-    .locator('#shell-left')
-    .getByRole('button', { name: /New conversation/ })
-    .focus();
-  expect(await insideDrawer(page, 'shell-left')).toBe(true);
+  // The boot reload disables the new-chat button for a moment; retry until
+  // focus actually lands inside the dock before shrinking the viewport.
+  await expect
+    .poll(async () => {
+      await page
+        .locator('#shell-left')
+        .getByRole('button', { name: /New conversation/ })
+        .focus();
+      return insideDrawer(page, 'shell-left');
+    })
+    .toBe(true);
 
   await page.setViewportSize({ width: 800, height: 900 });
   await expect(left).toHaveAttribute('aria-expanded', 'false');
@@ -240,8 +246,14 @@ test('Escape in the stage does not close a docked panel behind a stage dialog', 
   const left = leftTrigger(page);
   await expect(left).toHaveAttribute('aria-expanded', 'true');
   const composer = page.locator('#voice-stage textarea').first();
-  await composer.focus();
-  await expect(composer).toBeFocused();
+  // The boot reload leaves controls disabled for a moment; retry until the
+  // composer itself holds focus so the Escape assertion is meaningful.
+  await expect
+    .poll(async () => {
+      await composer.focus();
+      return composer.evaluate((el) => el === document.activeElement);
+    })
+    .toBe(true);
 
   await page.keyboard.press('Escape');
   await expect(left).toHaveAttribute('aria-expanded', 'true');
