@@ -50,6 +50,7 @@ KNOWN_OPERATIONS = frozenset(
     }
 )
 CONFIRMATION_REQUIRED = frozenset({"restore_context_operation"})
+IDEMPOTENCY_KEY = "owner-1:conversation-1:set_speaking_speed:1"
 
 
 def answers(
@@ -132,16 +133,33 @@ def test_clear_action_without_confirmation_reaches_ready_and_effect_only_from_re
     assert result.state is InteractionState.READY
     assert result.ready is not None
     assert result.ready.requires_confirmation is False
-    effect = begin_execution(result.state, result.ready)
+    effect = begin_execution(result, idempotency_key=IDEMPOTENCY_KEY)
     assert effect.operation_id == "set_speaking_speed"
     assert effect.revision == 1
+    assert effect.idempotency_key == IDEMPOTENCY_KEY
     assert dict(effect.arguments) == {"speed": 1.1}
 
-    for state in InteractionState:
-        if state is InteractionState.READY:
-            continue
+    # No non-READY transition can begin an effect, and the idempotency key is
+    # mandatory rather than derived from the operation and revision.
+    awaiting = go(
+        InteractionState.INTERPRETING,
+        answers(family=ActionFamily.MEMORY_MODIFICATION, operation_id="restore_context_operation"),
+        arguments={"operation_id": "operation-last-exclusion"},
+    )
+    assert awaiting.state is InteractionState.AWAITING_CONFIRMATION
+    assert awaiting.ready is None
+    for blocked in (
+        awaiting,
+        go(InteractionState.INTERPRETING, answers(scope=ScopeClarity.MISSING_INFORMATION)),
+        go(InteractionState.INTERPRETING, answers(relation=PendingRelation.CANCEL)),
+        complete_execution(InteractionState.EXECUTING, "succeeded"),
+    ):
         with pytest.raises(EffectNotAuthorized, match="READY_STATE_REQUIRED"):
-            begin_execution(state, result.ready)
+            begin_execution(blocked, idempotency_key=IDEMPOTENCY_KEY)
+    with pytest.raises(EffectNotAuthorized, match="IDEMPOTENCY_KEY_REQUIRED"):
+        begin_execution(result, idempotency_key="   ")
+    with pytest.raises(TypeError):
+        begin_execution(result)  # type: ignore[call-arg]
 
 
 def test_confirmation_round_trip_is_bound_to_the_delivered_revision():
@@ -183,7 +201,7 @@ def test_confirmation_round_trip_is_bound_to_the_delivered_revision():
     assert confirmed.state is InteractionState.READY
     assert confirmed.ready is not None
     assert confirmed.ready.confirmation_delivered is True
-    effect = begin_execution(confirmed.state, confirmed.ready)
+    effect = begin_execution(confirmed, idempotency_key=IDEMPOTENCY_KEY)
     assert effect.operation_id == "restore_context_operation"
 
 
@@ -372,8 +390,135 @@ def test_confirmation_ready_action_cannot_be_built_before_delivery():
         confirmation_delivered=True,
         requires_confirmation=True,
     )
-    effect = begin_execution(InteractionState.READY, delivered)
+    ready = Transition(
+        source=InteractionState.INTERPRETING,
+        state=InteractionState.READY,
+        reason="READY",
+        ready=delivered,
+    )
+    effect = begin_execution(ready, idempotency_key=IDEMPOTENCY_KEY)
     assert effect.operation_id == "restore_context_operation"
+
+
+def test_bare_or_foreign_ready_action_cannot_be_executed():
+    # A ReadyAction minted outside a transition is not an accepted input...
+    bare = ReadyAction(
+        operation_id="set_speaking_speed",
+        arguments={"speed": 1.1},
+        revision=1,
+        confirmation_delivered=False,
+        requires_confirmation=False,
+    )
+    with pytest.raises(EffectNotAuthorized, match="READY_TRANSITION_REQUIRED"):
+        begin_execution(bare, idempotency_key=IDEMPOTENCY_KEY)  # type: ignore[arg-type]
+
+    # ...and it cannot be smuggled in by attaching it to a non-READY step.
+    with pytest.raises(ValidationError, match="READY_ACTION_REQUIRES_READY_STATE"):
+        Transition(
+            source=InteractionState.AWAITING_CONFIRMATION,
+            state=InteractionState.AWAITING_CONFIRMATION,
+            reason="PENDING",
+            ready=bare,
+        )
+
+    # A READY step without an action has nothing to authorize.
+    actionless = Transition(source=InteractionState.INTERPRETING, state=InteractionState.READY, reason="READY")
+    with pytest.raises(EffectNotAuthorized, match="READY_ACTION_REQUIRED"):
+        begin_execution(actionless, idempotency_key=IDEMPOTENCY_KEY)
+
+
+def test_confirmation_requires_awaiting_confirmation_state():
+    delivered = PendingInteraction(
+        operation_id="restore_context_operation",
+        revision=1,
+        arguments={"operation_id": "operation-last-exclusion"},
+        confirmation_delivered=True,
+    )
+    ready = go(
+        InteractionState.AWAITING_CONFIRMATION,
+        answers(
+            family=ActionFamily.MEMORY_MODIFICATION,
+            operation_id="restore_context_operation",
+            relation=PendingRelation.CONFIRM,
+        ),
+        pending=delivered,
+        arguments={"operation_id": "operation-last-exclusion"},
+    )
+    assert ready.state is InteractionState.READY
+    assert ready.ready is not None
+
+    # Confirming again from READY must not re-mint a ready action at the same
+    # revision; it is a state error, not a second authorization.
+    repeat = go(
+        InteractionState.READY,
+        answers(
+            family=ActionFamily.MEMORY_MODIFICATION,
+            operation_id="restore_context_operation",
+            relation=PendingRelation.CONFIRM,
+        ),
+        pending=delivered,
+        arguments={"operation_id": "operation-last-exclusion"},
+    )
+    assert repeat.state is InteractionState.AWAITING_DETAILS
+    assert repeat.ready is None
+    assert repeat.clarification is not None
+    assert repeat.clarification.reason == "CONFIRMATION_STATE_REQUIRED"
+
+    # Confirming from INTERPRETING is equally meaningless.
+    fresh = go(
+        InteractionState.INTERPRETING,
+        answers(
+            family=ActionFamily.MEMORY_MODIFICATION,
+            operation_id="restore_context_operation",
+            relation=PendingRelation.CONFIRM,
+        ),
+        pending=delivered,
+        arguments={"operation_id": "operation-last-exclusion"},
+    )
+    assert fresh.state is InteractionState.AWAITING_DETAILS
+    assert fresh.ready is None
+
+
+def test_missing_information_on_a_confirm_turn_is_not_confirmation():
+    pending = PendingInteraction(
+        operation_id="restore_context_operation",
+        revision=2,
+        arguments={"operation_id": "operation-last-exclusion"},
+        confirmation_delivered=True,
+    )
+    result = go(
+        InteractionState.AWAITING_CONFIRMATION,
+        answers(
+            family=ActionFamily.MEMORY_MODIFICATION,
+            operation_id="restore_context_operation",
+            relation=PendingRelation.CONFIRM,
+            scope=ScopeClarity.MISSING_INFORMATION,
+        ),
+        pending=pending,
+        arguments={"reason": "the user added detail instead of confirming"},
+    )
+    assert result.state is InteractionState.AWAITING_DETAILS
+    assert result.ready is None
+    assert result.pending is not None
+    assert result.pending.confirmation_delivered is False
+    assert result.pending.revision == 3
+    assert result.clarification is not None
+    assert result.clarification.reason == "MISSING_DETAILS"
+
+    contradictory = go(
+        InteractionState.AWAITING_CONFIRMATION,
+        answers(
+            family=ActionFamily.MEMORY_MODIFICATION,
+            operation_id="restore_context_operation",
+            relation=PendingRelation.CONFIRM,
+            scope=ScopeClarity.NOT_APPLICABLE,
+        ),
+        pending=pending,
+    )
+    assert contradictory.state is InteractionState.AWAITING_DETAILS
+    assert contradictory.ready is None
+    assert contradictory.clarification is not None
+    assert contradictory.clarification.reason == "SCOPE_NOT_APPLICABLE"
 
 
 def test_every_state_and_answer_combination_produces_a_legal_transition():
@@ -471,25 +616,29 @@ def test_property_no_non_ready_state_can_begin_an_effect(
         )
     result = go(state, candidate, pending=pending, arguments=arguments)
 
-    # A transition never creates an effect, and a ready action only exists for
-    # the READY result state.  The effect constructor itself refuses every other
-    # source state, so no non-READY path can authorize a handler call.
-    if result.ready is not None:
-        assert result.state is InteractionState.READY
-        if state is not InteractionState.READY:
-            with pytest.raises(EffectNotAuthorized):
-                begin_execution(state, result.ready)
+    # A bare ReadyAction is not an accepted input at all; execution is bound to
+    # a Transition, so no caller can execute an action it minted separately.
+    bare = ReadyAction(
+        operation_id="set_speaking_speed",
+        arguments={},
+        revision=1,
+        confirmation_delivered=False,
+        requires_confirmation=False,
+    )
+    with pytest.raises(EffectNotAuthorized, match="READY_TRANSITION_REQUIRED"):
+        begin_execution(bare, idempotency_key=IDEMPOTENCY_KEY)  # type: ignore[arg-type]
+
+    # Only a READY transition carrying an action authorizes a handler call.
+    if result.state is not InteractionState.READY:
+        with pytest.raises(EffectNotAuthorized, match="READY_STATE_REQUIRED"):
+            begin_execution(result, idempotency_key=IDEMPOTENCY_KEY)
+    elif result.ready is None:
+        with pytest.raises(EffectNotAuthorized, match="READY_ACTION_REQUIRED"):
+            begin_execution(result, idempotency_key=IDEMPOTENCY_KEY)
+    else:
+        effect = begin_execution(result, idempotency_key=IDEMPOTENCY_KEY)
+        assert effect.operation_id == result.ready.operation_id
+        assert effect.revision == result.ready.revision
 
     if confidence < MIN_ANSWER_CONFIDENCE:
         assert result.ready is None
-        with pytest.raises(EffectNotAuthorized):
-            begin_execution(
-                result.state,
-                ReadyAction(
-                    operation_id="set_speaking_speed",
-                    arguments={},
-                    revision=1,
-                    confirmation_delivered=False,
-                    requires_confirmation=False,
-                ),
-            )

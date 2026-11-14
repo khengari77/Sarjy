@@ -11,10 +11,17 @@ define argument schemas or duplicate that registry.
 Safety properties are structural rather than advisory:
 
 * only ``READY`` can produce a ``ReadyAction``;
-* ``begin_execution`` accepts only a current ``READY`` state and a ready action
-  whose confirmation requirement is satisfied;
+* ``begin_execution`` accepts the ``Transition`` itself, requires it to be a
+  ``READY`` step carrying an action, and copies that action, so a bare
+  ``ReadyAction`` cannot cross the seam;
+* confirmation requires an ``AWAITING_CONFIRMATION`` source state and a
+  delivered confirmation bound to the same operation/revision/arguments;
 * low confidence, contradictory answers, unknown operations and missing details
   produce clarification or detail requests, never a ready action.
+
+What this module does *not* enforce is stated in ``docs/decision-layer.md``:
+operation arguments are neither validated nor schema-checked, ``EffectRequest``
+remains publicly constructible, and ``arguments`` immutability is shallow.
 """
 
 from __future__ import annotations
@@ -341,7 +348,12 @@ class Transition(Contract):
 
 
 class EffectRequest(Contract):
-    """The only artifact that may cross into an effectful handler."""
+    """The artifact that may cross into an effectful handler.
+
+    ``begin_execution`` is the only domain function that produces one, but the
+    model is publicly constructible like every other contract: the seam is a
+    convention enforced at call sites, not a Python-level access restriction.
+    """
 
     operation_id: str = Field(min_length=1, max_length=100)
     arguments: Mapping[str, Any] = Field(default_factory=dict)
@@ -352,6 +364,7 @@ class EffectRequest(Contract):
     @field_validator("arguments", mode="after")
     @classmethod
     def arguments_are_immutable(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        # Only the top level is frozen; nested values are shared with the caller.
         return _freeze_mapping(value)
 
 
@@ -361,28 +374,40 @@ class EffectNotAuthorized(ValueError):
         self.reason = reason
 
 
-def begin_execution(
-    current: InteractionState,
-    ready: ReadyAction,
-    *,
-    idempotency_key: str | None = None,
-) -> EffectRequest:
-    """Authorize one effect, only from READY with a satisfied confirmation.
+def begin_execution(transition: Transition, *, idempotency_key: str) -> EffectRequest:
+    """Authorize one effect from ``transition``, a READY step carrying an action.
 
-    This is the sole constructor of ``EffectRequest``.  Every non-READY source
-    state is rejected before the operation is inspected, which is the property
-    the state machine relies on.
+    The transition is the authority: the ready action is copied from it, so a
+    ``ReadyAction`` minted outside a ``READY`` transition has no way through
+    this seam.  Every non-READY transition and every READY transition without
+    an action is rejected before the operation is inspected.
+
+    ``idempotency_key`` is required and caller-supplied.  It must be unique
+    across subjects and conversations, not just within one: the operation
+    ledger stores it under a global unique constraint in a 100-character
+    column.  Callers should namespace it with the owner and conversation scope
+    (for example ``f"{owner_id}:{conversation_id}:{operation_id}:{revision}"``)
+    or use the same digest scheme as the context-operation service.
+
+    This function does not validate operation arguments or their schema; the
+    handler that owns the operation must do that.
     """
-    if current is not InteractionState.READY:
+    if not isinstance(transition, Transition):
+        raise EffectNotAuthorized("READY_TRANSITION_REQUIRED")
+    if transition.state is not InteractionState.READY:
         raise EffectNotAuthorized("READY_STATE_REQUIRED")
+    ready = transition.ready
+    if ready is None:
+        raise EffectNotAuthorized("READY_ACTION_REQUIRED")
+    if not idempotency_key.strip():
+        raise EffectNotAuthorized("IDEMPOTENCY_KEY_REQUIRED")
     if ready.requires_confirmation and not ready.confirmation_delivered:
         raise EffectNotAuthorized("CONFIRMATION_NOT_DELIVERED")
-    key = idempotency_key or f"{ready.operation_id}:{ready.revision}"
     return EffectRequest(
         operation_id=ready.operation_id,
         arguments=ready.arguments,
         revision=ready.revision,
-        idempotency_key=key,
+        idempotency_key=idempotency_key,
         include_explanation=ready.include_explanation,
     )
 
@@ -582,12 +607,24 @@ def _confirm(
 ) -> Transition:
     if pending is None:
         return _clarify(current, "NO_PENDING_INTERACTION")
+    if current is not InteractionState.AWAITING_CONFIRMATION:
+        # Confirmation is only meaningful while a proposal is awaiting it.
+        # Without this guard a READY interaction could confirm again and
+        # re-mint a ready action at the same revision.
+        return _clarify(current, "CONFIRMATION_STATE_REQUIRED", operation_id=pending.operation_id)
     if answers.request_type not in {RequestType.ACTION, RequestType.BOTH}:
         return _clarify(current, "CONFIRM_REQUIRES_ACTION_REQUEST")
     if answers.operation is OperationChoice.REGISTERED and answers.operation_id != pending.operation_id:
         return _clarify(current, "PENDING_OPERATION_MISMATCH", operation_id=pending.operation_id)
     if answers.scope is ScopeClarity.AMBIGUOUS:
         return _clarify(current, "SCOPE_AMBIGUOUS", operation_id=pending.operation_id)
+    if answers.scope is ScopeClarity.NOT_APPLICABLE:
+        return _clarify(current, "SCOPE_NOT_APPLICABLE", operation_id=pending.operation_id)
+    if answers.scope is ScopeClarity.MISSING_INFORMATION:
+        # Supplying new details is not confirmation: ask for the missing
+        # information and keep the pending proposal undelivered.
+        merged = _merged_arguments(pending, pending.operation_id, arguments)
+        return _missing_details(current, pending.operation_id, pending, merged)
     if pending.operation_id not in known_operations:
         return _clarify(current, "UNKNOWN_OPERATION", operation_id=pending.operation_id)
     if not pending.confirmation_delivered:
