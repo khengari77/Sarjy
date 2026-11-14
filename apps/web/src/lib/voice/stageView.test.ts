@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { initialVoiceState } from './connection';
 import { deriveStage } from './stageView';
+import { resolvePhaseColor } from '../orb/orbState';
 
 describe('deriveStage', () => {
   it('uses the supplied resolved theme instead of defaulting', () => {
@@ -30,5 +31,28 @@ describe('deriveStage', () => {
     const stage = deriveStage(voice, false, 'none', 'dark');
     expect(stage.presentation.effectivePhase).toBe('disconnected');
     expect(stage.presentation.statusLabel.en).toBe('Connection lost');
+  });
+});
+
+describe('deriveStage connection state colour', () => {
+  it('turns the orb red for an error even on a lost connection', () => {
+    const lost = deriveStage(
+      { ...initialVoiceState(), agentState: 'speaking' as const, connectionLost: true, voiceErrorCode: 'UNKNOWN_CODE' },
+      false,
+      'none',
+      'dark',
+    );
+    expect(lost.presentation.effectivePhase).toBe('error');
+    expect(lost.presentation.primaryColor).toBe('#ff7d9d');
+  });
+
+  it('keeps a clean drop on the disconnected palette', () => {
+    const lost = deriveStage(
+      { ...initialVoiceState(), agentState: 'speaking' as const, connectionLost: true },
+      false,
+      'none',
+      'dark',
+    );
+    expect(lost.presentation.effectivePhase).toBe('disconnected');
   });
 });
