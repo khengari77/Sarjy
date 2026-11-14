@@ -615,6 +615,29 @@ async def _replay_guess(
     )
 
 
+async def _locked_game(db: AsyncSession, *, owner_id: str, day: date, key: str, instant: datetime) -> WordleGame:
+    """Acquire the game's row lock, creating the game first when necessary.
+
+    ``ensure_game`` commits and returns an unlocked row, so first-guess requests
+    must re-select it here.  Every guess path therefore takes the game-row lock
+    before touching guess rows; a mixed lock order deadlocks PostgreSQL (40P01)
+    against the unique guess index.
+    """
+    statement = (
+        select(WordleGame)
+        .where(WordleGame.owner_id == owner_id, WordleGame.puzzle_date == key)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    game = await db.scalar(statement)
+    if game is None:
+        await ensure_game(db, owner_id=owner_id, day=day, now=instant)
+        game = await db.scalar(statement)
+    if game is None:
+        raise WordleServiceError(WORDLE_UNAVAILABLE, 503)
+    return game
+
+
 async def submit_guess(
     db: AsyncSession,
     *,
@@ -640,14 +663,7 @@ async def submit_guess(
     key = day.isoformat()
 
     for _ in range(SUBMIT_RETRIES):
-        game = await db.scalar(
-            select(WordleGame)
-            .where(WordleGame.owner_id == owner_id, WordleGame.puzzle_date == key)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if game is None:
-            game = await ensure_game(db, owner_id=owner_id, day=day, now=instant)
+        game = await _locked_game(db, owner_id=owner_id, day=day, key=key, instant=instant)
         replay = await _replay_guess(db, game=game, owner_id=owner_id, request_id=request_id, word=word, answer=answer)
         if replay is not None:
             await db.rollback()

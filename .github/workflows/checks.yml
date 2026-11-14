@@ -108,6 +108,14 @@ jobs:
           REQUIRE_DAY2_INTEGRATION: '1'
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
+      - name: Wordle per-game concurrency
+        # FOR UPDATE is a no-op on SQLite; this step is the only coverage of
+        # the PostgreSQL game-row serialization. A skip fails the step via
+        # tests/conftest.py.
+        run: uv run pytest -q tests/test_wordle_postgres.py
+        env:
+          REQUIRE_DAY2_INTEGRATION: '1'
+          TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
       - name: Real vector and integration checks
         run: |
           uv run python -c "import sys; sys.path.insert(0, 'apps/api'); import app.services.memory, app.services.context_operations, app.domain.weather_permissions"
