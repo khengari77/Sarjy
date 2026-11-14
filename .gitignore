@@ -44,3 +44,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# Design handoff kit (reference only; not app code)
+Sarjy_Living_Cloud_UI_UX_Design_Kit_v2.1/
