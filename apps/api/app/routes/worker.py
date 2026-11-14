@@ -26,6 +26,8 @@ from app.domain.weather_permissions import decide_weather_request
 from app.infrastructure.database import Conversation, Memory, Turn, UserSetting, VoiceSession
 from app.services.budget import reserve as reserve_development_budget
 from app.services.context_assembly import location_evidence, read_context_inputs
+from app.services.memory import MemoryService
+from app.services.memory_capture import MemoryCaptureError, confirm_memory, propose_memory
 from app.services.tool_operations import (
     ToolOperationError,
     claim_tool_operation,
@@ -44,6 +46,11 @@ class BudgetReservation(BaseModel):
 class AgentInput(BaseModel):
     request_id: str = Field(min_length=1, max_length=100)
     text: str = Field(min_length=1, max_length=12000)
+
+
+class MemoryConfirm(BaseModel):
+    token: str = Field(min_length=1, max_length=20000)
+    decision: Literal["save", "discard", "replace"]
 
 
 class AgentOutput(BaseModel):
@@ -79,12 +86,95 @@ def _session_guard(config: Settings):
     return worker_session
 
 
-def register_worker_routes(app, *, config: Settings, database):
+PENDING_MEMORY_INSTRUCTION = (
+    "A memory candidate is pending for this turn. Ask the user to confirm or decline before it is saved. "
+    "Do not claim it is saved until confirmation succeeds."
+)
+
+
+def register_worker_routes(app, *, config: Settings, database, embedder):
     guard = _session_guard(config)
     _register_budget_routes(app, config=config, database=database)
     _register_session_routes(app, database=database, guard=guard)
-    _register_turn_routes(app, database=database, guard=guard)
+    _register_turn_routes(app, config=config, database=database, guard=guard)
     _register_tool_routes(app, database=database, guard=guard)
+    _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
+
+
+def _memory_secret(config: Settings) -> str:
+    return config.context_proposal_secret or config.agent_service_secret
+
+
+def _memory_proposal(config: Settings, *, owner_id: str, conversation_id: str, source_turn_id: str, text: str):
+    secret = _memory_secret(config)
+    if not secret:
+        return None
+    try:
+        return propose_memory(
+            text,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            source_turn_id=source_turn_id,
+            secret=secret,
+        )
+    except MemoryCaptureError:
+        return None
+
+
+def _context_instructions(
+    config: Settings, pipeline, *, owner_id: str, conversation_id: str, turn
+) -> tuple[str, dict | None]:
+    proposal = _memory_proposal(
+        config,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        source_turn_id=turn.id,
+        text=turn.text,
+    )
+    instructions = pipeline_instructions(pipeline)
+    if proposal is not None:
+        instructions = f"{instructions}\n\n{PENDING_MEMORY_INSTRUCTION}"
+    return instructions, proposal
+
+
+def _turn_response(config: Settings, *, owner_id: str, conversation_id: str, turn, context):
+    return {
+        "turn_id": turn.id,
+        "context": context,
+        "memory_proposal": _memory_proposal(
+            config,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            source_turn_id=turn.id,
+            text=turn.text,
+        ),
+    }
+
+
+def _register_memory_routes(app, *, config: Settings, database, guard, embedder):
+    @app.post("/internal/agent/memory/confirm")
+    async def confirm_memory_route(body: MemoryConfirm, request: Request, db: AsyncSession = Depends(database)):
+        voice = await guard(request, db, allow_ended=True)
+        conversation = await db.get(Conversation, voice.conversation_id)
+        if conversation is None:
+            raise HTTPException(404)
+        try:
+            return await confirm_memory(
+                db,
+                MemoryService(db, embedder),
+                token=body.token,
+                decision=body.decision,
+                owner_id=conversation.owner_id,
+                conversation_id=voice.conversation_id,
+                source_turn_id=None,
+                secret=_memory_secret(config),
+            )
+        except MemoryCaptureError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code, **exc.details}) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                429 if str(exc) == "DAILY_BUDGET_EXHAUSTED" else 422, detail={"code": str(exc)}
+            ) from exc
 
 
 def _register_budget_routes(app, *, config: Settings, database):
@@ -151,7 +241,7 @@ def _compile_turn_context(
         raise
 
 
-def _register_turn_routes(app, *, database, guard):
+def _register_turn_routes(app, *, config: Settings, database, guard):
     @app.post("/internal/agent/turn/start")
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db)
@@ -163,7 +253,13 @@ def _register_turn_routes(app, *, database, guard):
             select(Turn).where(Turn.conversation_id == voice.conversation_id, Turn.request_id == body.request_id)
         )
         if existing:
-            return {"turn_id": existing.id, "context": existing.snapshot}
+            return _turn_response(
+                config,
+                owner_id=conversation.owner_id,
+                conversation_id=voice.conversation_id,
+                turn=existing,
+                context=existing.snapshot,
+            )
         turn = Turn(
             id=str(uuid4()),
             conversation_id=voice.conversation_id,
@@ -173,10 +269,17 @@ def _register_turn_routes(app, *, database, guard):
             status="completed",
         )
         pipeline = normalize_pipeline(voice.pipeline)
+        instructions, proposal = _context_instructions(
+            config,
+            pipeline,
+            owner_id=conversation.owner_id,
+            conversation_id=voice.conversation_id,
+            turn=turn,
+        )
         inputs = await read_context_inputs(db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id)
         compiled = _compile_turn_context(
             revision=conversation.revision,
-            instructions=pipeline_instructions(pipeline),
+            instructions=instructions,
             history=inputs.history,
             memories=inputs.memories.included,
             tool_results=inputs.tool_results,
@@ -211,7 +314,7 @@ def _register_turn_routes(app, *, database, guard):
         model_request = ModelRequest(
             turn_id=turn.id,
             attempt_id=str(uuid4()),
-            instructions=pipeline_instructions(pipeline),
+            instructions=instructions,
             selection=compiled.selection,
             messages=compiled.messages,
             response_policy=resolve_response_policy(pipeline["response_preference"], pipeline["response_tier"]),
@@ -237,6 +340,7 @@ def _register_turn_routes(app, *, database, guard):
 
         validate_assembly(conversation.revision, compiled.manifest, turn.snapshot)
         conversation_id = voice.conversation_id
+        owner_id = conversation.owner_id
         db.add(turn)
         if conversation.title == "New conversation":
             conversation.title = body.text[:80]
@@ -249,8 +353,14 @@ def _register_turn_routes(app, *, database, guard):
             )
             if not existing:
                 raise
-            return {"turn_id": existing.id, "context": existing.snapshot}
-        return {"turn_id": turn.id, "context": turn.snapshot}
+            return _turn_response(
+                config,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                turn=existing,
+                context=existing.snapshot,
+            )
+        return {"turn_id": turn.id, "context": turn.snapshot, "memory_proposal": proposal}
 
     @app.post("/internal/agent/turn/finalize")
     async def finalize(body: AgentOutput, request: Request, db: AsyncSession = Depends(database)):

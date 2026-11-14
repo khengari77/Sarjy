@@ -18,6 +18,26 @@ class Base(DeclarativeBase):
     pass
 
 
+class MemoryCaptureDecision(Base):
+    """Durable consent and clarification state for one proposal revision."""
+
+    __tablename__ = "memory_capture_decisions"
+    confirmation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64))
+    decision: Mapped[str] = mapped_column(String(16))
+    outcome: Mapped[str] = mapped_column(String(32))
+    target_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    target_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    lease_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    lease_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40))
+    expires_at: Mapped[str] = mapped_column(String(40))
+
+
 class ReviewerInvitation(Base):
     __tablename__ = "reviewer_invitations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -134,12 +154,14 @@ class Memory(Base):
     __tablename__ = "memories"
     __table_args__ = (
         UniqueConstraint("owner_id", "request_key"),
+        Index("ix_memories_owner_subject_status", "owner_id", "subject", "status"),
         Index("ix_memories_owner_status_updated", "owner_id", "status", "updated_at", "id"),
     )
     supersedes_id: Mapped[str | None] = mapped_column(ForeignKey("memories.id"), nullable=True, index=True)
     request_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    subject: Mapped[str | None] = mapped_column(String(120), nullable=True)
     content: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list | None] = mapped_column(EMBEDDING_TYPE, nullable=True)
     embedding_model: Mapped[str] = mapped_column(String(60), default="text-embedding-3-small")
@@ -238,6 +260,59 @@ class UserSetting(Base):
     response_preference: Mapped[str] = mapped_column(String(20), default="automatic")
     revision: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
+class WordlePuzzle(Base):
+    """One stored answer per calendar date.
+
+    A row is inserted as a short-lived claim (``answer`` is null) before the
+    outbound fetch.  The primary key on ``puzzle_date`` plus the claim columns
+    guarantee that concurrent requests make at most one source call.
+    """
+
+    __tablename__ = "wordle_puzzles"
+    puzzle_date: Mapped[str] = mapped_column(String(10), primary_key=True)
+    answer: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    source: Mapped[str] = mapped_column(String(200))
+    fetched_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    claim_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    claim_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    retry_after: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_failure: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    last_attempt_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class WordleGame(Base):
+    __tablename__ = "wordle_games"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "puzzle_date", name="uq_wordle_games_owner_date"),
+        Index("ix_wordle_games_owner_status", "owner_id", "status"),
+        Index("ix_wordle_games_puzzle_date", "puzzle_date"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"))
+    puzzle_date: Mapped[str] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(20), default="in_progress")
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
+class WordleGuess(Base):
+    __tablename__ = "wordle_guesses"
+    __table_args__ = (
+        UniqueConstraint("game_id", "attempt", name="uq_wordle_guesses_game_attempt"),
+        # Idempotency is per owner: two owners may reuse a client-generated id.
+        UniqueConstraint("owner_id", "request_id", name="uq_wordle_guesses_owner_request"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    game_id: Mapped[str] = mapped_column(ForeignKey("wordle_games.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    attempt: Mapped[int] = mapped_column(Integer)
+    word: Mapped[str] = mapped_column(String(5))
+    marks: Mapped[list] = mapped_column(JSON)
+    request_id: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
 
 
 class SettingRevision(Base):
