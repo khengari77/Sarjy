@@ -2,7 +2,7 @@
 
 Tracking: #130. Shared baseline: #102. No hosted or paid-provider acceptance is implied.
 
-Required checks retain unit/browser/proxy suites and add the existing offline deadline suite and smoke-option checks. PostgreSQL jobs share both database URLs and preflight their configuration and a single migration head. Required integration suites must not silently skip.
+Required checks retain unit/browser/proxy suites and add the existing offline deadline suite and smoke-option checks. PostgreSQL jobs share both database URLs and preflight their configuration and a single migration head. That check validates configuration only: it does not connect, so a stopped service or wrong credentials surface at the next step. Required integration suites must not silently skip.
 
 ## Feature-owner handoff
 
@@ -21,4 +21,4 @@ A separate issue/worktree implements generated state machines (Hypothesis backen
 
 ## Smoke tooling
 
-`pnpm --dir apps/web test:smoke-setup` checks argument validation without a browser, credentials, recordings or provider calls. `node apps/web/scripts/live-smoke.mjs --check-options [--locale=en]` prints supported selectors and exits. English is currently the only supported UI locale. The live command remains opt-in and needs the existing shared spending guards and explicit authorization. Microphone mode fails before browser startup until an English recording fixture is qualified; the historical fixture is Arabic. Deadline tests use only the fake upstream. Serialize local browser tests under the existing machine-wide lock.
+`pnpm --dir apps/web test:smoke-setup` checks argument validation without a browser, credentials, recordings or provider calls. `node apps/web/scripts/live-smoke.mjs --check-options [--locale=en]` prints supported selectors and exits. English is currently the only supported smoke locale; the application itself still ships its Arabic UI. The live command remains opt-in and needs the existing shared spending guards and explicit authorization. Microphone mode fails before browser startup until an English recording fixture is qualified; the historical fixture is Arabic. Deadline tests use only the fake upstream. Serialize local browser tests under the existing machine-wide lock.

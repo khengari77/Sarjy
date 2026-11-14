@@ -10,11 +10,13 @@ const origin = 'http://127.0.0.1:5173';
 const weather = process.argv.includes('--weather');
 const recording = process.argv.includes('--record');
 const microphone = process.argv.includes('--microphone');
+// The microphone guard precedes --check-options so no microphone invocation can
+// report success without an English fixture, including --check-options --microphone.
+if (microphone) throw new Error('ENGLISH_MICROPHONE_FIXTURE_REQUIRED');
 if (process.argv.includes('--check-options')) {
   console.log(JSON.stringify({ locale, callLabel: 'Start call', voiceLabel: 'Choose voice' }));
   process.exit(0);
 }
-if (microphone) throw new Error('ENGLISH_MICROPHONE_FIXTURE_REQUIRED');
 const directory = resolve(dirname(fileURLToPath(import.meta.url)), '../../../artifacts/test-videos');
 if (recording) await mkdir(directory, { recursive: true });
 const browser = await chromium.launch({
@@ -187,7 +189,7 @@ try {
     const turns = await result.json();
     transcript = turns.find((turn) => turn.role === 'user');
     if (microphone && transcript && !micStopped) {
-      const mute = page.getByRole('button', { name: 'كتم الصوت', exact: true });
+      const mute = page.getByRole('button', { name: 'Mute', exact: true });
       if (await mute.count()) {
         await mute.click();
         micStopped = true;

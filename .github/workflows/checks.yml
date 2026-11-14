@@ -90,7 +90,10 @@ jobs:
               await db.close()
           asyncio.run(main())
           PYCODE
-      - name: Regression prerequisites
+      - name: Regression environment configuration
+        # Validates required settings and a single migration head; it does not
+        # connect, so unreachable or misconfigured databases fail at the next
+        # step rather than here.
         run: uv run python scripts/check_regression_env.py
       - name: Migration preservation
         run: uv run pytest -q tests/test_migrations.py

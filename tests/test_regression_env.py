@@ -2,8 +2,10 @@
 
 import importlib.util
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
+import yaml
 from alembic.config import Config
 
 _spec = importlib.util.spec_from_file_location("regression_env", Path("scripts/check_regression_env.py"))
@@ -39,13 +41,34 @@ def test_migration_preflight_rejects_multiple_heads(tmp_path):
     preflight.validate_head(config)
 
 
-def test_committed_workflow_preserves_service_and_required_gates():
-    import yaml
+def _database_name(url: str) -> str:
+    return urlsplit(url).path.lstrip("/")
 
+
+def test_committed_workflow_preserves_service_and_required_gates():
     workflow = yaml.safe_load(Path(".github/workflows/checks.yml").read_text())
     postgres = workflow["jobs"]["postgres"]
-    assert postgres["services"]["postgres"]["image"] == "pgvector/pgvector:pg16"
+
+    service = postgres["services"]["postgres"]
+    assert service["image"] == "pgvector/pgvector:pg16"
+    assert "5432:5432" in service["ports"]
+    assert "pg_isready" in service["options"]
     preflight.validate_environment(postgres["env"])
+
+    steps = postgres["steps"]
+    preflight_steps = [step for step in steps if "scripts/check_regression_env.py" in step.get("run", "")]
+    assert len(preflight_steps) == 1, "postgres job must run the regression environment check exactly once"
+
+    migration_steps = [step for step in steps if step.get("name") == "Migration preservation"]
+    assert len(migration_steps) == 1, "postgres job must keep the migration preservation step"
+    migration = migration_steps[0]
+    assert _database_name(migration["env"]["TEST_POSTGRES_URL"]) == "migration_tests", (
+        "migration step must override TEST_POSTGRES_URL to the isolated migration database"
+    )
+    assert steps.index(preflight_steps[0]) < steps.index(migration), (
+        "regression environment check must run before the migration step it gates"
+    )
+
     commands = [step.get("run", "") for step in workflow["jobs"]["checks"]["steps"]]
     assert "pnpm --dir apps/web test:deadline" in commands
     assert "pnpm --dir apps/web test:smoke-setup" in commands

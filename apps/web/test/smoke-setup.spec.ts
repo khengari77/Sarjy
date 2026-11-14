@@ -12,5 +12,9 @@ test('English smoke selectors reach real controls without starting a call', asyn
   if ((await settings.getAttribute('aria-expanded')) !== 'true') await settings.click();
   await expect(page.getByRole('button', { name: 'Load voices / Search', exact: true })).toBeVisible();
   await expect(page.getByLabel('Choose voice', { exact: true })).toBeVisible();
+  const composer = page.getByRole('textbox', { name: 'Write a message…' });
+  await expect(composer).toBeEnabled();
+  await composer.fill('smoke selector check');
+  await expect(page.getByRole('button', { name: 'Send ↗', exact: true })).toBeEnabled();
   expect(admissions).toEqual([]);
 });
