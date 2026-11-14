@@ -87,8 +87,10 @@
 [data-theme='light'] {
   color-scheme: light;
 
-  --bg-app: #eaf6ff;
-  --bg-sidebar: #f3faff;
+  /* Deeper than the kit's #eaf6ff: the cloud was washing out against a very
+     bright sky. Still a sky tint, but it separates the orb's edges. */
+  --bg-app: #dceaf7;
+  --bg-sidebar: #eaf4fd;
   --surface-elevated: #ffffff;
   --surface-raised: #ffffff;
   --surface-hover: #deedfb;
