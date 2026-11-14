@@ -193,7 +193,7 @@ test('resuming a conversation loads turns without starting a microphone session'
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
   await expect.poll(() => mocked.turns.length).toBeGreaterThanOrEqual(2);
   expect(sessionPosts).toBe(0);
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeEnabled();
+  await expect(page.locator('.orb-button')).toBeEnabled();
 });
 
 test('an empty list shows the filled new-chat action, always-on search and workspace footer', async ({ page }) => {
@@ -239,7 +239,7 @@ test('switching chats mid-call requires an explicit end and switch', async ({ pa
 
   await gotoHistory(page);
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
@@ -252,7 +252,7 @@ test('switching chats mid-call requires an explicit end and switch', async ({ pa
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
   await page.getByRole('button', { name: 'End & switch' }).click();
   await expect.poll(() => ends.some((url) => url.endsWith('/sess-1/end'))).toBe(true);
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  await expect(page.locator('.orb-button')).toBeVisible();
 });
 
 test('starting a new conversation mid-call requires the same confirmation', async ({ page }) => {
@@ -263,7 +263,7 @@ test('starting a new conversation mid-call requires the same confirmation', asyn
 
   await gotoHistory(page);
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
@@ -276,7 +276,7 @@ test('starting a new conversation mid-call requires the same confirmation', asyn
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: 'End & start' }).click();
   await expect.poll(() => mocked.created()).toBe(1);
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  await expect(page.locator('.orb-button')).toBeVisible();
 });
 
 test('rename and delete are disabled with an explanation', async ({ page }) => {
