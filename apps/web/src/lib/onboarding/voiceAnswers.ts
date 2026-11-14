@@ -22,8 +22,31 @@ export type VoiceOnboardingAction =
   | { type: 'ignore' };
 
 const IGNORE: VoiceOnboardingAction = { type: 'ignore' };
-const QUESTION_STARTS = ['what', 'where', 'when', 'who', 'why', 'how', 'can', 'could', 'do', 'does', 'is', 'are'];
+const QUESTION_STARTS = [
+  'what',
+  'whats',
+  'where',
+  'when',
+  'who',
+  'why',
+  'how',
+  'can',
+  'could',
+  'do',
+  'does',
+  'is',
+  'are',
+  'will',
+  'would',
+  'should',
+];
 const NAME_PREFIXES = ['my name is', 'call me', 'i am', "i'm", "it's", 'this is', "name's"];
+// Commands, capabilities and states are never names. A false negative just
+// asks again; capturing "I want weather" as a name is the bug we prevent.
+const NON_NAME_WORDS =
+  /\b(weather|wordle|memory|remember|forget|joke|time|help|play|tell|ask|show|open|search|find|want|need|give|say|speak|talk|chat|please|thanks|thank|hello|hi|hey|bored|fine|good|okay|ok|here|ready|tired|hungry|sorry|busy|done|back|confused|lost|curious|excited|happy|sad|angry)\b/i;
+const NAME_WORD = /^[\p{L}][\p{L}\-'’]*$/u;
+const MAX_BARE_NAME_LETTERS = 30;
 
 function normalize(text: string): string {
   return text
@@ -36,7 +59,7 @@ function normalize(text: string): string {
 function looksLikeQuestion(text: string): boolean {
   if (text.includes('?')) return true;
   const words = normalize(text).split(' ');
-  return words.length > 5 && QUESTION_STARTS.includes(words[0]);
+  return QUESTION_STARTS.includes(words[0]);
 }
 
 function extractName(text: string): string | null {
@@ -44,10 +67,12 @@ function extractName(text: string): string | null {
     .trim()
     .replace(/^["'“”]|["'“”]$/g, '')
     .trim();
+  let prefixed = false;
   for (const prefix of NAME_PREFIXES) {
     const pattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b[\\s,:-]*`, 'i');
     if (pattern.test(value)) {
       value = value.replace(pattern, '').trim();
+      prefixed = true;
       break;
     }
   }
@@ -55,7 +80,11 @@ function extractName(text: string): string | null {
   const words = value.split(/\s+/).filter(Boolean);
   if (!value || value.length > 80 || words.length > 4) return null;
   if (!/[a-z\u00c0-\u024f\u0600-\u06ff]/i.test(value)) return null;
-  if (looksLikeQuestion(text)) return null;
+  if (looksLikeQuestion(text) || NON_NAME_WORDS.test(value)) return null;
+  if (!words.every((word) => NAME_WORD.test(word))) return null;
+  // Without an explicit "my name is / call me", only a genuinely short,
+  // name-shaped answer is accepted. Longer phrases are treated as requests.
+  if (!prefixed && (words.length > 2 || value.length > MAX_BARE_NAME_LETTERS)) return null;
   return value;
 }
 
