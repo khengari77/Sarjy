@@ -46,12 +46,16 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* Keep the orb centred when it fits, but top-align and scroll on short
+     viewports (e.g. 1280x720) so the composer never sits below the fold. */
+  justify-content: safe center;
   gap: 18px;
   width: 100%;
   max-width: var(--stage-max-width);
   margin: 0 auto;
   padding: 32px 20px 12px;
+  min-height: 0;
+  overflow-y: auto;
   text-align: center;
 }
 

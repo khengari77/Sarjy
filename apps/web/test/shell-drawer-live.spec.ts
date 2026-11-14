@@ -1,0 +1,284 @@
+import { expect, test, type Page } from '@playwright/test';
+
+// Cross-component regressions for the shell's modal drawers under LIVE-CALL
+// state. The shell-only spec cannot see these: the inert background covers the
+// stage, where the end-call confirmation and the call controls live.
+
+const CHATS = [
+  { id: 'c1', title: 'Trip to Paris', revision: 0 },
+  { id: 'c2', title: 'Work ideas', revision: 0 },
+];
+
+async function mockApi(page: Page) {
+  let created = 0;
+  await page.route('**/api/v1/demo-session', (route) => route.fulfill({ json: { id: 'owner' } }));
+  await page.route('**/api/v1/conversations', (route) => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: CHATS });
+    created += 1;
+    return route.fulfill({ json: { id: 'c-new', title: 'New conversation', revision: 0 } });
+  });
+  await page.route('**/api/v1/conversations/*/turns', (route) => route.fulfill({ json: [] }));
+  await page.route('**/api/v1/conversations/*/tool-calls', (route) => route.fulfill({ json: [] }));
+  await page.route('**/api/v1/voice/sessions', (route) =>
+    route.fulfill({
+      json: {
+        id: 'sess-1',
+        url: 'ws://fake.invalid',
+        token: 'fake',
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+      },
+    }),
+  );
+  const ends: string[] = [];
+  await page.route('**/api/v1/voice/sessions/*/end', (route) => {
+    ends.push(route.request().url());
+    return route.fulfill({ json: {} });
+  });
+  return { created: () => created, ends };
+}
+
+async function allowMicrophone(page: Page) {
+  await page.addInitScript(() => {
+    const stream = { getTracks: () => [] } as unknown as MediaStream;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => stream },
+    });
+  });
+}
+
+async function installFakeRuntime(page: Page) {
+  await page.addInitScript(() => {
+    class FakeRuntime {
+      __epoch = 0;
+      handlers = new Set<(event: unknown) => void>();
+      get epoch() {
+        return this.__epoch;
+      }
+      subscribe(handler: (event: unknown) => void) {
+        this.handlers.add(handler);
+        return () => this.handlers.delete(handler);
+      }
+      emit(event: Record<string, unknown>) {
+        for (const handler of [...this.handlers]) handler({ ...event, epoch: this.__epoch });
+      }
+      async connect() {
+        this.__epoch += 1;
+        this.emit({ type: 'status', source: 'transport', text: 'connected' });
+        this.emit({ type: 'status', source: 'agent', text: 'listening' });
+      }
+      async disconnect() {
+        this.__epoch += 1;
+      }
+      async cancelConnect() {}
+      async startMicrophone() {}
+      async stopMicrophone() {}
+      async sendText() {}
+      async resumeAudio() {}
+      async interrupt() {}
+      microphoneStream() {
+        return null;
+      }
+    }
+    window.__SARJY_VOICE_RUNTIME_FACTORY__ = () => new FakeRuntime();
+  });
+}
+
+async function waitForShell(page: Page) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const hydrated = await page
+      .waitForFunction(
+        () =>
+          Boolean(document.querySelector('.orb-button')) &&
+          document.querySelector('.orb-button')?.getAttribute('data-renderer') !== 'static',
+        null,
+        { timeout: 12_000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+    if (hydrated) return;
+    // This shared machine drops in-flight module requests on network changes
+    // (net::ERR_NETWORK_CHANGED). That leaves SSR markup unhydrated or shows
+    // SvelteKit's 500 page; a reload re-runs hydration.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+  }
+  throw new Error('shell never hydrated');
+}
+
+async function startCall(page: Page) {
+  await page.goto('/');
+  await waitForShell(page);
+  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
+}
+
+async function openLeftDrawer(page: Page) {
+  const trigger = page.getByRole('button', { name: 'Show conversations' });
+  await trigger.click();
+  await expect(page.locator('#shell-left')).toBeVisible();
+  return trigger;
+}
+
+function confirmDialog(page: Page) {
+  return page.getByRole('dialog', { name: 'End the current voice session?' });
+}
+
+test.beforeEach(async ({ page }) => {
+  test.setTimeout(90_000);
+  page.setDefaultTimeout(20_000);
+  await allowMicrophone(page);
+  await installFakeRuntime(page);
+});
+
+test.describe('mobile overlay drawer during a live call', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test('switching conversations hands the modal layer to the confirmation, which is focusable and usable', async ({
+    page,
+  }) => {
+    const api = await mockApi(page);
+    await startCall(page);
+    const trigger = await openLeftDrawer(page);
+
+    await page.locator('#shell-left').getByRole('button', { name: 'Work ideas', exact: true }).click();
+    const dialog = confirmDialog(page);
+    await expect(dialog).toBeVisible();
+
+    // The drawer handed off: it is closed, so the stage (and the dialog in it)
+    // are no longer inside an inert subtree, and the drawer's trigger is not
+    // where focus went.
+    expect(await dialog.evaluate((el) => el.closest('[inert]') === null)).toBe(true);
+    expect(await page.locator('.stage-content').evaluate((el) => (el as HTMLElement).inert)).toBe(false);
+    await expect(page.locator('#shell-left')).toBeHidden();
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    expect(api.ends).toHaveLength(0);
+
+    // Cancel is genuinely clickable while the drawer state settles.
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    // Nothing took focus after the dialog closed, so it returns to the trigger.
+    await expect(trigger).toBeFocused();
+    await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
+
+    // Same flow through the confirm path.
+    await openLeftDrawer(page);
+    await page.locator('#shell-left').getByRole('button', { name: 'Work ideas', exact: true }).click();
+    await dialog.getByRole('button', { name: 'End & switch' }).click();
+    await expect.poll(() => api.ends.some((url) => url.endsWith('/sess-1/end'))).toBe(true);
+    await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+    await expect(page.locator('#shell-left')).toBeHidden();
+  });
+
+  test('creating a conversation from the drawer keeps the confirmation reachable', async ({ page }) => {
+    const api = await mockApi(page);
+    await startCall(page);
+    await openLeftDrawer(page);
+
+    await page.locator('#shell-left').getByRole('button', { name: 'New conversation +' }).click();
+    const dialog = confirmDialog(page);
+    await expect(dialog).toBeVisible();
+    expect(await dialog.evaluate((el) => el.closest('[inert]') === null)).toBe(true);
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+
+    await dialog.getByRole('button', { name: 'End & start' }).click();
+    await expect.poll(() => api.created()).toBe(1);
+    await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  });
+
+  test('Mute/End stay reachable and operable while the drawer is modal', async ({ page }) => {
+    // Tablet keeps the control strip visible beside the drawer; phones stack the
+    // drawer over it, where keyboard/AT reach still matters.
+    await page.setViewportSize({ width: 900, height: 720 });
+    await mockApi(page);
+    await startCall(page);
+    await openLeftDrawer(page);
+
+    // The control strip is outside the inert set (#37 explicit requirement).
+    expect(await page.locator('.stage-controls').evaluate((el) => (el as HTMLElement).inert)).toBe(false);
+    expect(await page.locator('.stage-controls').evaluate((el) => el.closest('[inert]') === null)).toBe(true);
+
+    const mute = page.getByRole('button', { name: 'Mute', exact: true });
+    await mute.focus();
+    await expect(mute).toBeFocused();
+    await mute.click();
+    await expect(page.getByRole('button', { name: 'Enable microphone', exact: true })).toBeVisible();
+
+    const end = page.getByRole('button', { name: 'End call', exact: true });
+    await end.focus();
+    await expect(end).toBeFocused();
+
+    // Keyboard reaches the strip too: Tab cycles drawer + control surface.
+    await page.locator('#shell-left').getByRole('button', { name: 'Trip to Paris', exact: true }).focus();
+    let enteredControls = false;
+    for (let index = 0; index < 15; index += 1) {
+      await page.keyboard.press('Tab');
+      if (await page.locator('.stage-controls').evaluate((el) => el.contains(document.activeElement))) {
+        enteredControls = true;
+        break;
+      }
+    }
+    expect(enteredControls).toBe(true);
+  });
+});
+
+test('Escape closes the open dock that holds focus, not the most recently opened one', async ({ page }) => {
+  await mockApi(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/');
+  await waitForShell(page);
+
+  const left = page.getByRole('button', { name: 'Show conversations' });
+  const right = page.getByRole('button', { name: 'Show memory and settings' });
+  await expect(left).toHaveAttribute('aria-expanded', 'true');
+
+  // Open the right dock last, then move focus into the left dock.
+  await right.click();
+  await expect(right).toHaveAttribute('aria-expanded', 'true');
+  await page.locator('#shell-left').getByRole('button', { name: 'Trip to Paris', exact: true }).focus();
+  await expect(page.locator('#shell-left').getByRole('button', { name: 'Trip to Paris', exact: true })).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(left).toHaveAttribute('aria-expanded', 'false');
+  await expect(right).toHaveAttribute('aria-expanded', 'true');
+  await expect(left).toBeFocused();
+
+  // Mirror: reopen the left dock, focus the right dock, Escape closes right.
+  await left.click();
+  await expect(left).toHaveAttribute('aria-expanded', 'true');
+  await page.locator('#shell-right').getByRole('tab', { name: 'Voice' }).focus();
+  await page.keyboard.press('Escape');
+  await expect(right).toHaveAttribute('aria-expanded', 'false');
+  await expect(left).toHaveAttribute('aria-expanded', 'true');
+  await expect(right).toBeFocused();
+});
+
+test('blocked storage does not abort shell initialisation', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('storage blocked for test', 'SecurityError');
+      },
+    });
+  });
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const response = await page.goto('/');
+  expect(response?.status()).toBe(200);
+  await waitForShell(page);
+
+  const leftPanel = page.locator('#shell-left');
+  await expect(leftPanel).toBeVisible();
+  await expect(leftPanel).toHaveAttribute('data-hydrated', 'true');
+  expect(await leftPanel.evaluate((el) => (el as HTMLElement).inert)).toBe(false);
+
+  // The theme control still works without storage; persistence is best effort.
+  const theme = page.getByRole('button', { name: /^Theme:/ });
+  await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'system');
+  await theme.click();
+  // Preference advances even though nothing could be persisted.
+  await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'light');
+  expect(errors.filter((message) => /SecurityError|storage blocked/.test(message))).toEqual([]);
+});
