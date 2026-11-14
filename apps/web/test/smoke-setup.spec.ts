@@ -8,17 +8,16 @@ test('English smoke selectors reach real controls without starting a call', asyn
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  // The shell is server-rendered before it hydrates; clicking a trigger early is a
+  // no-op and the closed drawer stays inert (absent from the a11y tree), so wait for
+  // hydration before driving it.
+  await page.waitForFunction(() => document.querySelector('[data-hydrated="true"]') !== null);
   const settings = page.getByRole('button', { name: 'Show memory and settings', exact: true });
-  // SSR markup is clickable before Svelte hydrates; a click that lands first is
-  // a no-op. Retry until the drawer really opens instead of racing hydration.
   await expect
-    .poll(
-      async () => {
-        if ((await settings.getAttribute('aria-expanded')) !== 'true') await settings.click();
-        return settings.getAttribute('aria-expanded');
-      },
-      { timeout: 15_000 },
-    )
+    .poll(async () => {
+      if ((await settings.getAttribute('aria-expanded')) !== 'true') await settings.click();
+      return settings.getAttribute('aria-expanded');
+    })
     .toBe('true');
   await expect(page.getByRole('button', { name: 'Load voices / Search', exact: true })).toBeVisible();
   await expect(page.getByLabel('Choose voice', { exact: true })).toBeVisible();
