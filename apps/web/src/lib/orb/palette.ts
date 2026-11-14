@@ -144,8 +144,8 @@ export const ORB_STATE_COLORS: Record<ThemeName, OrbStateColors> = {
     memory: '#ffd37e',
     confirmation: '#ffd37e',
     error: '#c94767',
-    muted: '#516b8f',
-    disconnected: '#516b8f',
+    muted: '#4d678a',
+    disconnected: '#4d678a',
   },
   dark: {
     memory: '#ffd37e',

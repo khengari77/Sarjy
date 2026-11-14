@@ -27,6 +27,6 @@ test('English smoke selectors reach real controls without starting a call', asyn
   const composer = page.getByRole('textbox', { name: 'Write a message…' });
   await expect(composer).toBeEnabled();
   await composer.fill('smoke selector check');
-  await expect(page.getByRole('button', { name: 'Send ↗', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
   expect(admissions).toEqual([]);
 });
