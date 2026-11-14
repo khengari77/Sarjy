@@ -272,15 +272,15 @@ def test_postgres_concurrent_save_and_discard_claim_one_revision(monkeypatch):
             saving = asyncio.create_task(decision(sessions, embedder, request["token"], "save", owner, chat))
             await embedder.entered.wait()
             kind, value = await decision(sessions, embedder, request["token"], "discard", owner, chat)
-            assert kind == "ok" and value["status"] == "discarded"
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "MEMORY_PROPOSAL_RESOLVED"
             embedder.release.set()
             kind, value = await saving
-            assert kind == "error" and isinstance(value, MemoryCaptureError)
-            assert value.code == "DECISION_ALREADY_FINAL"
+            assert kind == "ok" and value["status"] == "saved"
             memories, decisions = await rows(sessions, owner)
-            assert memories == []
+            assert memories == [("I prefer coffee", 1, "active")]
             assert [(revision, choice, outcome) for revision, choice, outcome, _, _ in decisions] == [
-                (1, "discard", "discarded")
+                (1, "save", "saved")
             ]
         finally:
             await engine.dispose()
@@ -350,16 +350,19 @@ def test_postgres_concurrent_replace_and_discard_claim_one_clarification(monkeyp
             replacing = asyncio.create_task(decision(sessions, embedder, detail["token"], "replace", owner, chat))
             await embedder.entered.wait()
             kind, value = await decision(sessions, embedder, detail["token"], "discard", owner, chat)
-            assert kind == "ok" and value["status"] == "discarded"
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "MEMORY_PROPOSAL_RESOLVED"
             embedder.release.set()
             kind, value = await replacing
-            assert kind == "error" and isinstance(value, MemoryCaptureError)
-            assert value.code == "DECISION_ALREADY_FINAL"
+            assert kind == "ok" and value["status"] == "corrected"
             memories, decisions = await rows(sessions, owner)
-            assert [(content, status) for content, _, status in memories] == [("I prefer tea", "active")]
+            assert [(content, status) for content, _, status in memories] == [
+                ("I prefer tea", "superseded"),
+                ("I prefer coffee", "active"),
+            ]
             assert [(revision, choice, outcome) for revision, choice, outcome, _, _ in decisions] == [
                 (1, "save", "saved"),
-                (2, "discard", "discarded"),
+                (2, "replace", "corrected"),
             ]
         finally:
             await engine.dispose()
