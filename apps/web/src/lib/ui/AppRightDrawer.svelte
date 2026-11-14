@@ -14,11 +14,13 @@
     selectedVoice: VoiceOption | null;
     sessionVoice: VoiceOption | null;
     live: boolean;
+    speakingSpeed: number;
     captionsVisible: boolean;
-    activeTab?: 'memories' | 'voice' | 'appearance' | 'context';
+    activeTab?: 'memories' | 'controls' | 'context';
     onsearch: () => void;
     onloadmore: () => void;
     onremember: () => void;
+    onspeed: (speed: number) => Promise<boolean>;
     ontoggleCaptions: () => void;
   }
 
@@ -30,11 +32,13 @@
     selectedVoice,
     sessionVoice,
     live,
+    speakingSpeed,
     captionsVisible,
-    activeTab = $bindable('voice'),
+    activeTab = $bindable('controls'),
     onsearch,
     onloadmore,
     onremember,
+    onspeed,
     ontoggleCaptions,
   }: Props = $props();
 </script>
@@ -57,10 +61,12 @@
       {live}
       {selectedVoice}
       {sessionVoice}
+      {speakingSpeed}
       {captionsVisible}
       {onsearch}
       {onloadmore}
       {onremember}
+      {onspeed}
       {ontoggleCaptions}
     />
   {/snippet}

@@ -33,7 +33,7 @@ export interface PanelState {
   memory_explorer: boolean;
 }
 
-export type RightTab = 'memories' | 'voice' | 'appearance' | 'context';
+export type RightTab = 'memories' | 'controls' | 'context';
 
 export interface CommandState {
   settings: SettingsSnapshot;
@@ -69,7 +69,7 @@ export function initialCommandState(): CommandState {
   return {
     settings: initialSettings(),
     panels: { history: false, memory_explorer: false },
-    panelTab: 'voice',
+    panelTab: 'controls',
     last: null,
     trace: [],
     applied: [],
