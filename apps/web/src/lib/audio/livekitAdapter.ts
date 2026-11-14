@@ -51,6 +51,13 @@ const FATAL = new Set([
   'CALL_LIMIT_REACHED',
   'DAILY_BUDGET_EXHAUSTED',
   'BUDGET_SERVICE_UNAVAILABLE',
+  'VOICE_DEFAULT_UNCONFIGURED',
+  'VOICE_DEFAULT_UNAVAILABLE',
+  'VOICE_NOT_APPROVED',
+  'VOICE_UNAVAILABLE',
+  'VOICE_CATALOG_UNAVAILABLE',
+  'VOICE_CATALOG_ACCESS_DENIED',
+  'VOICE_PROVIDER_NOT_CONFIGURED',
 ]);
 
 export function isFatalVoiceError(code: string): boolean {
@@ -105,6 +112,38 @@ const FRIENDLY: Record<string, { en: string; ar: string }> = {
   BUDGET_SERVICE_UNAVAILABLE: {
     en: 'The usage guard is unavailable, so voice is paused to protect the budget.',
     ar: 'خدمة حد الاستخدام غير متاحة، لذا أُوقف الصوت حمايةً للميزانية.',
+  },
+  VOICE_DEFAULT_UNCONFIGURED: {
+    en: 'No default voice is configured. Choose a voice and try again.',
+    ar: 'لا يوجد صوت افتراضي مُعدّ. اختر صوتًا ثم أعد المحاولة.',
+  },
+  VOICE_DEFAULT_UNAVAILABLE: {
+    en: 'The configured default voice is unavailable. Choose another voice.',
+    ar: 'الصوت الافتراضي المُعدّ غير متاح. اختر صوتًا آخر.',
+  },
+  VOICE_NOT_APPROVED: {
+    en: 'That voice is not approved. Choose a voice from the list.',
+    ar: 'هذا الصوت غير معتمد. اختر صوتًا من القائمة.',
+  },
+  VOICE_UNAVAILABLE: {
+    en: 'That voice is no longer available. Choose another voice.',
+    ar: 'هذا الصوت لم يعد متاحًا. اختر صوتًا آخر.',
+  },
+  VOICE_CATALOG_UNAVAILABLE: {
+    en: 'The voice catalog is unavailable. Try again later.',
+    ar: 'قائمة الأصوات غير متاحة. أعد المحاولة لاحقًا.',
+  },
+  VOICE_CATALOG_ACCESS_DENIED: {
+    en: 'The voice catalog cannot be accessed. Try again later.',
+    ar: 'تعذّر الوصول إلى قائمة الأصوات. أعد المحاولة لاحقًا.',
+  },
+  VOICE_PROVIDER_NOT_CONFIGURED: {
+    en: 'Voice service is not configured. Try again later.',
+    ar: 'خدمة الصوت غير مُعدّة. أعد المحاولة لاحقًا.',
+  },
+  VOICE_SETTING_REJECTED: {
+    en: 'The voice change could not be saved. Try again.',
+    ar: 'تعذّر حفظ تغيير الصوت. أعد المحاولة.',
   },
   SESSION_RELEASE_FAILED: {
     en: 'The call ended, but the server could not confirm cleanup. Press End call again to retry.',

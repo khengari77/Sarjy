@@ -54,6 +54,8 @@ export interface ConnectionDeps {
   getRuntime(): VoiceRuntime;
   getLanguage(): 'ar' | 'en';
   getVoice(): { id: string; name: string };
+  /** Fired when the server fell back from the saved voice; refresh server settings. */
+  onVoiceFallback?(reason: 'removed' | 'transient'): void;
   meters: MeterController;
 }
 

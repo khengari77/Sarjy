@@ -41,7 +41,8 @@ export function bootStudio(options: StudioBoot) {
   // and every default below matches the missing-storage behaviour.
   const storage = browserStorage();
   if (options.restoreLanguage) options.setArabic(storage?.getItem('sarjy-language') === 'ar');
-  catalog.voiceId = storage?.getItem('sarjy-voice-id') || '';
+  // Voice selection is server-owned; the retired local-only key is ignored.
+  storage?.removeItem('sarjy-voice-id');
   options.setCaptions(storage?.getItem('sarjy-captions') !== 'off');
 
   const runtime: VoiceRuntime = createVoiceRuntime();
@@ -58,6 +59,8 @@ export function bootStudio(options: StudioBoot) {
     refresh: () => conversations!.refresh(),
     getRuntime: () => runtime,
     getLanguage: () => options.getLanguage(),
+    // The server fell back from a dead or unreachable saved voice: adopt its settings.
+    onVoiceFallback: () => void catalogStore.loadSettings(),
     getVoice: () => {
       const name = catalog.voices.find((entry) => entry.id === catalog.voiceId)?.name || catalog.voiceId;
       return { id: catalog.voiceId, name };
@@ -74,6 +77,7 @@ export function bootStudio(options: StudioBoot) {
     bootstrap: () =>
       options.run(async () => {
         await request('demo-session', {});
+        await catalogStore.loadSettings();
         await conversations.reload();
         if (conversation.conversations.length) await conversations.select(conversation.conversations[0].id);
       }),
