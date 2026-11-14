@@ -33,7 +33,7 @@ from livekit.agents import (
 )
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
-from provider_factory import apply_speaking_speed, build_providers
+from provider_factory import SpeakingSpeedController, build_providers
 from snapshot_request import snapshot_request
 
 server = AgentServer()
@@ -214,6 +214,7 @@ class SarjyAgent(Agent):
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
+        self.speaking_speed_control = SpeakingSpeedController()
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
         self.memory_message: str | None = None
@@ -313,7 +314,7 @@ class SarjyAgent(Agent):
             return
         tts = getattr(session, "tts", None)
         if tts is not None:
-            apply_speaking_speed(tts, speed)
+            self.speaking_speed_control.apply(tts, speed)
 
     async def _resolve_memory(self, decision: str) -> None:
         proposal = self.memory_proposal

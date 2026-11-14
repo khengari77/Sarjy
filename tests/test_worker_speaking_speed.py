@@ -10,14 +10,13 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from livekit.agents.types import NOT_GIVEN
 from livekit.plugins import elevenlabs
 from main import SarjyAgent
 from provider_factory import (
     SPEAKING_SPEED_DEFAULT,
     SPEAKING_SPEED_MAX,
     SPEAKING_SPEED_MIN,
-    apply_speaking_speed,
+    SpeakingSpeedController,
 )
 
 
@@ -25,12 +24,10 @@ class RecordingTTS:
     """Stands in for the ElevenLabs plugin and records update_options calls."""
 
     def __init__(self):
-        self._opts = SimpleNamespace(voice_settings=NOT_GIVEN)
         self.updates = []
 
     def update_options(self, *, voice_settings):
         self.updates.append(voice_settings)
-        self._opts.voice_settings = voice_settings
 
 
 def snapshot(speed, *, include_settings=True):
@@ -38,11 +35,13 @@ def snapshot(speed, *, include_settings=True):
     return {"model_request": request}
 
 
-def compiled_tts(speed, *, include_settings=True):
-    """Run one real compile() and return the TTS instance it configured."""
+def compiled(speed, *, include_settings=True, compiles=1):
+    """Run the real compile() path and return the TTS it configured."""
+    turn_starts = []
 
     def backend(request):
         assert request.url.path == "/internal/agent/turn/start"
+        turn_starts.append(request)
         return httpx.Response(
             200,
             json={"turn_id": "turn-1", "context": snapshot(speed, include_settings=include_settings)},
@@ -54,15 +53,17 @@ def compiled_tts(speed, *, include_settings=True):
             tts = RecordingTTS()
             # Agent.session resolves through its activity; this mirrors a live session.
             agent._activity = SimpleNamespace(session=SimpleNamespace(tts=tts))
-            await agent.compile(SimpleNamespace(id="message-1", text_content="slower please"))
-            return tts
+            message = SimpleNamespace(id="message-1", text_content="slower please")
+            for _ in range(compiles):
+                await agent.compile(message)
+            return tts, len(turn_starts)
 
     return asyncio.run(run())
 
 
 @pytest.mark.parametrize("speed", [0.8, 0.9, 1.1, 1.2])
 def test_turn_snapshot_speed_reaches_the_provider_configuration(speed):
-    tts = compiled_tts(speed)
+    tts, _ = compiled(speed)
     assert len(tts.updates) == 1
     assert tts.updates[0].speed == speed
     # The default voice character is preserved when only pace is overridden.
@@ -71,12 +72,13 @@ def test_turn_snapshot_speed_reaches_the_provider_configuration(speed):
 
 
 def test_default_speed_leaves_the_provider_configuration_untouched():
-    tts = compiled_tts(SPEAKING_SPEED_DEFAULT)
+    tts, _ = compiled(SPEAKING_SPEED_DEFAULT)
     assert tts.updates == []
 
 
 def test_missing_or_legacy_settings_keep_the_provider_default():
-    assert compiled_tts(SPEAKING_SPEED_DEFAULT, include_settings=False).updates == []
+    tts, _ = compiled(SPEAKING_SPEED_DEFAULT, include_settings=False)
+    assert tts.updates == []
 
 
 @pytest.mark.parametrize(
@@ -85,7 +87,8 @@ def test_missing_or_legacy_settings_keep_the_provider_default():
 )
 def test_speed_is_clamped_to_the_installed_plugin_interval(stored, applied):
     tts = RecordingTTS()
-    assert apply_speaking_speed(tts, stored) == applied
+    control = SpeakingSpeedController()
+    assert control.apply(tts, stored) == applied
     if applied == SPEAKING_SPEED_DEFAULT:
         assert tts.updates == []
     else:
@@ -94,28 +97,42 @@ def test_speed_is_clamped_to_the_installed_plugin_interval(stored, applied):
 
 def test_repeated_value_does_not_invalidate_the_live_connection():
     tts = RecordingTTS()
-    assert apply_speaking_speed(tts, 0.9) == 0.9
-    assert apply_speaking_speed(tts, 0.9) == 0.9
+    control = SpeakingSpeedController()
+    assert control.apply(tts, 0.9) == 0.9
+    assert control.apply(tts, 0.9) == 0.9
     assert len(tts.updates) == 1
 
 
-def test_existing_voice_settings_are_preserved_when_speed_changes():
+def test_double_compile_does_not_thrash_the_tts_connection():
+    """The SDK compiles a user message twice; only the first may touch TTS."""
+    tts, turn_starts = compiled(0.9, compiles=2)
+    assert turn_starts == 1
+    assert len(tts.updates) == 1
+
+
+def test_returning_to_default_resets_a_previously_set_speed():
     tts = RecordingTTS()
-    tts._opts.voice_settings = elevenlabs.VoiceSettings(stability=0.3, similarity_boost=0.6, speed=0.9)
-    apply_speaking_speed(tts, 1.1)
-    assert tts.updates[0].stability == 0.3
-    assert tts.updates[0].similarity_boost == 0.6
-    assert tts.updates[0].speed == 1.1
+    control = SpeakingSpeedController()
+    control.apply(tts, 0.8)
+    control.apply(tts, SPEAKING_SPEED_DEFAULT)
+    assert [update.speed for update in tts.updates] == [0.8, SPEAKING_SPEED_DEFAULT]
 
 
-def test_installed_plugin_accepts_and_retains_the_speed():
+def test_installed_plugin_accepts_the_voice_settings():
     """Evidence that the installed (unmocked) plugin supports this option."""
     tts = elevenlabs.TTS(
         model="eleven_flash_v2_5", voice_id="voice", language="en", api_key="test-key", enable_logging=False
     )
-    assert tts._opts.voice_settings is NOT_GIVEN
-    apply_speaking_speed(tts, 0.8)
-    assert tts._opts.voice_settings.speed == 0.8
-    revision = tts._opts_revision
-    apply_speaking_speed(tts, 0.8)
-    assert tts._opts_revision == revision
+    calls = []
+    original = tts.update_options
+
+    def recording(*, voice_settings):
+        calls.append(voice_settings)
+        return original(voice_settings=voice_settings)
+
+    tts.update_options = recording
+    control = SpeakingSpeedController()
+    assert control.apply(tts, 0.8) == 0.8
+    assert calls[0].speed == 0.8
+    assert control.apply(tts, 0.8) == 0.8
+    assert len(calls) == 1
