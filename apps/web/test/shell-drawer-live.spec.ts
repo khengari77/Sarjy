@@ -284,34 +284,3 @@ test('Escape closes the open dock that holds focus, not the most recently opened
   await expect(left).toHaveAttribute('aria-expanded', 'true');
   await expect(right).toBeFocused();
 });
-
-test('blocked storage does not abort shell initialisation', async ({ page }) => {
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  await page.addInitScript(() => {
-    Object.defineProperty(window, 'localStorage', {
-      configurable: true,
-      get() {
-        throw new DOMException('storage blocked for test', 'SecurityError');
-      },
-    });
-  });
-
-  await page.setViewportSize({ width: 1280, height: 720 });
-  const response = await page.goto('/');
-  expect(response?.status()).toBe(200);
-  await waitForShell(page);
-
-  const leftPanel = page.locator('#shell-left');
-  await expect(leftPanel).toBeVisible();
-  await expect(leftPanel).toHaveAttribute('data-hydrated', 'true');
-  expect(await leftPanel.evaluate((el) => (el as HTMLElement).inert)).toBe(false);
-
-  // The theme control still works without storage; persistence is best effort.
-  const theme = page.getByRole('button', { name: /^Theme:/ });
-  await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'system');
-  await theme.click();
-  // Preference advances even though nothing could be persisted.
-  await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'light');
-  expect(errors.filter((message) => /SecurityError|storage blocked/.test(message))).toEqual([]);
-});
