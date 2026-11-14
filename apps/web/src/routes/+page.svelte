@@ -24,6 +24,8 @@
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
   import { bootStudio } from '../lib/voice/studio';
   import { createSelectionController } from '../lib/voice/selection';
+  import { createCommandSession } from '../lib/commands/commandSession.svelte';
+  import CommandStatus from '../lib/commands/CommandStatus.svelte';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -36,7 +38,6 @@
   let pendingIntent = $state<PendingIntent>(null);
   let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none');
   let busy = $state(false);
-  let captionsVisible = $state(true);
   let voice = $state(initialVoiceState());
   let runtime: VoiceRuntime | undefined;
   let connection: VoiceConnection | undefined;
@@ -52,6 +53,9 @@
     getConversations: () => conversations!,
   });
   const words = $derived(wordsFor(arabic));
+
+  // GUI controls and backend-authored voice results both write this store.
+  const commands = createCommandSession(() => conversation.current);
 
   const phase = $derived<VoicePhase>(
     (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
@@ -129,11 +133,6 @@
     }, onVoiceError);
   }
 
-  function toggleCaptions() {
-    captionsVisible = !captionsVisible;
-    localStorage.setItem('sarjy-captions', captionsVisible ? 'on' : 'off');
-  }
-
   function toggleLanguage() {
     arabic = !arabic;
     localStorage.setItem('sarjy-language', arabic ? 'ar' : 'en');
@@ -148,7 +147,8 @@
       conversation,
       restoreLanguage: LANGUAGE_SWITCH_ENABLED,
       setArabic: (value) => (arabic = value),
-      setCaptions: (value) => (captionsVisible = value),
+      hydrateSettings: (settings) => commands.hydrate(settings),
+      applyCommand: commands.apply,
       setDevOverlay: (value) => (devOverlay = value),
       getLanguage: () => (arabic ? 'ar' : 'en'),
       run: (work, onError) => run(work, onError),
@@ -168,8 +168,9 @@
 </svelte:head>
 
 <AppShell
-  dir={arabic ? 'rtl' : 'ltr'}
-  stageDialogOpen={pendingIntent !== null}
+  bind:leftOpen={commands.state.panels.history}
+  bind:rightOpen={commands.state.panels.memory_explorer}
+  dir={arabic ? 'rtl' : 'ltr'}  stageDialogOpen={pendingIntent !== null}
   languageLabel={arabic ? 'English' : 'العربية'}
   onLanguage={LANGUAGE_SWITCH_ENABLED ? toggleLanguage : undefined}
   leftLabel={arabic ? 'المحادثات' : 'Conversations'}
@@ -205,7 +206,7 @@
       turns={conversation.turns}
       provisional={voice.provisional}
       tools={conversation.toolCalls}
-      {captionsVisible}
+      captionsVisible={commands.state.settings.captions_visible}
       {busy}
       {words}
       onretrymic={startConnect}
@@ -252,11 +253,13 @@
           voiceError={catalog.error}
           live={voice.live}
           activeVoiceName={voice.activeVoiceName}
-          {captionsVisible}
+          captionsVisible={commands.state.settings.captions_visible}
+          speakingSpeed={commands.state.settings.speaking_speed}
           onsearch={() => void catalogStore!.load()}
           onloadmore={() => void catalogStore!.load(true)}
           onremember={() => catalogStore!.remember()}
-          ontoggleCaptions={toggleCaptions}
+          ontoggleCaptions={commands.toggleCaptions}
+          onspeed={commands.setSpeed}
         />
       {/snippet}
     </RightDrawer>
@@ -264,3 +267,4 @@
 </AppShell>
 
 <p class="sr-only" aria-live="polite" aria-atomic="true">{announcement.message}</p>
+<CommandStatus session={commands} />

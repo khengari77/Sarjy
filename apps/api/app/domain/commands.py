@@ -17,7 +17,6 @@ from app.domain.contracts import (
     AdjustSpeakingSpeed,
     Contract,
     OpenMemoryExplorer,
-    SelectApprovedVoice,
     SetCaptionsVisible,
     ShowConversationHistory,
     UserSettings,
@@ -36,16 +35,22 @@ _EXACT_COMMANDS: dict[str, Action] = {
     "open the memory explorer": OpenMemoryExplorer(),
 }
 
-# "Use the British narrator voice."  The spoken name is resolved against the
-# approved catalog; this parser never invents a voice id.
-_VOICE_SELECTION = re.compile(
-    r"^(?:use|switch to|change to|choose|select) (?:the )?(?P<name>[a-z0-9][a-z0-9 '\-]{0,98}?) voice$"
+# "Use the British female voice." is an argument-bearing row (PR 1b, behind
+# #117's approved-voice contract).  Recognising the shape here lets the product
+# answer truthfully instead of passing it to conversational generation.
+_VOICE_SELECTION_SHAPE = re.compile(
+    r"^(?:use|switch to|change to|choose|select) (?:the )?[a-z0-9][a-z0-9 '\-]{0,98}? voice$"
 )
 
 # Rows that are deliberately not wired yet.  Recognising them lets the product
 # say so once instead of sending a destructive-sounding request to a
 # conversational model that cannot perform it.
 _UNSUPPORTED_COMMANDS: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (
+        _VOICE_SELECTION_SHAPE,
+        "VOICE_SELECTION_UNSUPPORTED",
+        "I can't change the voice by voice yet.",
+    ),
     (
         re.compile(r"^(?:show|find|search)(?: me)?(?: my| the)? memories(?: about .+)?$"),
         "MEMORY_SEARCH_UNSUPPORTED",
@@ -106,21 +111,6 @@ def parse_exact_command(text: str) -> Action | None:
     return _EXACT_COMMANDS.get(normalized)
 
 
-def parse_voice_selection(text: str) -> str | None:
-    """Return the spoken approved-voice name, or ``None``.
-
-    The pattern requires a trailing "voice", so an ordinary sentence such as
-    "use the kitchen" is not mistaken for a settings command.  Matching is
-    case-insensitive while the returned name keeps the user's capitalisation
-    for the truthful "not found" response.
-    """
-    normalized = " ".join(text.strip().split()).removesuffix(".")
-    match = _VOICE_SELECTION.match(normalized.casefold())
-    if match is None:
-        return None
-    return " ".join(normalized[match.start("name") : match.end("name")].split())
-
-
 def unsupported_command(text: str) -> tuple[str, str] | None:
     """Return ``(detail, spoken)`` for a known-but-unwired §5.7 row."""
     normalized = " ".join(text.strip().lower().split()).removesuffix(".")
@@ -138,7 +128,6 @@ def command_result(
     navigation: Literal["history", "memory_explorer"] | None = None,
     changed: bool = False,
     confirmed: bool | None = None,
-    voice_name: str | None = None,
 ) -> CommandResult:
     """Describe a committed dispatch outcome.  Never claims an uncommitted effect."""
     if settings is not None:
@@ -154,7 +143,7 @@ def command_result(
         settings=settings,
         navigation=navigation,
         changed=changed or navigation is not None,
-        spoken=spoken_outcome(action, kind=kind, settings=settings, voice_name=voice_name),
+        spoken=spoken_outcome(action, kind=kind),
     )
 
 
@@ -191,8 +180,6 @@ def spoken_outcome(
     action: Action,
     *,
     kind: CommandKind,
-    settings: UserSettings | None,
-    voice_name: str | None = None,
 ) -> str:
     """One short, truthful sentence per handled command."""
     if isinstance(action, AdjustSpeakingSpeed):
@@ -207,27 +194,15 @@ def spoken_outcome(
         return "Opening your previous conversations."
     if isinstance(action, OpenMemoryExplorer):
         return "Opening the memory explorer."
-    if isinstance(action, SelectApprovedVoice):
-        label = voice_name or "the selected voice"
-        if kind is CommandKind.UNCHANGED:
-            return f"{label} is already selected."
-        return f"Voice changed to {label}."
     return "Done."
-
-
-def command_trace(result: CommandResult) -> str:
-    """Stable identifier for parity assertions: the typed action, or the reason."""
-    return result.action or result.detail or result.kind.value
 
 
 __all__ = [
     "CommandKind",
     "CommandResult",
     "command_result",
-    "command_trace",
     "failed_result",
     "parse_exact_command",
-    "parse_voice_selection",
     "spoken_outcome",
     "unknown_result",
     "unsupported_command",

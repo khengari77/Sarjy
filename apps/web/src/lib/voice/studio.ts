@@ -1,6 +1,7 @@
 import { request } from '../api';
 import type { VoiceRuntime } from '../audio/voice-runtime';
 import { createVoiceRuntime } from '../audio/runtime-factory';
+import type { CommandResult, SettingsSnapshot } from '../commands/commandStore';
 import type { CatalogState } from './catalog';
 import { createCatalogStore } from './catalog';
 import type { VoiceState } from './connection';
@@ -19,7 +20,8 @@ export interface StudioBoot {
   conversation: ConversationState;
   restoreLanguage: boolean;
   setArabic(value: boolean): void;
-  setCaptions(value: boolean): void;
+  hydrateSettings(settings: Partial<SettingsSnapshot>): void;
+  applyCommand(result: CommandResult): void;
   setDevOverlay(value: DevOverlay): void;
   run(work: () => Promise<void>, onError?: (error: unknown) => void): Promise<void>;
   getLanguage(): 'ar' | 'en';
@@ -42,7 +44,11 @@ export function bootStudio(options: StudioBoot) {
   const storage = browserStorage();
   if (options.restoreLanguage) options.setArabic(storage?.getItem('sarjy-language') === 'ar');
   catalog.voiceId = storage?.getItem('sarjy-voice-id') || '';
-  options.setCaptions(storage?.getItem('sarjy-captions') !== 'off');
+  const storedSpeed = Number(storage?.getItem('sarjy-speaking-speed'));
+  options.hydrateSettings({
+    captions_visible: storage?.getItem('sarjy-captions') !== 'off',
+    speaking_speed: Number.isFinite(storedSpeed) && storedSpeed > 0 ? storedSpeed : 1,
+  });
 
   const runtime: VoiceRuntime = createVoiceRuntime();
   const meters = createMeterController(
@@ -62,6 +68,7 @@ export function bootStudio(options: StudioBoot) {
       const name = catalog.voices.find((entry) => entry.id === catalog.voiceId)?.name || catalog.voiceId;
       return { id: catalog.voiceId, name };
     },
+    applyCommand: (result) => options.applyCommand(result),
     meters,
   });
   const conversations = createConversationStore(conversation, {
@@ -76,6 +83,12 @@ export function bootStudio(options: StudioBoot) {
         await request('demo-session', {});
         await conversations.reload();
         if (conversation.conversations.length) await conversations.select(conversation.conversations[0].id);
+        try {
+          options.hydrateSettings(await request<SettingsSnapshot>('settings'));
+        } catch {
+          // The saved preference is a presentation setting; the local mirror
+          // stays usable when the settings read is unavailable.
+        }
       }),
     getLive: () => voice.live,
     endExpired: () => void options.run(() => connection.end(), options.onVoiceError),

@@ -13,21 +13,13 @@ from fastapi.testclient import TestClient
 
 
 class Catalog:
-    voices = (
-        VoiceOption(id="approved", name="Approved Narrator", languages=("en",)),
-        VoiceOption(id="other", name="Other Voice", languages=("en",)),
-    )
+    voices = (VoiceOption(id="approved", name="Approved Narrator", languages=("en",)),)
 
     async def require(self, voice_id):
         for voice in self.voices:
             if voice.id == voice_id:
                 return voice
         raise VoiceCatalogError("VOICE_UNAVAILABLE", 422)
-
-    async def find_by_name(self, name):
-        wanted = " ".join(name.casefold().split())
-        matches = [voice for voice in self.voices if " ".join(voice.name.casefold().split()) == wanted]
-        return matches[0] if len(matches) == 1 else None
 
 
 def app_for(tmp_path, name="commands"):
@@ -83,9 +75,8 @@ ROWS = [
     ("Show my previous conversations.", {"kind": "ShowConversationHistory"}, "executed"),
     ("Open my previous conversations.", {"kind": "ShowConversationHistory"}, "executed"),
     ("Open the memory explorer.", {"kind": "OpenMemoryExplorer"}, "executed"),
-    ("Use the Approved Narrator voice.", {"kind": "SelectApprovedVoice", "voice_id": "approved"}, "executed"),
 ]
-SETTING_KINDS = {"AdjustSpeakingSpeed", "SetCaptionsVisible", "SelectApprovedVoice"}
+SETTING_KINDS = {"AdjustSpeakingSpeed", "SetCaptionsVisible"}
 
 
 @pytest.mark.parametrize(("text", "action", "expected_kind"), ROWS)
@@ -141,6 +132,7 @@ def test_duplicate_finalized_transcript_applies_one_effect(tmp_path):
 @pytest.mark.parametrize(
     "text",
     [
+        "Use the British female voice.",
         "Show my memories about Paris.",
         "Forget the Paris trip but keep the budget.",
         "Restore the memories I excluded.",
@@ -182,20 +174,6 @@ def test_non_commands_fall_through_without_effects(tmp_path, text):
         response = voice(client, conversation, text)
         assert response.status_code == 200
         assert response.json() == {"handled": False}
-        assert counts(path) == (0, 0)
-
-
-def test_unapproved_spoken_voice_is_not_invented(tmp_path):
-    app, path = app_for(tmp_path)
-    with TestClient(app) as client:
-        conversation = chat(client)
-        response = voice(client, conversation, "Use the British female voice.")
-        assert response.status_code == 200
-        result = response.json()["result"]
-        assert result["kind"] == "unsupported"
-        assert result["detail"] == "VOICE_NOT_FOUND"
-        assert "British female" in result["spoken"]
-        assert client.get("/v1/settings").json()["approved_voice_id"] is None
         assert counts(path) == (0, 0)
 
 

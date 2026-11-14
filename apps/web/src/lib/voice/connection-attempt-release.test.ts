@@ -92,6 +92,7 @@ function harness() {
     getRuntime: () => runtime,
     getLanguage: () => 'en',
     getVoice: () => ({ id: 'v1', name: 'Voice' }),
+    applyCommand: () => {},
     meters: {
       startMicMeter: vi.fn(),
       stopMicMeter: vi.fn(),

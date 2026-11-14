@@ -1,14 +1,17 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
+import type { CommandResult } from '../commands/commandStore';
+import { controlEvent } from './controlPayload';
 import { waitForAgent, type StartupSignal } from './agentStartup';
 import { disposeAudioResources } from './disposeAudio';
 import { bindRoomEvents, disconnectRoomInBackground } from './roomLifecycle';
 import { transcriptMetadata } from './transcriptSpeaker';
 
-type VoiceEventBody =
+export type VoiceEventBody =
   | { type: 'status'; source: 'transport' | 'agent'; text: string }
   | { type: 'error'; code: string }
   | { type: 'audio-blocked'; code: string }
+  | { type: 'command'; command: CommandResult }
   | { type: 'transcript'; text: string; final: boolean; segmentId: string; speaker: 'user' | 'assistant' };
 
 export type VoiceEvent = VoiceEventBody & { epoch: number };
@@ -116,15 +119,9 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
       if (this.active(room, epoch) && state) this.emit({ type: 'status', source: 'agent', text: state });
     });
     bindings.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-      if (!this.active(room, epoch) || topic !== 'sarjy.error' || !participant?.isAgent) return;
-      try {
-        const event = JSON.parse(new TextDecoder().decode(payload));
-        if (['DAILY_BUDGET_EXHAUSTED', 'BUDGET_SERVICE_UNAVAILABLE'].includes(event.code)) {
-          this.emit({ type: 'error', code: event.code });
-        }
-      } catch {
-        /* malformed control payload: ignore rather than crash the session */
-      }
+      if (!this.active(room, epoch) || !participant?.isAgent) return;
+      const event = controlEvent(topic, payload);
+      if (event) this.emit(event);
     });
     bindings.on(RoomEvent.MediaDevicesError, () => {
       if (this.active(room, epoch)) this.emit({ type: 'error', code: 'MICROPHONE_UNAVAILABLE' });

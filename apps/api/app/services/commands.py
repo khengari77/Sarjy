@@ -19,14 +19,12 @@ from app.domain.commands import (
     command_result,
     failed_result,
     parse_exact_command,
-    parse_voice_selection,
     unknown_result,
     unsupported_command,
     unsupported_result,
 )
 from app.domain.contracts import (
     Action,
-    SelectApprovedVoice,
     UserSettings,
 )
 from app.services.actions import SETTING_ACTIONS, dispatch_action
@@ -60,19 +58,6 @@ async def handle_finalized_utterance(
     than one effect.
     """
     action = parse_exact_command(text)
-    voice_name: str | None = None
-    if action is None:
-        voice_name = parse_voice_selection(text)
-        if voice_name is not None:
-            voice = await _resolve_voice(catalog, voice_name)
-            if voice is None:
-                return unsupported_result(
-                    request_id=request_id,
-                    detail="VOICE_NOT_FOUND",
-                    spoken=f"I couldn't find an approved voice called {voice_name}.",
-                )
-            voice_name = voice.name
-            action = SelectApprovedVoice(voice_id=voice.id)
     if action is None:
         unsupported = unsupported_command(text)
         if unsupported is not None:
@@ -103,20 +88,10 @@ async def handle_finalized_utterance(
         return unknown_result(request_id=request_id, detail=detail, action=action)
     except Exception:
         return unknown_result(request_id=request_id, detail="ACTION_DELIVERY_UNKNOWN", action=action)
-    return _describe(request_id=request_id, action=action, raw=raw, voice_name=voice_name)
+    return _describe(request_id=request_id, action=action, raw=raw)
 
 
-async def _resolve_voice(catalog, name: str):
-    find = getattr(catalog, "find_by_name", None)
-    if find is None:
-        return None
-    try:
-        return await find(name)
-    except VoiceCatalogError:
-        return None
-
-
-def _describe(*, request_id: str, action: Action, raw: Any, voice_name: str | None) -> CommandResult:
+def _describe(*, request_id: str, action: Action, raw: Any) -> CommandResult:
     if not isinstance(raw, dict):
         return unknown_result(request_id=request_id, detail="ACTION_RESULT_INVALID", action=action)
     settings = raw.get("settings")
@@ -126,7 +101,6 @@ def _describe(*, request_id: str, action: Action, raw: Any, voice_name: str | No
             action=action,
             settings=UserSettings.model_validate(settings),
             changed=bool(raw.get("changed", False)),
-            voice_name=voice_name,
         )
     navigation = raw.get("navigation")
     if navigation in {"history", "memory_explorer"}:
