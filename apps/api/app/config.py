@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     default_llm_provider: Literal["openai_direct", "deepseek_direct"] = "deepseek_direct"
     deepseek_budget_enabled: bool = True
     deepseek_daily_micro_usd: int = 250_000
+    # Shared daily ElevenLabs character reservation. Application guard, not a provider quota (#151).
+    elevenlabs_daily_characters: int = Field(default=2500, ge=1)
     deepseek_request_micro_usd: int = 7_000
     eleven_api_key: str = ""
     approved_voice_ids: str = ""
@@ -53,14 +55,6 @@ class Settings(BaseSettings):
         # Fail at startup rather than admitting a malformed allow-list later.
         parse_voice_ids(value)
         return value
-
-    @model_validator(mode="after")
-    def validate_voice_configuration(self):
-        # Fail at startup, not on the first demo tap: with voice configured but no
-        # approved or default voice, every session request would fail at runtime.
-        if self.eleven_api_key and not (self.approved_voice_ids.strip() or self.default_voice_id):
-            raise ValueError("APPROVED_VOICE_IDS or DEFAULT_VOICE_ID is required when ELEVEN_API_KEY is set")
-        return self
 
     @model_validator(mode="after")
     def validate_wordle_timezone(self):

@@ -229,6 +229,8 @@ def _register_budget_routes(app, *, config: Settings, database):
         overrides = (
             {"units": config.deepseek_request_micro_usd, "limit": config.deepseek_daily_micro_usd}
             if body.provider == "deepseek"
+            else {"limit": config.elevenlabs_daily_characters}
+            if body.provider == "elevenlabs"
             else {}
         )
         try:
