@@ -346,3 +346,20 @@ def test_another_owner_cannot_use_the_proposal_token(tmp_path):
         assert response.status_code == 404
         assert counts(file) == (0, 0, 0, 1)
         assert other_chat
+
+
+def test_an_unrelated_turn_disarms_the_pending_proposal_so_a_later_yes_changes_nothing(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = new_chat(client)
+        seed(file, chat, [("name", "My name is Khengari")])
+        assert (
+            voice(client, chat, "Forget my name.", request="p1").json()["result"]["detail"]
+            == "MEMORY_EXCLUSION_PROPOSED"
+        )
+        assert voice(client, chat, "What is the weather like today?", request="u1").json() == {"handled": False}
+        stray = voice(client, chat, "Yes.", request="y1")
+        assert stray.json() == {"handled": False}, "a yes to another question must not apply the old proposal"
+        assert counts(file) == (0, 0, 0, 1)
+        _, outcome = latest_proposal(file)
+        assert outcome == "superseded"

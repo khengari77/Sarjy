@@ -139,8 +139,9 @@ def _ambiguity_spoken(candidates) -> str:
     return f"I have {_number_word(len(candidates))} matches: {listing}. Which one?"
 
 
-async def _supersede_pending(db: AsyncSession, owner_id: str, conversation_id: str) -> None:
-    await db.execute(
+async def _supersede_pending(db: AsyncSession, owner_id: str, conversation_id: str) -> bool:
+    """Retire any pending proposal; report whether one existed."""
+    result = await db.execute(
         update(ContextOperation)
         .where(
             ContextOperation.owner_id == owner_id,
@@ -150,11 +151,13 @@ async def _supersede_pending(db: AsyncSession, owner_id: str, conversation_id: s
         )
         .values(outcome=SUPERSEDED)
     )
+    return result.rowcount > 0
 
 
 async def discard_pending(db: AsyncSession, *, owner_id: str, conversation_id: str) -> None:
     """Disarm the pending proposal when the user moves to another memory request."""
     await _supersede_pending(db, owner_id, conversation_id)
+    # Always end the transaction the UPDATE began, even when nothing was pending.
     await db.commit()
 
 

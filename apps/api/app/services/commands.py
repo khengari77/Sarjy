@@ -96,6 +96,9 @@ async def handle_finalized_utterance(
         )
     if memory_result is not None:
         return memory_result
+    # Consent is one-shot: a pending proposal answers only the very next turn, so a
+    # later "yes" to some other question can never apply it.
+    await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
 
     action = parse_exact_command(text)
     voice_name: str | None = None
