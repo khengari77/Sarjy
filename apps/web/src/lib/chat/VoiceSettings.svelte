@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { VoiceOption } from '../api';
   import { friendlyVoiceError } from '../audio/livekitAdapter';
-  import { voiceStatusText, type VoiceStatus } from './voice-state';
+  import { voiceStatus, voiceStatusText } from './voice-state';
 
   let {
     arabic,
@@ -16,8 +16,7 @@
     live,
     selectedVoice,
     sessionVoice,
-    confirmedVoice,
-    status,
+    confirmedVoice = null,
     captionsVisible,
     onsearch,
     onloadmore,
@@ -36,8 +35,7 @@
     live: boolean;
     selectedVoice: VoiceOption | null;
     sessionVoice: VoiceOption | null;
-    confirmedVoice: VoiceOption | null;
-    status: VoiceStatus;
+    confirmedVoice?: VoiceOption | null;
     captionsVisible: boolean;
     onsearch: () => void;
     onloadmore: () => void;
@@ -45,6 +43,9 @@
     ontoggleCaptions: () => void;
   } = $props();
 
+  const status = $derived(
+    voiceStatus({ selected: selectedVoice, session: sessionVoice, confirmed: confirmedVoice, live }),
+  );
   const statusText = $derived(
     voiceStatusText({ selected: selectedVoice, session: sessionVoice, confirmed: confirmedVoice, live }, arabic),
   );
@@ -82,9 +83,7 @@
     </form>
     <label class="field-label" for="assistant-voice">{arabic ? 'اختر الصوت' : 'Choose voice'}</label>
     <select id="assistant-voice" bind:value={voiceId} disabled={voiceSaving} onchange={onremember}>
-      {#if !voiceId}
-        <option value="">{arabic ? 'الصوت الافتراضي من الخادم' : 'Server default voice'}</option>
-      {/if}
+      <option value="">{arabic ? 'الصوت الافتراضي من الخادم' : 'Server default voice'}</option>
       {#if voiceId && !voices.some((voice) => voice.id === voiceId)}
         <option value={voiceId}>{arabic ? 'الصوت المحفوظ (أعد تحميل القائمة)' : 'Saved voice (reload list)'}</option>
       {/if}

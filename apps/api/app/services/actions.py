@@ -59,6 +59,28 @@ def settings_value(row):
     )
 
 
+async def clear_saved_voice(db, owner_id) -> None:
+    """Drop a saved voice that is no longer usable, keeping revisions monotonic.
+
+    Used when a saved id has left the allow-list or the catalog, so the user
+    lands on the configured default every call instead of a dead preference.
+    """
+    row = await db.get(UserSetting, owner_id)
+    if row is None or row.approved_voice_id is None:
+        return
+    row.approved_voice_id = None
+    row.revision += 1
+    row.updated_at = now()
+    db.add(
+        SettingRevision(
+            id=str(uuid4()),
+            owner_id=owner_id,
+            revision=row.revision,
+            settings=settings_value(row).model_dump(mode="json"),
+        )
+    )
+
+
 def _replay_result(existing):
     result = (existing.payload or {}).get("result")
     if result is None:
@@ -326,16 +348,20 @@ async def dispatch_setting(db, *, owner_id, request_id, expected_revision, actio
 
     if not isinstance(action, SETTING_ACTIONS):
         raise HTTPException(422, detail={"code": "INVALID_SETTING_ACTION"})
-    if isinstance(action, SelectApprovedVoice):
+    if isinstance(action, SelectApprovedVoice) and action.voice_id is not None:
         if approved_voice_ids is not None and action.voice_id not in approved_voice_ids:
             raise VoiceCatalogError("VOICE_NOT_APPROVED", 422)
         await catalog.require(action.voice_id)
     key = _setting_key(owner_id, request_id)
     fingerprint = _setting_fingerprint(expected_revision, action)
-    try:
+    # Own the transaction like ``dispatch_action``: never commit or roll back a
+    # session the caller may still be using for reads.
+    bind = db.bind
+    factory = async_sessionmaker(bind.engine if isinstance(bind, AsyncConnection) else bind, expire_on_commit=False)
+    async with factory() as effects, effects.begin():
         # Serialize against conversation-scoped setting writes on the same gate.
-        await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
-        existing = await db.scalar(
+        await effects.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
+        existing = await effects.scalar(
             select(SettingWriteRequest).where(
                 SettingWriteRequest.owner_id == owner_id, SettingWriteRequest.request_key == key
             )
@@ -344,8 +370,8 @@ async def dispatch_setting(db, *, owner_id, request_id, expected_revision, actio
             if existing.fingerprint != fingerprint:
                 raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
             return existing.result
-        result = await _apply_setting(db, owner_id, expected_revision, action)
-        db.add(
+        result = await _apply_setting(effects, owner_id, expected_revision, action)
+        effects.add(
             SettingWriteRequest(
                 id=str(uuid4()),
                 owner_id=owner_id,
@@ -354,11 +380,7 @@ async def dispatch_setting(db, *, owner_id, request_id, expected_revision, actio
                 result=result,
             )
         )
-        await db.commit()
-        return result
-    except BaseException:
-        await db.rollback()
-        raise
+    return result
 
 
 async def _dispatch_transaction(

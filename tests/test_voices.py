@@ -372,11 +372,97 @@ def test_saved_voice_language_is_derived_from_the_catalog():
     # A saved Arabic voice stays Arabic even when the browser requests English.
     assert spoken_voice_language("saved", "en", arabic, "en") == "ar"
     assert spoken_voice_language("saved", "ar", arabic, "en") == "ar"
-    # Undeclared catalog entries keep the request language.
-    assert spoken_voice_language("saved", "ar", undeclared, "en") == "ar"
+    # A silent catalog uses the configured default language, never the request:
+    # the saved voice is a server-owned choice, the request may be another language.
+    assert spoken_voice_language("saved", "en", undeclared, "ar") == "ar"
+    assert spoken_voice_language("saved", "ar", undeclared, "en") == "en"
     # Explicit requests and the configured default keep their own rules.
     assert spoken_voice_language("requested", "en", arabic, "ar") == "en"
     assert spoken_voice_language("default", "en", arabic, "ar") == "ar"
+
+
+def test_saved_voice_without_catalog_language_uses_the_default_language(tmp_path, livekit_control_plane):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
+    settings = configured_with_default(tmp_path, approved_voice_ids="other-voice,arabic-voice")
+    with TestClient(create_app(settings, voice_catalog=service)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        saved = client.post(
+            "/v1/settings/actions",
+            json={
+                "request_id": "save-other",
+                "expected_revision": 0,
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "other-voice"},
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201, response.text
+        body = response.json()
+        # other-voice declares no languages; the configured default language is ar.
+        assert (body["voice"]["id"], body["voice_source"], body["voice_language"]) == ("other-voice", "saved", "ar")
+
+
+def test_clearing_a_saved_voice_restores_the_server_default(tmp_path, livekit_control_plane):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
+    settings = configured_with_default(tmp_path, approved_voice_ids="other-voice,arabic-voice")
+    with TestClient(create_app(settings, voice_catalog=service)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        saved = client.post(
+            "/v1/settings/actions",
+            json={
+                "request_id": "save",
+                "expected_revision": 0,
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "other-voice"},
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        cleared = client.post(
+            "/v1/settings/actions",
+            json={
+                "request_id": "clear",
+                "expected_revision": 1,
+                "action": {"kind": "SelectApprovedVoice", "voice_id": None},
+            },
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["settings"]["approved_voice_id"] is None
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert (body["voice"]["id"], body["voice_source"]) == ("arabic-voice", "default")
+
+
+def test_saved_voice_removed_from_allow_list_falls_back_to_the_default(tmp_path, livekit_control_plane):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
+    settings = configured_with_default(tmp_path, approved_voice_ids="arabic-voice")
+    with TestClient(create_app(settings, voice_catalog=service)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        # Simulate a saved id that was approved at save time and has since been
+        # removed from the allow-list.
+        with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
+            db.execute(
+                "INSERT INTO user_settings"
+                " (owner_id, speaking_speed, captions_visible, approved_voice_id, response_preference, revision, updated_at)"
+                " VALUES (?, 1.0, 1, 'other-voice', 'automatic', 1, '2026-01-01T00:00:00+00:00')",
+                (owner,),
+            )
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["voice"]["id"] == "arabic-voice"
+        assert body["voice_source"] == "default"
+        assert body["saved_voice_unavailable"] is True
+        # The dead preference is cleared, so the picker cannot keep showing it.
+        settings_after = client.get("/v1/settings").json()
+        assert settings_after["approved_voice_id"] is None
+        assert settings_after["revision"] == 2
+        client.post(f"/v1/voice/sessions/{body['id']}/end")
+        second = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert second.status_code == 201, second.text
+        assert second.json()["saved_voice_unavailable"] is False
 
 
 @pytest.mark.parametrize(

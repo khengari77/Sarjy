@@ -23,6 +23,7 @@ export interface SessionConfig {
   voice: VoiceOption;
   voice_language: 'ar' | 'en';
   voice_source: 'requested' | 'saved' | 'default';
+  saved_voice_unavailable?: boolean;
 }
 export interface SettingsActionResult {
   kind: 'SelectApprovedVoice' | 'AdjustSpeakingSpeed' | 'SetSpeakingSpeed' | 'SetCaptionsVisible';

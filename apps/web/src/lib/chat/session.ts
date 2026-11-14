@@ -54,11 +54,12 @@ export async function startVoiceSession(
 export async function saveVoiceSelection(voiceId: string, expectedRevision: number): Promise<UserSettings> {
   // Stable id for this exact intent: if the response is lost, retrying the same
   // selection at the same revision replays the committed outcome instead of 409.
-  const requestId = `voice:${expectedRevision}:${voiceId}`;
+  // An empty id is the explicit clear that restores the server default.
+  const requestId = `voice:${expectedRevision}:${voiceId || 'default'}`;
   const result = await request<SettingsActionResult>('settings/actions', {
     request_id: requestId,
     expected_revision: expectedRevision,
-    action: { kind: 'SelectApprovedVoice', voice_id: voiceId },
+    action: { kind: 'SelectApprovedVoice', voice_id: voiceId || null },
   });
   return result.settings;
 }

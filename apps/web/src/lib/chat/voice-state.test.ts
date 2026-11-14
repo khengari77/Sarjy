@@ -10,15 +10,16 @@ describe('voice status labels', () => {
     expect(voiceStatusText(state, false)).toContain('default voice');
   });
 
-  it('separates a next-call selection from a running call awaiting the worker ACK', () => {
+  it('states which voice a live call is using without promising an ACK', () => {
     const state = {
       selected: voice('a', 'Alpha'),
       session: voice('b', 'Beta'),
       confirmed: null,
       live: true,
     };
-    expect(voiceStatus(state)).toBe('selected-awaiting-confirmation');
-    expect(voiceStatusText(state, false)).toContain('awaiting worker confirmation');
+    expect(voiceStatus(state)).toBe('selected-for-call');
+    expect(voiceStatusText(state, false)).toContain('Voice for this call: Beta');
+    expect(voiceStatusText(state, false)).not.toContain('awaiting');
     expect(voiceStatusText(state, false)).not.toContain('Active voice');
   });
 

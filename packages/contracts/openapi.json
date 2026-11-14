@@ -2139,14 +2139,19 @@
             "type": "string"
           },
           "voice_id": {
-            "pattern": "^[A-Za-z0-9_-]{1,100}$",
-            "title": "Voice Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_-]{1,100}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Voice Id"
           }
         },
-        "required": [
-          "voice_id"
-        ],
         "title": "SelectApprovedVoice",
         "type": "object"
       },

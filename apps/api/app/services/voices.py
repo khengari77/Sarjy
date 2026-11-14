@@ -61,15 +61,20 @@ def spoken_voice_language(source: str | None, requested: str, option: VoiceOptio
 
     The configured default speaks its configured language. An explicit request
     names its own language. A saved preference stores only the voice id, so its
-    language comes from the catalog: the requested language when the catalog
-    declares support for it, otherwise the voice's single declared language.
-    Undeclared or ambiguous catalog entries keep the requested language.
+    language comes from the catalog; when the catalog is silent or ambiguous the
+    configured default language wins, never the request language, because the
+    saved voice is a server-owned choice and the request may be for another
+    language entirely.
     """
 
     if source == "default":
         return default_language
-    if source == "saved" and option.languages and requested not in option.languages and len(option.languages) == 1:
-        return option.languages[0]
+    if source == "saved":
+        if requested in option.languages:
+            return requested
+        if len(option.languages) == 1:
+            return option.languages[0]
+        return default_language
     return requested
 
 

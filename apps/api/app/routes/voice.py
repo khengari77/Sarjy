@@ -15,6 +15,7 @@ from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response
 from app.domain.pipeline import PipelineConfig, validate_pipeline
 from app.domain.sessions import admission_error
 from app.infrastructure.database import SessionGate, UserSetting, VoiceSession
+from app.services.actions import clear_saved_voice
 from app.services.pipeline_settings import configured_keys, default_llm
 from app.services.session_cleanup import cleanup_room
 from app.services.voices import (
@@ -33,6 +34,33 @@ class StartVoice(BaseModel):
     voice_id: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     response_tier: int | None = Field(default=None, ge=1, le=len(TIER_CAPS))
     response_preference: ResponsePreference = ResponsePreference.AUTOMATIC
+
+
+def _voice_error(exc: VoiceCatalogError, source: str | None) -> HTTPException:
+    code = "VOICE_DEFAULT_UNAVAILABLE" if source == "default" and exc.code == "VOICE_UNAVAILABLE" else exc.code
+    return HTTPException(exc.status, detail={"code": code})
+
+
+async def _resolve_call_voice(config: Settings, catalog: ElevenLabsVoices, requested: str | None, saved: str | None):
+    """Resolve, approve and catalog-check the call voice.
+
+    A saved voice that was removed from the allow-list or the catalog falls back
+    to the configured default instead of bricking the user; the response reports it.
+    """
+    approved = approved_voice_ids(config.approved_voice_ids, config.default_voice_id)
+    source: str | None = None
+    try:
+        voice_id, source = resolve_voice(requested, saved, config.default_voice_id)
+        require_approved(voice_id, approved)
+        return await catalog.require(voice_id), source, False
+    except VoiceCatalogError as exc:
+        if source != "saved" or not config.default_voice_id:
+            raise _voice_error(exc, source) from exc
+    try:
+        require_approved(config.default_voice_id, approved)
+        return await catalog.require(config.default_voice_id), "default", True
+    except VoiceCatalogError as fallback:
+        raise _voice_error(fallback, "default") from fallback
 
 
 def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, owned):
@@ -62,18 +90,10 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
             )
         settings_row = await db.get(UserSetting, user.id)
         saved_voice_id = settings_row.approved_voice_id if settings_row else None
-        voice_source: str | None = None
-        try:
-            voice_id, voice_source = resolve_voice(body.voice_id, saved_voice_id, config.default_voice_id)
-            require_approved(voice_id, approved_voice_ids(config.approved_voice_ids, config.default_voice_id))
-            selected_voice = await catalog.require(voice_id)
-        except VoiceCatalogError as exc:
-            code = (
-                "VOICE_DEFAULT_UNAVAILABLE"
-                if voice_source == "default" and exc.code == "VOICE_UNAVAILABLE"
-                else exc.code
-            )
-            raise HTTPException(exc.status, detail={"code": code}) from exc
+        selected_voice, voice_source, saved_voice_unavailable = await _resolve_call_voice(
+            config, catalog, body.voice_id, saved_voice_id
+        )
+        voice_id = selected_voice.id
         voice_language = spoken_voice_language(
             voice_source, body.language, selected_voice, config.default_voice_language
         )
@@ -82,6 +102,8 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
         )
         # Serialize reservations across API processes on both SQLite and PostgreSQL.
         await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
+        if saved_voice_unavailable:
+            await clear_saved_voice(db, user.id)
         now = datetime.now(UTC)
         await db.execute(
             update(VoiceSession)
@@ -149,6 +171,7 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
                 "voice": selected_voice.model_dump(),
                 "voice_language": voice_language,
                 "voice_source": voice_source,
+                "saved_voice_unavailable": saved_voice_unavailable,
             }
         except Exception:
             await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id).values(status="failed"))

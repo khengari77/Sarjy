@@ -78,13 +78,29 @@ export function createCatalogStore(state: CatalogState) {
     state.saving = true;
     state.settingsError = '';
     try {
-      applySettings(await saveVoiceSelection(next, state.revision));
+      await save(next);
     } catch (error) {
-      state.voiceId = previous;
-      state.settingsError = error instanceof Error ? error.message : 'VOICE_SETTING_REJECTED';
+      if (error instanceof Error && error.message === 'SETTINGS_REVISION_CONFLICT') {
+        // Another tab committed first: adopt its revision, then retry this
+        // selection once instead of leaving the picker stale until reload.
+        await loadSettings();
+        try {
+          await save(next);
+        } catch (retryError) {
+          state.voiceId = previous;
+          state.settingsError = retryError instanceof Error ? retryError.message : 'VOICE_SETTING_REJECTED';
+        }
+      } else {
+        state.voiceId = previous;
+        state.settingsError = error instanceof Error ? error.message : 'VOICE_SETTING_REJECTED';
+      }
     } finally {
       state.saving = false;
     }
+  }
+
+  async function save(voiceId: string) {
+    applySettings(await saveVoiceSelection(voiceId, state.revision));
   }
 
   return { load, loadSettings, remember };
