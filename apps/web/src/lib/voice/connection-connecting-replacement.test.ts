@@ -104,6 +104,8 @@ function harness() {
     getRuntime: () => runtime,
     getLanguage: () => 'en',
     getVoice: () => ({ id: 'v1', name: 'Voice' }),
+    applyCommand: () => {},
+    resyncSettings: () => {},
     meters: meters(),
   });
   return { state, runtime, connection };

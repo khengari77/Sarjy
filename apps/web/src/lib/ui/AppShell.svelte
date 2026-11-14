@@ -1,32 +1,11 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
   import { onMount, setContext, tick } from 'svelte';
-  import { nextThemePreference, themeName, type ResolvedTheme } from './theme';
+  import { nextThemePreference, themeName } from './theme';
+  import type { ShellProps } from './shellTypes';
   import { createDrawerSession } from './drawerSession.svelte';
   import { createThemeSession } from './themeSession.svelte';
   import { wrapTab } from './drawerFocus';
   import './shell.css';
-
-  interface Props {
-    dir?: 'ltr' | 'rtl';
-    languageLabel?: string;
-    onLanguage?: () => void;
-    leftLabel?: string;
-    rightLabel?: string;
-    left?: Snippet;
-    stage?: Snippet;
-    /** Always-reachable control surface (call controls, composer). */
-    controls?: Snippet;
-    right?: Snippet;
-    /** A dialog inside the stage has taken over modal ownership. */
-    stageDialogOpen?: boolean;
-    /**
-     * Reports the resolved (not preferred) theme. The shell owns storage and
-     * OS-preference resolution, so consumers such as the orb must not
-     * re-derive it from `data-theme` or `prefers-color-scheme` themselves.
-     */
-    onthemechange?: (theme: ResolvedTheme) => void;
-  }
 
   let {
     dir = 'ltr',
@@ -39,8 +18,10 @@
     controls,
     right,
     stageDialogOpen = false,
+    leftOpen = $bindable(false),
+    rightOpen = $bindable(false),
     onthemechange,
-  }: Props = $props();
+  }: ShellProps = $props();
 
   // The document ships as English; follow the UI language on the client.
   $effect(() => {
@@ -49,8 +30,6 @@
 
   // SSR renders both panels closed. The saved theme was already stamped on
   // <html> by the inline boot script, so hydration never reads storage.
-  let leftOpen = $state(false);
-  let rightOpen = $state(false);
   // ≥1200px docks the panels side by side; below that they share the overlay
   // layer, so only one can be open at a time.
   let docked = $state(false);

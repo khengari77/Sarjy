@@ -161,3 +161,16 @@ class ElevenLabsVoices:
             if voice.id == voice_id:
                 return voice
         raise VoiceCatalogError("VOICE_UNAVAILABLE", 422)
+
+    async def find_by_name(self, name: str) -> VoiceOption | None:
+        """Resolve an exact, case-insensitive voice name; ambiguity means absent.
+
+        The provider returns at most one page of candidates; a name outside that
+        page is treated as not found rather than guessed.
+        """
+        wanted = " ".join(name.casefold().split())
+        if not wanted:
+            return None
+        catalog = await self.list(search=name)
+        matches = [voice for voice in catalog.voices if " ".join(voice.name.casefold().split()) == wanted]
+        return matches[0] if len(matches) == 1 else None

@@ -181,3 +181,12 @@ def test_normalized_configuration_is_idempotent_and_does_not_mutate(tier, prefer
     assert source == before
     assert normalize_pipeline(resolved) == resolved
     assert resolved["max_output_tokens"] == TIER_CAPS[tier - 1]
+
+
+def test_instructions_deny_unperformed_capabilities():
+    """The model must not claim a UI/DB action the application did not perform."""
+    policy = ResponsePolicy.for_tier(2)
+    english = compose_system_message("en", policy)
+    arabic = compose_system_message("ar", policy)
+    assert "Never claim to have changed a setting" in english
+    assert "لا تدّعِ تغيير إعداد" in arabic
