@@ -5,18 +5,41 @@
     sendLabel,
     disabled,
     onsend,
+    micLabel = '',
+    micPressed = null,
+    onmic,
   }: {
     draft?: string;
     placeholder: string;
     sendLabel: string;
     disabled: boolean;
     onsend: () => void;
+    /** Accessible name for the mic button; the button is omitted without `onmic`. */
+    micLabel?: string;
+    /** `null` while no call is live (the button starts one); otherwise mic-on state. */
+    micPressed?: boolean | null;
+    onmic?: () => void;
   } = $props();
 </script>
 
 <footer class="composer">
-  <textarea bind:value={draft} aria-label={placeholder} {placeholder} {disabled}></textarea>
-  <button disabled={disabled || !draft.trim()} onclick={onsend} aria-label={sendLabel}>
+  <textarea bind:value={draft} rows="1" aria-label={placeholder} {placeholder} {disabled}></textarea>
+  {#if onmic}
+    <button
+      type="button"
+      class="mic"
+      {disabled}
+      onclick={onmic}
+      aria-label={micLabel}
+      aria-pressed={micPressed === null ? undefined : micPressed}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <rect x="9" y="3" width="6" height="11" rx="3" />
+        <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" />
+      </svg>
+    </button>
+  {/if}
+  <button type="button" class="send" disabled={disabled || !draft.trim()} onclick={onsend} aria-label={sendLabel}>
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="M3.4 20.6 21.2 12 3.4 3.4l2.1 6.6L15 12 5.5 14l-2.1 6.6Z" />
     </svg>
@@ -27,27 +50,32 @@
   .composer {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     width: 100%;
     max-width: var(--stage-max-width);
     margin: 8px auto 24px;
-    padding: 7px 7px 7px 18px;
+    padding: 6px 6px 6px 22px;
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-composer);
+    border-radius: 999px;
     background: var(--surface-elevated);
   }
 
+  /* One line: the pill never grows; overlong text scrolls inside the field. */
   .composer textarea {
     flex: 1;
+    min-width: 0;
+    height: 24px;
     min-height: 24px;
-    max-height: 140px;
-    padding: 10px 0;
+    max-height: 24px;
+    padding: 0;
     border: 0;
     background: transparent;
     color: var(--text-primary);
     font: inherit;
-    line-height: 1.4;
+    line-height: 24px;
     resize: none;
+    overflow: hidden;
+    white-space: nowrap;
     outline: none;
   }
 
@@ -61,18 +89,43 @@
     flex: 0 0 auto;
     width: 42px;
     height: 42px;
+    padding: 0;
     border: 0;
     border-radius: 999px;
+    cursor: pointer;
+    transition:
+      opacity var(--transition-quick),
+      background-color var(--transition-quick);
+  }
+
+  .composer .send {
     background: var(--accent);
     color: #fff;
-    cursor: pointer;
-    transition: opacity var(--transition-quick);
+  }
+
+  .composer .mic {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+  }
+
+  .composer .mic[aria-pressed='false'] {
+    color: var(--text-muted);
   }
 
   .composer button svg {
     width: 18px;
     height: 18px;
+  }
+
+  .composer .send svg {
     fill: currentColor;
+  }
+
+  .composer .mic svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
   }
 
   .composer button:disabled {
@@ -84,5 +137,12 @@
   .composer textarea:focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
+  }
+
+  @media (max-width: 767px) {
+    .composer {
+      margin-inline: 14px;
+      width: auto;
+    }
   }
 </style>

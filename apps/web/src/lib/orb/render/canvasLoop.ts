@@ -39,6 +39,10 @@ function rgba(rgb: Rgb, alpha: number): string {
 /**
  * Draw a layered, circular cloud once into an offscreen canvas. The per-frame
  * loop only transforms and composites these cached layers.
+ *
+ * Body layer: one soft filled halo disc, a diffuse whitish centre, pastel hue
+ * islands at the mid radii and ~10 sparse dots. Detail layer: a few thin wisp
+ * arcs and faint billows. Nothing here strokes an outline around the sphere.
  */
 function buildCloudTexture(palette: readonly string[], phase: Rgb, seed: number, wisp: boolean): HTMLCanvasElement {
   const texture = document.createElement('canvas');
@@ -49,78 +53,112 @@ function buildCloudTexture(palette: readonly string[], phase: Rgb, seed: number,
 
   const center = TEXTURE_SIZE / 2;
   const colours = palette.map((value) => hexToRgb(value));
+  const white: Rgb = [1, 1, 1];
+  const light = colours[5] ?? phase;
   const random = mulberry32(seed);
-  const outer = TEXTURE_SIZE * 0.44;
+  const outer = TEXTURE_SIZE * 0.4;
 
   if (!wisp) {
-    // Delicate halo, then a broad filled body so the centre never reads hollow.
-    const halo = ctx.createRadialGradient(center, center, outer * 0.5, center, center, TEXTURE_SIZE * 0.5);
-    halo.addColorStop(0, rgba(colours[0] ?? phase, 0.1));
-    halo.addColorStop(0.7, rgba(colours[1] ?? phase, 0.05));
-    halo.addColorStop(1, rgba(colours[1] ?? phase, 0));
+    // One soft filled halo disc, not concentric outlines.
+    const halo = ctx.createRadialGradient(center, center, 0, center, center, TEXTURE_SIZE * 0.5);
+    halo.addColorStop(0, rgba(colours[0] ?? phase, 0.14));
+    halo.addColorStop(0.75, rgba(colours[0] ?? phase, 0.08));
+    halo.addColorStop(1, rgba(colours[0] ?? phase, 0));
     ctx.fillStyle = halo;
     ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
 
-    const body = ctx.createRadialGradient(center, center, 0, center, center, outer);
-    body.addColorStop(0, rgba(colours[5] ?? phase, 0.6));
-    body.addColorStop(0.28, rgba(colours[0] ?? phase, 0.68));
-    body.addColorStop(0.64, rgba(colours[1] ?? phase, 0.54));
-    body.addColorStop(0.86, rgba(colours[2] ?? phase, 0.28));
-    body.addColorStop(1, rgba(colours[3] ?? phase, 0));
+    // Broad translucent body that dissolves toward the edge.
+    const body = ctx.createRadialGradient(center, center, 0, center, center, outer * 1.12);
+    body.addColorStop(0, rgba(light, 0.78));
+    body.addColorStop(0.45, rgba(colours[0] ?? phase, 0.62));
+    body.addColorStop(0.78, rgba(colours[0] ?? phase, 0.2));
+    body.addColorStop(1, rgba(colours[0] ?? phase, 0));
     ctx.fillStyle = body;
     ctx.beginPath();
-    ctx.arc(center, center, outer, 0, Math.PI * 2);
+    ctx.arc(center, center, outer * 1.12, 0, Math.PI * 2);
     ctx.fill();
+
+    // Hue islands at the mid radii: lavender, gold, mint, coral, cyan.
+    const hues = [4, 2, 1, 3, 0];
+    for (let index = 0; index < 10; index += 1) {
+      const angle = (index / 10) * Math.PI * 2 + random() * 0.6;
+      const distance = outer * (0.38 + random() * 0.3);
+      const x = center + Math.cos(angle) * distance;
+      const y = center + Math.sin(angle) * distance;
+      const radius = TEXTURE_SIZE * (0.1 + random() * 0.07);
+      const colour = colours[hues[index % hues.length] ?? 0] ?? phase;
+      const blob = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      blob.addColorStop(0, rgba(colour, 0.5));
+      blob.addColorStop(0.6, rgba(colour, 0.2));
+      blob.addColorStop(1, rgba(colour, 0));
+      ctx.fillStyle = blob;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Bright diffuse centre plus the current phase tint.
+    const core = ctx.createRadialGradient(center, center, 0, center, center, outer * 0.62);
+    core.addColorStop(0, rgba(white, 0.7));
+    core.addColorStop(0.5, rgba(light, 0.3));
+    core.addColorStop(1, rgba(light, 0));
+    ctx.fillStyle = core;
+    ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
+
+    // Phase tint stays inside the body so it can never read as a grey rim.
+    const tint = ctx.createRadialGradient(center, center, 0, center, center, outer * 0.78);
+    tint.addColorStop(0, rgba(phase, 0.1));
+    tint.addColorStop(0.55, rgba(phase, 0.07));
+    tint.addColorStop(1, rgba(phase, 0));
+    ctx.fillStyle = tint;
+    ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
+
+    // About ten sparse dots.
+    ctx.fillStyle = rgba(white, 0.7);
+    for (let index = 0; index < 10; index += 1) {
+      const angle = index * 2.399;
+      const distance = outer * (0.82 + 0.28 * ((index * 0.618 + 0.17) % 1));
+      ctx.beginPath();
+      ctx.arc(
+        center + Math.cos(angle) * distance,
+        center + Math.sin(angle) * distance,
+        0.9 + random() * 0.9,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+    }
+    return texture;
   }
 
-  const blobs = wisp ? 20 : 34;
-  for (let index = 0; index < blobs; index += 1) {
+  // Detail layer: a few faint billows and four thin wisp arcs.
+  for (let index = 0; index < 6; index += 1) {
     const angle = random() * Math.PI * 2;
-    const distance = Math.sqrt(random()) * outer * (wisp ? 0.78 : 0.66);
+    const distance = Math.sqrt(random()) * outer * 0.6;
     const x = center + Math.cos(angle) * distance;
     const y = center + Math.sin(angle) * distance;
-    const radius = TEXTURE_SIZE * (wisp ? 0.045 + random() * 0.09 : 0.07 + random() * 0.15);
+    const radius = TEXTURE_SIZE * (0.06 + random() * 0.07);
     const colour = colours[Math.floor(random() * colours.length)] ?? phase;
     const blob = ctx.createRadialGradient(x, y, 0, x, y, radius);
-    blob.addColorStop(0, rgba(colour, wisp ? 0.15 : 0.22));
-    blob.addColorStop(0.55, rgba(colour, wisp ? 0.07 : 0.11));
+    blob.addColorStop(0, rgba(colour, 0.14));
     blob.addColorStop(1, rgba(colour, 0));
     ctx.fillStyle = blob;
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
   }
-
-  if (!wisp) {
-    // Luminous inner centre plus the current phase tint.
-    const core = ctx.createRadialGradient(center, center, 0, center, center, outer * 0.72);
-    core.addColorStop(0, rgba(colours[5] ?? phase, 0.52));
-    core.addColorStop(0.55, rgba(colours[5] ?? phase, 0.18));
-    core.addColorStop(1, rgba(colours[5] ?? phase, 0));
-    ctx.fillStyle = core;
-    ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
-
-    const tint = ctx.createRadialGradient(center, center, 0, center, center, outer);
-    tint.addColorStop(0, rgba(phase, 0.16));
-    tint.addColorStop(0.7, rgba(phase, 0.08));
-    tint.addColorStop(1, rgba(phase, 0));
-    ctx.fillStyle = tint;
-    ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
-  }
-
-  // Sparse pinpricks, only a handful.
-  ctx.fillStyle = rgba(colours[5] ?? phase, 0.5);
-  for (let index = 0; index < 10; index += 1) {
-    const angle = random() * Math.PI * 2;
-    const distance = Math.sqrt(random()) * outer * 0.82;
-    const x = center + Math.cos(angle) * distance;
-    const y = center + Math.sin(angle) * distance;
-    const radius = 0.7 + random() * 1.4;
+  ctx.lineWidth = 1;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = rgba([0.95 + 0.05 * light[0], 0.95 + 0.05 * light[1], 1], 0.5);
+  for (let index = 0; index < 4; index += 1) {
+    const arcCentreX = center + (random() - 0.5) * outer * 0.7;
+    const arcCentreY = center + (random() - 0.5) * outer * 0.7;
+    const arcRadius = outer * (0.22 + random() * 0.22);
+    const start = random() * Math.PI * 2;
     ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.arc(arcCentreX, arcCentreY, arcRadius, start, start + 0.9 + random() * 0.8);
+    ctx.stroke();
   }
-
   return texture;
 }
 
