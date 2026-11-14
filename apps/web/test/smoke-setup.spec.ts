@@ -9,7 +9,17 @@ test('English smoke selectors reach real controls without starting a call', asyn
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
   const settings = page.getByRole('button', { name: 'Show memory and settings', exact: true });
-  if ((await settings.getAttribute('aria-expanded')) !== 'true') await settings.click();
+  // SSR markup is clickable before Svelte hydrates; a click that lands first is
+  // a no-op. Retry until the drawer really opens instead of racing hydration.
+  await expect
+    .poll(
+      async () => {
+        if ((await settings.getAttribute('aria-expanded')) !== 'true') await settings.click();
+        return settings.getAttribute('aria-expanded');
+      },
+      { timeout: 15_000 },
+    )
+    .toBe('true');
   await expect(page.getByRole('button', { name: 'Load voices / Search', exact: true })).toBeVisible();
   await expect(page.getByLabel('Choose voice', { exact: true })).toBeVisible();
   const composer = page.getByRole('textbox', { name: 'Write a message…' });
