@@ -109,7 +109,7 @@
     {:else}
       <section class="placeholder-block">
         <h2>Context</h2>
-        <p>The context inspector arrives in #44. No context data is shown yet.</p>
+        <p>The context inspector arrives in #43/#46. No context data is shown yet.</p>
       </section>
     {/if}
   </div>

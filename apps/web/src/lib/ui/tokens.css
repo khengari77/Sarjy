@@ -21,7 +21,10 @@
   --surface-hover: #203463;
   --text-primary: #f3f6ff;
   --text-muted: #a6b6dc;
-  --border-subtle: #2e406b;
+  /* Kit value #2e406b is only 1.66:1 on the sidebar. Lightened to reach 3:1
+     for functional boundaries against every shell surface, including
+     --surface-elevated and --surface-hover. */
+  --border-subtle: #75819d;
   --accent: #7762f6;
   --focus-ring: #a8b3ff;
 
@@ -77,12 +80,18 @@
   --surface-raised: #ffffff;
   --surface-hover: #deedfb;
   --text-primary: #122d52;
-  --text-muted: #526d91;
-  --border-subtle: #c9def2;
+  /* Nudged from #526d91 so muted text also clears 4.5:1 on --surface-hover. */
+  --text-muted: #516b8f;
+  /* Kit value #c9def2 is only 1.31:1 on the sidebar. Darkened to reach 3:1
+     for functional boundaries against every shell surface, including
+     --surface-elevated and --surface-hover. */
+  --border-subtle: #72879e;
   --accent: #2475e6;
   --focus-ring: #185ac4;
 
-  --status-success: #15ab7b;
+  /* Kit value #15ab7b is only 2.68:1 on --bg-app; this keeps the hue and
+     clears 3:1 for status glyphs. */
+  --status-success: #13976d;
   --status-error: #c94767;
 }
 
@@ -97,11 +106,11 @@
     --surface-raised: #ffffff;
     --surface-hover: #deedfb;
     --text-primary: #122d52;
-    --text-muted: #526d91;
-    --border-subtle: #c9def2;
+    --text-muted: #516b8f;
+    --border-subtle: #72879e;
     --accent: #2475e6;
     --focus-ring: #185ac4;
-    --status-success: #15ab7b;
+    --status-success: #13976d;
     --status-error: #c94767;
   }
 }

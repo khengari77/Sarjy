@@ -34,6 +34,11 @@
     right,
   }: Props = $props();
 
+  // The document ships as English; follow the UI language on the client.
+  $effect(() => {
+    document.documentElement.lang = dir === 'rtl' ? 'ar' : 'en';
+  });
+
   // SSR renders both panels closed. The saved theme was already stamped on
   // <html> by the inline boot script, so hydration never reads storage.
   let leftOpen = $state(false);

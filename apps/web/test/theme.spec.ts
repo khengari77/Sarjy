@@ -6,6 +6,21 @@ function themeButton(page: Page) {
   return page.getByRole('button', { name: /^Theme:/ });
 }
 
+function channel(value: string, index: number): number {
+  return parseInt(value.replace('#', '').slice(index * 2, index * 2 + 2), 16) / 255;
+}
+
+function luminance(hex: string): number {
+  const [r, g, b] = [0, 1, 2].map((index) => channel(hex, index));
+  const linear = (value: number) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+}
+
+function contrast(foreground: string, background: string): number {
+  const [hi, lo] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 async function waitForOrb(page: Page) {
   // SSR renders the orb statically; waiting for the hydrated renderer avoids
   // clicking header controls before Svelte attaches their handlers.
@@ -28,6 +43,7 @@ test('theme control cycles light/dark/system without creating a voice session or
 
   await page.goto('/');
   await waitForOrb(page);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   const html = page.locator('html');
   await expect(html).toHaveAttribute('data-theme', 'dark');
   await expect(html).toHaveAttribute('data-theme-preference', 'system');
@@ -66,6 +82,7 @@ test('theme control cycles light/dark/system without creating a voice session or
 
 test('a saved theme applies before paint on reload and SSR never stores it', async ({ page, request }) => {
   const serverHtml = await (await request.get('/')).text();
+  expect(serverHtml).toMatch(/<html lang="en"/);
   expect(serverHtml).not.toMatch(/<html[^>]*data-theme=/);
   expect(serverHtml).not.toMatch(/<html[^>]*data-theme-preference=/);
 
@@ -117,6 +134,76 @@ test('tablet and mobile start with both drawers closed and keep the triggers rea
   }
 });
 
+test('functional tokens meet measured contrast in both themes', async ({ page }) => {
+  await page.goto('/');
+  await waitForOrb(page);
+
+  const tokenNames = [
+    '--bg-app',
+    '--bg-sidebar',
+    '--surface-elevated',
+    '--surface-hover',
+    '--border-subtle',
+    '--focus-ring',
+    '--text-primary',
+    '--text-muted',
+    '--accent',
+    '--status-success',
+    '--status-error',
+  ] as const;
+
+  const evidence: Record<string, Record<string, string>> = {};
+  for (const theme of ['dark', 'light'] as const) {
+    const tokens = await page.evaluate(
+      ({ theme, names }) => {
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.setAttribute('data-theme-preference', theme);
+        const style = getComputedStyle(document.documentElement);
+        return Object.fromEntries(names.map((name) => [name, style.getPropertyValue(name).trim()]));
+      },
+      { theme, names: [...tokenNames] },
+    );
+    evidence[theme] = tokens;
+
+    const borderSurfaces = ['--bg-app', '--bg-sidebar', '--surface-elevated', '--surface-hover'];
+    for (const surface of borderSurfaces) {
+      expect(
+        contrast(tokens['--border-subtle'], tokens[surface]),
+        `${theme}: --border-subtle ${tokens['--border-subtle']} on ${surface} ${tokens[surface]}`,
+      ).toBeGreaterThanOrEqual(3);
+    }
+
+    const functional: Array<[string, number]> = [
+      ['--focus-ring', 3],
+      ['--accent', 3],
+      ['--status-success', 3],
+      ['--status-error', 3],
+    ];
+    for (const [token, minimum] of functional) {
+      for (const surface of ['--bg-app', '--bg-sidebar', '--surface-elevated']) {
+        expect(
+          contrast(tokens[token], tokens[surface]),
+          `${theme}: ${token} ${tokens[token]} on ${surface} ${tokens[surface]}`,
+        ).toBeGreaterThanOrEqual(minimum);
+      }
+    }
+
+    for (const token of ['--text-primary', '--text-muted']) {
+      for (const surface of ['--bg-app', '--bg-sidebar', '--surface-elevated', '--surface-hover']) {
+        expect(
+          contrast(tokens[token], tokens[surface]),
+          `${theme}: ${token} ${tokens[token]} on ${surface} ${tokens[surface]}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  }
+
+  await test.info().attach('contrast-evidence.json', {
+    body: JSON.stringify(evidence, null, 2),
+    contentType: 'application/json',
+  });
+});
+
 test('tablet drawers overlay without squeezing the orb', async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 720 });
   await page.goto('/');
@@ -166,6 +253,8 @@ test('the right drawer exposes the four tabs, closes on Escape and returns focus
   await expect(tabs).toHaveText(['Memories', 'Voice', 'Appearance', 'Context']);
   await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
   await expect(page.locator('#shell-right')).toContainText('memory explorer arrives in #43');
+  await page.locator('#shell-right').getByRole('tab', { name: 'Context' }).click();
+  await expect(page.locator('#shell-right')).toContainText('context inspector arrives in #43/#46');
 
   await page.keyboard.press('Escape');
   await expect(trigger).toHaveAttribute('aria-expanded', 'false');
