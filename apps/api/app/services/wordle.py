@@ -526,19 +526,17 @@ def poll_delays(
 async def _wait_for_answer(
     db: AsyncSession, key: str, sleep: Callable[[float], Awaitable[object]]
 ) -> WordlePuzzle | None:
-    # End the transaction before each poll on BOTH dialects.  On SQLite that
-    # makes the winner's commit visible past the read snapshot; on PostgreSQL
-    # (READ COMMITTED visibility is already fine) it returns the pooled
-    # connection instead of pinning it across the whole backoff window.
+    # Read, then end the transaction before sleeping.  On SQLite that makes the
+    # winner's commit visible past the read snapshot; on PostgreSQL it returns
+    # the pooled connection instead of pinning it across the whole backoff.
     for delay in poll_delays(CLAIM_WAIT_SECONDS):
-        await db.commit()
         row = await _load_puzzle(db, key)
         if row is not None and row.answer:
             return row
+        await db.commit()
         await sleep(delay)
     await db.commit()
-    row = await _load_puzzle(db, key)
-    return row if row is not None and row.answer else None
+    return None
 
 
 async def ensure_game(
@@ -590,6 +588,32 @@ async def game_view(db: AsyncSession, game: WordleGame, *, answer: str) -> GameV
     )
 
 
+async def _replay_guess(
+    db: AsyncSession,
+    *,
+    game: WordleGame,
+    owner_id: str,
+    request_id: str,
+    word: str,
+    answer: str,
+) -> GuessOutcome | None:
+    """Return the stored outcome for a duplicate request id, if any."""
+    existing = await db.scalar(
+        select(WordleGuess)
+        .where(WordleGuess.owner_id == owner_id, WordleGuess.request_id == request_id)
+        .execution_options(populate_existing=True)
+    )
+    if existing is None:
+        return None
+    if existing.game_id != game.id or existing.word != word:
+        raise WordleServiceError("WORDLE_REQUEST_CONFLICT", 409)
+    return GuessOutcome(
+        game=await game_view(db, game, answer=answer),
+        word=existing.word,
+        marks=tuple(existing.marks),
+    )
+
+
 async def submit_guess(
     db: AsyncSession,
     *,
@@ -599,8 +623,13 @@ async def submit_guess(
     guess: str,
     request_id: str,
     now: datetime | None = None,
+    _race_hook: Callable[[], Awaitable[object]] | None = None,
 ) -> GuessOutcome:
-    """Score one guess atomically, replaying a duplicate ``request_id``."""
+    """Score one guess atomically, replaying a duplicate ``request_id``.
+
+    ``_race_hook`` is a deterministic test seam fired after the status read and
+    before the insert; production callers never pass it.
+    """
     try:
         word = normalize_guess(guess)
     except WordleValidationError as exc:
@@ -613,25 +642,18 @@ async def submit_guess(
         game = await db.scalar(
             select(WordleGame)
             .where(WordleGame.owner_id == owner_id, WordleGame.puzzle_date == key)
+            .with_for_update()
             .execution_options(populate_existing=True)
         )
         if game is None:
             game = await ensure_game(db, owner_id=owner_id, day=day, now=instant)
-        existing = await db.scalar(
-            select(WordleGuess)
-            .where(WordleGuess.owner_id == owner_id, WordleGuess.request_id == request_id)
-            .execution_options(populate_existing=True)
-        )
-        if existing is not None:
-            if existing.game_id != game.id or existing.word != word:
-                raise WordleServiceError("WORDLE_REQUEST_CONFLICT", 409)
-            return GuessOutcome(
-                game=await game_view(db, game, answer=answer),
-                word=existing.word,
-                marks=tuple(existing.marks),
-            )
+        replay = await _replay_guess(db, game=game, owner_id=owner_id, request_id=request_id, word=word, answer=answer)
+        if replay is not None:
+            return replay
         if game.status != WordleStatus.IN_PROGRESS.value:
             raise WordleServiceError("WORDLE_GAME_OVER", 409)
+        if _race_hook is not None:
+            await _race_hook()
 
         rows = (await db.scalars(select(WordleGuess).where(WordleGuess.game_id == game.id))).all()
         attempt = len(rows) + 1
@@ -667,7 +689,7 @@ async def submit_guess(
 
         # Insert the guess and close the game in one transaction so a crash
         # cannot leave a terminal guess attached to an in-progress game.
-        await db.execute(
+        closed = await db.execute(
             update(WordleGame)
             .where(
                 WordleGame.id == game.id,
@@ -675,6 +697,12 @@ async def submit_guess(
             )
             .values(status=status, updated_at=now_iso)
         )
+        if closed.rowcount != 1:
+            # Someone else finished the game between our status read and this
+            # write.  Roll back so the unsanctioned guess insert does not
+            # survive on a won/lost game.
+            await db.rollback()
+            raise WordleServiceError("WORDLE_GAME_OVER", 409)
         await db.commit()
         fresh = await db.scalar(
             select(WordleGame).where(WordleGame.id == game.id).execution_options(populate_existing=True)

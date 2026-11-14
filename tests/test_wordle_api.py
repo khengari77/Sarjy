@@ -6,14 +6,15 @@ from contextlib import closing
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
 from app.config import Settings
 from app.domain.wordle import resolve_puzzle_date
 from app.infrastructure.database import Base, WordleGame, WordleGuess, WordlePuzzle
 from app.main import create_app
 from app.routes.wordle import GuessRateLimiter
-from app.services.wordle import ensure_game, submit_guess
+from app.services.wordle import WordleServiceError, ensure_game, submit_guess
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_wordle_source import FixtureSource
 
@@ -264,6 +265,128 @@ def _concurrent_engine(tmp_path):
         f"sqlite+aiosqlite:///{tmp_path}/wordle-concurrent.db",
         connect_args={"timeout": 30},
     )
+
+
+def test_late_guess_cannot_commit_on_a_game_finished_mid_flight(tmp_path):
+    """The winner commits between the late request's status read and its insert."""
+
+    async def run():
+        engine = _concurrent_engine(tmp_path)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        day = resolve_puzzle_date(datetime(2026, 11, 13, 12, 0, tzinfo=UTC), "Africa/Tripoli")
+        try:
+            async with sessions() as db:
+                db.add(
+                    WordlePuzzle(
+                        puzzle_date=day.isoformat(),
+                        answer=CRANE,
+                        source="fixture",
+                        fetched_at="2026-11-13T12:00:00+00:00",
+                        payload_hash="hash",
+                    )
+                )
+                await db.commit()
+            async with sessions() as db:
+                game = await ensure_game(db, owner_id="owner-one", day=day)
+
+            async def winner_finishes():
+                # Same session the late request is using: the read snapshot has
+                # already seen in_progress, then the winner commits terminal
+                # state and its guess.
+                await db.execute(
+                    update(WordleGame)
+                    .where(WordleGame.id == game.id)
+                    .values(status="won", updated_at="2026-11-13T12:00:01+00:00")
+                )
+                db.add(
+                    WordleGuess(
+                        id="winner-guess",
+                        game_id=game.id,
+                        owner_id="owner-one",
+                        attempt=1,
+                        word=CRANE,
+                        marks=["green"] * 5,
+                        request_id="winner",
+                        created_at="2026-11-13T12:00:01+00:00",
+                    )
+                )
+                await db.commit()
+
+            async with sessions() as db:
+                with pytest.raises(WordleServiceError) as error:
+                    await submit_guess(
+                        db,
+                        owner_id="owner-one",
+                        day=day,
+                        answer=CRANE,
+                        guess="SLATE",
+                        request_id="late",
+                        _race_hook=winner_finishes,
+                    )
+            assert error.value.code == "WORDLE_GAME_OVER"
+
+            async with sessions() as db:
+                rows = (
+                    await db.scalars(
+                        select(WordleGuess).where(WordleGuess.game_id == game.id).order_by(WordleGuess.attempt)
+                    )
+                ).all()
+                game_status = await db.scalar(select(WordleGame.status).where(WordleGame.id == game.id))
+            assert [(row.attempt, row.word) for row in rows] == [(1, CRANE)]
+            assert game_status == "won"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_duplicate_request_id_replays_after_the_game_is_terminal(tmp_path):
+    async def run():
+        engine = _concurrent_engine(tmp_path)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        day = resolve_puzzle_date(datetime(2026, 11, 13, 12, 0, tzinfo=UTC), "Africa/Tripoli")
+        try:
+            async with sessions() as db:
+                db.add(
+                    WordlePuzzle(
+                        puzzle_date=day.isoformat(),
+                        answer=CRANE,
+                        source="fixture",
+                        fetched_at="2026-11-13T12:00:00+00:00",
+                        payload_hash="hash",
+                    )
+                )
+                await db.commit()
+            async with sessions() as db:
+                await ensure_game(db, owner_id="owner-one", day=day)
+                won = await submit_guess(
+                    db,
+                    owner_id="owner-one",
+                    day=day,
+                    answer=CRANE,
+                    guess=CRANE,
+                    request_id="win",
+                )
+            assert won.game.status == "won"
+            async with sessions() as db:
+                replay = await submit_guess(
+                    db,
+                    owner_id="owner-one",
+                    day=day,
+                    answer=CRANE,
+                    guess=CRANE,
+                    request_id="win",
+                )
+            assert replay.game.status == "won"
+            assert [g.word for g in replay.game.guesses] == [CRANE]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
 
 
 def test_concurrent_tab_submissions_do_not_double_count(tmp_path):

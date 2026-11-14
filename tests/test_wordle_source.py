@@ -349,36 +349,37 @@ def test_wait_polling_uses_capped_exponential_backoff():
     assert sum(delays) >= 63.7
 
 
-def test_wait_for_answer_releases_the_transaction_between_polls():
-    class Row:
-        answer = "CRANE"
-        puzzle_date = "2026-11-13"
+def test_wait_for_answer_releases_the_connection_across_the_sleep(tmp_path):
+    async def run():
+        # A one-connection pool: if the waiting session still holds its
+        # connection across the sleep, the competing query cannot complete.
+        engine = create_async_engine(
+            f"sqlite+aiosqlite:///{tmp_path}/wordle-pool.db",
+            pool_size=1,
+            max_overflow=0,
+            connect_args={"timeout": 30},
+        )
+        await _create_schema(engine)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
 
-    class FakeSession:
-        def __init__(self):
-            self.events: list[str] = []
-            self.reads = 0
+        class Stop(Exception):
+            pass
 
-        async def commit(self):
-            self.events.append("commit")
+        try:
+            async with sessions() as db:
 
-        async def scalar(self, statement):
-            self.events.append("select")
-            self.reads += 1
-            return None if self.reads == 1 else Row()
+                async def fake_sleep(delay):
+                    assert db.in_transaction() is False
+                    async with sessions() as competing:
+                        await asyncio.wait_for(competing.scalar(select(WordlePuzzle).limit(1)), timeout=2)
+                    raise Stop
 
-    slept: list[float] = []
+                with pytest.raises(Stop):
+                    await _wait_for_answer(db, "2026-11-13", fake_sleep)
+        finally:
+            await engine.dispose()
 
-    async def fake_sleep(delay):
-        slept.append(delay)
-
-    db = FakeSession()
-    row = asyncio.run(_wait_for_answer(db, "2026-11-13", fake_sleep))
-    assert row is not None and row.answer == "CRANE"
-    # A commit (and therefore a connection release) precedes every read, on
-    # both SQLite and PostgreSQL.
-    assert db.events == ["commit", "select", "commit", "select"]
-    assert slept == [0.05]
+    asyncio.run(run())
 
 
 def test_http_source_classifies_missing_vs_broken():

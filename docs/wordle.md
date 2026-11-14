@@ -66,6 +66,13 @@ the source answer validation itself is strict.
 Guesses are game state, not conversation turns: they do not create memories or
 enter compiled context.
 
+Guesses are serialized per game (`SELECT ... FOR UPDATE` on PostgreSQL, writer
+lock on SQLite) and the terminal-status update's affected-row count is checked;
+if another request finished the game first, the pending insert is rolled back
+and the late guess is rejected with `WORDLE_GAME_OVER`. A duplicate
+`request_id` still replays the original outcome, including after the game is
+terminal.
+
 ## Migration
 
 `migrations/versions/0011_wordle.py` adds `wordle_puzzles`, `wordle_games` and
