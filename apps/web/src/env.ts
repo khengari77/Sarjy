@@ -6,6 +6,9 @@ export const variables = defineEnvVars({
   // older deployments can roll forward without touching their env files.
   DEVELOPMENT_USER: { schema: (value) => value || '' },
   DEVELOPMENT_PASSWORD: { schema: (value) => value || '' },
+  // Reviewer invitations are a second door beside the shared access token.
+  // Keep this in step with the API's REVIEWER_ACCESS_ENABLED setting.
+  REVIEWER_ACCESS_ENABLED: { schema: (value) => value || 'false' },
   REVIEW_ACCESS_TOKEN: { schema: (value) => value || '' },
   REVIEW_ACCESS_MAX_USES: { schema: (value) => value || '20' },
   REVIEW_ACCESS_EXPIRES_AT: { schema: (value) => value || '' },

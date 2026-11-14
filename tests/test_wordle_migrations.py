@@ -23,7 +23,9 @@ def alembic(url, *commands):
 
 
 def seed(connection):
-    connection.execute("INSERT INTO identities VALUES ('owner-1','hash','2030-01-01T00:00:00+00:00')")
+    connection.execute(
+        "INSERT INTO identities (id, token_hash, expires_at) VALUES ('owner-1','hash','2030-01-01T00:00:00+00:00')"
+    )
     connection.execute(
         "INSERT INTO conversations VALUES ('conversation-1','owner-1','Tripoli trip',3,'2026-11-11T00:00:00+00:00')"
     )
@@ -125,8 +127,12 @@ def test_wordle_uniqueness_constraints(tmp_path):
     url = f"sqlite+aiosqlite:///{path}"
     alembic(url, "upgrade", "head")
     with closing(sqlite3.connect(path)) as connection, connection:
-        connection.execute("INSERT INTO identities VALUES ('owner-1','hash-1','2030-01-01T00:00:00+00:00')")
-        connection.execute("INSERT INTO identities VALUES ('owner-2','hash-2','2030-01-01T00:00:00+00:00')")
+        connection.execute(
+            "INSERT INTO identities (id, token_hash, expires_at) VALUES ('owner-1','hash-1','2030-01-01T00:00:00+00:00')"
+        )
+        connection.execute(
+            "INSERT INTO identities (id, token_hash, expires_at) VALUES ('owner-2','hash-2','2030-01-01T00:00:00+00:00')"
+        )
         connection.execute(
             "INSERT INTO wordle_games (id, owner_id, puzzle_date, status, created_at, updated_at)"
             " VALUES ('game-1','owner-1','2026-11-13','in_progress','now','now')"

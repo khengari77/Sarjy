@@ -7,6 +7,7 @@ import {
   REVIEW_ACCESS_MAX_USES,
   REVIEW_ACCESS_STATE_PATH,
   REVIEW_ACCESS_TOKEN,
+  REVIEWER_ACCESS_ENABLED,
   SESSION_SECRET,
   WEB_SERVICE_SECRET,
 } from '$app/env/private';
@@ -15,6 +16,7 @@ import { redeemAccessToken, type AccessResult } from './access';
 import { isLocalOrigin, parseProtectedMode } from './config';
 import { resolveAccessExpiry } from './expiry';
 import { createFailureTrackers } from './rate-limit';
+import { isReviewerMode, REVIEWER_COOKIE } from './reviewer';
 import { SESSION_COOKIE, signSession, tokenFingerprint, verifySession } from './session';
 
 /**
@@ -32,6 +34,10 @@ if (protectedSetting === undefined && !isLocalOrigin(process.env.ORIGIN)) {
 export const sessionSecret = SESSION_SECRET || WEB_SERVICE_SECRET;
 export const accessToken = REVIEW_ACCESS_TOKEN;
 export const maxUses = Number.parseInt(REVIEW_ACCESS_MAX_USES, 10);
+// Reviewer mode is additive: an invitation session from the API authorises the
+// visitor, while the shared token door keeps its #142 configuration, deadline
+// and failure accounting. Enabling invitations never weakens the base gate.
+export const reviewerMode = isReviewerMode(REVIEWER_ACCESS_ENABLED);
 // Refuse to boot in protected mode when the absolute deadline is missing or
 // unparseable. An unprotected deployment has no deadline to enforce.
 export const accessExpiresAt = protectedMode ? resolveAccessExpiry(REVIEW_ACCESS_EXPIRES_AT) : Number.NaN;
@@ -75,6 +81,16 @@ export function sessionIsValid(cookies: Cookies): boolean {
   });
 }
 
+/**
+ * The web edge cannot verify a revocable reviewer session without calling the
+ * API on every request. Presence is enough to stop the shared token door from
+ * hiding the app shell; the API rejects an invalid, expired or revoked cookie
+ * on the first `/v1/*` call.
+ */
+export function reviewerSessionPresent(cookies: Cookies): boolean {
+  return reviewerMode && Boolean(cookies.get(REVIEWER_COOKIE));
+}
+
 export function redeem(candidate: string): Promise<AccessResult> {
   return redeemAccessToken({
     candidate,
@@ -99,4 +115,14 @@ export function issueSession(cookies: Cookies, granted: { expiresAt: number }): 
 
 export function clearSession(cookies: Cookies): void {
   cookies.delete(SESSION_COOKIE, { path: '/', httpOnly: true, secure: true, sameSite: 'lax' });
+}
+
+/**
+ * Clear the API-issued reviewer identity so sign-out does not leave a reviewer
+ * cookie behind. The API owns the cookie's authority; deleting it here only
+ * expires the copy in this browser.
+ */
+export function clearReviewerIdentity(cookies: Cookies): void {
+  if (!reviewerMode) return;
+  cookies.delete(REVIEWER_COOKIE, { path: '/' });
 }

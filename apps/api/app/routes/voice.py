@@ -14,7 +14,7 @@ from app.config import Settings
 from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy
 from app.domain.pipeline import PipelineConfig, validate_pipeline
 from app.domain.sessions import admission_error
-from app.infrastructure.database import SessionGate, UserSetting, VoiceSession
+from app.infrastructure.database import Identity, ReviewerInvitation, SessionGate, UserSetting, VoiceSession
 from app.services.actions import clear_saved_voice
 from app.services.pipeline_settings import configured_keys, default_llm
 from app.services.session_cleanup import cleanup_room
@@ -35,6 +35,48 @@ class StartVoice(BaseModel):
     voice_id: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     response_tier: int | None = Field(default=None, ge=1, le=len(TIER_CAPS))
     response_preference: ResponsePreference = ResponsePreference.AUTOMATIC
+
+
+async def _invitation_calls_exhausted(db: AsyncSession, user) -> bool:
+    """Return whether this reviewer invitation has spent its lifetime calls."""
+    if user.invitation_id is None:
+        return False
+    invitation = await db.get(ReviewerInvitation, user.invitation_id)
+    calls = await db.scalar(
+        select(func.count())
+        .select_from(VoiceSession)
+        .join(Identity, Identity.id == VoiceSession.owner_id)
+        .where(Identity.invitation_id == user.invitation_id)
+    )
+    return invitation is None or calls >= invitation.max_calls
+
+
+async def _admission_rejection(db: AsyncSession, config: Settings, user, now: datetime) -> str | None:
+    # Serialize reservations across API processes on both SQLite and PostgreSQL.
+    await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
+    await db.execute(
+        update(VoiceSession)
+        .where(VoiceSession.expires_at <= now.isoformat(), VoiceSession.status.in_(["starting", "active"]))
+        .values(status="ended")
+    )
+    active = (await db.scalars(select(VoiceSession).where(VoiceSession.status.in_(["starting", "active"])))).all()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    month_calls = await db.scalar(
+        select(func.count()).select_from(VoiceSession).where(VoiceSession.expires_at >= month_start)
+    )
+    identity_calls = await db.scalar(
+        select(func.count()).select_from(VoiceSession).where(VoiceSession.owner_id == user.id)
+    )
+    if await _invitation_calls_exhausted(db, user):
+        return "REVIEWER_INVITATION_BUDGET_EXHAUSTED"
+    return admission_error(
+        tuple(v.owner_id for v in active),
+        user.id,
+        month_calls,
+        identity_calls,
+        config.demo_session_budget,
+        config.demo_calls_per_identity,
+    )
 
 
 def _voice_error(exc: VoiceCatalogError, source: str | None) -> HTTPException:
@@ -67,7 +109,9 @@ async def _resolve_call_voice(config: Settings, catalog: ElevenLabsVoices, reque
         raise _voice_error(fallback, "default") from fallback
 
 
-def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, owned):
+def register_voice_routes(
+    app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, cleanup_identity, owned
+):
     @app.post("/v1/voice/sessions", status_code=201)
     async def start_voice(body: StartVoice, user=Depends(identity), db: AsyncSession = Depends(database)):
         await owned(body.conversation_id, user, db)
@@ -109,27 +153,7 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
         if saved_voice_unavailable == "removed":
             await clear_saved_voice(db, user.id)
         now = datetime.now(UTC)
-        await db.execute(
-            update(VoiceSession)
-            .where(VoiceSession.expires_at <= now.isoformat(), VoiceSession.status.in_(["starting", "active"]))
-            .values(status="ended")
-        )
-        active = (await db.scalars(select(VoiceSession).where(VoiceSession.status.in_(["starting", "active"])))).all()
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-        month_calls = await db.scalar(
-            select(func.count()).select_from(VoiceSession).where(VoiceSession.expires_at >= month_start)
-        )
-        identity_calls = await db.scalar(
-            select(func.count()).select_from(VoiceSession).where(VoiceSession.owner_id == user.id)
-        )
-        rejection = admission_error(
-            tuple(v.owner_id for v in active),
-            user.id,
-            month_calls,
-            identity_calls,
-            config.demo_session_budget,
-            config.demo_calls_per_identity,
-        )
+        rejection = await _admission_rejection(db, config, user, now)
         if rejection:
             raise HTTPException(429, detail={"code": rejection})
         voice = VoiceSession(
@@ -188,7 +212,7 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
             raise HTTPException(503, detail={"code": "VOICE_DISPATCH_FAILED"}) from None
 
     @app.post("/v1/voice/sessions/{session_id}/end")
-    async def end_voice(session_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
+    async def end_voice(session_id: str, user=Depends(cleanup_identity), db: AsyncSession = Depends(database)):
         voice = await db.get(VoiceSession, session_id)
         if not voice or voice.owner_id != user.id:
             raise HTTPException(404)
