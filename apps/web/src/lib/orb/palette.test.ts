@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ORB_PALETTES, ORB_STATE_COLORS, THEME_BACKGROUND, type ThemeName } from './palette';
+import { ORB_PALETTES, ORB_STATE_COLORS, THEME_BACKGROUND, orbAccents, orbDominant, type ThemeName } from './palette';
+import { parseHexColor } from './render/colors';
 
 const THEMES: readonly ThemeName[] = ['light', 'dark'];
 
@@ -94,6 +95,30 @@ describe('palette mirrors the shell tokens', () => {
     ];
     for (const value of values) {
       expect(value).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it('gives the renderer four to six parseable colours per theme', () => {
+    for (const theme of THEMES) {
+      const palette = ORB_PALETTES[theme];
+      expect(palette.length).toBeGreaterThanOrEqual(4);
+      expect(palette.length).toBeLessThanOrEqual(6);
+      for (const value of palette) {
+        const channels = parseHexColor(value);
+        expect(channels, `${theme} ${value}`).not.toBeNull();
+        expect(channels!.every((channel) => Number.isFinite(channel) && channel >= 0 && channel <= 1)).toBe(true);
+      }
+    }
+  });
+
+  it('keeps dominant and accent slices stable and disjoint', () => {
+    for (const theme of THEMES) {
+      const dominant = orbDominant(theme);
+      const accents = orbAccents(theme);
+      expect(dominant).toHaveLength(2);
+      expect(dominant[0]).not.toBe(dominant[1]);
+      expect(accents.length).toBeGreaterThanOrEqual(2);
+      expect([...dominant, ...accents]).toEqual([...ORB_PALETTES[theme]]);
     }
   });
 });
