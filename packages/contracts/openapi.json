@@ -76,6 +76,78 @@
         }
       }
     },
+    "/v1/memories": {
+      "get": {
+        "summary": "List Memories",
+        "operationId": "list_memories_v1_memories_get",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000000,
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/conversations/{conversation_id}/memories": {
       "post": {
         "summary": "Create",
@@ -748,6 +820,42 @@
         }
       }
     },
+    "/internal/agent/memory/confirm": {
+      "post": {
+        "summary": "Confirm Memory Route",
+        "operationId": "confirm_memory_route_internal_agent_memory_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/conversations/{conversation_id}/context": {
       "get": {
         "summary": "Get Context",
@@ -967,6 +1075,139 @@
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{conversation_id}/context/exclusions": {
+      "post": {
+        "summary": "Propose Exclusion",
+        "operationId": "propose_exclusion_v1_conversations__conversation_id__context_exclusions_post",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextExclusionProposalInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextProposal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/wordle/today": {
+      "get": {
+        "summary": "Today",
+        "operationId": "today_v1_wordle_today_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/wordle/guesses": {
+      "post": {
+        "summary": "Guess",
+        "operationId": "guess_v1_wordle_guesses_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuessInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/wordle/stats": {
+      "get": {
+        "summary": "Stats",
+        "operationId": "stats_v1_wordle_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/wordle/refresh": {
+      "post": {
+        "summary": "Refresh",
+        "operationId": "refresh_internal_wordle_refresh_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           }
@@ -1329,6 +1570,25 @@
         ],
         "title": "ContextDiff"
       },
+      "ContextExclusionProposalInput": {
+        "properties": {
+          "memory_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Memory Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "memory_ids"
+        ],
+        "title": "ContextExclusionProposalInput"
+      },
       "ContextMatch": {
         "properties": {
           "id": {
@@ -1689,6 +1949,29 @@
         ],
         "title": "ContextUndoResult"
       },
+      "GuessInput": {
+        "properties": {
+          "guess": {
+            "type": "string",
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Guess"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "guess",
+          "request_id"
+        ],
+        "title": "GuessInput"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1735,6 +2018,31 @@
         "title": "HandledAction"
       },
       "JsonValue": {},
+      "MemoryConfirm": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Token"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "save",
+              "discard",
+              "replace"
+            ],
+            "title": "Decision"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "decision"
+        ],
+        "title": "MemoryConfirm"
+      },
       "MemoryCorrection": {
         "properties": {
           "content": {
@@ -1775,6 +2083,148 @@
           "idempotency_key"
         ],
         "title": "MemoryCorrection"
+      },
+      "MemoryList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryListItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "next_offset"
+        ],
+        "title": "MemoryList"
+      },
+      "MemoryListItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "source_conversation_id": {
+            "type": "string",
+            "title": "Source Conversation Id"
+          },
+          "source_turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Turn Id"
+          },
+          "supersedes_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Id"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "excluded_in_conversation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excluded In Conversation"
+          },
+          "candidate_eligible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Eligible"
+          },
+          "included_in_conversation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Included In Conversation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "kind",
+          "version",
+          "status",
+          "source_conversation_id",
+          "source_turn_id",
+          "supersedes_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MemoryListItem"
       },
       "MemoryQuery": {
         "properties": {
