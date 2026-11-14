@@ -28,6 +28,7 @@ CONTROL_FIELDS = frozenset(
         "voice_id",
         "request_id",
         "settings_revision",
+        "expires_at",
     }
 )
 
@@ -41,6 +42,7 @@ def voice_control_payload(
     voice_id: str,
     request_id: str,
     settings_revision: int,
+    expires_at: str,
 ) -> dict[str, Any]:
     """Build the exact payload the worker may act on."""
     return {
@@ -52,6 +54,7 @@ def voice_control_payload(
         "voice_id": voice_id,
         "request_id": request_id,
         "settings_revision": settings_revision,
+        "expires_at": expires_at,
     }
 
 
@@ -93,7 +96,7 @@ def verify_voice_control(token: str, secret: str) -> dict[str, Any]:
         raise ValueError("VOICE_CONTROL_INVALID")
     if payload.get("audience") != CONTROL_AUDIENCE:
         raise ValueError("VOICE_CONTROL_INVALID")
-    for name in ("session_id", "room_name", "conversation_id", "owner_id", "voice_id", "request_id"):
+    for name in ("session_id", "room_name", "conversation_id", "owner_id", "voice_id", "request_id", "expires_at"):
         if not isinstance(payload.get(name), str) or not payload[name]:
             raise ValueError("VOICE_CONTROL_INVALID")
     revision = payload.get("settings_revision")

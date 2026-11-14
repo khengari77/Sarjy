@@ -84,6 +84,7 @@ class VoiceControl(Base):
     settings_revision: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    expires_at: Mapped[str] = mapped_column(String(40), default=now)
     created_at: Mapped[str] = mapped_column(String(40), default=now)
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
 

@@ -6,12 +6,27 @@ the exact LiveKit room, recording the worker's ACK, and deriving the confirmed
 active voice. It never mutates TTS itself.
 """
 
+from datetime import UTC, datetime, timedelta
+
 from livekit import api
 from livekit.protocol.models import DataPacket
 from sqlalchemy import select, update
 
 from app.domain.voice_control import CONTROL_TOPIC, sign_voice_control, voice_control_payload
 from app.infrastructure.database import VoiceControl, VoiceSession, now
+
+# Bounds a control that never reaches a synthesis boundary (worker crash, lost
+# ACK). At expiry the previous active voice stays and the request fails closed.
+CONTROL_TTL_SECONDS = 300
+
+
+def control_expiry() -> str:
+    return (datetime.now(UTC) + timedelta(seconds=CONTROL_TTL_SECONDS)).isoformat()
+
+
+def _is_expired(control: VoiceControl) -> bool:
+    report = control.expires_at
+    return not report or report <= now()
 
 
 class VoiceControlError(Exception):
@@ -72,11 +87,39 @@ def voice_state(voice: VoiceSession, control: VoiceControl | None) -> dict:
 
 
 async def latest_control(db, session_id: str) -> VoiceControl | None:
-    return await db.scalar(
+    control = await db.scalar(
         select(VoiceControl)
         .where(VoiceControl.session_id == session_id)
         .order_by(VoiceControl.created_at.desc(), VoiceControl.settings_revision.desc())
         .limit(1)
+    )
+    if control is not None:
+        control = await expire_control(db, control)
+    return control
+
+
+async def expire_control(db, control: VoiceControl) -> VoiceControl:
+    """Fail a stuck non-terminal control once its claim window has passed."""
+    if control.status in {"pending", "dispatched"} and _is_expired(control):
+        await db.execute(
+            update(VoiceControl)
+            .where(VoiceControl.id == control.id, VoiceControl.status.in_(["pending", "dispatched"]))
+            .values(status="failed", error_code="VOICE_SWITCH_EXPIRED", updated_at=now())
+        )
+        await db.commit()
+        await db.refresh(control)
+    return control
+
+
+async def fail_session_controls(db, session_id: str, code: str = "VOICE_SESSION_ENDED") -> None:
+    """Settle anything still in flight when its room/session ends."""
+    await db.execute(
+        update(VoiceControl)
+        .where(
+            VoiceControl.session_id == session_id,
+            VoiceControl.status.in_(["pending", "dispatched"]),
+        )
+        .values(status="failed", error_code=code, updated_at=now())
     )
 
 
@@ -89,6 +132,7 @@ async def deliver_control(db, *, control_id: str, delivery, secret: str) -> dict
     control = await db.get(VoiceControl, control_id)
     if control is None:
         raise VoiceControlError("VOICE_CONTROL_UNKNOWN", 404)
+    control = await expire_control(db, control)
     voice = await db.get(VoiceSession, control.session_id)
     if voice is None:
         raise VoiceControlError("VOICE_SESSION_NOT_FOUND", 404)
@@ -110,6 +154,7 @@ async def deliver_control(db, *, control_id: str, delivery, secret: str) -> dict
                         voice_id=control.voice_id,
                         request_id=control.request_id,
                         settings_revision=control.settings_revision,
+                        expires_at=control.expires_at,
                     ),
                     secret,
                 )
@@ -160,6 +205,9 @@ async def apply_ack(
         raise VoiceControlError("VOICE_CONTROL_UNKNOWN", 404)
     if not _ack_matches(control, request_id=request_id, voice_id=voice_id, settings_revision=settings_revision):
         raise VoiceControlError("VOICE_CONTROL_MISMATCH", 409)
+    # A stuck control expires before the ACK can activate it; expiry keeps the
+    # previous voice active and settles as a failure.
+    control = await expire_control(db, control)
     # Already settled: replaying the same ACK is harmless and must not reapply.
     if control.status in {"applied", "failed"}:
         await db.refresh(voice)

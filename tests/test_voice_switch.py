@@ -2,10 +2,11 @@
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from app.domain.voice_control import sign_voice_control, voice_control_payload
-from voice_switch import VoiceSwitch
+from voice_switch import VoiceChange, VoiceSwitch
 
 SECRET = "worker-secret"
 
@@ -33,7 +34,7 @@ class Backend:
         return httpx.Response(self.status)
 
 
-def token(*, request_id="r1", voice="voice-b", revision=1, session="session", room="room"):
+def token(*, request_id="r1", voice="voice-b", revision=1, session="session", room="room", expires_at=None):
     return sign_voice_control(
         voice_control_payload(
             session_id=session,
@@ -43,6 +44,7 @@ def token(*, request_id="r1", voice="voice-b", revision=1, session="session", ro
             voice_id=voice,
             request_id=request_id,
             settings_revision=revision,
+            expires_at=expires_at or (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
         ),
         SECRET,
     ).encode()
@@ -163,3 +165,27 @@ def test_ack_is_retried_after_a_transient_server_error():
     asyncio.run(switch.apply_pending())
     assert len(backend.posts) == 2
     assert json.loads(json.dumps(backend.posts[0][1]))["status"] == "applied"
+
+
+def test_expired_control_is_never_queued_or_applied():
+    switch, tts, backend = build()
+    past = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    assert switch.receive(token(expires_at=past)) is False
+    assert asyncio.run(switch.apply_pending()) is False
+    assert tts.calls == []
+    assert backend.posts == []
+
+
+def test_queued_control_that_expires_before_the_boundary_fails_closed():
+    switch, tts, backend = build()
+    switch.receive(token())
+    switch.pending = VoiceChange(
+        request_id="r1",
+        voice_id="voice-b",
+        settings_revision=1,
+        expires_at=(datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+    )
+    assert asyncio.run(switch.apply_pending()) is False
+    assert tts.calls == []
+    assert backend.posts[0][1]["status"] == "failed"
+    assert backend.posts[0][1]["error_code"] == "VOICE_SWITCH_EXPIRED"

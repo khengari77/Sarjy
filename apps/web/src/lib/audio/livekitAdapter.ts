@@ -122,6 +122,14 @@ const FRIENDLY: Record<string, { en: string; ar: string }> = {
     en: 'A newer voice choice replaced this one. The latest selection is shown.',
     ar: 'استبدل اختيار أحدث هذا الاختيار. يظهر أحدث تحديد.',
   },
+  VOICE_SWITCH_EXPIRED: {
+    en: 'The voice change expired before it was applied. The previous voice is still active; try again.',
+    ar: 'انتهت صلاحية تغيير الصوت قبل تطبيقه. الصوت السابق ما زال نشطًا؛ أعد المحاولة.',
+  },
+  VOICE_SESSION_ENDED: {
+    en: 'The call ended before the voice change was applied. Your choice applies to the next call.',
+    ar: 'انتهت المكالمة قبل تطبيق تغيير الصوت. يسري اختيارك على المكالمة التالية.',
+  },
   SETTINGS_REVISION_CONFLICT: {
     en: 'Voice settings changed elsewhere. Review the current voice and try again.',
     ar: 'تغيّرت إعدادات الصوت في مكان آخر. راجع الصوت الحالي وأعد المحاولة.',

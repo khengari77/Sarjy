@@ -32,7 +32,7 @@ from app.infrastructure.database import (
     now,
 )
 from app.infrastructure.upsert import insert_ignore
-from app.services.voice_control import voice_state
+from app.services.voice_control import control_expiry, voice_state
 
 SETTING_ACTIONS = (AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed)
 PREPARATION_LEASE_SECONDS = 120
@@ -475,6 +475,7 @@ async def _authorize_voice_control(db, *, owner_id, conversation_id, voice_id, s
         voice_id=voice_id,
         settings_revision=settings_revision,
         status="pending",
+        expires_at=control_expiry(),
         created_at=now(),
         updated_at=now(),
     )

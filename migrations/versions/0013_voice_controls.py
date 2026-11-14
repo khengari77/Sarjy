@@ -1,14 +1,16 @@
 """Add server-authorized live voice controls and the confirmed active voice.
 
 Additive only: existing sessions keep their pipeline voice as the confirmed
-active voice until the first accepted ACK.
+active voice until the first accepted ACK. This sits after
+``0012_onboarding`` (Wordle 0011 -> onboarding 0012 -> voice controls 0013) so
+the integration chain keeps exactly one head.
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0011_voice_controls"
-down_revision = "0010_context_retrieval_indexes"
+revision = "0013_voice_controls"
+down_revision = "0012_onboarding"
 
 
 def upgrade():
@@ -25,6 +27,7 @@ def upgrade():
         sa.Column("settings_revision", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(length=20), nullable=False),
         sa.Column("error_code", sa.String(length=60), nullable=True),
+        sa.Column("expires_at", sa.String(length=40), nullable=False),
         sa.Column("created_at", sa.String(length=40), nullable=False),
         sa.Column("updated_at", sa.String(length=40), nullable=False),
         sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"]),

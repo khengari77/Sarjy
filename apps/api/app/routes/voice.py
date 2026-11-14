@@ -17,6 +17,7 @@ from app.domain.sessions import admission_error
 from app.infrastructure.database import SessionGate, UserSetting, VoiceSession
 from app.services.pipeline_settings import configured_keys, default_llm
 from app.services.session_cleanup import cleanup_room
+from app.services.voice_control import fail_session_controls
 from app.services.voices import ElevenLabsVoices, VoiceCatalogError
 
 
@@ -145,6 +146,8 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
                 .where(VoiceSession.id == voice.id, VoiceSession.status.in_(["starting", "active"]))
                 .values(status="ended", expires_at=datetime.now(UTC).isoformat())
             )
+            # In-flight controls can never be ACKed once the room is ending.
+            await fail_session_controls(db, voice.id)
             await db.commit()
             await db.refresh(voice)
         try:

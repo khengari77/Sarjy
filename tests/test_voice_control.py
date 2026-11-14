@@ -122,6 +122,7 @@ def test_approved_change_reaches_exact_room_and_ack_confirms_active_voice(tmp_pa
         room, token = delivery.calls[0]
         assert room == "room"
         payload = verify_voice_control(token, SECRET)
+        assert payload.pop("expires_at") > datetime.now(UTC).isoformat()
         assert payload == {
             "audience": "sarjy.voice.change",
             "session_id": "session",
@@ -276,3 +277,40 @@ def test_voice_state_is_owner_scoped(tmp_path):
         with closing(TestClient(app)) as bob:
             bob.post("/v1/demo-session")
             assert bob.get("/v1/voice/sessions/session/voice").status_code == 404
+
+
+def test_stuck_dispatched_control_expires_and_rejects_the_late_ack(tmp_path):
+    app, path, delivery = setup(tmp_path)
+    with TestClient(app) as client:
+        owner, conversation = chat(client)
+        seed_session(path, conversation=conversation, owner=owner)
+        submit(client, conversation, request="r1", revision=0, voice="voice-b")
+        with closing(sqlite3.connect(path)) as db, db:
+            db.execute(
+                "UPDATE voice_controls SET expires_at=? WHERE request_id='r1'",
+                ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(),),
+            )
+        expired = client.get("/v1/voice/sessions/session/voice").json()
+        assert expired["status"] == "failed"
+        assert expired["error_code"] == "VOICE_SWITCH_EXPIRED"
+        assert expired["active_voice_id"] == "voice-a"
+
+        late = ack(client, request="r1", voice="voice-b", revision=1)
+        assert late.status_code == 200
+        assert late.json()["status"] == "failed"
+        assert late.json()["active_voice_id"] == "voice-a"
+        assert late.json()["active_settings_revision"] == 0
+
+
+def test_ending_the_session_settles_in_flight_controls(tmp_path):
+    app, path, delivery = setup(tmp_path)
+    with TestClient(app) as client:
+        owner, conversation = chat(client)
+        seed_session(path, conversation=conversation, owner=owner)
+        submit(client, conversation, request="r1", revision=0, voice="voice-b")
+        # Room cleanup is unconfigured in tests; the control settlement commits first.
+        assert client.post("/v1/voice/sessions/session/end").status_code == 503
+        state = client.get("/v1/voice/sessions/session/voice").json()
+        assert state["status"] == "failed"
+        assert state["error_code"] == "VOICE_SESSION_ENDED"
+        assert state["active_voice_id"] == "voice-a"

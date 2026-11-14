@@ -12,6 +12,7 @@ affects the next synthesis; already generated audio keeps playing.
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import httpx
 from app.domain.voice_control import verify_voice_control
@@ -24,6 +25,13 @@ class VoiceChange:
     request_id: str
     voice_id: str
     settings_revision: int
+    expires_at: str
+
+    def expired(self) -> bool:
+        try:
+            return datetime.fromisoformat(self.expires_at) <= datetime.now(UTC)
+        except ValueError:
+            return True
 
 
 class VoiceSwitch:
@@ -61,7 +69,10 @@ class VoiceSwitch:
             request_id=payload["request_id"],
             voice_id=payload["voice_id"],
             settings_revision=payload["settings_revision"],
+            expires_at=payload["expires_at"],
         )
+        if change.expired():
+            return False
         # Stale or duplicate controls never touch the queued change.
         if change.settings_revision <= self.settings_revision:
             return False
@@ -81,6 +92,9 @@ class VoiceSwitch:
             if change is None:
                 return False
             self.pending = None
+            if change.expired():
+                await self._ack(change, "failed", "VOICE_SWITCH_EXPIRED")
+                return False
             update = getattr(self.tts, "update_options", None)
             if update is None:
                 await self._ack(change, "failed", "VOICE_SWITCH_UNSUPPORTED")
