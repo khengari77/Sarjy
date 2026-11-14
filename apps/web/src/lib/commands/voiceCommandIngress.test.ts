@@ -31,6 +31,7 @@ function harness() {
   const state = initialCommandState();
   const store = createCommandStore(state);
   const apply = vi.fn((result: CommandResult) => store.apply(result));
+  const resyncSettings = vi.fn();
   const connection = createVoiceConnection(initialVoiceState(), {
     ensureConversation: async () => 'c1',
     getConversationId: () => 'c1',
@@ -39,6 +40,7 @@ function harness() {
     getLanguage: () => 'en',
     getVoice: () => ({ id: 'v1', name: 'Voice' }),
     applyCommand: apply,
+    resyncSettings,
     meters: {
       startMicMeter: vi.fn(),
       stopMicMeter: vi.fn(),
@@ -49,7 +51,7 @@ function harness() {
     },
   });
   const emit = (event: Record<string, unknown>) => connection.handleEvent({ ...event, epoch: 0 } as VoiceEvent);
-  return { state, store, apply, emit };
+  return { state, store, apply, resyncSettings, emit };
 }
 
 describe('finalized-only command ingress', () => {
@@ -79,6 +81,12 @@ describe('finalized-only command ingress', () => {
     // conversation, it never dispatches an action locally.
     expect(apply).not.toHaveBeenCalled();
     expect(state.settings.captions_visible).toBe(true);
+  });
+
+  it('refetches settings once for a resync request', () => {
+    const { resyncSettings, emit } = harness();
+    emit({ type: 'resync' });
+    expect(resyncSettings).toHaveBeenCalledTimes(1);
   });
 
   it('applies a worker result once even when delivery repeats', () => {

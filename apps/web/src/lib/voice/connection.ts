@@ -57,6 +57,8 @@ export interface ConnectionDeps {
   getVoice(): { id: string; name: string };
   /** Apply one backend-authored result to the shared command store. */
   applyCommand(result: CommandResult): void;
+  /** Refetch the committed server settings after a lost command publication. */
+  resyncSettings(): void;
   /** Fired when the server fell back from the saved voice; refresh server settings. */
   onVoiceFallback?(reason: 'removed' | 'transient'): void;
   meters: MeterController;
@@ -85,6 +87,7 @@ function handleVoiceEvent(
   if (event.type === 'error') state.voiceErrorCode = event.code;
   if (event.type === 'audio-blocked') state.audioBlocked = true;
   if (event.type === 'command') deps.applyCommand(event.command);
+  if (event.type === 'resync') deps.resyncSettings();
   if (event.type === 'transcript') {
     if (event.final) {
       state.provisional = null;

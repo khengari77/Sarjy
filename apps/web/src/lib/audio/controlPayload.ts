@@ -20,7 +20,9 @@ function decode(text: Uint8Array): Record<string, unknown> | null {
 
 export function controlEvent(topic: string | undefined, payload: Uint8Array): ControlEvent | null {
   if (topic === 'sarjy.command') {
-    const command = normalizeCommandResult(decode(payload));
+    const data = decode(payload);
+    if (data?.resync === true) return { type: 'resync' };
+    const command = normalizeCommandResult(data);
     return command ? { type: 'command', command } : null;
   }
   if (topic !== 'sarjy.error') return null;

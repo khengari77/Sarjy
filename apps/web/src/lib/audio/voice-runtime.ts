@@ -12,6 +12,7 @@ export type VoiceEventBody =
   | { type: 'error'; code: string }
   | { type: 'audio-blocked'; code: string }
   | { type: 'command'; command: CommandResult }
+  | { type: 'resync' }
   | { type: 'transcript'; text: string; final: boolean; segmentId: string; speaker: 'user' | 'assistant' };
 
 export type VoiceEvent = VoiceEventBody & { epoch: number };

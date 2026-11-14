@@ -84,6 +84,20 @@ describe('one shared store for GUI and voice', () => {
     expect(state.trace).toEqual(['ShowConversationHistory']);
   });
 
+  it('selects the Memories tab for a memory-explorer navigation result', () => {
+    const { store, state } = harness();
+    store.apply(
+      voiceCaptions({
+        action: 'OpenMemoryExplorer',
+        settings: null,
+        navigation: 'memory_explorer',
+        spoken: 'Opening the memory explorer.',
+      }),
+    );
+    expect(state.panels.memory_explorer).toBe(true);
+    expect(state.panelTab).toBe('memories');
+  });
+
   it('an unsupported result changes nothing', () => {
     const { store, state } = harness();
     store.apply({

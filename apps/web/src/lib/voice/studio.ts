@@ -64,6 +64,7 @@ export function bootStudio(options: StudioBoot) {
     getRuntime: () => runtime,
     getLanguage: () => options.getLanguage(),
     applyCommand: (result) => options.applyCommand(result),
+    resyncSettings: () => void catalogStore.loadSettings(),
     // The server fell back from a dead or unreachable saved voice: adopt its settings.
     onVoiceFallback: () => void catalogStore.loadSettings(),
     getVoice: () => {

@@ -243,7 +243,7 @@
   {/snippet}
 
   {#snippet right()}
-    <RightDrawer {arabic}>
+    <RightDrawer {arabic} bind:activeTab={commands.state.panelTab}>
       {#snippet voicePanel()}
         <VoiceSettings
           {arabic}

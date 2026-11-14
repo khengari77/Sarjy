@@ -33,9 +33,13 @@ export interface PanelState {
   memory_explorer: boolean;
 }
 
+export type RightTab = 'memories' | 'voice' | 'appearance' | 'context';
+
 export interface CommandState {
   settings: SettingsSnapshot;
   panels: PanelState;
+  /** Right-drawer tab selected by the last navigation command. */
+  panelTab: RightTab;
   last: CommandResult | null;
   /** Applied typed-action identifiers, in order; observable for parity tests. */
   trace: string[];
@@ -65,6 +69,7 @@ export function initialCommandState(): CommandState {
   return {
     settings: initialSettings(),
     panels: { history: false, memory_explorer: false },
+    panelTab: 'voice',
     last: null,
     trace: [],
     applied: [],
@@ -121,7 +126,10 @@ export function createCommandStore(state: CommandState) {
     state.applied.push(result.request_id);
     if (result.settings) state.settings = result.settings;
     if (result.navigation === 'history') state.panels.history = true;
-    if (result.navigation === 'memory_explorer') state.panels.memory_explorer = true;
+    if (result.navigation === 'memory_explorer') {
+      state.panels.memory_explorer = true;
+      state.panelTab = 'memories';
+    }
     state.trace.push(result.action ?? result.kind);
     state.last = result;
     return true;

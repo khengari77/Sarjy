@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
-  type TabId = 'memories' | 'voice' | 'appearance' | 'context';
+  export type TabId = 'memories' | 'voice' | 'appearance' | 'context';
 
   interface Tab {
     id: TabId;
@@ -12,9 +12,10 @@
     arabic?: boolean;
     /** Existing voice controls stay reachable in the Voice tab (#41 owns their contents). */
     voicePanel?: Snippet;
+    activeTab?: TabId;
   }
 
-  let { arabic = false, voicePanel }: Props = $props();
+  let { arabic = false, voicePanel, activeTab = $bindable<TabId>('voice') }: Props = $props();
 
   const tabs: Tab[] = [
     { id: 'memories', label: 'Memories' },
@@ -23,7 +24,6 @@
     { id: 'context', label: 'Context' },
   ];
 
-  let active = $state<TabId>('voice');
   let tablist = $state<HTMLDivElement | null>(null);
 
   function focusTab(index: number) {
@@ -63,11 +63,11 @@
         type="button"
         role="tab"
         id={`drawer-tab-${tab.id}`}
-        aria-selected={active === tab.id}
+        aria-selected={activeTab === tab.id}
         aria-controls={`drawer-panel-${tab.id}`}
-        tabindex={active === tab.id ? 0 : -1}
+        tabindex={activeTab === tab.id ? 0 : -1}
         class="tab"
-        onclick={() => (active = tab.id)}
+        onclick={() => (activeTab = tab.id)}
         onkeydown={(event) => onTabKeydown(event, index)}
       >
         {tab.label}
@@ -83,8 +83,8 @@
       role="tabpanel"
       id={`drawer-panel-${tab.id}`}
       aria-labelledby={`drawer-tab-${tab.id}`}
-      tabindex={active === tab.id ? 0 : -1}
-      hidden={active !== tab.id}
+      tabindex={activeTab === tab.id ? 0 : -1}
+      hidden={activeTab !== tab.id}
     >
       {#if tab.id === 'voice'}
         {#if voicePanel}

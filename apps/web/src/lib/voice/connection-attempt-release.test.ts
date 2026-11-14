@@ -96,6 +96,7 @@ function harness() {
     getLanguage: () => 'en',
     getVoice: () => ({ id: 'v1', name: 'Voice' }),
     applyCommand: () => {},
+    resyncSettings: () => {},
     meters: {
       startMicMeter: vi.fn(),
       stopMicMeter: vi.fn(),

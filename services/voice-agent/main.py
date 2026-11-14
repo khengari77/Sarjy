@@ -233,6 +233,11 @@ class SarjyAgent(Agent):
         # is not evidence that the user heard it.
         self.memory_prompted_key: tuple[Any, Any] | None = None
         self.memory_question_key: tuple[Any, Any] | None = None
+        # A consent decision owns its turn: the command path must not speak a
+        # second, contradictory outcome for the same utterance.
+        self.command_blocked_turn: str | None = None
+        # Set when a committed command result could not be published to the UI.
+        self.command_resync_required = False
 
     @staticmethod
     def _proposal_key(proposal: Mapping[str, Any] | None) -> tuple[Any, Any]:
@@ -249,6 +254,7 @@ class SarjyAgent(Agent):
             self.prepared[message.id] = response.json()
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
+        await self._publish_resync()
         decided = False
         # A confirmation/rejection utterance is never itself a capture, with or
         # without a pending proposal.
@@ -278,8 +284,9 @@ class SarjyAgent(Agent):
                         await self._resolve_memory(decision)
                         # One turn, one decision: the utterance that resolved the
                         # pending proposal must not also be enqueued as a new
-                        # capture candidate for the same turn.
+                        # capture candidate, nor reclassified as a command.
                         decided = True
+                        self.command_blocked_turn = message.id
                     else:
                         # A proposal is a one-shot for the next user turn; never stay armed
                         # across unrelated acknowledgements.
@@ -402,33 +409,57 @@ class SarjyAgent(Agent):
     async def command_for(self, message) -> dict | None:
         """Ask the API to interpret one finalized turn, once per turn.
 
-        A transport failure is not proof that nothing was applied, so it is not
-        turned into a spoken success or failure; the turn continues through the
-        guarded conversational path and the API's idempotency key protects a
-        retry of the same source turn.
+        A transport/5xx failure is retried once: the request id derives from the
+        source turn and the endpoint replays a committed result, so the retry
+        cannot double-apply. If both attempts fail, the turn continues through
+        the guarded conversational path; no success is spoken for it.
         """
         if message.id not in self.commands:
             result = None
-            try:
-                response = await self.backend.post(
-                    "/internal/agent/command", json={"turn_id": self.prepared[message.id]["turn_id"]}
-                )
-                response.raise_for_status()
-                result = response.json().get("command")
-            except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
-                logging.error("Finalized command resolution failed; continuing conversationally")
+            for attempt in range(2):
+                try:
+                    response = await self.backend.post(
+                        "/internal/agent/command", json={"turn_id": self.prepared[message.id]["turn_id"]}
+                    )
+                    response.raise_for_status()
+                    result = response.json().get("command")
+                    break
+                except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                    retryable = isinstance(exc, httpx.TransportError) or (
+                        isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
+                    )
+                    if attempt == 0 and retryable:
+                        continue
+                    logging.error("Finalized command resolution failed; continuing conversationally")
+                    break
             self.commands[message.id] = result if isinstance(result, dict) else None
         return self.commands[message.id]
 
     async def _publish_command(self, command: Mapping[str, Any]) -> None:
         if self.publish is None:
             return
+        for attempt in range(2):
+            try:
+                await self.publish(dict(command))
+                return
+            except Exception:
+                if attempt == 1:
+                    break
+        # The effect is committed but the UI did not receive it. Never retry the
+        # command; ask the next turn boundary to resync the server snapshot.
+        self.command_resync_required = True
+        logging.error("Finalized command result publication failed; resync required")
+
+    async def _publish_resync(self) -> None:
+        """At most once per turn boundary: tell the UI to refetch settings."""
+        if not self.command_resync_required or self.publish is None:
+            return
         try:
-            await self.publish(dict(command))
+            await self.publish({"resync": True})
         except Exception:
-            # The effect is already committed; a lost UI update must not be
-            # retried or turned into a second spoken outcome.
-            logging.error("Finalized command result publication failed")
+            logging.error("Command resync publication failed; will retry next turn")
+            return
+        self.command_resync_required = False
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         # Also covers typed input and repeated inference after tool calls.
@@ -436,7 +467,7 @@ class SarjyAgent(Agent):
         if user is None:
             return
         snapshot = await self.compile(user)
-        command = await self.command_for(user)
+        command = None if self.command_blocked_turn == user.id else await self.command_for(user)
         if command is not None:
             await self._publish_command(command)
             # Exact commands bypass conversational generation entirely; TTS
