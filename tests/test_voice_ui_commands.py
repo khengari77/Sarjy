@@ -150,17 +150,12 @@ def test_existing_step_rows_still_use_relative_changes():
 @pytest.mark.parametrize(
     "text",
     [
-        "can you make it dark?",
         "dark mode and hide captions",
-        "dark mode please",
-        "please switch to dark mode",
         "don't switch to dark mode",
-        "light mode?",
         "darkmode",
         "switch to dark mode and light mode",
         "set speed to fast",
         "set speed to 1.05",
-        "set speed to 1.2 please",
         "speak at 1.5x and hide captions",
         "make it faster",
     ],
@@ -377,7 +372,6 @@ def test_gender_voice_phrases(text, gender):
     [
         "change the voice to a manly voice",
         "use the male voice and hide captions",
-        "change the voice to a man please",
         "use a woman",
         "a female voice",
         "use a robot voice",

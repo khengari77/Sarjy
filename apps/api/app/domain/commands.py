@@ -81,6 +81,28 @@ _EXACT_COMMANDS: dict[str, Action] = {
     "use the light theme": SetTheme(theme="light"),
 }
 
+_THEME_NAMES: dict[str, ThemeName] = {
+    "light": "light",
+    "dark": "dark",
+    "system": "system",
+    "auto": "system",
+    "automatic": "system",
+}
+_THEME_SETTING = re.compile(
+    r"^(?:(?:switch|change|set|turn|go|flip|put)(?: it| the theme| the app| the display| the screen"
+    r"| the interface| the ui)?(?: back)?(?: to| on)?|use|make it|enable|activate)"
+    r" (?:the )?(?P<theme>light|dark|system|auto|automatic)(?: mode| theme)?$"
+    r"|^(?P<bare>light|dark) mode$"
+)
+_SPEED_STEP = re.compile(
+    r"^(?:speak|talk|go|read|reply|answer)(?: a (?:little )?bit| a little| a lot| much| even)?"
+    r" (?P<direction>slower|faster|more slowly|more quickly)$"
+)
+_CAPTIONS_SETTING = re.compile(
+    r"^(?:(?P<show>show|enable|turn on)|(?P<hide>hide|disable|turn off))(?: me)?(?: the)? (?:live )?(?:captions|subtitles)$"
+    r"|^turn (?:the )?(?:captions|subtitles) (?:(?P<on>on)|(?P<off>off))$"
+    r"|^(?:captions|subtitles) (?:(?P<on2>on)|(?P<off2>off))$"
+)
 # "Set speed to 1.2", "set the speed to 0.8" and "speak at 1.5x" carry a value,
 # so they are parsed instead of being dictionary rows. Out-of-range values are
 # clamped to the provider's supported interval; a value off the 0.1 step is not
@@ -152,12 +174,20 @@ _NO = frozenset(
 _GENDER_WORDS: dict[str, Literal["male", "female"]] = {
     "male": "male",
     "man": "male",
+    "guy": "male",
+    "gentleman": "male",
     "female": "female",
     "woman": "female",
+    "lady": "female",
+    "girl": "female",
 }
+_GENDER = "male|female|man|woman|guy|gentleman|lady|girl"
 _VOICE_GENDER = re.compile(
-    r"^(?:(?:change|switch|use)(?: to)? (?:a |an |the )?(?P<a>male|female|man|woman) voice"
-    r"|change (?:the|my) voice to (?:a |an )?(?P<b>male|female|man|woman))$"
+    rf"^(?:(?:change|switch|use|give me|i want|i(?:'d| would) like|let me hear|speak in|talk in)(?: to)? (?:a |an |the )?"
+    rf"(?P<a>{_GENDER})(?:'s)? voice"
+    rf"|(?:change|switch|set) (?:the|my|your) voice to (?:a |an )?(?P<b>{_GENDER})(?:'s voice)?"
+    rf"|(?:speak|talk|sound) like (?:a |an )?(?P<c>{_GENDER})"
+    rf"|make (?:the|your) voice (?:a |an )?(?P<d>{_GENDER}))$"
 )
 
 # Rows that are deliberately not wired yet.  Recognising them lets the product
@@ -229,11 +259,55 @@ class CommandResult(Contract):
     operation_id: str | None = Field(default=None, max_length=36)
 
 
+_FILLER_LEAD = re.compile(
+    r"^(?:(?:hey|hi|hello|ok|okay|so|well|alright|um|uh|sarjy|and|then)\b[\s,.!]*)+", re.IGNORECASE
+)
+_POLITE_LEAD = re.compile(
+    r"^(?:(?:can|could|would|will) you(?: (?:please|kindly))?(?: just)?|please|kindly"
+    r"|i(?:'d| would) like you to|i want you to|i need you to|go ahead and|just)[\s,]+",
+    re.IGNORECASE,
+)
+_POLITE_TAIL = re.compile(r"[\s,]+(?:please|for me|right now|now|thanks|thank you)$", re.IGNORECASE)
+
+
+def normalize_utterance(text: str, *, fold: bool = True) -> str:
+    """Strip case, trailing punctuation and conversational wrappers from a whole utterance.
+
+    "Okay, can you change to light mode, please?" and "change to light mode" are the
+    same request. Only wrappers around the whole utterance are removed, so a quoted,
+    negated or compound request is still not a command.
+    """
+    value = " ".join(text.strip().split())
+    if fold:
+        value = value.lower()
+    value = value.rstrip(" .!?")
+    previous = None
+    while previous != value:
+        previous = value
+        value = _FILLER_LEAD.sub("", value)
+        value = _POLITE_LEAD.sub("", value)
+        value = _POLITE_TAIL.sub("", value).rstrip(" .!?")
+    return value
+
+
 def parse_exact_command(text: str) -> Action | None:
-    normalized = " ".join(text.strip().lower().split()).removesuffix(".")
+    normalized = normalize_utterance(text)
     action = _EXACT_COMMANDS.get(normalized)
     if action is not None:
         return action
+    theme = _THEME_SETTING.match(normalized)
+    if theme is not None:
+        return SetTheme(theme=_THEME_NAMES[theme.group("theme") or theme.group("bare")])
+    captions = _CAPTIONS_SETTING.match(normalized)
+    if captions is not None:
+        shown = captions.group("show") or captions.group("on") or captions.group("on2")
+        return SetCaptionsVisible(visible=bool(shown))
+    if normalized in {"slow down", "speed up"}:
+        return AdjustSpeakingSpeed(delta=-0.1 if normalized == "slow down" else 0.1)
+    step = _SPEED_STEP.match(normalized)
+    if step is not None:
+        slower = step.group("direction") in {"slower", "more slowly"}
+        return AdjustSpeakingSpeed(delta=-0.1 if slower else 0.1)
     match = _SPEED_SETTING.match(normalized)
     if match is None:
         return None
@@ -248,11 +322,11 @@ def _clamp_speed(value: float) -> float:
 
 
 def parse_voice_gender(text: str) -> Literal["male", "female"] | None:
-    normalized = " ".join(text.strip().lower().split()).removesuffix(".")
+    normalized = normalize_utterance(text)
     match = _VOICE_GENDER.match(normalized)
     if match is None:
         return None
-    return _GENDER_WORDS[match.group("a") or match.group("b")]
+    return _GENDER_WORDS[match.group("a") or match.group("b") or match.group("c") or match.group("d")]
 
 
 def parse_voice_selection(text: str) -> str | None:
@@ -262,7 +336,7 @@ def parse_voice_selection(text: str) -> str | None:
     settings command. Matching is case-insensitive; the returned name keeps the
     user's capitalisation for an honest not-found response.
     """
-    normalized = " ".join(text.strip().split()).removesuffix(".")
+    normalized = normalize_utterance(text, fold=False)
     match = _VOICE_SELECTION.match(normalized.casefold())
     if match is None:
         return None
@@ -275,7 +349,7 @@ def parse_memory_exclusion_target(text: str) -> str | None:
     Compound, global and referential requests are deliberately not parsed here;
     the caller either refuses them honestly or leaves them to conversation.
     """
-    normalized = " ".join(text.strip().split()).removesuffix(".")
+    normalized = normalize_utterance(text, fold=False)
     match = _MEMORY_EXCLUDE.match(normalized)
     if match is None:
         return None
@@ -289,14 +363,14 @@ def parse_memory_exclusion_target(text: str) -> str | None:
 
 def memory_request_is_global(text: str) -> bool:
     """Whether a destructive memory request explicitly asks for every chat."""
-    normalized = " ".join(text.strip().lower().split()).removesuffix(".")
+    normalized = normalize_utterance(text)
     if not re.match(r"^(?:please )?(?:forget|exclude|delete|remove)\b", normalized):
         return False
     return bool(_MEMORY_GLOBAL.search(normalized))
 
 
 def memory_restore_requested(text: str) -> bool:
-    normalized = " ".join(text.strip().lower().split()).removesuffix(".")
+    normalized = normalize_utterance(text)
     return bool(_MEMORY_RESTORE.match(normalized))
 
 
@@ -312,7 +386,7 @@ def parse_exclusion_confirmation(text: str) -> bool | None:
 
 def unsupported_command(text: str) -> tuple[str, str] | None:
     """Return ``(detail, spoken)`` for a known-but-unwired §5.7 row."""
-    normalized = " ".join(text.strip().lower().split()).removesuffix(".")
+    normalized = normalize_utterance(text)
     for pattern, detail, spoken in _UNSUPPORTED_COMMANDS:
         if pattern.match(normalized):
             return detail, spoken
@@ -423,6 +497,7 @@ __all__ = [
     "parse_exact_command",
     "parse_exclusion_confirmation",
     "parse_memory_exclusion_target",
+    "normalize_utterance",
     "parse_voice_selection",
     "spoken_outcome",
     "unknown_result",
