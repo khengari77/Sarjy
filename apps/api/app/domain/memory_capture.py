@@ -294,3 +294,61 @@ def parse_capture(text: str) -> MemoryCapture | None:
             return None
 
     return _capture_for(content, explicit=explicit)
+
+
+MAX_TOOL_FACT_CHARS = 500
+MAX_TOOL_QUERY_CHARS = 200
+
+
+def _plain_text(value: str) -> str:
+    """Strip control characters; a model-supplied argument is untrusted data."""
+    return _normalize("".join(char if char.isprintable() else " " for char in value))
+
+
+def parse_tool_fact(fact: str) -> MemoryCapture | None:
+    """Validate a model-supplied fact with the same deterministic checks.
+
+    The model interprets meaning; this function decides whether the result may
+    become a proposal.  It returns ``None`` (never raises) for questions,
+    hypotheticals, quoted text, pronoun-only or referential values, empty or
+    over-long input.  The returned capture is always an *explicit* candidate and
+    is still only a proposal that needs the user's confirmation.
+    """
+    if fact.strip().endswith("?"):
+        return None
+    candidate = _plain_text(fact)
+    if not candidate or len(candidate) > MAX_TOOL_FACT_CHARS:
+        return None
+    if candidate.endswith("?") or _NON_REMEMBERABLE.search(candidate) or _HYPOTHETICAL.search(candidate):
+        return None
+    if _QUOTED.match(candidate) or is_referential(candidate):
+        return None
+    for pattern in _EXPLICIT:
+        match = pattern.match(candidate)
+        if match is not None:
+            candidate = _normalize(match.group("content"))
+            break
+    if not candidate or is_referential(candidate):
+        return None
+    if candidate.casefold() in _PRONOUN_VALUES:
+        return None
+    # A recognised first-person slot with a pronoun-only value ("I live in it") is refused.
+    if _ordinary_matches_pronoun(candidate):
+        return None
+    return _capture_for(candidate, explicit=True)
+
+
+def _ordinary_matches_pronoun(content: str) -> bool:
+    for pattern, _subject in (*_ORDINARY, *_NEGATED):
+        match = pattern.match(content)
+        if match is not None and _normalize(match.group("value")).casefold() in _PRONOUN_VALUES:
+            return True
+    return False
+
+
+def clean_tool_query(query: str) -> str | None:
+    """Bound and sanitise a model-supplied search query; ``None`` when unusable."""
+    cleaned = _plain_text(query)
+    if not cleaned or len(cleaned) > MAX_TOOL_QUERY_CHARS:
+        return None
+    return cleaned

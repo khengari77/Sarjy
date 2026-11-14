@@ -43,8 +43,9 @@ server = AgentServer()
 # if a stale or tampered backend payload asks for it.
 MAX_TIER_OUTPUT_TOKENS = 1024
 MAX_CONTEXT_BYTES = 64000
-MAX_TOOLS = 1
+MAX_TOOLS = 4
 GENERATION_ATTEMPT_SECONDS = 30.0
+FAILED_NOTE = "The memory tool failed. Nothing was saved, excluded or changed; do not claim otherwise."
 
 
 def deepseek_request_within_bounds(serialized: bytes) -> bool:
@@ -52,7 +53,7 @@ def deepseek_request_within_bounds(serialized: bytes) -> bool:
 
 
 def openai_request_within_bounds(serialized: bytes, tools: list, max_output_tokens: int) -> bool:
-    """Pure budget guard: 64KB context, one fixed tool and at most the tier-5 cap."""
+    """Pure budget guard: 64KB context, fixed tools and at most the tier-5 cap."""
     return (
         len(serialized) <= MAX_CONTEXT_BYTES and len(tools) <= MAX_TOOLS and max_output_tokens <= MAX_TIER_OUTPUT_TOKENS
     )
@@ -239,6 +240,11 @@ class SarjyAgent(Agent):
         self.command_blocked_turn: str | None = None
         # Set when a committed command result could not be published to the UI.
         self.command_resync_required = False
+        # Typed memory tools. A tool-armed turn owns the consent state: the turn/start
+        # proposal for the same turn must not be re-armed over it. ``forced_speech`` is
+        # the deterministic question the next llm_node yields instead of model prose.
+        self.tool_armed_turn: str | None = None
+        self.forced_speech: tuple[str, str] | None = None
 
     @staticmethod
     def _proposal_key(proposal: Mapping[str, Any] | None) -> tuple[Any, Any]:
@@ -301,6 +307,7 @@ class SarjyAgent(Agent):
         if (
             not decided
             and not decision_utterance
+            and self.tool_armed_turn != result["turn_id"]
             and proposal is not None
             and not is_referential(proposal.get("text") or "")
         ):
@@ -498,6 +505,13 @@ class SarjyAgent(Agent):
             handle = self.session.current_speech
             self._schedule_persistence(user, handle)
             return
+        if self.forced_speech is not None and self.forced_speech[0] == self.current_turn:
+            _, forced = self.forced_speech
+            self.forced_speech = None
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=forced))
+            handle = self.session.current_speech
+            self._schedule_persistence(user, handle)
+            return
         proposal = self.memory_proposal
         key = self._proposal_key(proposal)
         if proposal is not None and self.memory_question_key != key:
@@ -682,6 +696,66 @@ class SarjyAgent(Agent):
         )
         result.raise_for_status()
         return result.json()
+
+    def _disarm_memory_proposal(self) -> None:
+        self.memory_proposal = None
+        self.memory_clarify = False
+        self.memory_question_turn = None
+        self.memory_prompted_key = None
+        self.memory_question_key = None
+
+    async def _memory_tool(self, path: str, ctx: RunContext, **arguments: str) -> dict:
+        """POST one memory tool call; a failure is reported as not-done, never raised as success."""
+        if not self.current_turn:
+            raise ValueError("TOOL_TURN_REQUIRED")
+        call_id = getattr(ctx.function_call, "call_id", "")
+        try:
+            response = await self.backend.post(
+                f"/internal/agent/tool/{path}",
+                json={
+                    **arguments,
+                    "turn_id": self.current_turn,
+                    "request_id": operation_key(self.current_turn, call_id),
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, ValueError):
+            return {"error": "MEMORY_TOOL_FAILED", "message": FAILED_NOTE}
+        if not isinstance(body, dict) or "error" in body and body.get("status") != "rejected":
+            return {"error": "MEMORY_TOOL_FAILED", "message": FAILED_NOTE}
+        return body
+
+    @function_tool()
+    async def propose_memory(self, ctx: RunContext, fact: str):
+        """Propose remembering a lasting fact the user stated about themselves, written in first person (for example "I live in Benghazi"). This only proposes: the user is asked to confirm and nothing is saved until they do."""
+        body = await self._memory_tool("memory-propose", ctx, fact=fact)
+        proposal = body.get("proposal")
+        if body.get("status") == "proposed" and isinstance(proposal, dict) and isinstance(proposal.get("token"), str):
+            self._disarm_memory_proposal()
+            self.memory_proposal = proposal
+            self.memory_question_turn = self.current_turn
+            self.tool_armed_turn = self.current_turn
+            self.forced_speech = None
+        return str(body.get("message") or FAILED_NOTE)
+
+    @function_tool()
+    async def propose_forget(self, ctx: RunContext, query: str):
+        """Propose excluding a stored memory from this conversation. Pass only a short search query describing it (for example "tea"). This only proposes: the user is asked to confirm and nothing is changed until they do."""
+        body = await self._memory_tool("memory-forget", ctx, query=query)
+        spoken = body.get("spoken")
+        if isinstance(spoken, str) and spoken and "error" not in body:
+            # A forget request retires any remember proposal; only one may be armed.
+            self._disarm_memory_proposal()
+            self.tool_armed_turn = self.current_turn
+            self.forced_speech = (self.current_turn or "", spoken)
+        return str(body.get("message") or FAILED_NOTE)
+
+    @function_tool()
+    async def recall(self, ctx: RunContext, query: str):
+        """Look up what is saved about the user for a topic (for example "my job"). Read-only."""
+        body = await self._memory_tool("memory-recall", ctx, query=query)
+        return json.dumps(body, ensure_ascii=False)
 
 
 async def publish_command(room, command: Mapping[str, Any]) -> None:

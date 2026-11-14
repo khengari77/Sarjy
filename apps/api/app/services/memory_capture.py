@@ -87,6 +87,15 @@ def propose_memory(text: str, *, owner_id: str, conversation_id: str, source_tur
     capture = parse_capture(text)
     if capture is None:
         return None
+    return proposal_for_capture(
+        capture, owner_id=owner_id, conversation_id=conversation_id, source_turn_id=source_turn_id, secret=secret
+    )
+
+
+def proposal_for_capture(
+    capture: MemoryCapture, *, owner_id: str, conversation_id: str, source_turn_id: str, secret: str
+) -> dict:
+    """Sign an already validated candidate; shared by the regex path and the typed tool."""
     if not secret:
         raise MemoryCaptureError("MEMORY_CAPTURE_NOT_CONFIGURED", 503)
     confirmation_id = str(uuid4())

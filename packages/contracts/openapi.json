@@ -897,6 +897,114 @@
         }
       }
     },
+    "/internal/agent/tool/memory-propose": {
+      "post": {
+        "summary": "Agent Memory Propose",
+        "operationId": "agent_memory_propose_internal_agent_tool_memory_propose_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryProposeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/agent/tool/memory-forget": {
+      "post": {
+        "summary": "Agent Memory Forget",
+        "operationId": "agent_memory_forget_internal_agent_tool_memory_forget_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryQueryInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/agent/tool/memory-recall": {
+      "post": {
+        "summary": "Agent Memory Recall",
+        "operationId": "agent_memory_recall_internal_agent_tool_memory_recall_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryQueryInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/agent/memory/confirm": {
       "post": {
         "summary": "Confirm Memory Route",
@@ -1633,6 +1741,18 @@
               }
             ],
             "title": "Detail"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 36
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
           }
         },
         "additionalProperties": false,
@@ -2451,6 +2571,35 @@
         ],
         "title": "MemoryListItem"
       },
+      "MemoryProposeInput": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Turn Id"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "fact": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Fact"
+          }
+        },
+        "type": "object",
+        "required": [
+          "turn_id",
+          "request_id",
+          "fact"
+        ],
+        "title": "MemoryProposeInput"
+      },
       "MemoryQuery": {
         "properties": {
           "conversation_id": {
@@ -2478,6 +2627,35 @@
           "query"
         ],
         "title": "MemoryQuery"
+      },
+      "MemoryQueryInput": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Turn Id"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Query"
+          }
+        },
+        "type": "object",
+        "required": [
+          "turn_id",
+          "request_id",
+          "query"
+        ],
+        "title": "MemoryQueryInput"
       },
       "MemoryResult": {
         "properties": {
