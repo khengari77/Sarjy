@@ -73,6 +73,7 @@ def test_wordle_migration_upgrades_downgrades_and_matches_models(tmp_path):
         "claim_id",
         "claim_expires_at",
         "retry_after",
+        "last_failure",
         "last_attempt_at",
     }
     assert columns(path, "wordle_games") == {

@@ -216,6 +216,7 @@ class WordlePuzzle(Base):
     claim_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     claim_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     retry_after: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_failure: Mapped[str | None] = mapped_column(String(80), nullable=True)
     last_attempt_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 

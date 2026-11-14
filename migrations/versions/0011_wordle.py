@@ -26,6 +26,7 @@ def upgrade():
         sa.Column("claim_id", sa.String(36), nullable=True),
         sa.Column("claim_expires_at", sa.String(40), nullable=True),
         sa.Column("retry_after", sa.String(40), nullable=True),
+        sa.Column("last_failure", sa.String(80), nullable=True),
         sa.Column("last_attempt_at", sa.String(40), nullable=True),
     )
 

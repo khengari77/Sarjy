@@ -48,7 +48,7 @@ class FixtureSource:
     async def fetch(self, puzzle_date: date):
         self.calls.append(puzzle_date.isoformat())
         if self.not_published:
-            raise WordleSourceError("WORDLE_SOURCE_NOT_PUBLISHED")
+            raise WordleSourceError("WORDLE_NOT_PUBLISHED")
         if self.always_fail or self.failures:
             if self.failures:
                 self.failures -= 1
@@ -348,18 +348,30 @@ def test_wait_polling_uses_capped_exponential_backoff():
     assert sum(delays) >= 63.7
 
 
-def test_http_source_404_is_not_published_and_5xx_is_broken():
+def test_http_source_classifies_missing_vs_broken():
     def handler(request):
-        status = 404 if request.url.path.endswith("2026-11-13.json") else 503
-        return httpx.Response(status)
+        path = request.url.path
+        if path.endswith("2026-11-12.json"):
+            return httpx.Response(404)
+        if path.endswith("2026-11-13.json"):
+            return httpx.Response(200, json={"solution": "CRANE", "print_date": "2026-11-12"})
+        if path.endswith("2026-11-14.json"):
+            return httpx.Response(200, json=["not", "a", "dict"])
+        if path.endswith("2026-11-15.json"):
+            return httpx.Response(200, json={"solution": "CRANE"})
+        if path.endswith("2026-11-16.json"):
+            return httpx.Response(200, json={"solution": "CRANE", "print_date": "not-a-date"})
+        return httpx.Response(503)
 
     source = HttpWordleSource("https://wordle.example/v2/{date}.json", transport=httpx.MockTransport(handler))
-    with pytest.raises(WordleSourceError) as missing:
-        asyncio.run(source.fetch(DAY))
-    assert missing.value.code == "WORDLE_SOURCE_NOT_PUBLISHED"
-    with pytest.raises(WordleSourceError) as broken:
-        asyncio.run(source.fetch(DAY.replace(day=14)))
-    assert broken.value.code == "WORDLE_SOURCE_FAILED"
+    for day in (date(2026, 11, 12), date(2026, 11, 13)):
+        with pytest.raises(WordleSourceError) as missing:
+            asyncio.run(source.fetch(day))
+        assert missing.value.code == "WORDLE_NOT_PUBLISHED"
+    for day in (date(2026, 11, 14), date(2026, 11, 15), date(2026, 11, 16), date(2026, 11, 17)):
+        with pytest.raises(WordleSourceError) as broken:
+            asyncio.run(source.fetch(day))
+        assert broken.value.code == "WORDLE_SOURCE_FAILED"
 
 
 def test_released_claim_is_not_stealable_before_the_retry_cooldown(tmp_path):
@@ -435,6 +447,39 @@ def test_stored_future_puzzle_is_never_served(tmp_path):
     asyncio.run(run())
 
 
+def test_future_row_does_not_hide_an_older_valid_answer(tmp_path):
+    async def run():
+        engine = _memory_engine(tmp_path)
+        await _create_schema(engine)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        source = FixtureSource(not_published=True)
+        try:
+            async with sessions() as db:
+                for day, answer in (("2026-11-15", "CRANE"), ("2026-11-13", "SLATE")):
+                    db.add(
+                        WordlePuzzle(
+                            puzzle_date=day,
+                            answer=answer,
+                            source="fixture",
+                            fetched_at=FIXED_NOW.isoformat(),
+                            payload_hash="hash",
+                        )
+                    )
+                await db.commit()
+            async with sessions() as db:
+                puzzle = await ensure_today(
+                    db,
+                    source=source,
+                    timezone="America/New_York",
+                    now=datetime(2026, 11, 14, 6, 0, tzinfo=UTC),
+                )
+            assert (puzzle.puzzle_date, puzzle.answer) == ("2026-11-13", "SLATE")
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
 def test_not_published_serves_the_last_ingested_puzzle_degraded(tmp_path):
     async def run():
         engine = _memory_engine(tmp_path)
@@ -464,6 +509,17 @@ def test_not_published_serves_the_last_ingested_puzzle_degraded(tmp_path):
                 )
             assert puzzle.puzzle_date == "2026-11-13"
             assert puzzle.answer == "CRANE"
+            # A second request inside the cooldown must also serve the same
+            # degraded puzzle, not flip to WORDLE_UNAVAILABLE.
+            async with sessions() as db:
+                again = await ensure_today(
+                    db,
+                    source=source,
+                    timezone="America/New_York",
+                    now=datetime(2026, 11, 14, 6, 0, 1, tzinfo=UTC),
+                )
+            assert again.puzzle_date == "2026-11-13"
+            assert again.answer == "CRANE"
             assert source.calls == ["2026-11-14"]
         finally:
             await engine.dispose()

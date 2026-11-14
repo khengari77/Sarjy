@@ -31,8 +31,10 @@ snapshot) instead of calling out. Each source attempt is hard-capped by
 `asyncio.timeout`, and the lease is asserted at import to exceed the whole
 retry budget, so a slow source cannot be reclaimed mid-fetch. An expired
 in-flight claim can be reclaimed atomically; a released claim records its
-cooldown separately in `retry_after` and cannot be stolen before it elapses.
-The database uniqueness guarantee, not the scheduler, is authoritative.
+cooldown separately in `retry_after` together with the failure reason in
+`last_failure`, so a cooled-down publication delay keeps serving the degraded
+fallback instead of flickering to unavailable. The database uniqueness
+guarantee, not the scheduler, is authoritative.
 
 A `404` or a response for another date is `NOT_PUBLISHED`: the last ingested
 answer is served as an explicitly logged degraded state. A `5xx`, timeout or

@@ -66,8 +66,11 @@ CLAIM_WAIT_SECONDS = CLAIM_LEASE_SECONDS + 5.0
 CLAIM_POLL_SECONDS = 0.05
 CLAIM_POLL_MAX_SECONDS = 1.0
 SUBMIT_RETRIES = 4
-SOURCE_NOT_PUBLISHED = "WORDLE_SOURCE_NOT_PUBLISHED"
-SOURCE_FAILED = "WORDLE_SOURCE_FAILED"
+# One failure vocabulary shared by the source boundary and the service.  The
+# persisted reason lets a cooled-down row keep reporting why it is cooling.
+WORDLE_NOT_PUBLISHED = "WORDLE_NOT_PUBLISHED"
+WORDLE_SOURCE_FAILED = "WORDLE_SOURCE_FAILED"
+WORDLE_UNAVAILABLE = "WORDLE_UNAVAILABLE"
 
 
 class WordleSourceError(Exception):
@@ -163,15 +166,24 @@ class HttpWordleSource:
                 payload = response.json()
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
-                raise WordleSourceError(SOURCE_NOT_PUBLISHED) from exc
-            raise WordleSourceError(SOURCE_FAILED) from exc
+                raise WordleSourceError(WORDLE_NOT_PUBLISHED) from exc
+            raise WordleSourceError(WORDLE_SOURCE_FAILED) from exc
         except (httpx.HTTPError, ValueError) as exc:
-            raise WordleSourceError(SOURCE_FAILED) from exc
-        # A response that still names another date means the requested puzzle
-        # has not been published; that is a delay, not an outage.
-        returned_date = payload.get("print_date", payload.get("date")) if isinstance(payload, dict) else None
+            raise WordleSourceError(WORDLE_SOURCE_FAILED) from exc
+        # Only a 404 or a payload naming a valid, different date is a
+        # publication delay.  A malformed body is a broken source, never a
+        # reason to serve yesterday's puzzle indefinitely.
+        if not isinstance(payload, dict):
+            raise WordleSourceError(WORDLE_SOURCE_FAILED)
+        returned_date = payload.get("print_date", payload.get("date"))
+        if not isinstance(returned_date, str) or not returned_date:
+            raise WordleSourceError(WORDLE_SOURCE_FAILED)
         if returned_date != puzzle_date.isoformat():
-            raise WordleSourceError(SOURCE_NOT_PUBLISHED)
+            try:
+                date.fromisoformat(returned_date)
+            except ValueError as exc:
+                raise WordleSourceError(WORDLE_SOURCE_FAILED) from exc
+            raise WordleSourceError(WORDLE_NOT_PUBLISHED)
         return parse_source_payload(payload, puzzle_date, source=self.label)
 
 
@@ -188,14 +200,13 @@ async def _load_puzzle(db: AsyncSession, key: str) -> WordlePuzzle | None:
     )
 
 
-async def _latest_ingested_puzzle(db: AsyncSession) -> WordlePuzzle | None:
-    """Newest schedule row that actually carries an answer."""
+async def _latest_ingested_puzzle(db: AsyncSession, *, on_or_before: date | None = None) -> WordlePuzzle | None:
+    """Newest schedule row carrying an answer, optionally date-bounded in SQL."""
+    statement = select(WordlePuzzle).where(WordlePuzzle.answer.is_not(None))
+    if on_or_before is not None:
+        statement = statement.where(WordlePuzzle.puzzle_date <= on_or_before.isoformat())
     return await db.scalar(
-        select(WordlePuzzle)
-        .where(WordlePuzzle.answer.is_not(None))
-        .order_by(WordlePuzzle.puzzle_date.desc())
-        .limit(1)
-        .execution_options(populate_existing=True)
+        statement.order_by(WordlePuzzle.puzzle_date.desc()).limit(1).execution_options(populate_existing=True)
     )
 
 
@@ -219,7 +230,7 @@ async def scheduled_puzzle_date(db: AsyncSession, instant: datetime, timezone: s
 
 async def _servable_ingested_puzzle(db: AsyncSession, wall_date: date) -> WordlePuzzle | None:
     """Newest stored answer that is not in the future relative to the schedule."""
-    latest = await _latest_ingested_puzzle(db)
+    latest = await _latest_ingested_puzzle(db, on_or_before=wall_date)
     if latest is None:
         return None
     try:
@@ -255,11 +266,11 @@ async def ensure_today(
     try:
         return await ensure_puzzle(db, day, source=source, now=instant, sleep=sleep)
     except WordleServiceError as exc:
-        if exc.code != "WORDLE_NOT_PUBLISHED":
+        if exc.code != WORDLE_NOT_PUBLISHED:
             raise
         fallback = await _servable_ingested_puzzle(db, day)
         if fallback is None:
-            raise WordleServiceError("WORDLE_UNAVAILABLE", 503) from exc
+            raise WordleServiceError(WORDLE_UNAVAILABLE, 503) from exc
         logger.warning(
             "wordle date not published; serving stored date=%s degraded (wanted date=%s)",
             fallback.puzzle_date,
@@ -297,6 +308,7 @@ async def ensure_puzzle(
             "claim_id": claim_id,
             "claim_expires_at": claim_expires_at,
             "retry_after": None,
+            "last_failure": None,
             "last_attempt_at": now_iso,
         },
         index_elements=["puzzle_date"],
@@ -312,10 +324,10 @@ async def ensure_puzzle(
 
     fetched, failure = await _fetch_with_retries(source, day, sleep)
     if fetched is None:
-        await _release_claim(db, key, claim_id=claim_id, instant=instant, now_iso=now_iso)
-        if failure == SOURCE_NOT_PUBLISHED:
-            raise WordleServiceError("WORDLE_NOT_PUBLISHED", 503)
-        raise WordleServiceError("WORDLE_UNAVAILABLE", 503)
+        await _release_claim(db, key, claim_id=claim_id, instant=instant, now_iso=now_iso, failure=failure)
+        if failure == WORDLE_NOT_PUBLISHED:
+            raise WordleServiceError(WORDLE_NOT_PUBLISHED, 503)
+        raise WordleServiceError(WORDLE_UNAVAILABLE, 503)
 
     completed = await db.execute(
         update(WordlePuzzle)
@@ -328,6 +340,7 @@ async def ensure_puzzle(
             claim_id=None,
             claim_expires_at=None,
             retry_after=None,
+            last_failure=None,
             last_attempt_at=now_iso,
         )
     )
@@ -338,7 +351,7 @@ async def ensure_puzzle(
         return stored
     if stored is not None and stored.answer:
         return stored
-    raise WordleServiceError("WORDLE_UNAVAILABLE", 503)
+    raise WordleServiceError(WORDLE_UNAVAILABLE, 503)
 
 
 async def _contend_for_claim(
@@ -369,6 +382,7 @@ async def _contend_for_claim(
             claim_id=claim_id,
             claim_expires_at=claim_expires_at,
             retry_after=None,
+            last_failure=None,
             last_attempt_at=now_iso,
         )
     )
@@ -381,7 +395,11 @@ async def _contend_for_claim(
         return current
     if current is not None and current.claim_id is None:
         if current.retry_after is not None and current.retry_after > now_iso:
-            raise WordleServiceError("WORDLE_UNAVAILABLE", 503)
+            # Preserve why the row is cooling down: a publication delay must
+            # keep serving the degraded fallback, not turn into an outage.
+            if current.last_failure == WORDLE_NOT_PUBLISHED:
+                raise WordleServiceError(WORDLE_NOT_PUBLISHED, 503)
+            raise WordleServiceError(WORDLE_UNAVAILABLE, 503)
         claimed = await db.execute(
             update(WordlePuzzle)
             .where(
@@ -397,6 +415,7 @@ async def _contend_for_claim(
                 claim_id=claim_id,
                 claim_expires_at=claim_expires_at,
                 retry_after=None,
+                last_failure=None,
                 last_attempt_at=now_iso,
             )
         )
@@ -407,7 +426,7 @@ async def _contend_for_claim(
     stored = await _wait_for_answer(db, key, sleep)
     if stored is not None:
         return stored
-    raise WordleServiceError("WORDLE_UNAVAILABLE", 503)
+    raise WordleServiceError(WORDLE_UNAVAILABLE, 503)
 
 
 async def _fetch_with_retries(
@@ -421,13 +440,13 @@ async def _fetch_with_retries(
     delay.  Every other failure is retried within the bounded retry budget and
     reported as broken.
     """
-    failure = SOURCE_FAILED
+    failure = WORDLE_SOURCE_FAILED
     for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
         try:
             async with asyncio.timeout(FETCH_TIMEOUT_SECONDS):
                 return await source.fetch(day), None
         except TimeoutError:
-            failure = SOURCE_FAILED
+            failure = WORDLE_SOURCE_FAILED
             logger.warning(
                 "wordle fetch timed out date=%s source=%s attempt=%s budget=%ss",
                 day.isoformat(),
@@ -443,13 +462,13 @@ async def _fetch_with_retries(
                 attempt,
                 exc.code,
             )
-            if exc.code == SOURCE_NOT_PUBLISHED:
-                return None, SOURCE_NOT_PUBLISHED
-            failure = SOURCE_FAILED
+            if exc.code == WORDLE_NOT_PUBLISHED:
+                return None, WORDLE_NOT_PUBLISHED
+            failure = WORDLE_SOURCE_FAILED
         # Injected test doubles can fail in other ways; treat any boundary
         # failure as unavailable instead of propagating an internal 500.
         except Exception as exc:  # noqa: BLE001 - external boundary
-            failure = SOURCE_FAILED
+            failure = WORDLE_SOURCE_FAILED
             logger.warning(
                 "wordle fetch failed date=%s source=%s attempt=%s error=%s",
                 day.isoformat(),
@@ -469,6 +488,7 @@ async def _release_claim(
     claim_id: str,
     instant: datetime,
     now_iso: str,
+    failure: str | None,
 ) -> None:
     await db.execute(
         update(WordlePuzzle)
@@ -481,6 +501,7 @@ async def _release_claim(
             claim_id=None,
             claim_expires_at=None,
             retry_after=_iso(instant + RETRY_COOLDOWN),
+            last_failure=failure,
             last_attempt_at=now_iso,
         )
     )
@@ -551,7 +572,7 @@ async def ensure_game(
         .execution_options(populate_existing=True)
     )
     if game is None:
-        raise WordleServiceError("WORDLE_UNAVAILABLE", 503)
+        raise WordleServiceError(WORDLE_UNAVAILABLE, 503)
     return game
 
 
@@ -660,7 +681,7 @@ async def submit_guess(
             select(WordleGame).where(WordleGame.id == game.id).execution_options(populate_existing=True)
         )
         if fresh is None:
-            raise WordleServiceError("WORDLE_UNAVAILABLE", 503)
+            raise WordleServiceError(WORDLE_UNAVAILABLE, 503)
         return GuessOutcome(
             game=await game_view(db, fresh, answer=answer),
             word=word,
