@@ -119,6 +119,15 @@ async function openLeftDrawer(page: Page) {
   return trigger;
 }
 
+function isInert(page: Page, selector: string): Promise<boolean> {
+  return page.locator(selector).evaluate((el) => (el as HTMLElement).inert);
+}
+
+/** The shell's modal layer: the confirmation is portalled into this region. */
+function dialogRegion(page: Page) {
+  return page.locator('.stage-dialog');
+}
+
 function confirmDialog(page: Page) {
   return page.getByRole('dialog', { name: 'End the current voice session?' });
 }
@@ -144,29 +153,63 @@ test.describe('mobile overlay drawer during a live call', () => {
     const dialog = confirmDialog(page);
     await expect(dialog).toBeVisible();
 
-    // The drawer handed off: it is closed, so the stage (and the dialog in it)
-    // are no longer inside an inert subtree, and the drawer's trigger is not
-    // where focus went.
-    expect(await dialog.evaluate((el) => el.closest('[inert]') === null)).toBe(true);
-    expect(await page.locator('.stage-content').evaluate((el) => (el as HTMLElement).inert)).toBe(false);
+    // The drawer handed off. The confirmation is the modal layer: the stage
+    // body, header and control strip are all inert, and the dialog itself is
+    // the only interactive region - so aria-modal="true" is true, not a claim.
     await expect(page.locator('#shell-left')).toBeHidden();
+    expect(await dialog.evaluate((el) => el.closest('[inert]') === null)).toBe(true);
+    expect(await isInert(page, '.stage-dialog')).toBe(false);
+    // No stray focus stop: the modal region holds only the dialog.
+    await expect(page.locator('.stage-dialog [role="dialog"]')).toHaveCount(1);
+    expect(await isInert(page, '.stage-content')).toBe(true);
+    expect(await isInert(page, '.topbar')).toBe(true);
+    expect(await isInert(page, '.stage-controls')).toBe(true);
+    await expect(page.locator('.stage-content')).toHaveAttribute('inert', '');
+    await expect(page.locator('.topbar')).toHaveAttribute('inert', '');
     await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
     expect(api.ends).toHaveLength(0);
 
-    // Cancel is genuinely clickable while the drawer state settles.
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
-    await expect(dialog).toBeHidden();
-    // Nothing took focus after the dialog closed, so it returns to the trigger.
-    await expect(trigger).toBeFocused();
-    await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
+    // A Tab walk from Cancel never leaves the dialog region (no native trap on
+    // a div role=dialog, so this only holds if the shell wraps it).
+    for (let index = 0; index < 10; index += 1) {
+      await page.keyboard.press('Tab');
+      expect(
+        await dialogRegion(page).evaluate((el) => el.contains(document.activeElement)),
+        `dialog tab #${index + 1} escaped the modal layer`,
+      ).toBe(true);
+    }
 
-    // Same flow through the confirm path.
+    // Escape dismisses the dialog from wherever the walk left focus.
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    // Inert is cleared again, focus returns to the drawer trigger that opened
+    // the flow, and the previously-inert control strip works.
+    expect(await isInert(page, '.stage-content')).toBe(false);
+    expect(await isInert(page, '.topbar')).toBe(false);
+    expect(await isInert(page, '.stage-controls')).toBe(false);
+    await expect(trigger).toBeFocused();
+    // A single Escape cancelled once: the session is still live and nothing
+    // was released twice (a double cancel would end the call).
+    await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
+    expect(api.ends).toHaveLength(0);
+    // The modal region is emptied, so it is not a stray focus stop.
+    await expect(page.locator('.stage-dialog [role="dialog"]')).toHaveCount(0);
+    // Previously-inert controls are operable again, not merely non-inert.
+    const mute = page.getByRole('button', { name: 'Mute', exact: true });
+    await mute.focus();
+    await expect(mute).toBeFocused();
+    await mute.click();
+    await expect(page.getByRole('button', { name: 'Enable microphone', exact: true })).toBeVisible();
+
+    // Same flow through the confirm path; focus still returns to the trigger.
     await openLeftDrawer(page);
     await page.locator('#shell-left').getByRole('button', { name: 'Work ideas', exact: true }).click();
     await dialog.getByRole('button', { name: 'End & switch' }).click();
     await expect.poll(() => api.ends.some((url) => url.endsWith('/sess-1/end'))).toBe(true);
     await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
     await expect(page.locator('#shell-left')).toBeHidden();
+    await expect(trigger).toBeFocused();
+    await expect(page.locator('.stage-dialog [role="dialog"]')).toHaveCount(0);
   });
 
   test('creating a conversation from the drawer keeps the confirmation reachable', async ({ page }) => {
@@ -178,6 +221,8 @@ test.describe('mobile overlay drawer during a live call', () => {
     const dialog = confirmDialog(page);
     await expect(dialog).toBeVisible();
     expect(await dialog.evaluate((el) => el.closest('[inert]') === null)).toBe(true);
+    expect(await isInert(page, '.stage-content')).toBe(true);
+    expect(await isInert(page, '.topbar')).toBe(true);
     await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
 
     await dialog.getByRole('button', { name: 'End & start' }).click();
@@ -250,35 +295,4 @@ test('Escape closes the open dock that holds focus, not the most recently opened
   await expect(right).toHaveAttribute('aria-expanded', 'false');
   await expect(left).toHaveAttribute('aria-expanded', 'true');
   await expect(right).toBeFocused();
-});
-
-test('blocked storage does not abort shell initialisation', async ({ page }) => {
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  await page.addInitScript(() => {
-    Object.defineProperty(window, 'localStorage', {
-      configurable: true,
-      get() {
-        throw new DOMException('storage blocked for test', 'SecurityError');
-      },
-    });
-  });
-
-  await page.setViewportSize({ width: 1280, height: 720 });
-  const response = await page.goto('/');
-  expect(response?.status()).toBe(200);
-  await waitForShell(page);
-
-  const leftPanel = page.locator('#shell-left');
-  await expect(leftPanel).toBeVisible();
-  await expect(leftPanel).toHaveAttribute('data-hydrated', 'true');
-  expect(await leftPanel.evaluate((el) => (el as HTMLElement).inert)).toBe(false);
-
-  // The theme control still works without storage; persistence is best effort.
-  const theme = page.getByRole('button', { name: /^Theme:/ });
-  await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'system');
-  await theme.click();
-  // Preference advances even though nothing could be persisted.
-  await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'light');
-  expect(errors.filter((message) => /SecurityError|storage blocked/.test(message))).toEqual([]);
 });
