@@ -31,11 +31,18 @@
 
 {#if undoResult}
   <section class="memory-applied" aria-label="Exclusion undone" data-testid="exclusion-undone">
-    <h4>Exclusion undone</h4>
-    <p>
-      {undoResult.restored_ids.length} fact
-      {undoResult.restored_ids.length === 1 ? 'is' : 'are'} eligible for this conversation's context again.
-    </p>
+    <h4>{undoResult.restored_ids.length === 0 ? 'Undo made no fact eligible' : 'Exclusion undone'}</h4>
+    {#if undoResult.restored_ids.length === 0}
+      <p>
+        No fact became eligible for this conversation: the exclusion lineage still omits it from the next compiled
+        context. The stored fact is unchanged; nothing is claimed as restored.
+      </p>
+    {:else}
+      <p>
+        {undoResult.restored_ids.length} fact
+        {undoResult.restored_ids.length === 1 ? 'is' : 'are'} eligible for this conversation's context again.
+      </p>
+    {/if}
     <ContextDiff diff={undoResult.diff} title="Restored change" keptLabel="Still excluded" />
   </section>
 {/if}

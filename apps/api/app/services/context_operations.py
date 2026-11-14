@@ -664,17 +664,10 @@ async def _undo_operation(
     before = conversation.revision
     after = before + 1
     conversation.revision = after
-    still_excluded = frozenset(
-        (
-            await db.scalars(
-                select(ContextExclusion.memory_id).where(
-                    ContextExclusion.owner_id == owner_id,
-                    ContextExclusion.conversation_id == conversation_id,
-                    ContextExclusion.active.is_(True),
-                )
-            )
-        ).all()
-    )
+    # Same source as the compiler: raw exclusion rows miss correction lineage,
+    # so a superseded descendant of a still-excluded fact would be reported as
+    # restored while the next compiled request keeps omitting it.
+    still_excluded = await blocked_memory_ids(db, owner_id, conversation_id)
     diff = restore_diff(restored_ids, still_excluded, before, after)
     restore_id = str(uuid4())
     response = {
