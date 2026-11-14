@@ -153,29 +153,6 @@
     <h1 class="stage-heading">{words.conversationTitle}</h1>
   {/if}
 
-  {#if voiceErrorText}
-    <div class="alert" role="alert" data-code={voiceErrorCode}>
-      <p>{voiceErrorText}</p>
-      {#if voiceErrorCode.startsWith('MICROPHONE_')}
-        <button class="ghost-button" disabled={busy} onclick={onretrymic}>
-          {arabic ? 'إعادة محاولة الميكروفون' : 'Retry microphone'}
-        </button>
-      {/if}
-    </div>
-  {/if}
-
-  {#if connectionLost && live}
-    <div class="alert" role="status" data-code="CONNECTION_LOST">
-      <p>{arabic ? 'انقطع الاتصال.' : 'Connection lost.'}</p>
-      <button class="ghost-button" disabled={busy} onclick={onreconnect}>
-        {arabic ? 'إعادة الاتصال' : 'Reconnect'}
-      </button>
-      <button class="ghost-button" disabled={busy} onclick={onend}>
-        {arabic ? 'إنهاء' : 'End'}
-      </button>
-    </div>
-  {/if}
-
   {#if audioBlocked}
     <button class="primary-button" onclick={onenableaudio}>
       {arabic ? 'تشغيل الصوت' : 'Enable audio'}
@@ -219,6 +196,29 @@
       </p>
     {/if}
   </div>
+
+  {#if voiceErrorText}
+    <div class="stage-notice" role="status" data-code={voiceErrorCode}>
+      <span>{voiceErrorText}</span>
+      {#if voiceErrorCode.startsWith('MICROPHONE_')}
+        <button class="ghost-button" disabled={busy} onclick={onretrymic}>
+          {arabic ? 'إعادة محاولة الميكروفون' : 'Retry microphone'}
+        </button>
+      {/if}
+    </div>
+  {/if}
+
+  {#if connectionLost && live}
+    <div class="stage-notice" role="status" data-code="CONNECTION_LOST">
+      <span>{arabic ? 'انقطع الاتصال.' : 'Connection lost.'}</span>
+      <button class="ghost-button" disabled={busy} onclick={onreconnect}>
+        {arabic ? 'إعادة الاتصال' : 'Reconnect'}
+      </button>
+      <button class="ghost-button" disabled={busy} onclick={onend}>
+        {arabic ? 'إنهاء' : 'End'}
+      </button>
+    </div>
+  {/if}
 
   <div class="caption-bubble">
     <Transcript

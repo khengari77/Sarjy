@@ -138,7 +138,7 @@ test('two activations in the same tick create only one session', async ({ page }
     button?.click();
   });
 
-  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
   expect(sessionPosts).toBe(1);
 });
 

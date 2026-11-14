@@ -178,14 +178,28 @@ button:disabled {
   background: var(--status-error);
 }
 
-.alert {
+.stage-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 14px;
   margin: 0;
-  padding: 10px 14px;
-  border-radius: var(--radius-control);
-  border: 1px solid color-mix(in srgb, var(--orb-error) 45%, transparent);
-  background: color-mix(in srgb, var(--orb-error) 12%, transparent);
-  color: #ffd9dd;
-  max-width: 46ch;
+  max-width: 58ch;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.stage-notice .ghost-button {
+  min-height: 34px;
+  padding: 4px 12px;
+  font-size: 13px;
 }
 
 .orb-zone {
@@ -337,6 +351,10 @@ h1 {
 
 @media (max-width: 767px) {
   .voice-stage .caption-bubble .expand {
+    min-height: var(--min-tap-target);
+  }
+
+  .stage-notice .ghost-button {
     min-height: var(--min-tap-target);
   }
 
