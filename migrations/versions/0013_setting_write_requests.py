@@ -8,8 +8,8 @@ small owner-scoped key table: one row per committed settings request.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0012_setting_write_requests"
-down_revision = "0011_wordle"
+revision = "0013_setting_write_requests"
+down_revision = "0012_memory_subject"
 
 
 def upgrade():
