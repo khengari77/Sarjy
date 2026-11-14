@@ -26,10 +26,14 @@ export interface StageView {
  * presentation. `theme` is the shell's resolved theme (presentation only).
  */
 export function deriveStage(voice: VoiceState, arabic: boolean, overlay: OrbOverlay, theme: ThemeName): StageView {
-  const phase =
-    (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
-    phaseFromTransportStatus(voice.transportStatus) ??
-    'idle';
+  // A lost connection outranks whatever the agent or transport last reported:
+  // otherwise the orb keeps its previous colour while the UI says "Connection
+  // lost". `disconnected` owns the offline palette and the truthful label.
+  const phase = voice.connectionLost
+    ? 'disconnected'
+    : ((voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
+      phaseFromTransportStatus(voice.transportStatus) ??
+      'idle');
   const fatalError = voice.voiceErrorCode !== '' && isFatalVoiceError(voice.voiceErrorCode);
   return {
     phase,

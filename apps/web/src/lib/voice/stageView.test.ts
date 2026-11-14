@@ -24,4 +24,11 @@ describe('deriveStage', () => {
     expect(stage.presentation.effectivePhase).not.toBe('idle');
     expect(stage.presentation.enabledActions).toEqual(['retry']);
   });
+
+  it('shows the disconnected state when the connection is lost', () => {
+    const voice = { ...initialVoiceState(), agentState: 'speaking' as const, connectionLost: true };
+    const stage = deriveStage(voice, false, 'none', 'dark');
+    expect(stage.presentation.effectivePhase).toBe('disconnected');
+    expect(stage.presentation.statusLabel.en).toBe('Connection lost');
+  });
 });
