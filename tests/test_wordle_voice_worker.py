@@ -75,6 +75,15 @@ def test_say_rpc_rejects_agent_callers_and_invalid_payloads():
     assert session.calls == []
 
 
+def test_say_rpc_reports_a_session_that_is_not_ready():
+    class Closing(StrictSession):
+        async def say(self, text, **kwargs):
+            raise RuntimeError("AgentSession isn't running")
+
+    response = asyncio.run(perform_say(Closing(), say_data(), {"human": HUMAN}))
+    assert json.loads(response) == {"ok": False, "code": "SARJY_SAY_UNAVAILABLE"}
+
+
 def test_control_messages_only_flip_the_human_reveal_flag():
     reveal = RevealState()
     packet = SimpleNamespace(
