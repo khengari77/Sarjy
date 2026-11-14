@@ -143,9 +143,8 @@ describe('light-mode render palette gains depth without changing hues', () => {
     const min = Math.min(r, g, b);
     if (max === min) return 0;
     const delta = max - min;
-    const raw =
-      max === r ? ((g - b) / delta) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
-    return ((raw * 60) % 360 + 360) % 360;
+    const raw = max === r ? ((g - b) / delta) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+    return (((raw * 60) % 360) + 360) % 360;
   }
 
   it('leaves the dark render palette byte-for-byte unchanged', () => {

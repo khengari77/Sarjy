@@ -17,7 +17,10 @@ import { mixHexColors } from './render/colors';
 
 export type ThemeName = 'light' | 'dark';
 
-/** 4-6 blended colours per theme: 2 dominant + 1-3 accents. */export const ORB_PALETTES: Record<ThemeName, readonly string[]> = {
+/** 4-6 blended colours per theme: 2 dominant + 1-3 accents. */ export const ORB_PALETTES: Record<
+  ThemeName,
+  readonly string[]
+> = {
   light: ['#9cdbff', '#7cdcc7', '#ffd37e', '#ff9ab0', '#b5a0ff', '#d6f6ff'],
   dark: ['#548fff', '#3b6fff', '#9a74f7', '#baa7ff', '#57d7d2', '#f67c9f'],
 };

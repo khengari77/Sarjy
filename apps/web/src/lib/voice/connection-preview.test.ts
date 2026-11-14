@@ -149,10 +149,12 @@ describe('connecting microphone preview consent boundary', () => {
     expect(state.micLevel).toBeCloseTo(0.42);
     expect(fake.stop).not.toHaveBeenCalled();
 
-    rooms().at(-1)!.remoteParticipants.set('agent', {
-      isAgent: true,
-      attributes: { 'lk.agent.state': 'listening' },
-    });
+    rooms()
+      .at(-1)!
+      .remoteParticipants.set('agent', {
+        isAgent: true,
+        attributes: { 'lk.agent.state': 'listening' },
+      });
     rooms().at(-1)!.connectResolve!();
     await vi.advanceTimersByTimeAsync(150);
     await attempt;

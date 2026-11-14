@@ -24,7 +24,8 @@ export function createEnvelopeMeter(stream: MediaStream, options: MeterOptions =
   // the honest answer where there is no Web Audio API at all.
   const scope = typeof window === 'undefined' ? undefined : window;
   const AudioContextCtor =
-    scope?.AudioContext ?? (scope as unknown as { webkitAudioContext?: typeof AudioContext } | undefined)?.webkitAudioContext;
+    scope?.AudioContext ??
+    (scope as unknown as { webkitAudioContext?: typeof AudioContext } | undefined)?.webkitAudioContext;
   if (!AudioContextCtor) {
     return { level: () => 0, dispose: () => {} };
   }

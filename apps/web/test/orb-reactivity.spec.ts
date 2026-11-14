@@ -11,52 +11,55 @@ interface MicState {
 }
 
 async function installFakeMicrophone(page: Page, level = 0.5) {
-  await page.addInitScript(({ level }) => {
-    const state = { calls: 0, stops: 0, level, tracks: [] as { stop(): void }[] };
-    const track = {
-      stop() {
-        state.stops += 1;
-      },
-    };
-    state.tracks.push(track);
-    const stream = {
-      getTracks: () => state.tracks,
-      getAudioTracks: () => state.tracks,
-    };
-    Object.defineProperty(navigator, 'mediaDevices', {
-      configurable: true,
-      value: {
-        getUserMedia: async () => {
-          state.calls += 1;
-          return stream;
+  await page.addInitScript(
+    ({ level }) => {
+      const state = { calls: 0, stops: 0, level, tracks: [] as { stop(): void }[] };
+      const track = {
+        stop() {
+          state.stops += 1;
         },
-      },
-    });
-    class FakeAnalyser {
-      fftSize = 512;
-      smoothingTimeConstant = 0.6;
-      getFloatTimeDomainData(samples: Float32Array) {
-        samples.fill(state.level);
+      };
+      state.tracks.push(track);
+      const stream = {
+        getTracks: () => state.tracks,
+        getAudioTracks: () => state.tracks,
+      };
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: {
+          getUserMedia: async () => {
+            state.calls += 1;
+            return stream;
+          },
+        },
+      });
+      class FakeAnalyser {
+        fftSize = 512;
+        smoothingTimeConstant = 0.6;
+        getFloatTimeDomainData(samples: Float32Array) {
+          samples.fill(state.level);
+        }
+        connect() {}
+        disconnect() {}
       }
-      connect() {}
-      disconnect() {}
-    }
-    class FakeAudioContext {
-      createMediaStreamSource() {
-        return { connect() {}, disconnect() {} };
+      class FakeAudioContext {
+        createMediaStreamSource() {
+          return { connect() {}, disconnect() {} };
+        }
+        createAnalyser() {
+          return new FakeAnalyser();
+        }
+        close() {
+          return Promise.resolve();
+        }
       }
-      createAnalyser() {
-        return new FakeAnalyser();
-      }
-      close() {
-        return Promise.resolve();
-      }
-    }
-    Object.defineProperty(window, 'AudioContext', { configurable: true, value: FakeAudioContext });
-    Object.defineProperty(window, 'webkitAudioContext', { configurable: true, value: FakeAudioContext });
-    (window as unknown as { __mic: MicState }).__mic = state as unknown as MicState;
-    (window as unknown as { __micStream: MediaStream }).__micStream = stream as unknown as MediaStream;
-  }, { level });
+      Object.defineProperty(window, 'AudioContext', { configurable: true, value: FakeAudioContext });
+      Object.defineProperty(window, 'webkitAudioContext', { configurable: true, value: FakeAudioContext });
+      (window as unknown as { __mic: MicState }).__mic = state as unknown as MicState;
+      (window as unknown as { __micStream: MediaStream }).__micStream = stream as unknown as MediaStream;
+    },
+    { level },
+  );
 }
 
 async function micState(page: Page): Promise<MicState> {
@@ -161,8 +164,8 @@ test('in-call mic and output levels reach the orb render state', async ({ page }
     const runtime = new FakeRuntime();
     (window as unknown as { __speak: () => void }).__speak = () =>
       runtime.emit({ type: 'status', source: 'agent', text: 'speaking' });
-    (window as unknown as { __SARJY_VOICE_RUNTIME_FACTORY__?: () => unknown }).__SARJY_VOICE_RUNTIME_FACTORY__ =
-      () => runtime;
+    (window as unknown as { __SARJY_VOICE_RUNTIME_FACTORY__?: () => unknown }).__SARJY_VOICE_RUNTIME_FACTORY__ = () =>
+      runtime;
   });
 
   await page.goto('/');
@@ -196,7 +199,8 @@ async function measureLightOrb(page: Page, orb: Locator) {
       const pixel = (x: number, y: number) => {
         const index = (y * image.width + x) * 4;
         return [data[index], data[index + 1], data[index + 2]];
-      };      const background = pixel(4, 4);
+      };
+      const background = pixel(4, 4);
       const size = Math.min(box.width, box.height);
       const centreX = box.x + box.width / 2;
       const centreY = box.y + box.height / 2;

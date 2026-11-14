@@ -125,7 +125,8 @@ function beginAttempt(state: VoiceState) {
   state.connectionLost = false;
 }
 
-function markMicrophoneFailure(state: VoiceState, attempt: number, generation: number, error: unknown) {  if (attempt !== generation) return;
+function markMicrophoneFailure(state: VoiceState, attempt: number, generation: number, error: unknown) {
+  if (attempt !== generation) return;
   state.voiceErrorCode = errorCode(error);
   // A microphone refusal is not a transport attempt; return to idle so the
   // orb does not advertise a connection that never started.
