@@ -91,32 +91,20 @@ button:disabled {
   place-items: center;
 }
 
-.orb-ring {
-  position: absolute;
-  border-radius: 50%;
-  border: 1px solid var(--border-subtle);
-  pointer-events: none;
-}
-
-.orb-ring-inner {
-  width: min(350px, 88vw);
-  aspect-ratio: 1;
-  opacity: 0.24;
-}
-
-.orb-ring-outer {
-  width: min(420px, 100vw);
-  aspect-ratio: 1;
-  opacity: 0.14;
-}
-
+/* One soft, filled halo disc behind the orb: no outline rings. */
 .orb-glow {
   position: absolute;
-  width: 118%;
+  width: 124%;
   aspect-ratio: 1;
   border-radius: 50%;
   pointer-events: none;
-  background: radial-gradient(circle, color-mix(in srgb, var(--orb-glow-color) 18%, transparent), transparent 70%);
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--surface-elevated) 58%, transparent) 0%,
+    color-mix(in srgb, var(--surface-elevated) 42%, transparent) 52%,
+    color-mix(in srgb, var(--orb-glow-color) 9%, transparent) 74%,
+    transparent 100%
+  );
 }
 
 .orb-wrap > .orb-button {

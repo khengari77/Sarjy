@@ -161,8 +161,6 @@
 
   <div class="orb-zone">
     <div class="orb-wrap" style:--orb-glow-color={presentation.primaryColor}>
-      <span class="orb-ring orb-ring-inner" aria-hidden="true"></span>
-      <span class="orb-ring orb-ring-outer" aria-hidden="true"></span>
       <span class="orb-glow" aria-hidden="true"></span>
       <VoiceOrb
         {presentation}
