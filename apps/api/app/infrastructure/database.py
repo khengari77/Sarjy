@@ -32,6 +32,8 @@ class MemoryCaptureDecision(Base):
     target_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     target_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    lease_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    lease_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[str] = mapped_column(String(40))
     expires_at: Mapped[str] = mapped_column(String(40))
 

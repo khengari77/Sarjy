@@ -27,11 +27,14 @@ def upgrade():
         sa.Column("target_id", sa.String(36), nullable=True),
         sa.Column("target_version", sa.Integer(), nullable=True),
         sa.Column("result", sa.JSON(), nullable=True),
+        sa.Column("lease_id", sa.String(36), nullable=True),
+        sa.Column("lease_expires_at", sa.String(40), nullable=True),
         sa.Column("created_at", sa.String(40), nullable=False),
         sa.Column("expires_at", sa.String(40), nullable=False),
     )
     op.create_index("ix_memory_capture_decisions_owner_id", "memory_capture_decisions", ["owner_id"])
     op.create_index("ix_memory_capture_decisions_conversation_id", "memory_capture_decisions", ["conversation_id"])
+    op.create_index("ix_memory_capture_decisions_lease_id", "memory_capture_decisions", ["lease_id"])
 
     if op.get_bind().dialect.name == "postgresql":
         op.execute("ALTER TABLE memory_capture_decisions ENABLE ROW LEVEL SECURITY")
@@ -48,6 +51,7 @@ def upgrade():
 def downgrade():
     if op.get_bind().dialect.name == "postgresql":
         op.execute("DROP POLICY IF EXISTS memory_capture_decisions_private ON memory_capture_decisions")
+    op.drop_index("ix_memory_capture_decisions_lease_id", table_name="memory_capture_decisions")
     op.drop_index("ix_memory_capture_decisions_conversation_id", table_name="memory_capture_decisions")
     op.drop_index("ix_memory_capture_decisions_owner_id", table_name="memory_capture_decisions")
     op.drop_table("memory_capture_decisions")

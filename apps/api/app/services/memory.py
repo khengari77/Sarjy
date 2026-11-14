@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from math import isfinite, sqrt
@@ -17,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, a
 from sqlalchemy.pool import StaticPool
 
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
-from app.domain.memory_capture import parse_capture
+from app.domain.memory_capture import resolve_subject
 from app.infrastructure.database import Memory, MemoryWriteRequest, Turn, now
 from app.infrastructure.upsert import insert_ignore
 from app.services.authorization import owned_conversation, owned_memory
@@ -55,6 +56,9 @@ def cosine_distance(left, right):
 
 class Embedder(Protocol):
     async def embed(self, db: AsyncSession, text: str) -> tuple[float, ...]: ...
+
+
+LeaseGuard = Callable[[AsyncSession], Awaitable[None]]
 
 
 class EmbeddingFailure(HTTPException):
@@ -204,9 +208,11 @@ class MemoryService:
         async with self.sessions() as db:
             return await owned_memory(db, owner_id, memory_id)
 
-    async def create_memory(self, owner_id, conversation_id, source_turn_id, content, idempotency_key):
+    async def create_memory(self, owner_id, conversation_id, source_turn_id, content, idempotency_key, *, guard=None):
         self._require_isolated_caller()
-        return await self._write(owner_id, conversation_id, source_turn_id, content, idempotency_key, None, None)
+        return await self._write(
+            owner_id, conversation_id, source_turn_id, content, idempotency_key, None, None, guard=guard
+        )
 
     async def correct_memory(
         self,
@@ -218,6 +224,7 @@ class MemoryService:
         *,
         source_turn_id=None,
         conversation_id=None,
+        guard=None,
     ):
         self._require_isolated_caller()
         previous = await self.get_memory(owner_id, memory_id)
@@ -229,6 +236,7 @@ class MemoryService:
             idempotency_key,
             memory_id,
             expected_version,
+            guard=guard,
         )
 
     async def _claim(
@@ -335,6 +343,8 @@ class MemoryService:
         key,
         previous_id,
         expected_version,
+        *,
+        guard=None,
     ):
         async with self.sessions() as db, db.begin():
             # Short row-local write lock (also effective on SQLite), never held across inference.
@@ -357,6 +367,10 @@ class MemoryService:
                 )
                 if source is None:
                     raise HTTPException(404, detail={"code": "SOURCE_TURN_NOT_FOUND"})
+            if guard is not None:
+                # Fenced in this transaction: a worker whose lease was taken
+                # over cannot commit the memory row it protects.
+                await guard(db)
             version = 1
             if previous_id is not None:
                 changed = await db.execute(
@@ -372,11 +386,11 @@ class MemoryService:
                 if changed.rowcount != 1:
                     raise HTTPException(409, detail={"code": "MEMORY_VERSION_CONFLICT"})
                 version = expected_version + 1
-            parsed = parse_capture(content)
             memory = Memory(
                 id=str(uuid4()),
                 owner_id=owner_id,
-                subject=parsed.subject if parsed is not None else None,
+                # New rows always resolve a subject; only pre-migration rows stay NULL.
+                subject=resolve_subject(content),
                 content=content,
                 embedding=list(validate_embedding(claim["embedding"])),
                 embedding_model=EMBEDDING_MODEL,
@@ -393,7 +407,9 @@ class MemoryService:
             row.state, row.result, row.updated_at = "completed", asdict(result), now()
             return result
 
-    async def _write(self, owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version):
+    async def _write(
+        self, owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version, *, guard=None
+    ):
         self._require_isolated_caller()
         _validate_write(content, key, previous_id, expected_version)
         if (
@@ -433,6 +449,7 @@ class MemoryService:
                 key,
                 previous_id,
                 expected_version,
+                guard=guard,
             )
         except HTTPException as exc:
             if exc.status_code in {400, 403, 404, 409, 422}:

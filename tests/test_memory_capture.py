@@ -1573,3 +1573,284 @@ def test_worker_refuses_consent_for_an_unprompted_revision():
 
     asyncio.run(run())
     assert paths == ["/internal/agent/turn/start"]
+
+
+def test_new_memories_always_carry_a_resolved_subject(tmp_path):
+    """Every new row must have a subject; NULL rows are legacy-only."""
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        for index, text in enumerate(("Remember to renew the passport", "I prefer tea", "I am allergic to peanuts")):
+            proposal = turn(client, headers, text, f"subject-{index}").json()["memory_proposal"]
+            saved = client.post(
+                "/internal/agent/memory/confirm",
+                headers=headers,
+                json={"token": proposal["token"], "decision": "save"},
+            )
+            assert saved.status_code == 200, saved.text
+
+        # The REST adapter can store arbitrary content that the recognizer ignores.
+        arbitrary = client.post(
+            f"/v1/conversations/{chat}/memories",
+            json={"content": "a plain note without a first-person slot", "idempotency_key": "arbitrary-note"},
+        )
+        assert arbitrary.status_code == 201, arbitrary.text
+
+    with closing(sqlite3.connect(file)) as db, db:
+        subjects = [row[0] for row in db.execute("SELECT subject FROM memories ORDER BY created_at")]
+    assert len(subjects) == 4
+    assert all(isinstance(subject, str) and subject for subject in subjects), subjects
+
+
+def test_advisory_subject_lock_is_transaction_scoped(monkeypatch):
+    """The lock is pg_advisory_xact_lock inside a transaction, never session-level."""
+    import asyncio
+    import inspect
+    from types import SimpleNamespace
+
+    from app.services import memory_capture
+
+    events = []
+
+    class _Transaction:
+        async def __aenter__(self):
+            events.append("begin")
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            events.append("rollback" if exc_type is not None else "commit")
+
+    class _LockSession:
+        async def __aenter__(self):
+            events.append("checkout")
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            events.append("return-to-pool")
+
+        def begin(self):
+            return _Transaction()
+
+        async def execute(self, statement, parameters):
+            events.append(("lock", str(statement), parameters["key"]))
+
+    class _Bind:
+        dialect = SimpleNamespace(name="postgresql")
+        engine = object()
+
+    def _lock_session_factory(*args, **kwargs):
+        return _LockSession
+
+    monkeypatch.setattr(memory_capture, "async_sessionmaker", _lock_session_factory)
+
+    async def run():
+        db = SimpleNamespace(bind=_Bind())
+        async with memory_capture._advisory_subject_lock(db, "owner", "location"):
+            events.append("write")
+
+    asyncio.run(run())
+    lock_index = events.index("begin") + 1
+    assert events[lock_index] == ("lock", "SELECT pg_advisory_xact_lock(hashtext(:key))", "memcap:owner:location")
+    assert events.index("commit") > events.index("write")
+    assert events[-1] == "return-to-pool", "the pooled connection must not be returned while holding the lock"
+
+    events.clear()
+
+    async def run_failure():
+        db = SimpleNamespace(bind=_Bind())
+        with pytest.raises(RuntimeError):
+            async with memory_capture._advisory_subject_lock(db, "owner", "location"):
+                raise RuntimeError("effect failed")
+
+    asyncio.run(run_failure())
+    assert events[-2:] == ["rollback", "return-to-pool"]
+
+    source = inspect.getsource(memory_capture)
+    assert "pg_advisory_xact_lock" in source
+    assert "pg_advisory_lock" not in source, "session-level advisory locks leak across pooled connections"
+    assert "pg_advisory_unlock" not in source, "a transaction-scoped lock must not be manually unlocked"
+
+
+def test_memory_write_is_aborted_after_a_lease_takeover(tmp_path, monkeypatch):
+    asyncio, open_store, proposal, decision, rows, MemoryCaptureError = _capture_harness(tmp_path)
+
+    async def run():
+        from app.infrastructure.database import MemoryCaptureDecision
+        from app.services import memory_capture
+
+        engine, sessions = await open_store("lease.db", ["I prefer tea"])
+        embedder = FakeEmbedder()
+        request = proposal("I prefer tea", 0)
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = memory_capture._require_lease
+        calls = {"count": 0}
+        # The in-process subject lock models one worker serializing itself; a
+        # takeover comes from a different process, so give each call its own.
+        monkeypatch.setattr(memory_capture, "_subject_lock", lambda owner_id, subject: asyncio.Lock())
+
+        async def gated_require(db, payload, lease_id):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                entered.set()
+                await release.wait()
+            return await original(db, payload, lease_id)
+
+        monkeypatch.setattr(memory_capture, "_require_lease", gated_require)
+        try:
+            stalled = asyncio.create_task(decision(sessions, embedder, request["token"], "save"))
+            await entered.wait()
+
+            # The stalled worker's lease expires and a retry takes it over.
+            async with sessions() as db:
+                row = await db.get(MemoryCaptureDecision, (request["confirmation_id"], 1))
+                row.lease_expires_at = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+                await db.commit()
+            kind, value = await decision(sessions, embedder, request["token"], "save")
+            assert kind == "ok" and value["status"] == "saved", getattr(value, "code", None)
+
+            release.set()
+            kind, value = await stalled
+            assert kind == "error" and isinstance(value, MemoryCaptureError)
+            assert value.code == "MEMORY_LEASE_LOST"
+            memories, receipts = await rows(sessions)
+            assert memories == [("I prefer tea", 1, "active")]
+            assert receipts == [(1, "save", "saved", None, None)]
+            assert embedder.calls == ["I prefer tea"], "the stale worker must not embed or write"
+        finally:
+            release.set()
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_taken_over_lease_cannot_record_a_terminal_receipt(tmp_path):
+    asyncio, open_store, proposal, decision, rows, MemoryCaptureError = _capture_harness(tmp_path)
+
+    async def run():
+        from app.domain.context_operations import verify_proposal
+        from app.infrastructure.database import MemoryCaptureDecision
+        from app.services import memory_capture
+        from sqlalchemy import update
+
+        engine, sessions = await open_store("receipt-lease.db", [])
+        request = proposal("I prefer tea", 0)
+        payload = verify_proposal(request["token"], SECRET)
+        try:
+            async with sessions() as db:
+                claim = await memory_capture._claim_decision(
+                    db,
+                    payload=payload,
+                    owner_id="owner",
+                    conversation_id="chat",
+                    token=request["token"],
+                    decision="save",
+                )
+                assert claim is not None and claim.replay is None
+                # A takeover replaces the lease before this worker records.
+                await db.execute(
+                    update(MemoryCaptureDecision)
+                    .where(
+                        MemoryCaptureDecision.confirmation_id == payload["confirmation_id"],
+                        MemoryCaptureDecision.revision == 1,
+                    )
+                    .values(lease_id="taken-over")
+                )
+                await db.commit()
+                with pytest.raises(MemoryCaptureError) as raised:
+                    await memory_capture._record_decision(
+                        db,
+                        payload=payload,
+                        owner_id="owner",
+                        conversation_id="chat",
+                        token=request["token"],
+                        decision="save",
+                        outcome="saved",
+                        lease_id=claim.lease_id,
+                    )
+                assert raised.value.code == "MEMORY_LEASE_LOST"
+                receipt = await db.get(MemoryCaptureDecision, (payload["confirmation_id"], 1))
+                assert receipt.outcome == "applying" and receipt.lease_id == "taken-over"
+            memories, _ = await rows(sessions)
+            assert memories == []
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_memory_write_transaction_refuses_a_lost_lease(tmp_path):
+    asyncio, open_store, proposal, decision, rows, MemoryCaptureError = _capture_harness(tmp_path)
+
+    async def run():
+        from app.infrastructure.database import Memory
+        from app.services.memory import MemoryService
+        from sqlalchemy import select
+
+        engine, sessions = await open_store("guard.db", [])
+
+        async def lost(_db):
+            raise MemoryCaptureError("MEMORY_LEASE_LOST", 409)
+
+        try:
+            async with sessions() as db:
+                service = MemoryService(db, FakeEmbedder())
+                with pytest.raises(MemoryCaptureError):
+                    await service.create_memory("owner", "chat", None, "I prefer tea", "guard-key", guard=lost)
+            async with sessions() as db:
+                assert await db.scalar(select(Memory).where(Memory.owner_id == "owner")) is None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_decision_lease_reads_are_owner_scoped(tmp_path):
+    asyncio, open_store, proposal, decision, rows, MemoryCaptureError = _capture_harness(tmp_path)
+
+    async def run():
+        from app.domain.context_operations import verify_proposal
+        from app.services import memory_capture
+
+        engine, sessions = await open_store("owner-scope.db", [])
+        request = proposal("I prefer tea", 0)
+        payload = verify_proposal(request["token"], SECRET)
+        try:
+            async with sessions() as db:
+                claim = await memory_capture._claim_decision(
+                    db,
+                    payload=payload,
+                    owner_id="owner",
+                    conversation_id="chat",
+                    token=request["token"],
+                    decision="save",
+                )
+                assert claim is not None and claim.lease_id is not None
+                assert await memory_capture._decision(db, payload["confirmation_id"], 1, "someone-else") is None, (
+                    "another owner must not see this decision"
+                )
+                with pytest.raises(MemoryCaptureError) as raised:
+                    await memory_capture._require_lease(db, {**payload, "owner_id": "someone-else"}, claim.lease_id)
+                assert raised.value.code == "MEMORY_LEASE_LOST"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_lease_expiry_is_compared_as_time_not_text():
+    from app.services.leases import lease_expired, lease_expiry
+
+    now = datetime.now(UTC)
+    # Timestamps have variable microsecond precision, so expiry is decided by
+    # parsing them as instants; a non-ISO value must fail closed (string
+    # ordering would silently treat it as live).
+    assert lease_expired((now - timedelta(seconds=60)).replace(microsecond=0).isoformat()) is True
+    assert lease_expired((now + timedelta(seconds=60)).replace(microsecond=0).isoformat()) is False
+    assert lease_expired((now + timedelta(seconds=60)).isoformat()) is False
+    assert lease_expired(lease_expiry()) is False
+    assert lease_expired(lease_expiry(seconds=-1)) is True
+    assert lease_expired(None) is True
+    assert lease_expired("not-a-timestamp") is True

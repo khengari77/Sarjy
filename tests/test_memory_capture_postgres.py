@@ -365,3 +365,42 @@ def test_postgres_concurrent_replace_and_discard_claim_one_clarification(monkeyp
             await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_postgres_subject_lock_releases_at_transaction_boundary():
+    """pg_advisory_xact_lock is held by one transaction and released by its commit."""
+    url = os.environ.get("TEST_MEMORY_POSTGRES_URL")
+    if not url:
+        pytest.skip("TEST_MEMORY_POSTGRES_URL requires disposable migrated pgvector PostgreSQL")
+
+    async def run():
+        from app.services import memory_capture
+        from sqlalchemy import text
+
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        owner = f"lock-{uuid4()}"
+        try:
+            async with (
+                sessions() as holder,
+                memory_capture._advisory_subject_lock(holder, owner, "location"),
+                sessions() as probe,
+            ):
+                held = await probe.scalar(
+                    text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                    {"key": f"memcap:{owner}:location"},
+                )
+                assert held is False, "the locked transaction must block another worker"
+                await probe.rollback()
+            # The helper's transaction committed; the lock is gone, not leaked.
+            async with sessions() as probe:
+                free = await probe.scalar(
+                    text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                    {"key": f"memcap:{owner}:location"},
+                )
+                assert free is True, "a session-level lock would still be held here"
+                await probe.rollback()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())

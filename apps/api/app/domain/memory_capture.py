@@ -5,6 +5,7 @@ produce a candidate.  The result is data, never a write: the service shell owns
 authorization, consent, embedding reservations and durable claims.
 """
 
+import hashlib
 import re
 from dataclasses import dataclass
 
@@ -141,6 +142,24 @@ def _negated(text: str) -> tuple[str, str] | None:
     return None
 
 
+def _explicit_subject(content: str) -> str:
+    """A stable, non-null subject for a remembered fact with no recognized slot."""
+    return "explicit:" + hashlib.sha256(content.casefold().encode()).hexdigest()[:32]
+
+
+def resolve_subject(content: str) -> str:
+    """Resolve the subject a new memory row must carry.
+
+    Only rows written before the subject column (or arbitrary content that the
+    recognizer ignores) may be NULL. New captures always resolve to a stable
+    slot so they can never silently fall back into the legacy NULL scan.
+    """
+    capture = parse_capture(content)
+    if capture is not None and capture.subject:
+        return capture.subject
+    return _explicit_subject(_normalize(content) or content)
+
+
 def _capture_for(content: str, *, explicit: bool) -> MemoryCapture | None:
     negated_slot = _negated(content)
     slot = _ordinary(content) or negated_slot
@@ -149,7 +168,12 @@ def _capture_for(content: str, *, explicit: bool) -> MemoryCapture | None:
         if _NEGATION_PREFIX.match(content):
             return None
         return MemoryCapture(
-            text=content, subject=None, value=content.casefold(), explicit=explicit, replaces=replaces, negated=False
+            text=content,
+            subject=_explicit_subject(content),
+            value=content.casefold(),
+            explicit=explicit,
+            replaces=replaces,
+            negated=False,
         )
     subject, value = slot
     return MemoryCapture(
