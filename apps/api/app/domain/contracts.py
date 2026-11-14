@@ -351,7 +351,8 @@ class SetSpeakingSpeed(Contract):
 
 class SelectApprovedVoice(Contract):
     kind: Literal["SelectApprovedVoice"] = "SelectApprovedVoice"
-    voice_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,100}$")
+    # ``None`` is the explicit clear: fall back to the configured server default.
+    voice_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,100}$")
 
 
 class ShowConversationHistory(Contract):
