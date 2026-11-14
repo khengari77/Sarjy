@@ -55,6 +55,15 @@ facts without candidates/exclusion annotations and disables exclusion actions.
   changes the memory revision, and when the Memories tab is (re)opened while
   the list is stale — a voice save made while the tab was hidden shows up
   without switching conversations.
+- `MemoryPanel.svelte` is the view; `explorer.svelte.ts` owns the
+  fetch/preview/confirm/undo lifecycle. Every request captures the conversation
+  it was issued for, drops a result that resolves after a switch, and a switch
+  resets transient state (preview, confirmation, busy flags).
+- "Exclude…" is only enabled on the current (`active`) version, because the
+  preview endpoint refuses any other status.
+- A repeated confirm for the same fact in the same conversation replays the
+  earlier operation instead of writing a second `context_exclusions` row, so
+  one Undo clears it.
 - Search uses the existing `POST /v1/memories/search`; results are labelled
   approximate and "matched search", never conflated with actual model input.
 - "Exclude…" calls `POST /v1/conversations/{id}/context/exclusions` to sign a
@@ -72,15 +81,20 @@ facts without candidates/exclusion annotations and disables exclusion actions.
 
 ## Deferred (recorded on #122)
 
-- Operation results are not yet fenced to their originating conversation: a
-  confirmation that resolves after a conversation switch, and a retry that
-  reuses a fresh idempotency key after an unknown outcome. Repro and intended
-  fix are in the PR body.
+- **Fresh idempotency key per retry.** A retry after an unknown outcome gets a
+  new key, so the server cannot replay the earlier receipt. The copy is honest
+  (unknown, not "nothing changed"), but one intent should own one key.
+- **Eager list fetch.** `GET /v1/memories` runs on page load because the drawer
+  is always mounted, even though the Memories tab is closed. Load lazily on
+  first tab open.
+- **"Money-related fact" is a label, not a badge.** It is derived server-side
+  from `kind`, and there is no numeric budget badge to fix.
 
 ## Tests
 
 ```sh
 pnpm --dir apps/web test:unit -- src/lib/memory/memory.test.ts
+pnpm --dir apps/web exec playwright test test/memory-panel.spec.ts
 pnpm --dir apps/web check
 pnpm --dir apps/web lint
 ```

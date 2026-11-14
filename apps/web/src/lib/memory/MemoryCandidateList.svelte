@@ -84,8 +84,12 @@
           <div class="memory-row-actions">
             <button
               class="ghost-button"
-              disabled={!canExclude}
-              title={canExclude ? 'Review before excluding' : 'Select a conversation first'}
+              disabled={!canExclude || row.item.status !== 'active'}
+              title={row.item.status !== 'active'
+                ? 'Only the current version can be excluded'
+                : canExclude
+                  ? 'Review before excluding'
+                  : 'Select a conversation first'}
               onclick={() => onexclude(row)}
             >
               Exclude…

@@ -623,3 +623,50 @@ def test_ordinary_facts_are_not_classified_as_budget(tmp_path):
         kinds = {item["content"]: item["kind"] for item in listed["items"]}
         assert kinds["I prefer tea over coffee"] == "memory"
         assert kinds["Budget 500 USD for the trip"] == "budget"
+
+
+def test_repeated_confirm_does_not_duplicate_active_exclusions(tmp_path):
+    """A double confirm yields one exclusion row and one Undo clears it."""
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        created = client.post(
+            f"/v1/conversations/{chat}/memories",
+            json={"content": "Trip to Tripoli from 1 to 5 May", "idempotency_key": "dup-seed"},
+        )
+        assert created.status_code == 201, created.text
+        memory_id = created.json()["id"]
+
+        first_proposal = client.post(f"/v1/conversations/{chat}/context/exclusions", json={"memory_ids": [memory_id]})
+        assert first_proposal.status_code == 200, first_proposal.text
+        first = confirm(client, chat, first_proposal.json(), "dup-first")
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        assert first_body["idempotent"] is False
+
+        second_proposal = client.post(f"/v1/conversations/{chat}/context/exclusions", json={"memory_ids": [memory_id]})
+        assert second_proposal.status_code == 200, second_proposal.text
+        second = confirm(client, chat, second_proposal.json(), "dup-second")
+        assert second.status_code == 200, second.text
+        second_body = second.json()
+        assert second_body["idempotent"] is True
+        assert second_body["operation_id"] == first_body["operation_id"]
+
+        with closing(sqlite3.connect(file)) as db:
+            active = db.execute("SELECT count(*) FROM context_exclusions WHERE active=1").fetchone()[0]
+        assert active == 1, "a repeated confirm must not add a second active exclusion"
+
+        restored = client.post(
+            f"/v1/conversations/{chat}/context/undo",
+            json={
+                "operation_id": first_body["operation_id"],
+                "expected_revision": first_body["revision_after"],
+                "idempotency_key": "dup-undo",
+            },
+        )
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["restored_ids"] == [memory_id]
+        with closing(sqlite3.connect(file)) as db:
+            active = db.execute("SELECT count(*) FROM context_exclusions WHERE active=1").fetchone()[0]
+        assert active == 0

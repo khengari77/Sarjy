@@ -25,6 +25,21 @@ const FACTS = [
     included_in_conversation: true,
   },
   {
+    id: 'mem-old-version',
+    content: 'Lives in Riyadh (corrected)',
+    kind: 'memory',
+    version: 1,
+    status: 'superseded',
+    source_conversation_id: 'c1',
+    source_turn_id: 'turn-0',
+    supersedes_id: null,
+    created_at: '2026-10-30T09:00:00Z',
+    updated_at: '2026-10-30T09:00:00Z',
+    excluded_in_conversation: false,
+    candidate_eligible: false,
+    included_in_conversation: false,
+  },
+  {
     id: 'mem-excluded',
     content: 'Lives in Riyadh',
     kind: 'memory',
@@ -190,7 +205,7 @@ test('the memory explorer mounts in the drawer, scopes the list to the conversat
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('Prefers tea over coffee');
   await expect(panel).toContainText('Lives in Riyadh');
-  await expect(panel).toContainText('2 shown of 2 stored facts');
+  await expect(panel).toContainText('3 shown of 3 stored facts');
 
   // The inclusion projection is the acceptance point: one fact is in the next
   // compiled context, one is already excluded from it.
@@ -201,6 +216,12 @@ test('the memory explorer mounts in the drawer, scopes the list to the conversat
   await expect(panel.locator('[data-included="true"]')).toContainText('Candidate');
   await expect(panel.locator('[data-excluded="true"]')).toContainText('Excluded');
   await expect(panel).not.toContainText('Included in the next compiled context');
+
+  // A superseded row must not offer a control the API refuses (it requires
+  // status == "active"), otherwise excluding it 404s while the row is on screen.
+  const staleRow = panel.locator('li.memory-row', { hasText: 'Lives in Riyadh (corrected)' });
+  await expect(staleRow.getByRole('button', { name: 'Exclude…' })).toBeDisabled();
+  await expect(panel.locator('[data-included="true"]').getByRole('button', { name: 'Exclude…' })).toBeEnabled();
 
   // Owner scoping is enforced by the API; the UI must at least ask for the
   // selected conversation rather than an unscoped dump.

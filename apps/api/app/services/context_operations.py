@@ -180,6 +180,36 @@ def _digest(*parts: str) -> str:
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 
+async def _already_excluded_operation(
+    db: AsyncSession, owner_id: str, conversation_id: str, excluded_ids
+) -> ContextOperation | None:
+    """The prior operation that excluded every requested fact, if any.
+
+    Returns ``None`` unless *all* ids already have an active exclusion row and
+    those rows belong to one operation, so a partial overlap still writes the
+    missing exclusions instead of silently skipping them.
+    """
+    wanted = sorted(excluded_ids)
+    if not wanted:
+        return None
+    rows = (
+        await db.scalars(
+            select(ContextExclusion).where(
+                ContextExclusion.owner_id == owner_id,
+                ContextExclusion.conversation_id == conversation_id,
+                ContextExclusion.memory_id.in_(wanted),
+                ContextExclusion.active.is_(True),
+            )
+        )
+    ).all()
+    if {row.memory_id for row in rows} != set(wanted):
+        return None
+    operation_ids = {row.operation_id for row in rows}
+    if len(operation_ids) != 1:
+        return None
+    return await db.get(ContextOperation, operation_ids.pop())
+
+
 def _operation_key(owner_id: str, conversation_id: str, kind: str, idempotency_key: str) -> str:
     return _digest("context-operation", owner_id, conversation_id, kind, idempotency_key)
 
@@ -395,6 +425,18 @@ async def confirm_proposal(
         keep=keep_authority,
         exclude=exclude_authority,
     )
+
+    # A repeated confirm must not write a second exclusion row: the table has no
+    # unique constraint (undo reactivates rather than deletes), so a double
+    # click would otherwise leave an active duplicate that a single Undo cannot
+    # clear. When every requested fact is already excluded in this
+    # conversation, replay the operation that excluded it. Undo then targets
+    # the row that actually exists.
+    prior = await _already_excluded_operation(db, owner_id, conversation_id, excluded_ids)
+    if prior is not None:
+        response = dict((prior.payload or {}).get("response") or {})
+        response["idempotent"] = True
+        return response
 
     before = conversation.revision
     after = before + 1
