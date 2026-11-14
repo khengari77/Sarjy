@@ -3,8 +3,8 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0013_reviewer_access"
-down_revision = "0012_memory_subject"
+revision = "0014_reviewer_access"
+down_revision = "0013_setting_write_requests"
 
 TABLES = (
     "reviewer_invitations",
