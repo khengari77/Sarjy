@@ -13,6 +13,7 @@ export function safeNextPath(value: string | null | undefined): string {
     if (resolved.origin !== 'https://sarjy.invalid') return '/';
     if (!resolved.pathname.startsWith('/') || resolved.pathname.startsWith('//')) return '/';
     if (resolved.pathname === '/logout') return '/';
+    resolved.searchParams.delete('token');
     return `${resolved.pathname}${resolved.search}${resolved.hash}`;
   } catch {
     return '/';

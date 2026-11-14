@@ -82,7 +82,7 @@ def test_built_web_requires_review_token_before_proxying():
                 assert 'id="access-token"' in door.text
                 assert 'id="voice-stage"' not in door.text
                 assert "set-cookie" not in door.headers
-                assert door.headers["referrer-policy"] == "no-referrer"
+                assert door.headers["referrer-policy"] == "same-origin"
                 assert door.headers["cache-control"] == "no-store"
 
                 for path in ("/api/v1/conversations", "/api/v1/demo-session"):

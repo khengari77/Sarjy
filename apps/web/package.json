@@ -11,7 +11,7 @@
     "format:check": "prettier --check .",
     "test:unit": "svelte-kit sync && vitest run",
     "test:browser": "playwright test",
-    "test:auth": "playwright test --config playwright.auth.config.ts && playwright test --config playwright.auth-expired.config.ts",
+    "test:auth": "playwright test --config playwright.auth.config.ts && playwright test --config playwright.auth-expired.config.ts && playwright test --config playwright.auth-prod.config.ts",
     "test:smoke-setup": "node --test scripts/live-smoke-setup.test.mjs",
     "test:deadline": "playwright test --config playwright.deadline.config.ts",
     "test:proxy": "playwright test --config playwright.proxy.config.ts",

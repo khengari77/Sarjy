@@ -33,7 +33,6 @@ export function tokenKey(token: string): string {
 }
 
 export function createAccessStateStore(options: { path: string; now?: () => number }): AccessStateStore {
-  let initialised = false;
   let warnedMissing = false;
   let tail: Promise<unknown> = Promise.resolve();
 
@@ -51,18 +50,18 @@ export function createAccessStateStore(options: { path: string; now?: () => numb
       const raw = await readFile(options.path, 'utf8');
       const parsed: unknown = JSON.parse(raw);
       if (!isAccessState(parsed)) throw new Error('invalid state shape');
-      initialised = true;
       return parsed;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT' && !warnedMissing) {
-        warnedMissing = true;
-        console.warn('review access: state file missing; usage counters start at zero (expiry still applies)');
-      } else if (code !== 'ENOENT' && !initialised) {
-        console.warn('review access: state file unreadable; usage counters start at zero (expiry still applies)');
+      if (code === 'ENOENT') {
+        if (!warnedMissing) {
+          warnedMissing = true;
+          console.warn('review access: state file missing; usage counters start at zero (expiry still applies)');
+        }
+        return {};
       }
-      initialised = true;
-      return {};
+      console.error('review access: state file unreadable or corrupt; refusing to consume a use (fail closed)');
+      throw new Error('REVIEW_ACCESS_STATE_UNREADABLE');
     }
   }
 

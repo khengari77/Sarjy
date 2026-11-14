@@ -35,7 +35,7 @@ test('unauthenticated / is a token door with no app content or cookie', async ()
   expect(body).not.toContain('id="voice-stage"');
   expect(body).not.toContain('Conversations');
   expect(response.headers.get('set-cookie')).toBeNull();
-  expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+  expect(response.headers.get('referrer-policy')).toBe('same-origin');
   expect(response.headers.get('cache-control')).toBe('no-store');
 });
 
@@ -137,6 +137,17 @@ test('next is restricted to same-origin paths', async () => {
   expect(response.headers.get('location')).toBe('/');
 });
 
+test('a token on a non-root path never appears in the next URL', async () => {
+  const response = await fetch(`${BASE}/some/page?token=${TOKEN}&keep=1`, {
+    redirect: 'manual',
+    headers: { accept: 'text/html' },
+  });
+  expect(response.status).toBe(303);
+  const location = response.headers.get('location') ?? '';
+  expect(location).not.toContain(TOKEN);
+  expect(location).toBe(`/?next=${encodeURIComponent('/some/page?keep=1')}`);
+});
+
 test('logout clears the session and returns to the door', async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -169,4 +180,14 @@ test('the door works with JavaScript disabled', async ({ browser }) => {
   await expect(page).toHaveURL(`${BASE}/`);
   await expect(page.locator('#voice-stage')).toBeVisible();
   await context.close();
+});
+
+test('repeated failures return a distinct wait message', async () => {
+  let body = '';
+  for (let attempt = 0; attempt < 14; attempt += 1) {
+    const response = await exchange('definitely-wrong');
+    body = await response.text();
+    if (body.includes('Too many attempts.')) break;
+  }
+  expect(body).toContain('Too many attempts. Try again shortly.');
 });

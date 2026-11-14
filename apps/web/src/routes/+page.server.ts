@@ -9,17 +9,16 @@ import { safeNextPath } from '../lib/auth/redirect';
  */
 export const actions: Actions = {
   default: async ({ request, cookies, url, getClientAddress, setHeaders }) => {
-    setHeaders({ 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
+    setHeaders({ 'cache-control': 'no-store' });
     if (!protectedMode) throw redirect(303, '/');
 
     const form = await request.formData();
     const submitted = form.get('token');
     const next = safeNextPath(form.get('next')?.toString() ?? url.searchParams.get('next'));
     const address = getClientAddress();
-    const failure = { error: true, next };
-    const reject = () => fail(400, failure);
+    const reject = (blocked = false) => fail(blocked ? 429 : 400, { error: true, blocked, next });
 
-    if (accessFailures.blocked(address)) return reject();
+    if (accessFailures.blocked(address)) return reject(true);
     const candidate = typeof submitted === 'string' ? submitted.trim() : '';
     if (!candidate) {
       accessFailures.fail(address);
@@ -28,14 +27,13 @@ export const actions: Actions = {
 
     const result = await redeem(candidate);
     if (!result.ok) {
-      accessFailures.fail(address);
+      // Missing storage is not a failed guess; never spend the visitor's
+      // failure budget on an internal outage.
+      if (result.reason !== 'unavailable') accessFailures.fail(address);
       return reject();
     }
     accessFailures.reset(address);
-    if (!issueSession(cookies, result)) {
-      accessFailures.fail(address);
-      return reject();
-    }
+    if (!issueSession(cookies, result)) return reject();
     throw redirect(303, next);
   },
 };

@@ -13,6 +13,7 @@ describe('safeNextPath', () => {
     ['javascript:alert(1)', '/'],
     ['/ok\\https://evil.example', '/'],
     ['/logout', '/'],
+    ['/chat?token=abc&voice=1', '/chat?voice=1'],
   ])('resolves %s to %s', (input, expected) => {
     expect(safeNextPath(input)).toBe(expected);
   });

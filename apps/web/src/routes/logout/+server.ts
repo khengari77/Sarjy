@@ -1,8 +1,14 @@
-import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { clearSession } from '../../lib/auth/guard.server';
 
-export const POST: RequestHandler = ({ cookies }) => {
+/** Clear the reviewer session. Both methods are safe to repeat. */
+const logout: RequestHandler = ({ cookies }) => {
   clearSession(cookies);
-  throw redirect(303, '/');
+  return new Response(null, {
+    status: 303,
+    headers: { location: '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' },
+  });
 };
+
+export const GET = logout;
+export const POST = logout;

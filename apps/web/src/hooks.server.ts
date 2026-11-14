@@ -5,6 +5,7 @@ assertAccessConfigured();
 
 const PUBLIC_PATHS = new Set(['/healthz', '/logout', '/favicon.ico', '/favicon.svg', '/favicon.png', '/robots.txt']);
 const PUBLIC_PREFIXES = ['/_app/', '/@vite/', '/@fs/', '/@id/', '/node_modules/', '/src/', '/.svelte-kit/'];
+const FORM_TYPES = new Set(['application/x-www-form-urlencoded', 'multipart/form-data']);
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.has(pathname) || PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
@@ -15,11 +16,34 @@ function isPageRequest(request: Request): boolean {
   return (request.headers.get('accept') ?? '').includes('text/html');
 }
 
-function secure(response: Response, entry = false): Response {
-  response.headers.set('referrer-policy', 'no-referrer');
+function isFormPost(request: Request): boolean {
+  if (request.method !== 'POST') return false;
+  const type = (request.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase();
+  return FORM_TYPES.has(type);
+}
+
+/**
+ * `same-origin` on HTML, `no-referrer` everywhere else.
+ *
+ * A `no-referrer` document sends `Origin: null` on native form posts, which
+ * SvelteKit's production CSRF check rejects. `same-origin` keeps a `?token=`
+ * out of third-party `Referer` headers (the actual leak) while preserving the
+ * `Origin` needed by the no-JavaScript door and the sign-out form.
+ */
+function secure(response: Response): Response {
   const type = response.headers.get('content-type') ?? '';
-  if (entry || type.includes('text/html')) response.headers.set('cache-control', 'no-store');
+  const html = type.includes('text/html');
+  response.headers.set('referrer-policy', html ? 'same-origin' : 'no-referrer');
+  if (html) response.headers.set('cache-control', 'no-store');
   return response;
+}
+
+/** Drop a token-bearing query parameter before it reaches a visible URL. */
+function nextPath(pathname: string, search: string): string {
+  const params = new URLSearchParams(search);
+  params.delete('token');
+  const query = params.toString();
+  return query ? `${pathname}?${query}` : pathname;
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
@@ -31,16 +55,20 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   if (sessionIsValid(event.cookies)) return secure(await resolve(event));
 
-  // The root is the door: it renders the token field, serves the `?token=`
-  // exchange and accepts the no-JavaScript form post.
-  if (pathname === '/') return secure(await resolve(event), true);
+  // The root is the door: GET/HEAD render it, and a native form POST (and only
+  // that) may exchange a manually entered token. Other methods are not a door.
+  if (pathname === '/') {
+    const method = event.request.method;
+    if (method === 'GET' || method === 'HEAD' || isFormPost(event.request)) {
+      return secure(await resolve(event));
+    }
+  }
 
   if (isPageRequest(event.request)) {
-    const next = `${pathname}${search}`;
     return new Response(null, {
       status: 303,
       headers: {
-        location: `/?next=${encodeURIComponent(next)}`,
+        location: `/?next=${encodeURIComponent(nextPath(pathname, search))}`,
         'referrer-policy': 'no-referrer',
         'cache-control': 'no-store',
       },

@@ -13,10 +13,12 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
  */
 export const SESSION_COOKIE = 'sarjy_review_session';
 
+const MAC_CONTEXT = 'review-session:v1';
 const VERSION_FIELD = /^[A-Za-z0-9_-]{1,128}$/;
 const BASE64URL_SHA256 = /^[A-Za-z0-9_-]{43}$/;
 const EPOCH_SECONDS = /^\d{1,12}$/;
 const NONCE_BYTES = 18;
+const CLOCK_SKEW_MS = 60_000;
 
 function hmac(secret: string, payload: string): Buffer {
   return createHmac('sha256', secret).update(payload, 'utf8').digest();
@@ -24,6 +26,10 @@ function hmac(secret: string, payload: string): Buffer {
 
 function encode(value: Buffer): string {
   return value.toString('base64url');
+}
+
+function macInput(unsigned: string, fingerprint: string): string {
+  return `${MAC_CONTEXT}:${unsigned}.${fingerprint}`;
 }
 
 /** Length-independent comparison of two strings. */
@@ -70,7 +76,7 @@ export function signSession(secret: string, options: SignSessionOptions): Signed
 
   const nonce = options.nonce ?? encode(randomBytes(NONCE_BYTES));
   const unsigned = `${nonce}.${nowSec}.${expiresAtSec}`;
-  const signature = encode(hmac(secret, `${unsigned}.${options.fingerprint}`));
+  const signature = encode(hmac(secret, macInput(unsigned, options.fingerprint)));
   return { token: `${unsigned}.${signature}`, expiresAt: expiresAtSec * 1000, maxAge };
 }
 
@@ -83,8 +89,8 @@ export interface VerifySessionOptions {
 
 /**
  * Verify signature, age and the token fingerprint. Any mismatch is treated as
- * "no session": tampered, expired, issued for a rotated token, or carrying an
- * expiry beyond the configured absolute instant.
+ * "no session": tampered, expired, issued in the future, issued for a rotated
+ * token, or carrying an expiry beyond the configured absolute instant.
  */
 export function verifySession(
   token: string | null | undefined,
@@ -100,11 +106,14 @@ export function verifySession(
   if (!BASE64URL_SHA256.test(signature)) return false;
 
   const now = options.now ?? Date.now();
+  const issuedAt = Number(issuedText) * 1000;
   const expiresAt = Number(expiresText) * 1000;
+  if (issuedAt > now + CLOCK_SKEW_MS) return false;
+  if (issuedAt >= expiresAt) return false;
   if (expiresAt <= now) return false;
   if (expiresAt > options.maxExpiresAt) return false;
 
-  const expected = hmac(secret, `${nonce}.${issuedText}.${expiresText}.${options.fingerprint}`);
+  const expected = hmac(secret, macInput(`${nonce}.${issuedText}.${expiresText}`, options.fingerprint));
   const provided = Buffer.from(signature, 'base64url');
   if (provided.length !== expected.length) return false;
   if (!timingSafeEqual(provided, expected)) return false;

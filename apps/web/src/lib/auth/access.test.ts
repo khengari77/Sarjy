@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -56,6 +56,21 @@ describe('review access accounting', () => {
     const file = JSON.parse(await readFile(path, 'utf8')) as Record<string, { used: number }>;
     expect(file[KEY]).toEqual({ used: 2 });
     expect(JSON.stringify(file)).not.toContain(TOKEN);
+  });
+
+  it('fails closed on a corrupt state file instead of treating it as empty', async () => {
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const path = await statePath();
+    await writeFile(path, '{not json', 'utf8');
+    const store = createAccessStateStore({ path });
+    const result = await redeemAccessToken({
+      candidate: TOKEN,
+      config: { token: TOKEN, expiresAt: NOW + 60_000, maxUses: 5 },
+      store,
+      now: NOW,
+    });
+    expect(result).toEqual({ ok: false, reason: 'unavailable' });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('fail closed'));
   });
 
   it('starts from zero and says so when the state file is missing', async () => {

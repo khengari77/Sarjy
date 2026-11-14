@@ -5,12 +5,14 @@
 
   interface Props {
     error?: boolean;
+    blocked?: boolean;
     next?: string;
   }
 
-  let { error = false, next = '/' }: Props = $props();
+  let { error = false, blocked = false, next = '/' }: Props = $props();
   let form = $state<HTMLFormElement | null>(null);
   let input = $state<HTMLInputElement | null>(null);
+  const message = $derived(blocked ? 'Too many attempts. Try again shortly.' : GENERIC_ACCESS_ERROR);
 
   // Fragments never reach the server, so `#token=` can only be exchanged
   // client-side. Strip it from history before posting and let the plain form
@@ -54,7 +56,7 @@
         aria-invalid={error ? 'true' : undefined}
         aria-describedby={error ? 'access-error' : undefined}
       />
-      <p id="access-error" class="entry-error" role="alert">{error ? GENERIC_ACCESS_ERROR : ''}</p>
+      <p id="access-error" class="entry-error" role="alert">{error ? message : ''}</p>
       <button type="submit">Enter</button>
     </form>
   </section>

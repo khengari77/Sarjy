@@ -40,6 +40,14 @@ describe('review session cookie', () => {
     ).toBe(false);
   });
 
+  it('rejects a cookie whose issued_at is in the future', () => {
+    const now = 1_700_000_000_000;
+    const signed = signSession(SECRET, { fingerprint: FINGERPRINT, expiresAt: now + 2 * HOUR, now: now + HOUR })!;
+    expect(verifySession(signed.token, SECRET, { fingerprint: FINGERPRINT, maxExpiresAt: now + 2 * HOUR, now })).toBe(
+      false,
+    );
+  });
+
   it('rejects a cookie issued for a rotated access token', () => {
     const now = 1_700_000_000_000;
     const signed = sign(now, now + HOUR)!;
