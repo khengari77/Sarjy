@@ -8,7 +8,6 @@ export const variables = defineEnvVars({
   REVIEW_ACCESS_TOKEN: { schema: (value) => value || '' },
   REVIEW_ACCESS_MAX_USES: { schema: (value) => value || '20' },
   REVIEW_ACCESS_EXPIRES_AT: { schema: (value) => value || '' },
-  REVIEW_ACCESS_DAYS: { schema: (value) => value || '' },
   REVIEW_ACCESS_STATE_PATH: { schema: (value) => value || '' },
   SESSION_SECRET: { schema: (value) => value || '' },
   WEB_SERVICE_SECRET: { schema: (value) => value || '' },

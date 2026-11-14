@@ -2,7 +2,6 @@ import type { Cookies } from '@sveltejs/kit';
 import { resolve } from 'node:path';
 import {
   DEVELOPMENT_PROTECTED,
-  REVIEW_ACCESS_DAYS,
   REVIEW_ACCESS_EXPIRES_AT,
   REVIEW_ACCESS_MAX_USES,
   REVIEW_ACCESS_STATE_PATH,
@@ -12,6 +11,7 @@ import {
 } from '$app/env/private';
 import { createAccessStateStore } from './access-state';
 import { redeemAccessToken, type AccessResult } from './access';
+import { resolveAccessExpiry } from './expiry';
 import { createRateLimiter } from './rate-limit';
 import { SESSION_COOKIE, signSession, tokenFingerprint, verifySession } from './session';
 
@@ -24,26 +24,15 @@ export const protectedMode = DEVELOPMENT_PROTECTED === 'true';
 export const sessionSecret = SESSION_SECRET || WEB_SERVICE_SECRET;
 export const accessToken = REVIEW_ACCESS_TOKEN;
 export const maxUses = Number.parseInt(REVIEW_ACCESS_MAX_USES, 10);
-export const accessExpiresAt = resolveExpiry();
+// Refuse to boot in protected mode when the absolute deadline is missing or
+// unparseable. An unprotected deployment has no deadline to enforce.
+export const accessExpiresAt = protectedMode ? resolveAccessExpiry(REVIEW_ACCESS_EXPIRES_AT) : Number.NaN;
 export const accessState = createAccessStateStore({
   path: resolve(REVIEW_ACCESS_STATE_PATH || '.sarjy/review-access-state.json'),
 });
 export const accessFailures = createRateLimiter({ limit: 10, windowMs: 15 * 60_000 });
 
 const fingerprint = sessionSecret ? tokenFingerprint(accessToken, sessionSecret) : '';
-
-/**
- * `REVIEW_ACCESS_EXPIRES_AT` is authoritative. `REVIEW_ACCESS_DAYS` is an
- * optional convenience that resolves to a fixed instant once, at boot; it does
- * not slide forward on later requests or restarts beyond the boot computation.
- */
-function resolveExpiry(): number {
-  const absolute = Date.parse(REVIEW_ACCESS_EXPIRES_AT);
-  if (Number.isFinite(absolute)) return absolute;
-  const days = Number.parseFloat(REVIEW_ACCESS_DAYS);
-  if (Number.isFinite(days) && days > 0) return Date.now() + days * 86_400_000;
-  return Number.NaN;
-}
 
 export function assertAccessConfigured(): void {
   if (!protectedMode) return;
