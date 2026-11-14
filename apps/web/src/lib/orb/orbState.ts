@@ -7,6 +7,16 @@
  */
 
 import { mixHexColors } from './render/colors';
+import {
+  orbPalette,
+  orbPhaseWeights,
+  orbStateColors,
+  type LivingPhase,
+  type PaletteWeight,
+  type ThemeName,
+} from './palette';
+
+export type { PaletteWeight, ThemeName };
 
 export type VoicePhase = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'disconnected';
 
@@ -45,10 +55,14 @@ export interface MotionPreset {
 }
 
 export interface OrbPresentation {
+  /** Theme used for the returned colours. Presentation-only input. */
+  theme: ThemeName;
   /** Resolved phase after priority resolution (error/disconnected win). */
   effectivePhase: VoicePhase | 'error';
   primaryColor: string;
   accent: string | null;
+  /** Palette weighting behind `primaryColor`, for the renderer. */
+  paletteWeights: readonly PaletteWeight[];
   motionPreset: MotionPreset;
   statusLabel: LocalizedText;
   ariaLabel: LocalizedText;
@@ -68,91 +82,62 @@ export const INITIAL_STATE: VoiceUiState = {
   outputLevel: 0,
 };
 
-const COLORS = {
-  idle: '#4cc9b6',
-  connecting: '#58bbd9',
-  listening: '#4da8ff',
-  thinking: '#a684f7',
-  speaking: '#4add91',
-  disconnected: '#5e7189',
-  error: '#f25565',
-  memory: '#e9b454',
-  confirmation: '#ffa65a',
-} as const;
+/**
+ * The canonical phase/overlay vocabulary. Onboarding (#111) and Wordle are
+ * deliberately absent: they are separate UI/game states and must never be
+ * reported as a voice phase by this module.
+ */
+export const VOICE_PHASES: readonly VoicePhase[] = [
+  'idle',
+  'connecting',
+  'listening',
+  'thinking',
+  'speaking',
+  'disconnected',
+];
 
-export const ORB_COLORS = COLORS;
+export const ORB_OVERLAYS: readonly OrbOverlay[] = ['none', 'memory_work', 'confirming', 'muted', 'error'];
+
+/** Phases that represent a live voice session (not idle/disconnected). */
+export const LIVE_VOICE_PHASES: readonly VoicePhase[] = ['connecting', 'listening', 'thinking', 'speaking'];
+
+/**
+ * Priority rank of the state that wins presentation. Error outranks
+ * disconnected, which outranks a live phase. Accents (confirming, memory_work,
+ * muted) only decorate a live phase and never outrank it.
+ */
+export type OrbPriority = 'error' | 'disconnected' | 'phase' | 'confirming' | 'memory_work' | 'muted';
+
+export function resolveOrbPriority(state: Pick<VoiceUiState, 'phase' | 'overlay'>): OrbPriority {
+  if (state.overlay === 'error') return 'error';
+  if (state.phase === 'disconnected') return 'disconnected';
+  if (state.overlay === 'confirming') return 'confirming';
+  if (state.overlay === 'memory_work') return 'memory_work';
+  if (state.overlay === 'muted') return 'muted';
+  return 'phase';
+}
+
+function motion(
+  breath: number,
+  flowRate: number,
+  turbulence: number,
+  edgeGlow: number,
+  particleActivity: number,
+  radialPulse: number,
+  hueMix: number,
+  opacity: number,
+): MotionPreset {
+  return { breath, flowRate, turbulence, edgeGlow, particleActivity, radialPulse, hueMix, opacity };
+}
 
 const MOTION: Record<VoicePhase | 'error', MotionPreset> = {
-  idle: {
-    breath: 0.22,
-    flowRate: 0.18,
-    turbulence: 0.18,
-    edgeGlow: 0.3,
-    particleActivity: 0.18,
-    radialPulse: 0,
-    hueMix: 0,
-    opacity: 1,
-  },
-  connecting: {
-    breath: 0.3,
-    flowRate: 0.35,
-    turbulence: 0.24,
-    edgeGlow: 0.4,
-    particleActivity: 0.3,
-    radialPulse: 0,
-    hueMix: 0.35,
-    opacity: 1,
-  },
-  listening: {
-    breath: 0.34,
-    flowRate: 0.42,
-    turbulence: 0.31,
-    edgeGlow: 0.55,
-    particleActivity: 0.42,
-    radialPulse: 0.8,
-    hueMix: 0,
-    opacity: 1,
-  },
-  thinking: {
-    breath: 0.18,
-    flowRate: 0.56,
-    turbulence: 0.48,
-    edgeGlow: 0.48,
-    particleActivity: 0.5,
-    radialPulse: 0.15,
-    hueMix: 0,
-    opacity: 1,
-  },
-  speaking: {
-    breath: 0.38,
-    flowRate: 0.52,
-    turbulence: 0.32,
-    edgeGlow: 0.6,
-    particleActivity: 0.55,
-    radialPulse: 0.85,
-    hueMix: 0,
-    opacity: 1,
-  },
-  disconnected: {
-    breath: 0.04,
-    flowRate: 0.05,
-    turbulence: 0.05,
-    edgeGlow: 0.12,
-    particleActivity: 0.04,
-    radialPulse: 0,
-    hueMix: 0,
-    opacity: 0.7,
-  },
-  error: {
-    breath: 0.1,
-    flowRate: 0.3,
-    turbulence: 0.5,
-    edgeGlow: 0.45,
-    particleActivity: 0.3,
-    radialPulse: 0,
-    hueMix: 0,
-    opacity: 1,
-  },
+  idle: motion(0.22, 0.18, 0.18, 0.3, 0.18, 0, 0, 1),
+  connecting: motion(0.3, 0.35, 0.24, 0.4, 0.3, 0, 0.35, 1),
+  listening: motion(0.34, 0.42, 0.31, 0.55, 0.42, 0.8, 0, 1),
+  thinking: motion(0.18, 0.56, 0.48, 0.48, 0.5, 0.15, 0, 1),
+  speaking: motion(0.38, 0.52, 0.32, 0.6, 0.55, 0.85, 0, 1),
+  disconnected: motion(0.04, 0.05, 0.05, 0.12, 0.04, 0, 0, 0.7),
+  error: motion(0.1, 0.3, 0.5, 0.45, 0.3, 0, 0, 1),
 };
 
 const PHASE_LABELS: Record<VoicePhase, LocalizedText> = {
@@ -161,7 +146,7 @@ const PHASE_LABELS: Record<VoicePhase, LocalizedText> = {
   listening: { en: 'Listening…', ar: 'أستمع…' },
   thinking: { en: 'Thinking…', ar: 'أفكر…' },
   speaking: { en: 'Speaking…', ar: 'أتحدث…' },
-  disconnected: { en: 'Disconnected', ar: 'انقطع الاتصال' },
+  disconnected: { en: 'Connection lost', ar: 'انقطع الاتصال' },
 };
 
 const OVERLAY_LABELS: Partial<Record<OrbOverlay, LocalizedText>> = {
@@ -169,6 +154,13 @@ const OVERLAY_LABELS: Partial<Record<OrbOverlay, LocalizedText>> = {
   confirming: { en: 'Confirmation needed', ar: 'مطلوب تأكيد' },
   muted: { en: 'Microphone muted', ar: 'الميكروفون مكتوم' },
   error: { en: 'Something went wrong', ar: 'حدث خطأ ما' },
+};
+
+const OVERLAY_ARIA: Partial<Record<OrbOverlay, LocalizedText>> = {
+  memory_work: { en: 'Checking memory.', ar: 'أراجع الذاكرة.' },
+  confirming: { en: 'Confirmation needed before continuing.', ar: 'يلزم تأكيد قبل المتابعة.' },
+  muted: { en: 'Microphone muted, unmute microphone.', ar: 'الميكروفون مكتوم، ألغِ كتم الميكروفون.' },
+  error: { en: 'Something went wrong, retry connection.', ar: 'حدث خطأ ما، أعد محاولة الاتصال.' },
 };
 
 const PHASE_ARIA: Record<VoicePhase | 'error', LocalizedText> = {
@@ -201,16 +193,58 @@ function clampLevel(value: number): number {
  * error > disconnected > voice phase.
  */
 export function resolveEffectivePhase(state: Pick<VoiceUiState, 'phase' | 'overlay'>): VoicePhase | 'error' {
-  if (state.overlay === 'error') return 'error';
-  if (state.phase === 'disconnected') return 'disconnected';
+  const priority = resolveOrbPriority(state);
+  if (priority === 'error') return 'error';
+  if (priority === 'disconnected') return 'disconnected';
   return state.phase;
 }
 
 /**
- * Pure presentation derivation. Never performs I/O or mutates the input.
+ * Blend the phase's palette weighting into one literal hex colour.
+ * Exported so tests and the renderer share the exact same arithmetic.
  */
-export function deriveOrbPresentation(state: VoiceUiState): OrbPresentation {
+export function resolvePhaseColor(theme: ThemeName, phase: VoicePhase | 'error'): string {
+  const stateColors = orbStateColors(theme);
+
+  if (phase === 'error') return stateColors.error;
+
+  const palette = orbPalette(theme);
+  const weights = orbPhaseWeights(theme, phase as LivingPhase);
+  if (weights.length === 0) return palette[0];
+
+  let blended = palette[weights[0].index];
+  let accumulated = weights[0].weight;
+  for (const entry of weights.slice(1)) {
+    accumulated += entry.weight;
+    blended = mixHexColors(blended, palette[entry.index], entry.weight / accumulated);
+  }
+
+  // Disconnected keeps the palette slot but fades toward the theme slate
+  // (docs 01: "gentle fade toward slate/blue gray").
+  if (phase === 'disconnected') {
+    return mixHexColors(blended, stateColors.disconnected, 0.55);
+  }
+
+  return blended;
+}
+
+function joinAria(parts: LocalizedText[]): LocalizedText {
+  return {
+    en: parts.map((part) => part.en).join(' '),
+    ar: parts.map((part) => part.ar).join(' '),
+  };
+}
+
+/**
+ * Pure presentation derivation. Never performs I/O or mutates the input.
+ *
+ * `theme` is a presentation-only input: it may change colours, never phase,
+ * overlay, actions, labels or session identity.
+ */
+export function deriveOrbPresentation(state: VoiceUiState, theme: ThemeName): OrbPresentation {
   const effectivePhase = resolveEffectivePhase(state);
+  const priority = resolveOrbPriority(state);
+  const stateColors = orbStateColors(theme);
   const micLevel = clampLevel(state.micLevel);
   const outputLevel = clampLevel(state.outputLevel);
 
@@ -221,36 +255,40 @@ export function deriveOrbPresentation(state: VoiceUiState): OrbPresentation {
     radialPulse: Math.max(base.radialPulse * (0.35 + pulse * 0.65), pulse * base.radialPulse),
   };
 
-  let primaryColor: string = COLORS[effectivePhase];
+  const overlayApplies = priority === 'confirming' || priority === 'memory_work' || priority === 'muted';
+
+  let primaryColor = resolvePhaseColor(theme, effectivePhase);
   let accent: string | null = null;
   let accentOnly = false;
-  let statusLabel = PHASE_LABELS[effectivePhase as VoicePhase] ?? PHASE_LABELS.idle;
-  let enabledActions = ACTIONS_BY_PHASE[effectivePhase];
-  const showMicSlash = state.overlay === 'muted' || (!state.micActive && state.phase === 'listening');
+  let statusLabel = effectivePhase === 'error' ? OVERLAY_LABELS.error! : PHASE_LABELS[effectivePhase];
+  let enabledActions = [...ACTIONS_BY_PHASE[effectivePhase]];
+  let ariaParts: LocalizedText[] = [];
+  let showMicSlash = !state.micActive && state.phase === 'listening' && effectivePhase === 'listening';
 
-  if (effectivePhase !== 'error' && effectivePhase !== 'disconnected') {
+  if (overlayApplies) {
+    accentOnly = true;
+    ariaParts = [OVERLAY_ARIA[state.overlay]!];
+
     if (state.overlay === 'confirming') {
-      accent = COLORS.confirmation;
-      accentOnly = true;
+      accent = stateColors.confirmation;
       statusLabel = OVERLAY_LABELS.confirming!;
-      if (!enabledActions.includes('end')) enabledActions = [...enabledActions, 'end'];
+      if (!enabledActions.includes('end')) enabledActions.push('end');
     } else if (state.overlay === 'memory_work') {
-      accent = COLORS.memory;
-      accentOnly = true;
+      accent = stateColors.memory;
       statusLabel = OVERLAY_LABELS.memory_work!;
-    } else if (state.overlay === 'muted') {
+    } else {
       // Muted keeps the live phase colour but desaturates and shows a mic slash.
       // The agent's speaking/thinking label still wins: muting the microphone
       // must not hide that the assistant is producing a reply.
-      primaryColor = mixHexColors(COLORS[effectivePhase], COLORS.disconnected, 0.55);
-      accent = COLORS.memory;
-      accentOnly = true;
+      primaryColor = mixHexColors(primaryColor, stateColors.muted, 0.5);
+      accent = stateColors.muted;
       statusLabel =
         effectivePhase === 'speaking' || effectivePhase === 'thinking'
           ? PHASE_LABELS[effectivePhase]
           : OVERLAY_LABELS.muted!;
       enabledActions = enabledActions.filter((action) => action !== 'mute');
-      if (!enabledActions.includes('unmute')) enabledActions = [...enabledActions, 'unmute'];
+      if (!enabledActions.includes('unmute')) enabledActions.push('unmute');
+      showMicSlash = true;
     }
   }
 
@@ -258,14 +296,18 @@ export function deriveOrbPresentation(state: VoiceUiState): OrbPresentation {
     accent = null;
     accentOnly = false;
     statusLabel = OVERLAY_LABELS.error!;
+    ariaParts = [];
   }
 
-  const ariaLabel = PHASE_ARIA[effectivePhase];
+  const ariaLabel =
+    ariaParts.length > 0 ? joinAria([...ariaParts, PHASE_ARIA[effectivePhase]]) : PHASE_ARIA[effectivePhase];
 
   return {
+    theme,
     effectivePhase,
     primaryColor,
     accent,
+    paletteWeights: orbPhaseWeights(theme, (effectivePhase === 'error' ? state.phase : effectivePhase) as LivingPhase),
     motionPreset,
     statusLabel,
     ariaLabel,

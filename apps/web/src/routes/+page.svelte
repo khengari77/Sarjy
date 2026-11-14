@@ -7,7 +7,8 @@
     phaseFromAgentState,
     phaseFromTransportStatus,
   } from '../lib/audio/livekitAdapter';
-  import { deriveOrbPresentation, INITIAL_STATE, type VoicePhase } from '../lib/orb/orbState';
+  import { deriveOrbPresentation, INITIAL_STATE, type VoicePhase, type VoiceUiState } from '../lib/orb/orbState';
+  import type { ResolvedTheme } from '../lib/ui/theme';
   import AppShell from '../lib/ui/AppShell.svelte';
   import ConversationList from '../lib/chat/ConversationList.svelte';
   import VoiceStage from '../lib/chat/VoiceStage.svelte';
@@ -37,6 +38,10 @@
   let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none');
   let busy = $state(false);
   let captionsVisible = $state(true);
+  // The shell owns storage and OS-preference resolution and reports the answer
+  // through onthemechange. `dark` matches the tokens.css SSR fallback, so the
+  // server and the first client frame agree before the boot script resolves.
+  let theme = $state<ResolvedTheme>('dark');
   let voice = $state(initialVoiceState());
   let runtime: VoiceRuntime | undefined;
   let connection: VoiceConnection | undefined;
@@ -61,18 +66,17 @@
   const canInterrupt = $derived(phase === 'thinking' || phase === 'speaking');
   const fatalError = $derived(voice.voiceErrorCode !== '' && isFatalVoiceError(voice.voiceErrorCode));
   const voiceErrorText = $derived(voice.voiceErrorCode ? friendlyVoiceError(voice.voiceErrorCode, arabic) : '');
-  const presentation = $derived(
-    deriveOrbPresentation({
-      ...INITIAL_STATE,
-      phase,
-      overlay: devOverlay !== 'none' ? devOverlay : fatalError ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
-      micActive: voice.live !== null && !voice.muted,
-      sessionId: voice.live?.id ?? null,
-      connectionReady: voice.live !== null && !voice.connectionLost,
-      micLevel: voice.micLevel,
-      outputLevel: voice.outputLevel,
-    }),
-  );
+  const uiState = $derived<VoiceUiState>({
+    ...INITIAL_STATE,
+    phase,
+    overlay: devOverlay !== 'none' ? devOverlay : fatalError ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
+    micActive: voice.live !== null && !voice.muted,
+    sessionId: voice.live?.id ?? null,
+    connectionReady: voice.live !== null && !voice.connectionLost,
+    micLevel: voice.micLevel,
+    outputLevel: voice.outputLevel,
+  });
+  const presentation = $derived(deriveOrbPresentation(uiState, theme));
 
   async function run(work: () => Promise<void>, onError?: (error: unknown) => void) {
     busy = true;
@@ -174,6 +178,7 @@
   onLanguage={LANGUAGE_SWITCH_ENABLED ? toggleLanguage : undefined}
   leftLabel={arabic ? 'المحادثات' : 'Conversations'}
   rightLabel={arabic ? 'الذاكرة والإعدادات' : 'Memory and settings'}
+  onthemechange={(value) => (theme = value)}
 >
   {#snippet left()}
     <ConversationList
