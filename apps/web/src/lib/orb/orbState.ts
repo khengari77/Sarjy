@@ -16,13 +16,23 @@ import {
   type ThemeName,
 } from './palette';
 
+import {
+  ACTIONS_BY_PHASE,
+  ACTION_ARIA,
+  OVERLAY_ARIA,
+  OVERLAY_LABELS,
+  PHASE_ARIA,
+  PHASE_LABELS,
+  advertisedAction,
+  joinAria,
+  type LocalizedText,
+  type OrbAction,
+  type OrbOverlay,
+  type VoicePhase,
+} from './labels';
+
 export type { PaletteWeight, ThemeName };
-
-export type VoicePhase = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'disconnected';
-
-export type OrbOverlay = 'none' | 'memory_work' | 'confirming' | 'muted' | 'error';
-
-export type OrbAction = 'start' | 'cancel' | 'mute' | 'unmute' | 'interrupt' | 'end' | 'retry' | 'reconnect';
+export type { LocalizedText, OrbAction, OrbOverlay, VoicePhase } from './labels';
 
 export interface VoiceUiState {
   phase: VoicePhase;
@@ -36,11 +46,6 @@ export interface VoiceUiState {
   outputLevel: number;
   errorMessage?: string;
   confirmationMessage?: string;
-}
-
-export interface LocalizedText {
-  en: string;
-  ar: string;
 }
 
 export interface MotionPreset {
@@ -140,49 +145,6 @@ const MOTION: Record<VoicePhase | 'error', MotionPreset> = {
   error: motion(0.1, 0.3, 0.5, 0.45, 0.3, 0, 0, 1),
 };
 
-const PHASE_LABELS: Record<VoicePhase, LocalizedText> = {
-  idle: { en: 'Ready', ar: 'جاهز' },
-  connecting: { en: 'Connecting…', ar: 'جارٍ الاتصال…' },
-  listening: { en: 'Listening…', ar: 'أستمع…' },
-  thinking: { en: 'Thinking…', ar: 'أفكر…' },
-  speaking: { en: 'Speaking…', ar: 'أتحدث…' },
-  disconnected: { en: 'Connection lost', ar: 'انقطع الاتصال' },
-};
-
-const OVERLAY_LABELS: Partial<Record<OrbOverlay, LocalizedText>> = {
-  memory_work: { en: 'Checking memory…', ar: 'أراجع الذاكرة…' },
-  confirming: { en: 'Confirmation needed', ar: 'مطلوب تأكيد' },
-  muted: { en: 'Microphone muted', ar: 'الميكروفون مكتوم' },
-  error: { en: 'Something went wrong', ar: 'حدث خطأ ما' },
-};
-
-const OVERLAY_ARIA: Partial<Record<OrbOverlay, LocalizedText>> = {
-  memory_work: { en: 'Checking memory.', ar: 'أراجع الذاكرة.' },
-  confirming: { en: 'Confirmation needed before continuing.', ar: 'يلزم تأكيد قبل المتابعة.' },
-  muted: { en: 'Microphone muted, unmute microphone.', ar: 'الميكروفون مكتوم، ألغِ كتم الميكروفون.' },
-  error: { en: 'Something went wrong, retry connection.', ar: 'حدث خطأ ما، أعد محاولة الاتصال.' },
-};
-
-const PHASE_ARIA: Record<VoicePhase | 'error', LocalizedText> = {
-  idle: { en: 'Start voice conversation', ar: 'ابدأ محادثة صوتية' },
-  connecting: { en: 'Connecting, cancel connection', ar: 'جارٍ الاتصال، إلغاء الاتصال' },
-  listening: { en: 'Listening. Mute microphone', ar: 'أستمع. اكتم الميكروفون' },
-  thinking: { en: 'Thinking. Interrupt Sarjy', ar: 'أفكر. قاطع سَرْجي' },
-  speaking: { en: 'Speaking. Interrupt Sarjy', ar: 'يتحدث. قاطع سَرْجي' },
-  disconnected: { en: 'Disconnected, reconnect', ar: 'انقطع الاتصال، أعد الاتصال' },
-  error: { en: 'Error, retry connection', ar: 'خطأ، أعد المحاولة' },
-};
-
-const ACTIONS_BY_PHASE: Record<VoicePhase | 'error', OrbAction[]> = {
-  idle: ['start'],
-  connecting: ['cancel'],
-  listening: ['mute', 'end'],
-  thinking: ['interrupt', 'end'],
-  speaking: ['interrupt', 'end'],
-  disconnected: ['reconnect'],
-  error: ['retry'],
-};
-
 function clampLevel(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(1, Math.max(0, value));
@@ -226,13 +188,6 @@ export function resolvePhaseColor(theme: ThemeName, phase: VoicePhase | 'error')
   }
 
   return blended;
-}
-
-function joinAria(parts: LocalizedText[]): LocalizedText {
-  return {
-    en: parts.map((part) => part.en).join(' '),
-    ar: parts.map((part) => part.ar).join(' '),
-  };
 }
 
 /**
@@ -299,8 +254,12 @@ export function deriveOrbPresentation(state: VoiceUiState, theme: ThemeName): Or
     ariaParts = [];
   }
 
-  const ariaLabel =
-    ariaParts.length > 0 ? joinAria([...ariaParts, PHASE_ARIA[effectivePhase]]) : PHASE_ARIA[effectivePhase];
+  const action = advertisedAction(enabledActions);
+  const ariaLabel = joinAria(
+    [...ariaParts, PHASE_ARIA[effectivePhase], ...(action ? [ACTION_ARIA[action]] : [])].filter(
+      (part) => part.en !== '' || part.ar !== '',
+    ),
+  );
 
   return {
     theme,
