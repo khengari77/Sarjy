@@ -75,44 +75,49 @@
     {/each}
   </div>
 
-  <div
-    class="panel"
-    role="tabpanel"
-    id={`drawer-panel-${active}`}
-    aria-labelledby={`drawer-tab-${active}`}
-    tabindex="0"
-  >
-    {#if active === 'voice'}
-      {#if voicePanel}
-        {@render voicePanel()}
+  {#each tabs as tab (tab.id)}
+    <!-- Every tab owns a real panel: all four ids exist in the DOM so each
+         tab's aria-controls resolves. Only the selected panel is shown. -->
+    <div
+      class="panel"
+      role="tabpanel"
+      id={`drawer-panel-${tab.id}`}
+      aria-labelledby={`drawer-tab-${tab.id}`}
+      tabindex={active === tab.id ? 0 : -1}
+      hidden={active !== tab.id}
+    >
+      {#if tab.id === 'voice'}
+        {#if voicePanel}
+          {@render voicePanel()}
+        {:else}
+          <p class="placeholder">Voice settings arrive in #46.</p>
+        {/if}
+      {:else if tab.id === 'appearance'}
+        <section class="placeholder-block">
+          <h2>Appearance</h2>
+          <p>Theme is available from the header control. Further appearance options arrive in #46.</p>
+        </section>
+        <section class="placeholder-block">
+          <h2>Workspace mode</h2>
+          <p>
+            Simple and Developer modes move here once the switch ships in #46. The header keeps only controls that do
+            something.
+          </p>
+          <p class="mode-preview" aria-hidden="true"><span>Simple</span><span>Developer</span></p>
+        </section>
+      {:else if tab.id === 'memories'}
+        <section class="placeholder-block">
+          <h2>Memories</h2>
+          <p>The memory explorer arrives in #43. No remembered items are shown yet.</p>
+        </section>
       {:else}
-        <p class="placeholder">Voice settings arrive in #46.</p>
+        <section class="placeholder-block">
+          <h2>Context</h2>
+          <p>The context inspector arrives in #43/#46. No context data is shown yet.</p>
+        </section>
       {/if}
-    {:else if active === 'appearance'}
-      <section class="placeholder-block">
-        <h2>Appearance</h2>
-        <p>Theme is available from the header control. Further appearance options arrive in #46.</p>
-      </section>
-      <section class="placeholder-block">
-        <h2>Workspace mode</h2>
-        <p>
-          Simple and Developer modes move here once the switch ships in #46. The header keeps only controls that do
-          something.
-        </p>
-        <p class="mode-preview" aria-hidden="true"><span>Simple</span><span>Developer</span></p>
-      </section>
-    {:else if active === 'memories'}
-      <section class="placeholder-block">
-        <h2>Memories</h2>
-        <p>The memory explorer arrives in #43. No remembered items are shown yet.</p>
-      </section>
-    {:else}
-      <section class="placeholder-block">
-        <h2>Context</h2>
-        <p>The context inspector arrives in #43/#46. No context data is shown yet.</p>
-      </section>
-    {/if}
-  </div>
+    </div>
+  {/each}
 </div>
 
 <style>
