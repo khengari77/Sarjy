@@ -1,7 +1,7 @@
 import type { MotionPreset } from '../orbState';
 import type { ThemeName } from '../palette';
 import { hexToRgb } from './colors';
-import { currentTheme, paletteFor, watchTheme } from './theme';
+import { paletteFor } from './theme';
 import type { OrbRenderState, Rgb } from './types';
 
 export interface CanvasLoopOptions {
@@ -137,7 +137,7 @@ export function startCanvasDrawing(options: CanvasLoopOptions): () => void {
   let detailTexture: HTMLCanvasElement | null = null;
 
   function ensureCache() {
-    const theme = currentTheme();
+    const theme = renderState.theme;
     if (theme === cacheTheme && renderState.color === cacheColor && bodyTexture && detailTexture) return;
     cacheTheme = theme;
     cacheColor = renderState.color;
@@ -147,9 +147,6 @@ export function startCanvasDrawing(options: CanvasLoopOptions): () => void {
     detailTexture = buildCloudTexture(palette, phase, 0x9e21, true);
   }
   ensureCache();
-  const stopThemeWatch = watchTheme(() => {
-    cacheTheme = null;
-  });
 
   let angle = 0;
   let frame = 0;
@@ -207,7 +204,6 @@ export function startCanvasDrawing(options: CanvasLoopOptions): () => void {
   frame = requestAnimationFrame(draw);
   return () => {
     cancelAnimationFrame(frame);
-    stopThemeWatch();
     bodyTexture = null;
     detailTexture = null;
   };

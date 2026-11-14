@@ -41,6 +41,7 @@
   const renderState: OrbRenderState = {
     // First frame before the presentation effect runs; dark matches the
     // tokens.css SSR fallback and still comes from the shared palette.
+    theme: 'dark',
     color: ORB_PALETTES.dark[0],
     accent: null,
     motion: {
@@ -114,6 +115,7 @@
   $effect(() => {
     // Keep the renderer in sync with the derived presentation without
     // re-registering handlers or recreating the canvas.
+    renderState.theme = presentation.theme;
     renderState.color = presentation.primaryColor;
     renderState.accent = presentation.accent;
     renderState.motion = presentation.motionPreset;

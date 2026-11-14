@@ -1,6 +1,9 @@
+import type { ThemeName } from '../palette';
 import type { MotionPreset, RendererTier } from '../orbState';
 
 export interface OrbRenderState {
+  /** Resolved shell theme; the renderer never reads data-theme itself. */
+  theme: ThemeName;
   color: string;
   accent: string | null;
   motion: MotionPreset;

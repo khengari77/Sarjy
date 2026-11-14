@@ -1,17 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ORB_PALETTES, orbAccents, orbDominant } from '../palette';
 import { parseHexColor } from './colors';
-import { paletteFor, resolveTheme } from './theme';
-
-describe('renderer theme resolution', () => {
-  it('accepts only the two stamped theme names', () => {
-    expect(resolveTheme('light')).toBe('light');
-    expect(resolveTheme('dark')).toBe('dark');
-    for (const value of [undefined, '', 'Light', 'cosmic', 'dark ']) {
-      expect(resolveTheme(value)).toBe('light');
-    }
-  });
-});
+import { paletteFor } from './theme';
 
 describe('Living Cloud palette contract (B01)', () => {
   it('provides four to six literal hex colours per theme', () => {

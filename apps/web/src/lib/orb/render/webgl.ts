@@ -1,7 +1,7 @@
 import type { ThemeName } from '../palette';
 import { hexToRgb } from './colors';
 import { FRAGMENT, VERTEX } from './shaders';
-import { currentTheme, paletteFor, watchTheme } from './theme';
+import { paletteFor } from './theme';
 import type { OrbRenderState, Rgb } from './types';
 
 export interface WebglOptions {
@@ -101,8 +101,7 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     hasAccent: gl.getUniformLocation(program, 'uHasAccent'),
   };
 
-  function applyPalette() {
-    const theme = currentTheme();
+  function applyPalette(theme: ThemeName) {
     gl.uniform3fv(uniforms.colors, paletteValues(theme));
     // Sky Prism needs more body shade and saturation to stay legible on
     // #EAF6FF; Cosmic Cloud is already high contrast on #080F29.
@@ -110,8 +109,8 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     gl.uniform1f(uniforms.saturation, theme === 'light' ? 1.6 : 1);
     gl.uniform1f(uniforms.coreMix, theme === 'light' ? 0.18 : 0.42);
   }
-  applyPalette();
-  const stopThemeWatch = watchTheme(applyPalette);
+  let appliedTheme = options.renderState.theme;
+  applyPalette(appliedTheme);
 
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -149,6 +148,11 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     const time = (now - start) / 1000;
     const pulse = Math.min(1, Math.max(0, options.getPulse()));
 
+    if (options.renderState.theme !== appliedTheme) {
+      appliedTheme = options.renderState.theme;
+      applyPalette(appliedTheme);
+    }
+
     options.resize();
     if (canvas.width < 1 || canvas.height < 1) return;
     gl.viewport(0, 0, canvas.width, canvas.height);
@@ -185,7 +189,6 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
   return () => {
     cancelAnimationFrame(frame);
     canvas.removeEventListener('webglcontextlost', onLost);
-    stopThemeWatch();
     gl.deleteVertexArray(vao);
     releaseProgram(gl, program, vs, fs);
     // Drop the GPU context eagerly; the element is about to be replaced.

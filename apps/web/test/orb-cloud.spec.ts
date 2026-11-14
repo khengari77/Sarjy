@@ -97,7 +97,9 @@ test.describe('Living Cloud fill and motion', () => {
     for (const theme of ['light', 'dark'] as const) {
       await page.goto(`/?theme=${theme}`);
       const orb = page.getByRole('button', { name: 'Start voice conversation' });
-      await expect(orb).not.toHaveAttribute('data-renderer', 'static', { timeout: 60000 });
+      // This test claims to cover the enhanced tier: require it rather than
+      // accepting Canvas2D, which also is not "static".
+      await expect(orb).toHaveAttribute('data-renderer', 'enhanced', { timeout: 60000 });
       // The theme must reach the renderer, not just the page chrome.
       await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);
       await page.waitForTimeout(700);
@@ -116,7 +118,7 @@ test.describe('Living Cloud fill and motion', () => {
   test('WebGL interior billows move between frames', async ({ page }) => {
     await page.goto('/');
     const orb = page.getByRole('button', { name: 'Start voice conversation' });
-    await expect(orb).not.toHaveAttribute('data-renderer', 'static', { timeout: 60000 });
+    await expect(orb).toHaveAttribute('data-renderer', 'enhanced', { timeout: 60000 });
     await page.waitForTimeout(800);
     const first = await orb.screenshot();
     await page.waitForTimeout(1200);
