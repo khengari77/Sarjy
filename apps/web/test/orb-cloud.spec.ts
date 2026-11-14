@@ -204,6 +204,23 @@ test('flipping the theme reaches the orb and the renderer palette', async ({ pag
   await expect(canvas).toHaveAttribute('data-renderer-theme', 'light');
 });
 
+test('a lost WebGL context degrades to Canvas2D instead of the static glyph', async ({ page }) => {
+  await page.goto('/');
+  const orb = page.locator('.orb-button');
+  await expect(orb).toHaveAttribute('data-renderer', 'enhanced');
+
+  // Mobile browsers drop the context when the tab is backgrounded and drivers
+  // reset theirs; the orb must downgrade rather than go dark.
+  await page.evaluate(() => {
+    const surface = document.querySelector<HTMLCanvasElement>('canvas.orb-canvas');
+    surface?.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext();
+  });
+
+  await expect(orb).toHaveAttribute('data-renderer', 'light');
+  await expect(orb.locator('canvas.orb-canvas')).toHaveCount(1);
+  await expect(orb.locator('.orb-static')).toHaveCount(0);
+});
+
 test('a low-FPS downgrade reaches the Canvas2D tier instead of collapsing to static', async ({ page }) => {
   // ~18 fps: above the 12 fps static floor, below the 30 fps enhanced floor,
   // so the downward ladder must choose 'light'.

@@ -102,6 +102,10 @@
   function handleTier(value: RendererTier) {
     const previous = tier;
     tier = value;
+    // A tier that can draw clears the terminal marker: a WebGL shader failure
+    // or a lost context falls back to Canvas2D, and `failed` must not pin the
+    // static glyph over a surface that is actually rendering.
+    if (value !== 'static') failed = false;
     if (starting) return;
     const needsSurface =
       (previous === 'enhanced' && value === 'light') || (previous === 'static' && value !== 'static');

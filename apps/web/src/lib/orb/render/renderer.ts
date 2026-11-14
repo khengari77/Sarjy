@@ -107,9 +107,14 @@ export function startOrbRenderer(
         isDisposed: () => disposed,
         onFailed: hooks.onFailed,
         onContextLost: () => {
-          hooks.onFailed();
-          demote('static');
+          // A canvas that has owned a WebGL2 context can never hand out 2D, so
+          // the fallback needs the fresh element `handleTier` builds. A lost
+          // context is a downgrade, not a terminal failure: `failed` would pin
+          // the static glyph for the session even though Canvas2D can draw.
+          // `setup` still collapses to static when no tier can start.
           stopDrawing?.();
+          stopDrawing = null;
+          demote('light');
         },
       });
       if (stop) {
