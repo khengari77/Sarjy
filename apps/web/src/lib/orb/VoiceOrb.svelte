@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { selectRendererTier, type OrbPresentation, type RendererTier } from './orbState';
+  import { ORB_PALETTES } from './palette';
+  import { staticGlyph } from './staticGlyph';
   import { startOrbRenderer } from './render/renderer';
-  import type { OrbRenderState } from './render/types';
+  import type { OrbRenderState, OrbTierState } from './render/types';
 
   interface Props {
     presentation: OrbPresentation;
@@ -26,11 +28,20 @@
 
   let canvas: HTMLCanvasElement | undefined = $state();
   let tier: RendererTier = $state('static');
-  let failed = $state(false);
+  let failed = $state(false),
+    surfaceKey = $state(0);
+  let starting = false;
+  let surfaceGeneration = 0;
+  let stopRenderer: (() => void) | undefined;
+  // Survives canvas remounts: the renderer records here that it was demoted,
+  // so the replacement surface starts one step down instead of re-probing up.
+  const tierState: OrbTierState = { demoted: false };
 
   // Plain mutable bridge read by the animation loop; updated by the effect below.
   const renderState: OrbRenderState = {
-    color: '#4cc9b6',
+    // First frame before the presentation effect runs; dark matches the
+    // tokens.css SSR fallback and still comes from the shared palette.
+    color: ORB_PALETTES.dark[0],
     accent: null,
     motion: {
       breath: 0.2,
@@ -52,17 +63,53 @@
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
     const probe = document.createElement('canvas');
     tier = selectRendererTier({ reducedMotion: reduced.matches, webglAvailable: Boolean(probe.getContext('webgl2')) });
-    let stop: (() => void) | undefined;
-    void tick().then(() => {
-      if (!canvas) return;
-      stop = startOrbRenderer(canvas, renderState, {
-        getPulse: () => pulse,
-        onTier: (value) => (tier = value),
-        onFailed: () => (failed = true),
-      });
-    });
-    return () => stop?.();
+    begin();
+    return () => {
+      surfaceGeneration += 1;
+      stopRenderer?.();
+      stopRenderer = undefined;
+    };
   });
+
+  function begin() {
+    const token = ++surfaceGeneration;
+    void tick().then(() => {
+      // A newer remount or unmount wins over this pending start.
+      if (token !== surfaceGeneration || !canvas) return;
+      stopRenderer?.();
+      starting = true;
+      stopRenderer = startOrbRenderer(
+        canvas,
+        renderState,
+        {
+          getPulse: () => pulse,
+          onTier: handleTier,
+          onFailed: () => (failed = true),
+        },
+        tierState,
+      );
+      starting = false;
+    });
+  }
+
+  /**
+   * A canvas cannot hand out a 2D context once it owns a WebGL2 context, and a
+   * tier change that adds/removes the canvas leaves the renderer holding a
+   * detached node. Both need a fresh element, so remount the surface and start
+   * the next tier on it instead of collapsing to static.
+   */
+  function handleTier(value: RendererTier) {
+    const previous = tier;
+    tier = value;
+    if (starting) return;
+    const needsSurface =
+      (previous === 'enhanced' && value === 'light') || (previous === 'static' && value !== 'static');
+    if (!needsSurface) return;
+    stopRenderer?.();
+    stopRenderer = undefined;
+    surfaceKey += 1;
+    begin();
+  }
 
   $effect(() => {
     // Keep the renderer in sync with the derived presentation without
@@ -76,25 +123,6 @@
       canvas.dataset.accent = presentation.accent ?? '';
     }
   });
-
-  function staticGlyph(phase: string): string {
-    switch (phase) {
-      case 'connecting':
-        return '◌';
-      case 'listening':
-        return '◉';
-      case 'thinking':
-        return '✦';
-      case 'speaking':
-        return '◍';
-      case 'disconnected':
-        return '⊘';
-      case 'error':
-        return '!';
-      default:
-        return '●';
-    }
-  }
 </script>
 
 <button
@@ -103,6 +131,7 @@
   aria-label={label}
   {disabled}
   data-renderer={failed ? 'static' : tier}
+  data-theme={presentation.theme}
   data-phase={presentation.effectivePhase}
   data-mic-level={micLevel.toFixed(2)}
   data-output-level={outputLevel.toFixed(2)}
@@ -120,8 +149,10 @@
       {#if statusLabel}<span class="orb-state-text">{statusLabel}</span>{/if}
     </span>
   {:else}
-    <canvas bind:this={canvas} class="orb-canvas" style:opacity={presentation.motionPreset.opacity} aria-hidden="true"
-    ></canvas>
+    {#key surfaceKey}
+      <canvas bind:this={canvas} class="orb-canvas" style:opacity={presentation.motionPreset.opacity} aria-hidden="true"
+      ></canvas>
+    {/key}
   {/if}
   {#if presentation.showMicSlash}
     <span class="mic-slash" aria-hidden="true">🎙̸</span>
@@ -171,20 +202,23 @@
     aspect-ratio: 1;
     border-radius: 50%;
     background:
+      radial-gradient(circle at 42% 36%, color-mix(in srgb, var(--orb-accent) 52%, white) 0%, transparent 34%),
       radial-gradient(
         circle at 50% 50%,
-        transparent 54%,
-        color-mix(in srgb, var(--orb-color) 26%, transparent) 60%,
-        transparent 68%
+        color-mix(in srgb, var(--orb-color) 80%, white) 0%,
+        color-mix(in srgb, var(--orb-color) 62%, transparent) 36%,
+        color-mix(in srgb, var(--orb-color) 34%, transparent) 62%,
+        transparent 80%
       ),
       radial-gradient(
         circle at 50% 50%,
-        transparent 64%,
-        color-mix(in srgb, var(--orb-accent) 12%, transparent) 74%,
-        transparent 82%
+        transparent 60%,
+        color-mix(in srgb, var(--orb-color) 24%, transparent) 76%,
+        transparent 90%
       );
-    border: 2px solid color-mix(in srgb, var(--orb-color) 40%, transparent);
-    box-shadow: 0 0 48px color-mix(in srgb, var(--orb-color) 22%, transparent);
+    box-shadow:
+      inset 0 0 40px color-mix(in srgb, var(--orb-accent) 30%, transparent),
+      0 0 48px color-mix(in srgb, var(--orb-color) 24%, transparent);
   }
 
   .orb-static-state {
@@ -195,7 +229,7 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    color: color-mix(in srgb, var(--orb-color) 75%, white);
+    color: color-mix(in srgb, var(--orb-color) 55%, var(--text-primary));
     pointer-events: none;
     text-align: center;
     padding: 18%;
