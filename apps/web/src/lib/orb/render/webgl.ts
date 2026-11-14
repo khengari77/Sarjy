@@ -107,15 +107,17 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     gl.uniform3fv(uniforms.colors, paletteValues(theme));
     // Sky Prism needs more body shade and saturation to stay legible on
     // #EAF6FF; Cosmic Cloud is already high contrast on #080F29.
-    gl.uniform1f(uniforms.bodyShade, theme === 'light' ? 0.95 : 1);
-    gl.uniform1f(uniforms.saturation, theme === 'light' ? 1.6 : 1);
-    gl.uniform1f(uniforms.coreMix, theme === 'light' ? 0.18 : 0.42);
+    gl.uniform1f(uniforms.bodyShade, theme === 'light' ? 0.97 : 1);
+    gl.uniform1f(uniforms.saturation, theme === 'light' ? 1.3 : 1);
+    gl.uniform1f(uniforms.coreMix, theme === 'light' ? 0.7 : 0.55);
   }
   let appliedTheme = options.renderState.theme;
   applyPalette(appliedTheme);
 
   gl.enable(gl.BLEND);
-  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  // The shader emits premultiplied colour (see FRAGMENT) for a premultiplied
+  // canvas; un-premultiplied output darkens every translucent fringe to grey.
+  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   gl.disable(gl.DEPTH_TEST);
 
   let frame = 0;
