@@ -12,6 +12,8 @@ export interface VoiceActionDeps {
   setAudioBlocked(value: boolean): void;
   run(work: () => Promise<void>, onError?: (error: unknown) => void): Promise<void>;
   onError(error: unknown): void;
+  beforeSend?(): void | Promise<void>;
+  afterSend?(text: string): void;
 }
 
 /** Call controls shared by the orb, buttons and composer. */
@@ -41,9 +43,11 @@ export function createVoiceActions(deps: VoiceActionDeps) {
   async function sendText(text: string, clear: () => void) {
     if (!text.trim()) return;
     await deps.run(async () => {
+      await deps.beforeSend?.();
       if (!deps.live()) await deps.getConnection().connect(false);
       if (!deps.live()) return;
       await deps.getConnection().sendText(text.trim());
+      deps.afterSend?.(text.trim());
       clear();
     }, deps.onError);
   }

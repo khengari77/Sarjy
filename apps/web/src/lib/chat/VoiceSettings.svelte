@@ -39,7 +39,7 @@
 </script>
 
 <div class="sidebar-inner" dir={arabic ? 'rtl' : 'ltr'}>
-  <section class="panel-block">
+  <section class="panel-block" id="memory-explorer" tabindex="-1">
     <h2>{arabic ? 'الذاكرة والسياق' : 'Memory & Context'}</h2>
     <p class="muted-text">
       {arabic

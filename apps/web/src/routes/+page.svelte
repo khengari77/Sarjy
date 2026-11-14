@@ -23,6 +23,7 @@
   import { createSelectionController } from '../lib/voice/selection';
   import { initialVoiceSwitchState } from '../lib/voice/voiceSwitch';
   import { createLiveVoiceSwitch } from '../lib/voice/voiceSwitchController';
+  import { OnboardingHost, createOnboarding } from '../lib/onboarding';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -40,11 +41,11 @@
   let captionsVisible = $state(true);
   let voice = $state(initialVoiceState());
   let voiceSwitch = $state(initialVoiceSwitchState());
-  let liveSessionId = $state<string | null>(null);
   let connection: VoiceConnection | undefined;
   let conversations: ConversationStore | undefined;
   let catalogStore: ReturnType<typeof createCatalogStore> | undefined;
   let voiceActions = $state<ReturnType<typeof bootStudio>['voiceActions']>();
+  const onboarding = createOnboarding();
   const selection = createSelectionController({
     voice,
     getPending: () => pendingIntent,
@@ -69,10 +70,7 @@
   // A new session (including reconnect) starts from the selected voice; live
   // pending/confirmed state never leaks across rooms.
   $effect(() => {
-    const id = voice.live?.id ?? null;
-    if (id === liveSessionId) return;
-    liveSessionId = id;
-    liveSwitch.onSession(id, voice.activeVoiceName);
+    liveSwitch.onSession(voice.live?.id ?? null, voice.activeVoiceName);
   });
 
   const phase = $derived<VoicePhase>(
@@ -114,10 +112,6 @@
     voice.voiceErrorCode = errorCode(error);
   }
 
-  function changeVoice() {
-    void run(() => liveSwitch.change());
-  }
-
   // A pending change only completes at the next synthesis boundary, so retry
   // the ACK read when a new turn starts instead of calling silence a failure.
   $effect(() => {
@@ -157,6 +151,11 @@
       getCanInterrupt: () => canInterrupt,
       run: (work, onError) => run(work, onError),
       onVoiceError,
+      beforeSend: async () => {
+        if (onboarding.controller.active()) await onboarding.controller.suspend();
+      },
+      afterSend: (text) => onboarding.noteTyped(text),
+      afterBootstrap: () => void onboarding.controller.load(),
     });
     connection = boot.connection;
     conversations = boot.conversations;
@@ -194,6 +193,7 @@
   {/snippet}
 
   {#snippet stage()}
+    <OnboardingHost {onboarding} {busy} {catalog} {voice} {conversation} />
     <VoiceStage
       {presentation}
       micLevel={voice.micLevel}
@@ -260,7 +260,7 @@
       {captionsVisible}
       onsearch={() => void catalogStore!.load()}
       onloadmore={() => void catalogStore!.load(true)}
-      onvoicechange={changeVoice}
+      onvoicechange={() => void run(() => liveSwitch.change())}
       ontoggleCaptions={toggleCaptions}
     />
   {/snippet}

@@ -21,10 +21,13 @@ export interface StudioBoot {
   setArabic(value: boolean): void;
   setCaptions(value: boolean): void;
   setDevOverlay(value: DevOverlay): void;
+  afterBootstrap?(): void;
   run(work: () => Promise<void>, onError?: (error: unknown) => void): Promise<void>;
   getLanguage(): 'ar' | 'en';
   getCanInterrupt(): boolean;
   onVoiceError(error: unknown): void;
+  beforeSend?(): void | Promise<void>;
+  afterSend?(text: string): void;
 }
 
 export function bootStudio(options: StudioBoot) {
@@ -73,6 +76,8 @@ export function bootStudio(options: StudioBoot) {
     setAudioBlocked: (value) => (voice.audioBlocked = value),
     run: (work, onError) => options.run(work, onError),
     onError: options.onVoiceError,
+    beforeSend: () => options.beforeSend?.(),
+    afterSend: (text) => options.afterSend?.(text),
   });
   const conversations = createConversationStore(conversation, {
     getLive: () => voice.live !== null,
@@ -86,6 +91,7 @@ export function bootStudio(options: StudioBoot) {
         await request('demo-session', {});
         await conversations.reload();
         if (conversation.conversations.length) await conversations.select(conversation.conversations[0].id);
+        options.afterBootstrap?.();
       }),
     getLive: () => voice.live,
     endExpired: () => void options.run(() => connection.end(), options.onVoiceError),

@@ -19,6 +19,7 @@ from app.domain.contracts import (
     UserSettings,
     resolve_response_policy,
 )
+from app.domain.onboarding import greeting_for
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
@@ -26,6 +27,7 @@ from app.domain.weather_permissions import decide_weather_request
 from app.infrastructure.database import Conversation, Memory, Turn, UserSetting, VoiceSession
 from app.services.budget import reserve as reserve_development_budget
 from app.services.context_assembly import location_evidence, read_context_inputs
+from app.services.onboarding import OnboardingService, capabilities_for
 from app.services.tool_operations import (
     ToolOperationError,
     claim_tool_operation,
@@ -91,7 +93,7 @@ def _session_guard(config: Settings):
 def register_worker_routes(app, *, config: Settings, database):
     guard = _session_guard(config)
     _register_budget_routes(app, config=config, database=database)
-    _register_session_routes(app, database=database, guard=guard)
+    _register_session_routes(app, config=config, database=database, guard=guard)
     _register_turn_routes(app, database=database, guard=guard)
     _register_tool_routes(app, database=database, guard=guard)
     _register_voice_control_routes(app, database=database, guard=guard)
@@ -121,7 +123,7 @@ def _register_budget_routes(app, *, config: Settings, database):
             raise HTTPException(429, detail={"code": str(exc)}) from exc
 
 
-def _register_session_routes(app, *, database, guard):
+def _register_session_routes(app, *, config: Settings, database, guard):
     @app.post("/internal/agent/bootstrap")
     async def bootstrap(request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db)
@@ -138,13 +140,22 @@ def _register_session_routes(app, *, database, guard):
         if not changed.rowcount:
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
         pipeline = normalize_pipeline(voice.pipeline)
+        progress = await OnboardingService(db, capabilities_for(config)).load(voice.owner_id)
+        await db.commit()
         return {
             "pipeline": pipeline,
             "instructions": pipeline_instructions(pipeline),
             "expires_at": voice.expires_at,
             "active_voice_id": session_active_voice(voice),
             "settings_revision": voice.active_settings_revision or 0,
+            "onboarding_greeting": greeting_for(progress),
         }
+
+    @app.post("/internal/agent/onboarding/greeting-played", status_code=204)
+    async def onboarding_greeting_played(request: Request, db: AsyncSession = Depends(database)):
+        voice = await guard(request, db)
+        await OnboardingService(db, capabilities_for(config)).mark_greeting_played(voice.owner_id)
+        await db.commit()
 
 
 def _compile_turn_context(

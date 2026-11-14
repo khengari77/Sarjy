@@ -26,8 +26,11 @@ export interface LiveVoiceSwitchDeps {
  */
 export function createLiveVoiceSwitch(deps: LiveVoiceSwitchDeps) {
   let polling = false;
+  let currentSessionId: string | null = null;
 
   function onSession(sessionId: string | null, activeVoiceName: string) {
+    if (sessionId === currentSessionId) return;
+    currentSessionId = sessionId;
     const selected = deps.getVoiceId();
     const name = activeVoiceName || deps.getVoices().find((entry) => entry.id === selected)?.name || selected;
     resetVoiceSwitch(deps.state, sessionId ? selected : '', sessionId ? name : '');
