@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -345,9 +346,28 @@ def test_missing_keys_raise_configuration_errors(monkeypatch):
         adapter.build_routers(fixture=FIXTURE, cache=None)
 
 
+def test_missing_extraction_prices_raise_configuration_errors(monkeypatch):
+    monkeypatch.setenv("JEV_API_KEY", "jev-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
+    monkeypatch.delenv("SARJY_ROUTING_EXTRACTION_INPUT_PRICE", raising=False)
+    monkeypatch.delenv("SARJY_ROUTING_EXTRACTION_OUTPUT_PRICE", raising=False)
+    with pytest.raises(adapter.ConfigurationError, match="SARJY_ROUTING_EXTRACTION_INPUT_PRICE"):
+        adapter.build_routers(fixture=FIXTURE, cache=None)
+
+    monkeypatch.setenv("SARJY_ROUTING_EXTRACTION_INPUT_PRICE", "0.30")
+    with pytest.raises(adapter.ConfigurationError, match="SARJY_ROUTING_EXTRACTION_OUTPUT_PRICE"):
+        adapter.build_routers(fixture=FIXTURE, cache=None)
+
+    monkeypatch.setenv("SARJY_ROUTING_EXTRACTION_OUTPUT_PRICE", "0")
+    with pytest.raises(adapter.ConfigurationError, match="positive"):
+        adapter.build_routers(fixture=FIXTURE, cache=None)
+
+
 def test_build_routers_returns_live_routers_with_a_shared_budget(monkeypatch):
     monkeypatch.setenv("JEV_API_KEY", "jev-test-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
+    monkeypatch.setenv("SARJY_ROUTING_EXTRACTION_INPUT_PRICE", "0.30")
+    monkeypatch.setenv("SARJY_ROUTING_EXTRACTION_OUTPUT_PRICE", "1.20")
     monkeypatch.setenv("SARJY_ROUTING_LIVE_MAX_CALLS", "12")
     monkeypatch.setenv("SARJY_ROUTING_LIVE_MAX_TOKENS", "3456")
 
@@ -361,7 +381,10 @@ def test_build_routers_returns_live_routers_with_a_shared_budget(monkeypatch):
     assert budget is routers[2]._reserve
     assert budget.max_calls == 12
     assert budget.max_tokens == 3456
-    assert adapter.AUTOMATIC_ROUTING_ENABLED is False
+    assert routers[1].generation.input_usd_per_million == 0.30
+    assert routers[1].generation.output_usd_per_million == 1.20
+    assert routers[1].generation.input_usd_per_million > 0
+    assert routers[1].generation.output_usd_per_million > 0
 
 
 def test_direct_router_records_a_typed_action_and_usage():
@@ -385,15 +408,27 @@ def test_direct_router_records_a_typed_action_and_usage():
             },
         )
 
+    reservations = AllowReservation()
     router = adapter.DirectLiveRouter(
         FIXTURE,
         api_key="deepseek-test-key",
-        reserve=AllowReservation(),
+        reserve=reservations,
         transport=httpx.MockTransport(handler),
     )
     output = asyncio.run(router.route(CASE))
 
     assert len(calls) == 1
+    prompt = adapter._direct_prompt(CASE, FIXTURE)
+    estimated_input = max(1, math.ceil(len(prompt) / 4))
+    expected_micro_usd = max(
+        1,
+        math.ceil(
+            estimated_input * adapter.DEEPSEEK_PEAK_INPUT_MICRO_USD_PER_TOKEN
+            + adapter.DIRECT_MAX_OUTPUT_TOKENS * adapter.DEEPSEEK_PEAK_OUTPUT_MICRO_USD_PER_TOKEN
+        ),
+    )
+    assert reservations.calls[0].estimated_cost_micro_usd == expected_micro_usd
+    assert reservations.calls[0].estimated_cost_micro_usd > math.ceil(estimated_input * 0.042)
     assert output.intent == "voice_setting"
     assert output.tier == 1
     assert output.complexity == "simple"
@@ -414,10 +449,11 @@ def test_direct_router_malformed_content_is_a_safe_failure():
         calls.append(request)
         return httpx.Response(200, json={"choices": [{"message": {"content": "not json"}}]})
 
+    reservations = AllowReservation()
     router = adapter.DirectLiveRouter(
         FIXTURE,
         api_key="deepseek-test-key",
-        reserve=AllowReservation(),
+        reserve=reservations,
         transport=httpx.MockTransport(handler),
     )
     output = asyncio.run(router.route(CASE))

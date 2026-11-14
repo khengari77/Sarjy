@@ -17,6 +17,9 @@ Required environment:
     System One / Jev credential.
 ``DEEPSEEK_API_KEY``
     DeepSeek credential for extraction and the direct router.
+``SARJY_ROUTING_EXTRACTION_INPUT_PRICE`` / ``..._OUTPUT_PRICE``
+    USD per million tokens for extraction reservation and cost estimates.
+    They are required so a live report can never silently assume zero cost.
 
 Optional environment:
 
@@ -25,8 +28,6 @@ Optional environment:
 ``SARJY_ROUTING_LIVE_MAX_TOKENS``
     Hard cap on estimated input plus output tokens for the whole run
     (default 250000).
-``SARJY_ROUTING_EXTRACTION_INPUT_PRICE`` / ``..._OUTPUT_PRICE``
-    USD per million tokens used only for extraction reservation estimates.
 
 A request that would exceed either cap is skipped and reported as
 ``RESERVATION_DENIED``; it is never treated as a successful result.
@@ -43,6 +44,10 @@ from typing import Any, Final
 
 import day2_routing_benchmark as harness
 import httpx
+from app.domain.budget import (
+    DEEPSEEK_PEAK_INPUT_MICRO_USD_PER_MILLION,
+    DEEPSEEK_PEAK_OUTPUT_MICRO_USD_PER_MILLION,
+)
 from app.domain.contracts import Intent, RestoreContextOperation, SelectApprovedVoice, parse_action
 from app.domain.routing import (
     ACTION_INTENTS,
@@ -73,7 +78,11 @@ DIRECT_TIMEOUT_SECONDS: Final = 10.0
 EXTRACTION_MAX_OUTPUT_TOKENS: Final = 128
 DEFAULT_MAX_CALLS: Final = 96
 DEFAULT_MAX_TOKENS: Final = 250_000
-AUTOMATIC_ROUTING_ENABLED: Final = False
+# Peak DeepSeek Flash prices from app.domain.budget (micro-USD per million
+# tokens).  One micro-USD per token is 1e-6 USD, so dividing the per-million
+# figure by one million gives micro-USD per token.
+DEEPSEEK_PEAK_INPUT_MICRO_USD_PER_TOKEN: Final = DEEPSEEK_PEAK_INPUT_MICRO_USD_PER_MILLION / 1_000_000
+DEEPSEEK_PEAK_OUTPUT_MICRO_USD_PER_TOKEN: Final = DEEPSEEK_PEAK_OUTPUT_MICRO_USD_PER_MILLION / 1_000_000
 
 _ACTION_EXAMPLES: Final[dict[str, str]] = {
     "AdjustSpeakingSpeed": '{"kind":"AdjustSpeakingSpeed","delta":-0.1}',
@@ -128,16 +137,14 @@ def _env_int(name: str, default: int) -> int:
     return value
 
 
-def _env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return default
+def _require_price(name: str) -> float:
+    raw = _require_env(name)
     try:
         value = float(raw)
     except ValueError as exc:
-        raise ConfigurationError(f"{name} must be a non-negative number") from exc
-    if not math.isfinite(value) or value < 0:
-        raise ConfigurationError(f"{name} must be a non-negative finite number")
+        raise ConfigurationError(f"{name} must be a positive number") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ConfigurationError(f"{name} must be a positive finite number")
     return value
 
 
@@ -375,7 +382,13 @@ class DirectLiveRouter:
             return harness.RouterOutput(error="INVALID_INSTRUCTION")
 
         estimated_input = max(1, math.ceil(len(prompt) / 4))
-        estimated_cost = max(1, math.ceil(estimated_input * 0.042))
+        estimated_cost = max(
+            1,
+            math.ceil(
+                estimated_input * DEEPSEEK_PEAK_INPUT_MICRO_USD_PER_TOKEN
+                + DIRECT_MAX_OUTPUT_TOKENS * DEEPSEEK_PEAK_OUTPUT_MICRO_USD_PER_TOKEN
+            ),
+        )
         reservation = ReservationRequest(
             request_id=f"bench:{case.id}",
             provider="deepseek",
@@ -495,8 +508,8 @@ def _generation_config() -> GenerationConfig:
     return GenerationConfig(
         model=EXTRACTION_MODEL,
         max_output_tokens=EXTRACTION_MAX_OUTPUT_TOKENS,
-        input_usd_per_million=_env_float("SARJY_ROUTING_EXTRACTION_INPUT_PRICE", 0.0),
-        output_usd_per_million=_env_float("SARJY_ROUTING_EXTRACTION_OUTPUT_PRICE", 0.0),
+        input_usd_per_million=_require_price("SARJY_ROUTING_EXTRACTION_INPUT_PRICE"),
+        output_usd_per_million=_require_price("SARJY_ROUTING_EXTRACTION_OUTPUT_PRICE"),
     )
 
 
@@ -521,7 +534,6 @@ def build_routers(*, fixture: harness.Fixture, cache: harness.ResultCache) -> Se
 
 
 __all__ = [
-    "AUTOMATIC_ROUTING_ENABLED",
     "ConfigurationError",
     "DEFAULT_MAX_CALLS",
     "DEFAULT_MAX_TOKENS",
