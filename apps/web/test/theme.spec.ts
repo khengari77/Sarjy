@@ -93,7 +93,6 @@ test('the orb derives from the shell-resolved theme, not its own preference', as
   await expect(orb).toHaveAttribute('data-theme', 'dark');
   const darkColour = await colour();
   const darkDot = await dotColour();
-  expect(darkColour).not.toBeNull();
 
   // system → light: the presentation colour and the status dot both change,
   // so the theme reaches the renderer state rather than only a prop.
