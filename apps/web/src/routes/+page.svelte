@@ -1,13 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { VoiceRuntime } from '../lib/audio/voice-runtime';
-  import {
-    friendlyVoiceError,
-    isFatalVoiceError,
-    phaseFromAgentState,
-    phaseFromTransportStatus,
-  } from '../lib/audio/livekitAdapter';
-  import { deriveOrbPresentation, INITIAL_STATE, type VoicePhase, type VoiceUiState } from '../lib/orb/orbState';
+  import { activateOrb } from '../lib/orb/orbActions';
   import type { ResolvedTheme } from '../lib/ui/theme';
   import AppShell from '../lib/ui/AppShell.svelte';
   import ConversationList from '../lib/chat/ConversationList.svelte';
@@ -24,6 +18,7 @@
   import { errorCode } from '../lib/voice/errors';
   import { createCatalogStore, initialCatalogState } from '../lib/voice/catalog';
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
+  import { deriveStage } from '../lib/voice/stageView';
   import { bootStudio } from '../lib/voice/studio';
   import { createSelectionController } from '../lib/voice/selection';
   import '../lib/chat/chat.css';
@@ -59,25 +54,12 @@
   const selectedVoice = $derived(selectedVoiceOption(catalog.voices, catalog.voiceId));
   const sessionVoice = $derived(voice.live?.voice ?? null);
 
-  const phase = $derived<VoicePhase>(
-    (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
-      phaseFromTransportStatus(voice.transportStatus) ??
-      'idle',
-  );
-  const canInterrupt = $derived(phase === 'thinking' || phase === 'speaking');
-  const fatalError = $derived(voice.voiceErrorCode !== '' && isFatalVoiceError(voice.voiceErrorCode));
-  const voiceErrorText = $derived(voice.voiceErrorCode ? friendlyVoiceError(voice.voiceErrorCode, arabic) : '');
-  const uiState = $derived<VoiceUiState>({
-    ...INITIAL_STATE,
-    phase,
-    overlay: devOverlay !== 'none' ? devOverlay : fatalError ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
-    micActive: voice.live !== null && !voice.muted,
-    sessionId: voice.live?.id ?? null,
-    connectionReady: voice.live !== null && !voice.connectionLost,
-    micLevel: voice.micLevel,
-    outputLevel: voice.outputLevel,
-  });
-  const presentation = $derived(deriveOrbPresentation(uiState, theme));
+  // One projection owns the phase, copy and orb presentation; the orb button
+  // dispatches whatever action that presentation advertises.
+  const stage = $derived(deriveStage(voice, arabic, devOverlay, theme));
+  const canInterrupt = $derived(stage.canInterrupt);
+  const voiceErrorText = $derived(stage.errorText);
+  const presentation = $derived(stage.presentation);
 
   async function run(work: () => Promise<void>, onError?: (error: unknown) => void) {
     busy = true;
@@ -96,12 +78,19 @@
   }
 
   function handleOrb() {
-    if (voice.live) {
-      if (voice.muted) void toggleMute();
-      else if (canInterrupt) void interrupt();
-      return;
-    }
-    if (!voice.connecting) startConnect();
+    activateOrb(presentation, {
+      start: startConnect,
+      cancel: () => void run(() => connection!.cancelConnect(), onVoiceError),
+      mute: () => void toggleMute(),
+      interrupt: () => void interrupt(),
+      retry: () => (voice.live ? reconnect() : startConnect()),
+      reconnect,
+      end: () => void run(() => connection!.end(), onVoiceError),
+    });
+  }
+
+  function reconnect() {
+    void run(() => connection!.reconnect(), onVoiceError);
   }
 
   function startConnect() {
