@@ -194,7 +194,15 @@
 }
 
 @media (min-width: 1200px) {
-  .sidebar-left[data-open='false'],
+  /* Before hydration the left dock is already open in CSS, matching the
+     post-mount desktop default so content does not shift on first paint. */
+  .sidebar-left[data-hydrated='false'],
+  .sidebar-left[data-open='true'],
+  .sidebar-right[data-open='true'] {
+    display: flex;
+  }
+
+  .sidebar-left[data-open='false'][data-hydrated='true'],
   .sidebar-right[data-open='false'] {
     display: none;
   }

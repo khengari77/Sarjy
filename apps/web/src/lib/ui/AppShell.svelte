@@ -41,6 +41,10 @@
   // ≥1200px docks the panels side by side; below that they share the overlay
   // layer, so only one can be open at a time.
   let docked = $state(false);
+  // Desktop renders the left dock open before hydration so the first paint
+  // matches the post-mount state (no layout shift); narrow viewports keep the
+  // SSR-closed drawer off-canvas.
+  let hydrated = $state(false);
   let leftButton = $state<HTMLButtonElement | null>(null);
   let rightButton = $state<HTMLButtonElement | null>(null);
   let openOrigin = $state<'left' | 'right' | null>(null);
@@ -107,6 +111,7 @@
     docked = wide.matches;
     leftOpen = wide.matches;
     syncTheme();
+    hydrated = true;
 
     const onViewportChange = (event: MediaQueryListEvent) => {
       docked = event.matches;
@@ -185,6 +190,7 @@
         class="sidebar sidebar-left"
         id="shell-left"
         data-open={leftOpen}
+        data-hydrated={hydrated}
         aria-label={leftLabel}
         inert={!leftOpen ? true : undefined}
       >
