@@ -38,6 +38,8 @@ function harness() {
     refresh: async () => {},
     getLanguage: () => 'en',
     getVoice: () => ({ id: 'voice', name: 'voice' }),
+    applyCommand: () => {},
+    resyncSettings: () => {},
     meters: { teardownMeters: vi.fn(), setupMeters: vi.fn() } as never,
   });
   return { state, runtime, connection };

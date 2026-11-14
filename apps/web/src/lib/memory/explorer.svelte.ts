@@ -1,6 +1,7 @@
 import { errorCode } from '../voice/errors';
 import {
   confirmExclusion,
+  friendlyListError,
   friendlyMemoryError,
   labelsFor,
   loadMemories,
@@ -131,7 +132,7 @@ export class MemoryExplorer {
       this.items = [];
       this.total = 0;
       this.nextOffset = null;
-      this.listError = friendlyMemoryError(errorCode(error));
+      this.listError = friendlyListError(errorCode(error));
     } finally {
       if (requested === this.#scope()) this.loading = false;
     }
@@ -150,7 +151,7 @@ export class MemoryExplorer {
       this.nextOffset = page.next_offset;
     } catch (error) {
       if (requested !== this.#scope()) return;
-      this.listError = friendlyMemoryError(errorCode(error));
+      this.listError = friendlyListError(errorCode(error));
     } finally {
       if (requested === this.#scope()) this.loadingMore = false;
     }

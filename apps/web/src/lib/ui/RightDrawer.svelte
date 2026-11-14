@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
-  type TabId = 'memories' | 'voice' | 'appearance' | 'context';
+  export type TabId = 'memories' | 'voice' | 'appearance' | 'context';
 
   interface Tab {
     id: TabId;
@@ -15,9 +15,11 @@
     /** Transparent memory/context explorer (#43). Rendered in its own tab;
      *  the argument is true while that tab is visible. */
     memoryPanel?: Snippet<[boolean]>;
+    /** Selected tab, bindable so command navigation can choose it. */
+    activeTab?: TabId;
   }
 
-  let { arabic = false, voicePanel, memoryPanel }: Props = $props();
+  let { arabic = false, voicePanel, memoryPanel, activeTab = $bindable<TabId>('voice') }: Props = $props();
 
   const tabs: Tab[] = [
     { id: 'memories', label: 'Memories' },
@@ -26,7 +28,6 @@
     { id: 'context', label: 'Context' },
   ];
 
-  let active = $state<TabId>('voice');
   let tablist = $state<HTMLDivElement | null>(null);
 
   function focusTab(index: number) {
@@ -66,11 +67,11 @@
         type="button"
         role="tab"
         id={`drawer-tab-${tab.id}`}
-        aria-selected={active === tab.id}
+        aria-selected={activeTab === tab.id}
         aria-controls={`drawer-panel-${tab.id}`}
-        tabindex={active === tab.id ? 0 : -1}
+        tabindex={activeTab === tab.id ? 0 : -1}
         class="tab"
-        onclick={() => (active = tab.id)}
+        onclick={() => (activeTab = tab.id)}
         onkeydown={(event) => onTabKeydown(event, index)}
       >
         {tab.label}
@@ -86,8 +87,8 @@
       role="tabpanel"
       id={`drawer-panel-${tab.id}`}
       aria-labelledby={`drawer-tab-${tab.id}`}
-      tabindex={active === tab.id ? 0 : -1}
-      hidden={active !== tab.id}
+      tabindex={activeTab === tab.id ? 0 : -1}
+      hidden={activeTab !== tab.id}
     >
       {#if tab.id === 'voice'}
         {#if voicePanel}
@@ -110,7 +111,7 @@
         </section>
       {:else if tab.id === 'memories'}
         {#if memoryPanel}
-          {@render memoryPanel(active === 'memories')}
+          {@render memoryPanel(activeTab === 'memories')}
         {:else}
           <section class="placeholder-block">
             <h2>Memories</h2>

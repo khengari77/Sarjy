@@ -15,6 +15,7 @@
     sessionVoice: VoiceOption | null;
     live: boolean;
     captionsVisible: boolean;
+    activeTab?: 'memories' | 'voice' | 'appearance' | 'context';
     onsearch: () => void;
     onloadmore: () => void;
     onremember: () => void;
@@ -30,6 +31,7 @@
     sessionVoice,
     live,
     captionsVisible,
+    activeTab = $bindable('voice'),
     onsearch,
     onloadmore,
     onremember,
@@ -37,7 +39,7 @@
   }: Props = $props();
 </script>
 
-<RightDrawer {arabic}>
+<RightDrawer {arabic} bind:activeTab>
   {#snippet memoryPanel(active)}
     <MemoryPanel {conversationId} {active} revision={memoryRevision} />
   {/snippet}

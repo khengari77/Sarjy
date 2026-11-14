@@ -1,4 +1,5 @@
 import { request, type UserSettings, type VoiceCatalog, type VoiceOption } from '../api';
+import type { CommandResult } from '../commands/commandStore';
 import { fetchSettings, mergeVoices, saveVoiceSelection } from '../chat/session';
 
 export interface CatalogState {
@@ -33,7 +34,10 @@ export function initialCatalogState(voiceId = ''): CatalogState {
   };
 }
 
-export function createCatalogStore(state: CatalogState) {
+export function createCatalogStore(
+  state: CatalogState,
+  options: { onSettings?(settings: UserSettings): void; onVoiceSaved?(result: CommandResult): void } = {},
+) {
   async function load(more = false) {
     if (state.loading) return;
     state.loading = true;
@@ -67,6 +71,7 @@ export function createCatalogStore(state: CatalogState) {
     state.savedVoiceId = settings.approved_voice_id ?? '';
     state.voiceId = state.savedVoiceId;
     state.settingsError = '';
+    options.onSettings?.(settings);
   }
 
   /** Persist the picker choice owner-side; revert to the saved value on rejection. */
@@ -100,7 +105,22 @@ export function createCatalogStore(state: CatalogState) {
   }
 
   async function save(voiceId: string) {
-    applySettings(await saveVoiceSelection(voiceId, state.revision));
+    const previous = state.savedVoiceId;
+    const requestId = `voice:${state.revision}:${voiceId || 'default'}`;
+    const saved = await saveVoiceSelection(voiceId, state.revision);
+    applySettings(saved);
+    const changed = saved.approved_voice_id !== previous;
+    const name = state.voices.find((option) => option.id === voiceId)?.name || 'the selected voice';
+    options.onVoiceSaved?.({
+      request_id: requestId,
+      kind: changed ? 'executed' : 'unchanged',
+      action: 'SelectApprovedVoice',
+      settings: saved,
+      navigation: null,
+      changed,
+      spoken: changed ? `Voice set to ${name} for the next call.` : `${name} is already saved for the next call.`,
+      detail: null,
+    });
   }
 
   return { load, loadSettings, remember };

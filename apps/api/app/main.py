@@ -123,13 +123,14 @@ def create_app(
 
     from app.routes.actions import register_action_routes
 
+    approved = approved_voice_ids(config.approved_voice_ids, config.default_voice_id)
     register_action_routes(
         app,
         database,
         identity,
         owned,
         catalog,
-        approved_voice_ids=approved_voice_ids(config.approved_voice_ids, config.default_voice_id),
+        approved_voice_ids=approved,
     )
 
     embedder = embedding_adapter or OpenAIEmbedder(config.openai_api_key)
@@ -170,7 +171,9 @@ def create_app(
 
     register_system_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
     register_voice_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
-    register_worker_routes(app, config=config, database=database, embedder=embedder)
+    register_worker_routes(
+        app, config=config, database=database, embedder=embedder, catalog=catalog, approved_voice_ids=approved
+    )
     register_context_routes(app, config=config, database=database, identity=identity, semantic_search=semantic_search)
     register_exclusion_routes(app, config=config, database=database, identity=identity)
     register_wordle_routes(app, config=config, database=database, identity=identity, source=source)

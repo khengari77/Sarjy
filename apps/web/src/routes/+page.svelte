@@ -15,12 +15,14 @@
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
   import { errorCode } from '../lib/voice/errors';
-  import { storeCaptions, storeLanguage } from '../lib/preferences';
+  import { storeLanguage } from '../lib/preferences';
   import { createCatalogStore, initialCatalogState } from '../lib/voice/catalog';
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
   import { deriveStage } from '../lib/voice/stageView';
   import { bootStudio } from '../lib/voice/studio';
   import { createSelectionController } from '../lib/voice/selection';
+  import { createCommandSession } from '../lib/commands/commandSession.svelte';
+  import CommandStatus from '../lib/commands/CommandStatus.svelte';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -33,7 +35,6 @@
   let pendingIntent = $state<PendingIntent>(null);
   let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none');
   let busy = $state(false);
-  let captionsVisible = $state(true);
   // The shell owns storage and OS-preference resolution and reports the answer
   // through onthemechange. `dark` matches the tokens.css SSR fallback, so the
   // server and the first client frame agree before the boot script resolves.
@@ -56,6 +57,10 @@
   // Any finalised turn can save a memory server-side; the panel uses this to
   // invalidate a list it loaded before the save.
   const memoryRevision = $derived(`${conversation.current ?? ''}:${conversation.turns.length}`);
+  // Panel state is a top-level reactive object so the shell bindings and the
+  // command store share one source of truth.
+  const panels = $state({ history: false, memory_explorer: false });
+  const commands = createCommandSession(catalog, panels);
 
   // One projection owns the phase, copy and orb presentation; the orb button
   // dispatches whatever action that presentation advertises.
@@ -126,11 +131,6 @@
     }, onVoiceError);
   }
 
-  function toggleCaptions() {
-    captionsVisible = !captionsVisible;
-    storeCaptions(captionsVisible);
-  }
-
   function toggleLanguage() {
     arabic = !arabic;
     storeLanguage(arabic);
@@ -145,7 +145,8 @@
       conversation,
       restoreLanguage: LANGUAGE_SWITCH_ENABLED,
       setArabic: (value) => (arabic = value),
-      setCaptions: (value) => (captionsVisible = value),
+      hydrateSettings: (settings) => commands.hydrate(settings),
+      applyCommand: commands.apply,
       setDevOverlay: (value) => (devOverlay = value),
       getLanguage: () => (arabic ? 'ar' : 'en'),
       run: (work, onError) => run(work, onError),
@@ -165,6 +166,8 @@
 </svelte:head>
 
 <AppShell
+  bind:leftOpen={panels.history}
+  bind:rightOpen={panels.memory_explorer}
   dir={arabic ? 'rtl' : 'ltr'}
   stageDialogOpen={pendingIntent !== null}
   languageLabel={arabic ? 'English' : 'العربية'}
@@ -203,7 +206,7 @@
       turns={conversation.turns}
       provisional={voice.provisional}
       tools={conversation.toolCalls}
-      {captionsVisible}
+      captionsVisible={commands.state.settings.captions_visible}
       {busy}
       {words}
       onretrymic={startConnect}
@@ -244,17 +247,19 @@
       {arabic}
       conversationId={conversation.current}
       {memoryRevision}
+      bind:activeTab={commands.state.panelTab}
       {catalog}
       {selectedVoice}
       {sessionVoice}
       live={voice.live !== null}
-      {captionsVisible}
+      captionsVisible={commands.state.settings.captions_visible}
       onsearch={() => void catalogStore!.load()}
       onloadmore={() => void catalogStore!.load(true)}
-      onremember={() => catalogStore!.remember()}
-      ontoggleCaptions={toggleCaptions}
+      onremember={() => void catalogStore!.remember()}
+      ontoggleCaptions={() => void commands.setCaptions(!commands.state.settings.captions_visible)}
     />
   {/snippet}
 </AppShell>
 
 <p class="sr-only" aria-live="polite" aria-atomic="true">{announcement.message}</p>
+<CommandStatus session={commands} />
