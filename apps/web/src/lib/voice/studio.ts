@@ -55,6 +55,7 @@ export function bootStudio(options: StudioBoot) {
   );
   const catalogStore = createCatalogStore(catalog, {
     onSettings: (settings) => options.hydrateSettings(settings),
+    onVoiceSaved: (result) => options.applyCommand(result),
   });
   const connection = createVoiceConnection(voice, {
     ensureConversation: () => conversations!.ensureConversation(),
