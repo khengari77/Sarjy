@@ -96,32 +96,59 @@ function clearOwnedLive(state: VoiceState, deps: ConnectionDeps, sessionId: stri
   state.provisional = null;
 }
 
+interface CancelContext {
+  state: VoiceState;
+  deps: ConnectionDeps;
+  takeSession(): SessionConfig | null;
+  releaseSession(session: SessionConfig): Promise<boolean>;
+}
+
+async function cancelConnection(ctx: CancelContext): Promise<void> {
+  const { state, deps } = ctx;
+  const wasConnecting = state.connecting;
+  state.connecting = false;
+  state.voiceErrorCode = '';
+  state.transportStatus = 'idle';
+  state.agentState = null;
+  const session = ctx.takeSession();
+  if (wasConnecting && session) {
+    if (state.live) clearOwnedLive(state, deps, session.id);
+    const releasedOk = await ctx.releaseSession(session);
+    if (!releasedOk) {
+      state.live = session;
+      state.muted = true;
+      state.voiceErrorCode = 'SESSION_RELEASE_FAILED';
+      state.transportStatus = 'disconnected';
+    }
+  }
+  await deps
+    .getRuntime()
+    .cancelConnect()
+    .catch(() => {});
+}
+
 export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   let attemptCounter = 0;
   let ending = false;
   let pendingSession: SessionConfig | null = null;
   const releaseSession = createSessionReleaser();
-
   async function connect(microphone: boolean) {
     if (state.live) {
       if (microphone && state.muted) await toggleVoiceMute(state, deps);
       return;
     }
     if (state.connecting) return;
-
     const attempt = ++attemptCounter;
     pendingSession = null;
     state.connecting = true;
     state.voiceErrorCode = '';
     state.connectionLost = false;
-
     try {
       let conversationId = deps.getConversationId();
       if (!conversationId) {
         conversationId = await deps.ensureConversation();
         if (attempt !== attemptCounter) return;
       }
-
       if (microphone) {
         try {
           await ensureMicrophoneAccess();
@@ -131,7 +158,6 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         }
         if (attempt !== attemptCounter) return;
       }
-
       await startSessionAttempt(state, deps, {
         microphone,
         conversationId,
@@ -154,29 +180,17 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   }
 
   async function cancelConnect() {
-    const wasConnecting = state.connecting;
     attemptCounter += 1;
-    state.connecting = false;
-    state.voiceErrorCode = '';
-    state.transportStatus = 'idle';
-    state.agentState = null;
-    const session = state.live ?? pendingSession;
-    if (wasConnecting && session) {
-      if (state.live) clearOwnedLive(state, deps, session.id);
-      pendingSession = null;
-      const releasedOk = await releaseSession(session);
-      if (!releasedOk) {
-        // Keep the server session retryable; it may still hold admission.
-        state.live = session;
-        state.muted = true;
-        state.voiceErrorCode = 'SESSION_RELEASE_FAILED';
-        state.transportStatus = 'disconnected';
-      }
-    }
-    await deps
-      .getRuntime()
-      .cancelConnect()
-      .catch(() => {});
+    await cancelConnection({
+      state,
+      deps,
+      takeSession: () => {
+        const session = state.live ?? pendingSession;
+        pendingSession = null;
+        return session;
+      },
+      releaseSession,
+    });
   }
 
   async function end() {
