@@ -5,6 +5,7 @@ interface FakeRoom {
   connectResolve: (() => void) | null;
   connectReject: ((error: Error) => void) | null;
   remoteParticipants: Map<string, { isAgent: boolean; attributes: Record<string, string> }>;
+  localParticipant: { getTrackPublication: () => { track: { stop(): void } } | undefined };
   emit(event: string, ...args: unknown[]): void;
   disconnect: () => Promise<void>;
 }
@@ -145,4 +146,77 @@ it('releases audio even when room disconnect rejects', async () => {
   expect(audio.srcObject).toBeNull();
   await runtime.disconnect();
   expect(audio.pause).toHaveBeenCalledOnce();
+});
+
+it('stops outgoing capture and playback before awaiting the previous room teardown', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
+  const runtime = new LiveKitVoiceRuntime();
+  const connecting = runtime.connect(config);
+  await vi.advanceTimersByTimeAsync(1);
+  const outgoing = rooms().at(-1)!;
+  outgoing.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
+  outgoing.connectResolve!();
+  await vi.advanceTimersByTimeAsync(100);
+  await connecting;
+
+  const sequence: string[] = [];
+  const audio = {
+    pause: vi.fn(() => sequence.push('detach-playback')),
+    remove: vi.fn(),
+    srcObject: {},
+  };
+  outgoing.emit('trackSubscribed', { kind: 'audio', attach: () => audio });
+  const stop = vi.fn(() => sequence.push('stop-capture'));
+  outgoing.localParticipant = { getTrackPublication: () => ({ track: { stop } }) };
+  outgoing.disconnect = () => {
+    sequence.push('await-teardown');
+    // Never settles: the replacement must not wait for it.
+    return new Promise<void>(() => {});
+  };
+
+  const replacement = runtime.connect({ ...config, id: 'sess-2' });
+  await vi.advanceTimersByTimeAsync(1);
+
+  // Ordering is the contract: outgoing media is released before the old
+  // room teardown is awaited, not merely before the replacement finishes.
+  expect(sequence).toEqual(['detach-playback', 'stop-capture', 'await-teardown']);
+  expect(audio.srcObject).toBeNull();
+  const next = rooms().at(-1)!;
+  expect(next).not.toBe(outgoing);
+  next.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
+  next.connectResolve!();
+  await vi.advanceTimersByTimeAsync(100);
+  await expect(replacement).resolves.toBeUndefined();
+});
+
+it('resolves the replacement call when the previous teardown rejects', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
+  const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  class RejectingTeardownRuntime extends LiveKitVoiceRuntime {
+    override async disconnect(): Promise<void> {
+      throw new Error('sensitive provider detail');
+    }
+  }
+  try {
+    const runtime = new RejectingTeardownRuntime();
+    const replacement = runtime.connect(config);
+    await vi.advanceTimersByTimeAsync(1);
+    const room = rooms().at(-1)!;
+    room.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
+    room.connectResolve!();
+    await vi.advanceTimersByTimeAsync(100);
+
+    await expect(replacement).resolves.toBeUndefined();
+    expect(debug).toHaveBeenCalledWith('[Sarjy] Previous voice call teardown failed');
+    expect(JSON.stringify(debug.mock.calls)).not.toContain('sensitive');
+    // The new call is usable, not just non-throwing.
+    expect(rooms().at(-1)).toBe(room);
+    expect(runtime.epoch).toBeGreaterThan(0);
+  } finally {
+    debug.mockRestore();
+  }
 });

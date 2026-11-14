@@ -62,7 +62,8 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   }
 
   async connect(config: SessionConfig) {
-    await this.disconnect();
+    // A failed previous-call teardown must never fail the call replacing it.
+    await this.disconnect().catch(() => console.debug('[Sarjy] Previous voice call teardown failed'));
     this.sessionEpoch += 1;
     const epoch = this.sessionEpoch;
     this.sawTranscriptionSegments = false;
@@ -264,7 +265,8 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     const room = this.room;
     this.room = null;
     // Detach resource ownership before awaiting the old room. A replacement
-    // connection may start while disconnect is pending or rejecting.
+    // connection may start while disconnect is pending or rejecting, so the
+    // outgoing microphone and playback stop synchronously here first.
     const audio = this.audio;
     const analysers = this.analysers;
     const audioContext = this.audioContext;
