@@ -132,6 +132,7 @@
 
   <footer class="drawer-footer">
     <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Weather data: Open-Meteo</a>
+    <span class="drawer-product">Voice Context Studio</span>
   </footer>
 </div>
 
@@ -148,10 +149,19 @@
     border-top: 1px solid var(--border-subtle);
     color: var(--text-muted);
     font-size: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .drawer-footer a {
     color: inherit;
+  }
+
+  .drawer-product {
+    display: block;
+    opacity: 0.8;
+    letter-spacing: 0.02em;
   }
 
   .tabs {

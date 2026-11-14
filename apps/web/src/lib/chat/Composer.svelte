@@ -16,7 +16,11 @@
 
 <footer class="composer">
   <textarea bind:value={draft} aria-label={placeholder} {placeholder} {disabled}></textarea>
-  <button disabled={disabled || !draft.trim()} onclick={onsend}>{sendLabel} ↗</button>
+  <button disabled={disabled || !draft.trim()} onclick={onsend} aria-label={sendLabel}>
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3.4 20.6 21.2 12 3.4 3.4l2.1 6.6L15 12 5.5 14l-2.1 6.6Z" />
+    </svg>
+  </button>
 </footer>
 
 <style>
@@ -26,7 +30,7 @@
     gap: 10px;
     width: 100%;
     max-width: var(--stage-max-width);
-    margin: 0 auto;
+    margin: 8px auto 24px;
     padding: 7px 7px 7px 18px;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-composer);
@@ -61,16 +65,14 @@
     border-radius: 999px;
     background: var(--accent);
     color: #fff;
-    font: inherit;
-    font-size: 0;
     cursor: pointer;
     transition: opacity var(--transition-quick);
   }
 
-  .composer button::after {
-    content: '↗';
-    font-size: 18px;
-    line-height: 1;
+  .composer button svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
   }
 
   .composer button:disabled {
