@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.domain.commands import CommandResult
 from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
 from app.domain.contracts import (
     MemoryRecord,
@@ -69,6 +70,10 @@ class WeatherInput(BaseModel):
 
 class CommandInput(BaseModel):
     turn_id: str = Field(min_length=1, max_length=100)
+
+
+class CommandResponse(BaseModel):
+    command: CommandResult | None = None
 
 
 def _session_guard(config: Settings):
@@ -407,7 +412,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
 
 
 def _register_command_routes(app, *, database, guard, catalog):
-    @app.post("/internal/agent/command")
+    @app.post("/internal/agent/command", response_model=CommandResponse)
     async def finalized_command(body: CommandInput, request: Request, db: AsyncSession = Depends(database)):
         """The one worker entry for a finalized user utterance.
 

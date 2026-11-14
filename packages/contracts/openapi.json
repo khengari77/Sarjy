@@ -712,6 +712,45 @@
         }
       }
     },
+    "/internal/agent/command": {
+      "post": {
+        "summary": "Finalized Command",
+        "description": "The one worker entry for a finalized user utterance.\n\nReads the already-persisted source turn and its frozen revisions; it\nnever accepts a client-supplied revision or transcript.  Returns\n``{\"command\": null}`` when the utterance is ordinary conversation.",
+        "operationId": "finalized_command_internal_agent_command_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/agent/tool/weather": {
       "post": {
         "summary": "Agent Weather",
@@ -721,6 +760,42 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/WeatherInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/agent/memory/confirm": {
+      "post": {
+        "summary": "Confirm Memory Route",
+        "operationId": "confirm_memory_route_internal_agent_memory_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryConfirm"
               }
             }
           },
@@ -972,6 +1047,90 @@
           }
         }
       }
+    },
+    "/v1/wordle/today": {
+      "get": {
+        "summary": "Today",
+        "operationId": "today_v1_wordle_today_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/wordle/guesses": {
+      "post": {
+        "summary": "Guess",
+        "operationId": "guess_v1_wordle_guesses_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuessInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/wordle/stats": {
+      "get": {
+        "summary": "Stats",
+        "operationId": "stats_v1_wordle_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/wordle/refresh": {
+      "post": {
+        "summary": "Refresh",
+        "operationId": "refresh_internal_wordle_refresh_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1181,6 +1340,131 @@
           "provider"
         ],
         "title": "BudgetReservation"
+      },
+      "CommandInput": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Turn Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "turn_id"
+        ],
+        "title": "CommandInput"
+      },
+      "CommandKind": {
+        "type": "string",
+        "enum": [
+          "executed",
+          "unchanged",
+          "needs_confirmation",
+          "unsupported",
+          "failed",
+          "unknown"
+        ],
+        "title": "CommandKind"
+      },
+      "CommandResponse": {
+        "properties": {
+          "command": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CommandResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "CommandResponse"
+      },
+      "CommandResult": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CommandKind"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "navigation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "history",
+                  "memory_explorer"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Navigation"
+          },
+          "changed": {
+            "type": "boolean",
+            "title": "Changed",
+            "default": false
+          },
+          "spoken": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Spoken"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "kind",
+          "spoken"
+        ],
+        "title": "CommandResult",
+        "description": "The single result the UI applies and the worker speaks once."
       },
       "ContextAmbiguity": {
         "properties": {
@@ -1689,6 +1973,29 @@
         ],
         "title": "ContextUndoResult"
       },
+      "GuessInput": {
+        "properties": {
+          "guess": {
+            "type": "string",
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Guess"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "guess",
+          "request_id"
+        ],
+        "title": "GuessInput"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1718,6 +2025,9 @@
                 "$ref": "#/components/schemas/NavigationActionResult"
               },
               {
+                "$ref": "#/components/schemas/CommandResult"
+              },
+              {
                 "additionalProperties": {
                   "$ref": "#/components/schemas/JsonValue"
                 },
@@ -1735,6 +2045,31 @@
         "title": "HandledAction"
       },
       "JsonValue": {},
+      "MemoryConfirm": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Token"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "save",
+              "discard",
+              "replace"
+            ],
+            "title": "Decision"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "decision"
+        ],
+        "title": "MemoryConfirm"
+      },
       "MemoryCorrection": {
         "properties": {
           "content": {

@@ -65,6 +65,13 @@ def counts(path):
         )
 
 
+def handler_trace(path):
+    """The typed action each committed dispatch recorded, in commit order."""
+    with closing(sqlite3.connect(path)) as db, db:
+        payloads = [row[0] for row in db.execute("SELECT payload FROM context_operations ORDER BY created_at")]
+    return [json.loads(payload).get("result", {}).get("kind") for payload in payloads]
+
+
 ROWS = [
     ("Speak slower.", {"kind": "AdjustSpeakingSpeed", "delta": -0.1}, "executed"),
     ("Speak faster.", {"kind": "AdjustSpeakingSpeed", "delta": 0.1}, "executed"),
@@ -89,6 +96,7 @@ def test_voice_and_gui_fixtures_converge_on_one_state_and_handler_trace(tmp_path
         spoken = response.json()
         spoken_settings = client.get("/v1/settings").json()
         spoken_counts = counts(spoken_path)
+        spoken_trace = handler_trace(spoken_path)
 
     gui_app, gui_path = app_for(tmp_path, "gui")
     with TestClient(gui_app) as client:
@@ -98,12 +106,14 @@ def test_voice_and_gui_fixtures_converge_on_one_state_and_handler_trace(tmp_path
         manual = response.json()
         gui_settings = client.get("/v1/settings").json()
         gui_counts = counts(gui_path)
+        gui_trace = handler_trace(gui_path)
 
     assert spoken["handled"] is True and manual["handled"] is True
     assert spoken["result"]["kind"] == expected_kind
     assert spoken["result"]["changed"] is (expected_kind == "executed")
     assert spoken_settings == gui_settings
     assert spoken_counts == gui_counts
+    assert spoken_trace == gui_trace == [action["kind"]]
     assert spoken["result"]["action"] == action["kind"]
     assert spoken["result"]["spoken"]
     if action["kind"] in SETTING_KINDS:

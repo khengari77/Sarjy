@@ -81,9 +81,9 @@ async def handle_finalized_utterance(
         return failed_result(request_id=request_id, detail=exc.code, action=action)
     except HTTPException as exc:
         detail = _detail_code(exc)
-        # A revision conflict is a safe, definite no-op; transport failures are
-        # not proof either way.
-        if exc.status_code == 409:
+        # A rejected request is a definite no-op. A 5xx or transport failure is
+        # not proof either way and must never be reported as success.
+        if exc.status_code < 500:
             return failed_result(request_id=request_id, detail=detail, action=action)
         return unknown_result(request_id=request_id, detail=detail, action=action)
     except Exception:

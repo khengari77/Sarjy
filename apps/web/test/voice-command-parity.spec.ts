@@ -79,6 +79,9 @@ async function boot(page: Page) {
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
   await page.goto('/');
   await expect(page.locator('[data-command-trace]')).toHaveAttribute('data-command-trace', '');
+  // Wait for hydration and the bootstrap that follows runtime subscription.
+  await expect(page.getByRole('button', { name: 'Riyadh weather', exact: true })).toBeVisible();
+  await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
 }
 
 async function emit(page: Page, event: Record<string, unknown>) {
