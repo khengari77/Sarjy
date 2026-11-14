@@ -3,6 +3,7 @@
   import ExclusionOutcome from './ExclusionOutcome.svelte';
   import ExclusionReview from './ExclusionReview.svelte';
   import MemoryCandidateList from './MemoryCandidateList.svelte';
+  import MemoryIntro from './MemoryIntro.svelte';
   import MemorySearch from './MemorySearch.svelte';
   import {
     confirmExclusion,
@@ -80,10 +81,7 @@
 
   $effect(() => {
     const signal = `${active}:${revision}`;
-    if (lastSignal === null) {
-      lastSignal = signal;
-      return;
-    }
+    lastSignal ??= signal;
     if (signal === lastSignal) return;
     lastSignal = signal;
     if (active) void reload();
@@ -222,22 +220,7 @@
 </script>
 
 <section class="memory-panel" aria-label="Memory and context explorer" data-testid="memory-panel">
-  <header class="memory-header">
-    <h3>Memory &amp; context</h3>
-    <p class="memory-muted">Every saved fact is visible here with its source; states stay separate.</p>
-  </header>
-
-  {#if !conversationId}
-    <p class="memory-notice" role="status">
-      Select a conversation to see whether a fact is a candidate for its next compiled context or excluded from it.
-      Stored facts are listed below.
-    </p>
-  {/if}
-
-  <p class="memory-muted">
-    “Candidate” means the fact is inside the set the compiler builds the next prompt from. The final prompt can still
-    trim it to fit its character budget, so this is candidacy, not a promise the model received it.
-  </p>
+  <MemoryIntro {conversationId} />
 
   <MemorySearch
     bind:query
@@ -289,7 +272,4 @@
   {/if}
 
   <ExclusionOutcome {confirmation} {undoResult} {undoBusy} {undoError} onundo={() => void undo()} />
-  <p class="memory-footnote">
-    Excluding is reversible. It does not delete the stored fact and does not claim to erase conversation history.
-  </p>
 </section>

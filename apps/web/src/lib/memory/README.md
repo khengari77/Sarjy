@@ -41,12 +41,12 @@ facts without candidates/exclusion annotations and disables exclusion actions.
   `candidate_eligible` / `included_in_conversation` / `excluded_in_conversation`
   annotations.
 - The list's projection comes from the compiler's own reader
-  (`orm_memory_candidates`), so exclusion *lineage* applies: a correction that
+  (`orm_memory_candidates`), so exclusion _lineage_ applies: a correction that
   supersedes an excluded fact is excluded too, and the bounded candidate window
   is not backfilled after exclusions.
 - **Candidate, not included.** `included_in_conversation` means "inside the
   candidate set the next prompt is built from". The compiler can still trim
-  that prompt to its character budget, so the UI calls this a *candidate* and
+  that prompt to its character budget, so the UI calls this a _candidate_ and
   never claims the model received the fact. `candidate_eligible` is weaker
   still: active and not excluded, but possibly outside the candidate window.
 - `kind` is `budget` only when the classifier returns exactly `budget`; an

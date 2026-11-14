@@ -63,7 +63,13 @@ it('treats an excluded correction lineage descendant as excluded, not a candidat
   // hand-built row that only carries the exclusion bit must still not claim
   // candidacy.
   const descendant = labelsFor(
-    item({ id: 'memory-2', supersedes_id: 'memory-1', excluded_in_conversation: true, candidate_eligible: false, included_in_conversation: false }),
+    item({
+      id: 'memory-2',
+      supersedes_id: 'memory-1',
+      excluded_in_conversation: true,
+      candidate_eligible: false,
+      included_in_conversation: false,
+    }),
     false,
   );
   expect(descendant).toMatchObject({ excluded: true, candidate: false, eligible: false });
