@@ -961,7 +961,7 @@ export interface components {
              */
             kind: "SelectApprovedVoice";
             /** Voice Id */
-            voice_id: string;
+            voice_id: string | null;
         };
         /** SetCaptionsVisible */
         SetCaptionsVisible: {

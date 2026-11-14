@@ -15,6 +15,7 @@
   import CallControls from '../lib/chat/CallControls.svelte';
   import Composer from '../lib/chat/Composer.svelte';
   import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
+  import { selectedVoiceOption } from '../lib/chat/voice-state';
   import RightDrawer from '../lib/ui/RightDrawer.svelte';
   import MemoryPanel from '../lib/memory/MemoryPanel.svelte';
   import { createAnnouncement } from '../lib/chat/announcement.svelte';
@@ -53,6 +54,8 @@
     getConversations: () => conversations!,
   });
   const words = $derived(wordsFor(arabic));
+  const selectedVoice = $derived(selectedVoiceOption(catalog.voices, catalog.voiceId));
+  const sessionVoice = $derived(voice.live?.voice ?? null);
   // Any finalised turn can save a memory server-side; the panel uses this to
   // invalidate a list it loaded before the save.
   const memoryRevision = $derived(`${conversation.current ?? ''}:${conversation.turns.length}`);
@@ -257,12 +260,15 @@
           nextVoicePage={catalog.nextPage}
           voiceLoading={catalog.loading}
           voiceError={catalog.error}
-          live={voice.live}
-          activeVoiceName={voice.activeVoiceName}
+          voiceSaving={catalog.saving}
+          settingsError={catalog.settingsError}
+          live={voice.live !== null}
+          {selectedVoice}
+          {sessionVoice}
           {captionsVisible}
           onsearch={() => void catalogStore!.load()}
           onloadmore={() => void catalogStore!.load(true)}
-          onremember={() => catalogStore!.remember()}
+          onremember={() => void catalogStore!.remember()}
           ontoggleCaptions={toggleCaptions}
         />
       {/snippet}
