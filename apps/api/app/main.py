@@ -41,8 +41,8 @@ async def _stop_refresh_task(task) -> None:
         return
     task.cancel()
     try:
-        await task
-    except asyncio.CancelledError:
+        await asyncio.wait_for(task, timeout=5)
+    except (asyncio.CancelledError, TimeoutError):
         pass
     except Exception:  # noqa: BLE001 - a failed refresh task must not block shutdown
         logging.getLogger(__name__).exception("wordle refresh task failed")

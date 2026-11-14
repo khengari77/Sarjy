@@ -11,7 +11,12 @@ from pydantic import ValidationError
 
 def test_invalid_wordle_timezone_fails_configuration():
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, wordle_timezone="Not/AZone")
+        Settings(_env_file=None, wordle_enabled=True, wordle_timezone="Not/AZone")
+
+
+def test_disabled_wordle_never_blocks_boot_on_the_zone():
+    assert Settings(_env_file=None, wordle_enabled=False, wordle_timezone="Not/AZone").wordle_timezone == "Not/AZone"
+    assert Settings(_env_file=None, wordle_enabled=False, wordle_timezone="").wordle_timezone == ""
 
 
 def test_shutdown_disposes_even_when_the_refresh_task_already_failed():
@@ -42,5 +47,30 @@ def test_stop_refresh_task_does_not_raise_for_a_failed_task():
         task = asyncio.create_task(fail())
         await asyncio.sleep(0)
         await _stop_refresh_task(task)
+
+    asyncio.run(run())
+
+
+def test_shutdown_disposes_when_the_task_ignores_cancellation():
+    class Engine:
+        disposed = False
+
+        async def dispose(self):
+            self.disposed = True
+
+    async def stubborn():
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            await asyncio.sleep(30)
+
+    async def run():
+        task = asyncio.create_task(stubborn())
+        await asyncio.sleep(0)
+        engine = Engine()
+        started = asyncio.get_running_loop().time()
+        await _shutdown(task, engine)
+        assert engine.disposed is True
+        assert asyncio.get_running_loop().time() - started < 8
 
     asyncio.run(run())

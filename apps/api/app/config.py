@@ -44,6 +44,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_wordle_timezone(self):
+        # A disabled feature must never prevent boot; an empty value is the
+        # ordinary compose/TZ interpolation case.
+        if not self.wordle_enabled:
+            return self
         try:
             ZoneInfo(self.wordle_timezone)
         except (ZoneInfoNotFoundError, ValueError) as exc:
