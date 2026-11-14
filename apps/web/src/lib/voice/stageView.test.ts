@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { initialVoiceState } from './connection';
 import { deriveStage } from './stageView';
-import { resolvePhaseColor } from '../orb/orbState';
 
 describe('deriveStage', () => {
   it('uses the supplied resolved theme instead of defaulting', () => {
