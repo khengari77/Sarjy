@@ -92,7 +92,7 @@ export function startOrbRenderer(
 
     const gl =
       tier === 'enhanced'
-        ? canvas.getContext('webgl2', { alpha: true, antialias: true, premultipliedAlpha: false })
+        ? canvas.getContext('webgl2', { alpha: true, antialias: true, premultipliedAlpha: true })
         : null;
     if (gl) {
       const stop = setupWebgl({
