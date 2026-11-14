@@ -31,17 +31,13 @@ export async function fetchSettings(): Promise<UserSettings> {
   return request<UserSettings>('settings');
 }
 
-export async function startVoiceSession(
-  conversationId: string,
-  language: 'ar' | 'en',
-  voiceId?: string,
-): Promise<SessionConfig> {
-  // Omit the voice when the user has no saved selection: the server then applies
-  // its approved default, so a fresh browser can start without opening the picker.
+export async function startVoiceSession(conversationId: string, language: 'ar' | 'en'): Promise<SessionConfig> {
+  // Never send a voice id here: the server owns resolution (saved -> default) and
+  // the saved voice's language. An explicit per-call override needs a distinct
+  // user intent and must not be inferred from whatever the picker happens to show.
   const body = {
     conversation_id: conversationId,
     language,
-    ...(voiceId ? { voice_id: voiceId } : {}),
     response_preference: 'automatic',
   } satisfies StartVoice;
   return request<SessionConfig>('voice/sessions', body);
