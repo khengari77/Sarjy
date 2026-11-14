@@ -670,3 +670,68 @@ def test_repeated_confirm_does_not_duplicate_active_exclusions(tmp_path):
         with closing(sqlite3.connect(file)) as db:
             active = db.execute("SELECT count(*) FROM context_exclusions WHERE active=1").fetchone()[0]
         assert active == 0
+
+
+def test_undo_does_not_claim_a_lineage_excluded_descendant_is_eligible(tmp_path):
+    """F1: Undo must report the compiler's exclusion, not raw rows.
+
+    Exclude "Hotel in Rome", correct it to "Hotel in Paris" (the descendant is
+    blocked through lineage), exclude the descendant explicitly, then Undo that
+    operation. The old code computed ``still_excluded`` from raw active rows,
+    so it claimed the descendant was restored while the compiler still omitted
+    it from the next request.
+    """
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        original = client.post(
+            f"/v1/conversations/{chat}/memories",
+            json={"content": "Hotel in Rome, 3 nights", "idempotency_key": "f1-seed"},
+        )
+        assert original.status_code == 201, original.text
+        original_id = original.json()["id"]
+
+        first = client.post(f"/v1/conversations/{chat}/context/exclusions", json={"memory_ids": [original_id]})
+        assert first.status_code == 200, first.text
+        first_applied = confirm(client, chat, first.json(), "f1-first")
+        assert first_applied.status_code == 200, first_applied.text
+
+        corrected = client.post(
+            f"/v1/memories/{original_id}/correct",
+            json={"content": "Hotel in Paris, 2 nights", "expected_version": 1, "idempotency_key": "f1-correct"},
+        )
+        assert corrected.status_code == 200, corrected.text
+        descendant_id = corrected.json()["id"]
+
+        listed = client.get("/v1/memories", params={"conversation_id": chat, "limit": 100}).json()
+        listed_descendant = next(item for item in listed["items"] if item["id"] == descendant_id)
+        assert listed_descendant["excluded_in_conversation"] is True
+
+        second = client.post(f"/v1/conversations/{chat}/context/exclusions", json={"memory_ids": [descendant_id]})
+        assert second.status_code == 200, second.text
+        second_applied = confirm(client, chat, second.json(), "f1-second")
+        assert second_applied.status_code == 200, second_applied.text
+        applied = second_applied.json()
+
+        undone = client.post(
+            f"/v1/conversations/{chat}/context/undo",
+            json={
+                "operation_id": applied["operation_id"],
+                "expected_revision": applied["revision_after"],
+                "idempotency_key": "f1-undo",
+            },
+        )
+        assert undone.status_code == 200, undone.text
+        body = undone.json()
+        assert body["restored_ids"] == [], "lineage still excludes the corrected descendant"
+        assert descendant_id in body["diff"]["kept"]
+
+        refetched = client.get("/v1/memories", params={"conversation_id": chat, "limit": 100}).json()
+        refetched_descendant = next(item for item in refetched["items"] if item["id"] == descendant_id)
+        assert refetched_descendant["excluded_in_conversation"] is True
+
+        headers = add_turn_session(file, chat)
+        context = start_turn(client, headers, request_id="f1", text="Where am I staying?")
+        assert descendant_id not in context["included_record_ids"]
+        assert descendant_id in context["excluded_record_ids"]
