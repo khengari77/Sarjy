@@ -143,6 +143,7 @@
   aria-label={label}
   {disabled}
   data-renderer={failed ? 'static' : tier}
+  data-theme={presentation.theme}
   data-phase={presentation.effectivePhase}
   data-mic-level={micLevel.toFixed(2)}
   data-output-level={outputLevel.toFixed(2)}

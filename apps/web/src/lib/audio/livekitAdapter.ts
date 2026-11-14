@@ -106,6 +106,10 @@ const FRIENDLY: Record<string, { en: string; ar: string }> = {
     en: 'The usage guard is unavailable, so voice is paused to protect the budget.',
     ar: 'خدمة حد الاستخدام غير متاحة، لذا أُوقف الصوت حمايةً للميزانية.',
   },
+  SESSION_RELEASE_FAILED: {
+    en: 'The call ended, but the server could not confirm cleanup. Press End call again to retry.',
+    ar: 'انتهت المكالمة، لكن الخادم لم يؤكد التنظيف. اضغط «إنهاء المكالمة» مرة أخرى لإعادة المحاولة.',
+  },
 };
 
 /** Plain-language copy; never leaks keys, provider names or billing details. */

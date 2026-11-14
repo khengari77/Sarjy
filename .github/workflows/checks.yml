@@ -108,10 +108,20 @@ jobs:
           REQUIRE_DAY2_INTEGRATION: '1'
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
+      - name: Wordle per-game concurrency
+        # FOR UPDATE is a no-op on SQLite; this step is the only coverage of
+        # the PostgreSQL game-row serialization. A skip fails the step via
+        # tests/conftest.py.
+        run: uv run pytest -v tests/test_wordle_postgres.py
+        env:
+          REQUIRE_DAY2_INTEGRATION: '1'
+          REQUIRE_WORDLE_POSTGRES: '1'
+          TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
+          TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
       - name: Real vector and integration checks
         run: |
           uv run python -c "import sys; sys.path.insert(0, 'apps/api'); import app.services.memory, app.services.context_operations, app.domain.weather_permissions"
-          uv run pytest -q tests/test_memory_postgres.py tests/test_day2_integration.py tests/test_memory_transaction_boundary.py tests/test_tool_operations_postgres.py tests/test_context_bounded_retrieval.py
+          uv run pytest -q tests/test_memory_postgres.py tests/test_memory_capture_postgres.py tests/test_day2_integration.py tests/test_memory_transaction_boundary.py tests/test_tool_operations_postgres.py tests/test_context_bounded_retrieval.py
         env:
           REQUIRE_DAY2_INTEGRATION: '1'
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests

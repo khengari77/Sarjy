@@ -1,9 +1,11 @@
 import type { SessionConfig } from '../api';
-import { endVoiceSession } from '../chat/session';
 import { ensureMicrophoneAccess } from '../audio/microphone';
 import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
 import { errorCode } from './errors';
 import { startSessionAttempt } from './sessionAttempt';
+import { createSessionReleaser } from './sessionRelease';
+import { cancelConnection } from './cancelConnection';
+import { applyFailedRelease } from './releaseOutcome';
 import { interruptVoice, sendVoiceText, toggleVoiceMute } from './voiceControls';
 import type { MeterController } from './meters';
 
@@ -55,14 +57,19 @@ export interface ConnectionDeps {
   meters: MeterController;
 }
 
-function handleVoiceEvent(state: VoiceState, deps: ConnectionDeps, event: VoiceEvent, isEnding: () => boolean) {
+function handleVoiceEvent(
+  state: VoiceState,
+  deps: ConnectionDeps,
+  event: VoiceEvent,
+  isEnding: (sessionId: string) => boolean,
+) {
   if (event.type === 'status') {
     if (event.source === 'agent') {
       state.agentState = event.text;
     } else {
       state.agentState = null;
       state.transportStatus = event.text;
-      if (event.text === 'disconnected' && state.live && !isEnding()) {
+      if (event.text === 'disconnected' && state.live && !isEnding(state.live.id)) {
         deps.meters.teardownMeters();
         state.muted = true;
         state.connectionLost = true;
@@ -82,50 +89,51 @@ function handleVoiceEvent(state: VoiceState, deps: ConnectionDeps, event: VoiceE
   }
 }
 
+/** Read through a call so a session set while a release was awaited is visible. */
+function liveSessionId(state: VoiceState): string | null {
+  return state.live?.id ?? null;
+}
+
+function clearOwnedLive(state: VoiceState, deps: ConnectionDeps, sessionId: string) {
+  if (state.live?.id !== sessionId) return;
+  deps.meters.teardownMeters();
+  state.live = null;
+  state.muted = true;
+  state.activeVoiceName = '';
+  state.connectionLost = false;
+  state.provisional = null;
+}
+
 export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   let attemptCounter = 0;
-  let ending = false;
-  const released = new Set<string>();
-
-  async function releaseSession(session: SessionConfig | null) {
-    if (!session || released.has(session.id)) return;
-    released.add(session.id);
-    await endVoiceSession(session).catch(() => {});
-  }
-
-  function ownsLive(sessionId: string) {
-    return state.live?.id === sessionId;
-  }
-
-  function clearOwnedLive(sessionId: string) {
-    if (!ownsLive(sessionId)) return;
-    deps.meters.teardownMeters();
-    state.live = null;
-    state.muted = true;
-    state.activeVoiceName = '';
-    state.connectionLost = false;
-    state.provisional = null;
-  }
-
+  const endingSessions = new Set<string>();
+  let pendingSession: SessionConfig | null = null;
+  const releaseSession = createSessionReleaser();
+  // Read through calls so a session created while a release was awaited is
+  // visible to the guards below.
+  const pendingSessionId = () => pendingSession?.id ?? null;
+  const replacingSession = (sessionId: string) => {
+    const liveId = liveSessionId(state);
+    const pendingId = pendingSessionId();
+    return (liveId !== null && liveId !== sessionId) || (pendingId !== null && pendingId !== sessionId);
+  };
   async function connect(microphone: boolean) {
     if (state.live) {
       if (microphone && state.muted) await toggleVoiceMute(state, deps);
       return;
     }
     if (state.connecting) return;
-
     const attempt = ++attemptCounter;
+    pendingSession = null;
     state.connecting = true;
     state.voiceErrorCode = '';
     state.connectionLost = false;
-
     try {
       let conversationId = deps.getConversationId();
       if (!conversationId) {
         conversationId = await deps.ensureConversation();
         if (attempt !== attemptCounter) return;
       }
-
       if (microphone) {
         try {
           await ensureMicrophoneAccess();
@@ -135,14 +143,17 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         }
         if (attempt !== attemptCounter) return;
       }
-
       await startSessionAttempt(state, deps, {
         microphone,
         conversationId,
         isCurrent: () => attempt === attemptCounter && deps.getConversationId() === conversationId,
         releaseSession,
-        clearOwnedLive,
+        clearOwnedLive: (sessionId) => clearOwnedLive(state, deps, sessionId),
+        onSessionCreated: (session) => {
+          pendingSession = session;
+        },
       });
+      if (state.live) pendingSession = null;
     } catch (error) {
       if (attempt === attemptCounter) {
         state.voiceErrorCode = errorCode(error);
@@ -154,28 +165,29 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   }
 
   async function cancelConnect() {
-    const wasConnecting = state.connecting;
     attemptCounter += 1;
-    state.connecting = false;
-    state.voiceErrorCode = '';
-    state.transportStatus = 'idle';
-    state.agentState = null;
-    if (wasConnecting && state.live) {
-      const session = state.live;
-      clearOwnedLive(session.id);
-      void releaseSession(session);
-    }
-    await deps
-      .getRuntime()
-      .cancelConnect()
-      .catch(() => {});
+    await cancelConnection({
+      state,
+      deps,
+      takeSession: () => {
+        const session = state.live ?? pendingSession;
+        pendingSession = null;
+        return session;
+      },
+      releaseSession,
+      clearOwnedLive: (sessionId) => clearOwnedLive(state, deps, sessionId),
+      isReplacing: replacingSession,
+    });
   }
 
   async function end() {
-    if (ending) return;
-    ending = true;
+    const session: SessionConfig | null = state.live ?? pendingSession;
+    // Teardown ownership follows the session, not the module: ending call A
+    // must never make End a no-op for a replacement call B.
+    if (session && endingSessions.has(session.id)) return;
+    if (session) endingSessions.add(session.id);
     attemptCounter += 1;
-    const session = state.live;
+    pendingSession = null;
     deps.meters.teardownMeters();
     state.live = null;
     state.muted = true;
@@ -183,25 +195,31 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     state.provisional = null;
     state.transportStatus = 'idle';
     state.agentState = null;
+    state.activeVoiceName = '';
+    state.voiceErrorCode = '';
     try {
       await deps
         .getRuntime()
         .disconnect()
         .catch(() => {});
-      await releaseSession(session);
+      const releasedOk = await releaseSession(session);
+      if (!releasedOk && session) applyFailedRelease(state, session, replacingSession(session.id));
       await deps.refresh().catch(() => {});
     } finally {
-      ending = false;
+      if (session) endingSessions.delete(session.id);
     }
   }
 
   async function reconnect() {
     await end();
+    // A failed release leaves the old session live so End can retry it.
+    // connect() would only unmute that dead session, so refuse instead.
+    if (state.live) return;
     await connect(true);
   }
 
   function handleEvent(event: VoiceEvent) {
-    handleVoiceEvent(state, deps, event, () => ending);
+    handleVoiceEvent(state, deps, event, (sessionId) => endingSessions.has(sessionId));
   }
 
   return {
