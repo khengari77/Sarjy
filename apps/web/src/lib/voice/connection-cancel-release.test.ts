@@ -194,6 +194,29 @@ describe('reconnect after a failed release', () => {
   });
 });
 
+describe('cancel with a stalled local transport', () => {
+  it('releases the backend session without waiting for local teardown', async () => {
+    vi.useFakeTimers();
+    const { state, connection, runtime } = await liveConnection();
+    let finishLocal!: () => void;
+    runtime.cancelConnect = () =>
+      new Promise<void>((resolve) => {
+        finishLocal = resolve;
+      });
+
+    const cancelling = connection.cancelConnect();
+    await vi.advanceTimersByTimeAsync(0);
+    // The local cancel is still pending, yet the server session is released.
+    expect(mocks.end).toHaveBeenCalledWith(config);
+    expect(state.live).toBeNull();
+
+    finishLocal();
+    await vi.advanceTimersByTimeAsync(0);
+    await cancelling;
+    expect(state.voiceErrorCode).toBe('');
+  });
+});
+
 describe('end after a replacement connected', () => {
   it('keeps the replacement when the old session release fails', async () => {
     vi.useFakeTimers();

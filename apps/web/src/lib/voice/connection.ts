@@ -124,13 +124,17 @@ async function cancelConnection(ctx: CancelContext): Promise<void> {
   // present a dead session as live to the next connect().
   const session = ctx.takeSession();
   if (session) clearOwnedLive(state, deps, session.id);
-  // Local media stops before any backend await: a pending release must never
-  // keep the outgoing transport (or its microphone) alive.
-  await deps
+  // Start the local teardown without awaiting it: media detach happens
+  // synchronously inside cancelConnect(), while a stalled transport must not
+  // gate the backend release (that would leak the admitted session).
+  const localCancel = deps
     .getRuntime()
     .cancelConnect()
     .catch(() => {});
-  if (!session) return;
+  if (!session) {
+    await localCancel;
+    return;
+  }
   const releasedOk = await ctx.releaseSession(session);
   // A replacement can become live while the release is in flight. Never
   // overwrite it with the failed old session.
@@ -143,6 +147,7 @@ async function cancelConnection(ctx: CancelContext): Promise<void> {
     state.voiceErrorCode = 'SESSION_RELEASE_FAILED';
     state.transportStatus = 'disconnected';
   }
+  await localCancel;
 }
 
 export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
