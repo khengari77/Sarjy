@@ -9,10 +9,27 @@ import type { VoiceState } from './connection';
 export function applyFailedRelease(state: VoiceState, session: SessionConfig, replacing: boolean) {
   if (replacing) {
     console.warn('[Sarjy] Voice session release failed; replacement kept live', { sessionId: session.id });
+    // Still retryable, but never as the live call.
+    state.pendingCleanup ??= session;
     return;
   }
   state.live = session;
   state.muted = true;
   state.voiceErrorCode = 'SESSION_RELEASE_FAILED';
   state.transportStatus = 'disconnected';
+}
+
+/** Retry the admission release left by a failed startup cleanup. */
+export async function retryFailedCleanup(
+  state: VoiceState,
+  release: (session: SessionConfig) => Promise<boolean>,
+): Promise<void> {
+  const session = state.pendingCleanup;
+  if (!session) return;
+  state.voiceErrorCode = '';
+  if (await release(session)) {
+    if (state.pendingCleanup?.id === session.id) state.pendingCleanup = null;
+    return;
+  }
+  state.voiceErrorCode = 'SESSION_RELEASE_FAILED';
 }

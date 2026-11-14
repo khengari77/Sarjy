@@ -5,7 +5,7 @@ import { errorCode } from './errors';
 import { startSessionAttempt } from './sessionAttempt';
 import { createSessionReleaser } from './sessionRelease';
 import { cancelConnection } from './cancelConnection';
-import { applyFailedRelease } from './releaseOutcome';
+import { applyFailedRelease, retryFailedCleanup } from './releaseOutcome';
 import { interruptVoice, sendVoiceText, toggleVoiceMute } from './voiceControls';
 import type { MeterController } from './meters';
 
@@ -25,6 +25,8 @@ export interface VoiceState {
   voiceErrorCode: string;
   activeVoiceName: string;
   provisional: ProvisionalTranscript | null;
+  /** Admission held by a session whose startup cleanup failed; retryable. */
+  pendingCleanup: SessionConfig | null;
   audioBlocked: boolean;
   micLevel: number;
   outputLevel: number;
@@ -41,6 +43,7 @@ export function initialVoiceState(): VoiceState {
     voiceErrorCode: '',
     activeVoiceName: '',
     provisional: null,
+    pendingCleanup: null,
     audioBlocked: false,
     micLevel: 0,
     outputLevel: 0,
@@ -105,17 +108,20 @@ function clearOwnedLive(state: VoiceState, deps: ConnectionDeps, sessionId: stri
 }
 
 export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
-  let attemptCounter = 0;
+  // Ownership epoch: bumped before admission starts so an attempt, not a
+  // session id, owns the connection state.
+  let generation = 0;
   const endingSessions = new Set<string>();
   let pendingSession: SessionConfig | null = null;
   const releaseSession = createSessionReleaser();
   // Read through calls so a session created while a release was awaited is
   // visible to the guards below.
-  const pendingSessionId = () => pendingSession?.id ?? null;
-  const replacingSession = (sessionId: string) => {
+  // A teardown that began at `epoch` has been replaced if a newer attempt
+  // started since, id or no id yet; ids catch a session installed in place.
+  const replacingSession = (epoch: number, sessionId: string) => {
+    if (generation !== epoch) return true;
     const liveId = liveSessionId(state);
-    const pendingId = pendingSessionId();
-    return (liveId !== null && liveId !== sessionId) || (pendingId !== null && pendingId !== sessionId);
+    return (liveId !== null && liveId !== sessionId) || (pendingSession !== null && pendingSession.id !== sessionId);
   };
   async function connect(microphone: boolean) {
     if (state.live) {
@@ -123,7 +129,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
       return;
     }
     if (state.connecting) return;
-    const attempt = ++attemptCounter;
+    const attempt = ++generation;
     pendingSession = null;
     state.connecting = true;
     state.voiceErrorCode = '';
@@ -132,40 +138,42 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
       let conversationId = deps.getConversationId();
       if (!conversationId) {
         conversationId = await deps.ensureConversation();
-        if (attempt !== attemptCounter) return;
+        if (attempt !== generation) return;
       }
       if (microphone) {
         try {
           await ensureMicrophoneAccess();
         } catch (error) {
-          if (attempt === attemptCounter) state.voiceErrorCode = errorCode(error);
+          if (attempt === generation) state.voiceErrorCode = errorCode(error);
           return;
         }
-        if (attempt !== attemptCounter) return;
+        if (attempt !== generation) return;
       }
       await startSessionAttempt(state, deps, {
         microphone,
         conversationId,
-        isCurrent: () => attempt === attemptCounter && deps.getConversationId() === conversationId,
+        attempt,
+        isCurrent: () => attempt === generation && deps.getConversationId() === conversationId,
         releaseSession,
         clearOwnedLive: (sessionId) => clearOwnedLive(state, deps, sessionId),
-        onSessionCreated: (session) => {
-          pendingSession = session;
+        onSessionCreated: (session, attempt) => {
+          // A stale admission must not claim pending ownership.
+          if (attempt === generation) pendingSession = session;
         },
       });
       if (state.live) pendingSession = null;
     } catch (error) {
-      if (attempt === attemptCounter) {
+      if (attempt === generation) {
         state.voiceErrorCode = errorCode(error);
         state.transportStatus = 'disconnected';
       }
     } finally {
-      if (attempt === attemptCounter) state.connecting = false;
+      if (attempt === generation) state.connecting = false;
     }
   }
 
   async function cancelConnect() {
-    attemptCounter += 1;
+    const epoch = ++generation;
     await cancelConnection({
       state,
       deps,
@@ -176,7 +184,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
       },
       releaseSession,
       clearOwnedLive: (sessionId) => clearOwnedLive(state, deps, sessionId),
-      isReplacing: replacingSession,
+      isReplacing: (sessionId) => replacingSession(epoch, sessionId),
     });
   }
 
@@ -186,7 +194,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     // must never make End a no-op for a replacement call B.
     if (session && endingSessions.has(session.id)) return;
     if (session) endingSessions.add(session.id);
-    attemptCounter += 1;
+    const endEpoch = ++generation;
     pendingSession = null;
     deps.meters.teardownMeters();
     state.live = null;
@@ -203,7 +211,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         .disconnect()
         .catch(() => {});
       const releasedOk = await releaseSession(session);
-      if (!releasedOk && session) applyFailedRelease(state, session, replacingSession(session.id));
+      if (!releasedOk && session) applyFailedRelease(state, session, replacingSession(endEpoch, session.id));
       await deps.refresh().catch(() => {});
     } finally {
       if (session) endingSessions.delete(session.id);
@@ -218,19 +226,17 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     await connect(true);
   }
 
-  function handleEvent(event: VoiceEvent) {
-    handleVoiceEvent(state, deps, event, (sessionId) => endingSessions.has(sessionId));
-  }
-
   return {
     connect,
     reconnect,
     cancelConnect,
     end,
+    retryCleanup: () => retryFailedCleanup(state, releaseSession),
     toggleMute: () => toggleVoiceMute(state, deps),
     interrupt: () => interruptVoice(state, deps),
     sendText: (text: string) => sendVoiceText(state, deps, text),
-    handleEvent,
+    handleEvent: (event: VoiceEvent) =>
+      handleVoiceEvent(state, deps, event, (sessionId) => endingSessions.has(sessionId)),
   };
 }
 

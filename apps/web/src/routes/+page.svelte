@@ -231,7 +231,9 @@
       muted={voice.muted}
       connectionLost={voice.connectionLost}
       {canInterrupt}
+      cleanupRequired={voice.pendingCleanup !== null}
       {words}
+      onretrycleanup={() => run(() => connection!.retryCleanup(), onVoiceError)}
       onend={() => run(() => connection!.end(), onVoiceError)}
       oncancel={() => run(() => connection!.cancelConnect(), onVoiceError)}
       ontoggle={toggleMute}

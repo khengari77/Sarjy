@@ -8,6 +8,7 @@ export type Words = {
   end: string;
   mute: string;
   unmute: string;
+  retryCleanup: string;
 };
 
 const EN: Words = {
@@ -20,6 +21,7 @@ const EN: Words = {
   end: 'End call',
   mute: 'Mute',
   unmute: 'Enable microphone',
+  retryCleanup: 'Retry ending previous call',
 };
 
 const AR: Words = {
@@ -32,6 +34,7 @@ const AR: Words = {
   end: 'إنهاء',
   mute: 'كتم الصوت',
   unmute: 'تشغيل الميكروفون',
+  retryCleanup: 'إعادة إنهاء المكالمة السابقة',
 };
 
 export function wordsFor(arabic: boolean): Words {
