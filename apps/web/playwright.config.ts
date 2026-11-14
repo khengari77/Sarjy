@@ -1,6 +1,8 @@
 import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: 'test',
+  // The token gate has its own servers/configs; keep it out of the default suite.
+  testIgnore: ['auth.spec.ts', 'auth-expired.spec.ts', 'auth-prod.spec.ts'],
   expect: { timeout: 15000 },
   use: { baseURL: 'http://127.0.0.1:4173' },
   webServer: [
