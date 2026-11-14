@@ -5,7 +5,7 @@ interface FakeRoom {
   connectResolve: (() => void) | null;
   connectReject: ((error: Error) => void) | null;
   remoteParticipants: Map<string, { isAgent: boolean; attributes: Record<string, string> }>;
-  localParticipant: { identity: string };
+  localParticipant: { identity: string; trackPublications: Map<string, { trackSid: string }> };
   emit(event: string, ...args: unknown[]): void;
   emitTextStream(topic: string, reader: unknown, participantInfo: { identity: string }): void;
   disconnect: () => Promise<void>;
@@ -16,7 +16,7 @@ vi.mock('livekit-client', () => {
   class Room {
     listeners = new Map<string, Set<(...args: unknown[]) => void>>();
     remoteParticipants = new Map<string, { isAgent: boolean; attributes: Record<string, string> }>();
-    localParticipant = { identity: 'user-1' };
+    localParticipant = { identity: 'user-1', trackPublications: new Map<string, { trackSid: string }>() };
     textHandlers = new Map<string, (reader: unknown, participantInfo: { identity: string }) => void>();
     canPlaybackAudio = true;
     connectResolve: (() => void) | null = null;
@@ -144,16 +144,25 @@ describe('text-stream transcription metadata', () => {
   it('keeps a user provisional segment as user/false with its segment id', async () => {
     vi.useFakeTimers();
     const { runtime, room } = await connectedRuntime(config);
+    room.localParticipant.trackPublications.set('TR_MIC', { trackSid: 'TR_MIC' });
     const events: Array<{ type: string; text?: string; final?: boolean; segmentId?: string; speaker?: string }> = [];
     runtime.subscribe((event) => events.push(event));
 
     room.emitTextStream(
       'lk.transcription',
       {
-        info: { id: 'stream-1', attributes: { 'lk.transcription_final': 'false', 'lk.segment_id': 'user-partial' } },
+        info: {
+          id: 'stream-1',
+          attributes: {
+            'lk.transcription_final': 'false',
+            'lk.segment_id': 'user-partial',
+            'lk.transcribed_track_id': 'TR_MIC',
+          },
+        },
         readAll: async () => 'hel',
       },
-      { identity: 'user-1' },
+      // Publisher identity must not decide the speaker.
+      { identity: 'agent-9' },
     );
     await vi.advanceTimersByTimeAsync(0);
 
@@ -164,5 +173,45 @@ describe('text-stream transcription metadata', () => {
       segmentId: 'user-partial',
       speaker: 'user',
     });
+  });
+
+  it('labels a segment from a non-local transcribed track as assistant', async () => {
+    vi.useFakeTimers();
+    const { runtime, room } = await connectedRuntime(config);
+    room.localParticipant.trackPublications.set('TR_MIC', { trackSid: 'TR_MIC' });
+    const events: Array<{ type: string; speaker?: string }> = [];
+    runtime.subscribe((event) => events.push(event));
+
+    room.emitTextStream(
+      'lk.transcription',
+      {
+        info: {
+          id: 'stream-2',
+          attributes: { 'lk.transcribed_track_id': 'TR_AGENT_OUTPUT', 'lk.transcription_final': 'true' },
+        },
+        readAll: async () => 'hello there',
+      },
+      // Even when the publisher is this participant, the track id decides.
+      { identity: 'user-1' },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(events.at(-1)).toMatchObject({ type: 'transcript', text: 'hello there', speaker: 'assistant' });
+  });
+
+  it('treats a segment without a transcribed track id as assistant', async () => {
+    vi.useFakeTimers();
+    const { runtime, room } = await connectedRuntime(config);
+    const events: Array<{ type: string; speaker?: string }> = [];
+    runtime.subscribe((event) => events.push(event));
+
+    room.emitTextStream(
+      'lk.transcription',
+      { info: { id: 'stream-3', attributes: {} }, readAll: async () => 'unknown source' },
+      { identity: 'user-1' },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(events.at(-1)).toMatchObject({ type: 'transcript', speaker: 'assistant' });
   });
 });
