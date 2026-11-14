@@ -83,6 +83,14 @@ _NON_REMEMBERABLE = re.compile(
     r"^\s*(?:don't|do not|never)\s+remember\b|\bnever\s+mind\b|\bforget\s+(?:it|that|this)\b",
     re.IGNORECASE,
 )
+# A trailing save/remember instruction is not part of the fact. Leading
+# "remember that ..." is handled by _EXPLICIT; this covers the ordinary form
+# "My name is X. Save this fact." which would otherwise store the imperative in
+# the subject value.
+_TRAILING_IMPERATIVE = re.compile(
+    r"(?:[\s,;.!?-]+(?:please\s+)?(?:save|remember|store|keep|note)\s+(?:this|that|it)(?:\s+fact)?)\s*[.!?]*$",
+    re.IGNORECASE,
+)
 _QUOTED = re.compile(r'^\s*["“\'].*["”\']\s*$', re.DOTALL)
 _ORDINARY = (
     (re.compile(r"^i\s+(?:really\s+)?(?:prefer|like|love|enjoy)\s+(?P<value>.+)$", re.IGNORECASE), "preference"),
@@ -250,6 +258,9 @@ def parse_capture(text: str) -> MemoryCapture | None:
         return None
     candidate = _normalize(text)
     if not candidate or len(candidate) > MAX_CAPTURE_CHARS:
+        return None
+    candidate = _TRAILING_IMPERATIVE.sub("", candidate).strip()
+    if not candidate:
         return None
     if _NON_REMEMBERABLE.search(candidate) or _HYPOTHETICAL.search(candidate):
         return None
