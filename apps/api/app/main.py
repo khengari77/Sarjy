@@ -18,7 +18,7 @@ from app.domain.secrets import secret_matches
 from app.infrastructure.database import Base, SessionGate
 from app.services.context_actions import build_context_action_handlers
 from app.services.memory import MemoryService, OpenAIEmbedder
-from app.services.voices import ElevenLabsVoices
+from app.services.voices import ElevenLabsVoices, approved_voice_ids
 from app.services.wordle import HttpWordleSource, wordle_refresh_loop
 
 
@@ -111,7 +111,15 @@ def create_app(
 
     from app.routes.actions import register_action_routes
 
-    register_action_routes(app, database, identity, owned, catalog)
+    approved = approved_voice_ids(config.approved_voice_ids, config.default_voice_id)
+    register_action_routes(
+        app,
+        database,
+        identity,
+        owned,
+        catalog,
+        approved_voice_ids=approved,
+    )
 
     embedder = embedding_adapter or OpenAIEmbedder(config.openai_api_key)
 
@@ -151,7 +159,9 @@ def create_app(
 
     register_system_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
     register_voice_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
-    register_worker_routes(app, config=config, database=database, embedder=embedder, catalog=catalog)
+    register_worker_routes(
+        app, config=config, database=database, embedder=embedder, catalog=catalog, approved_voice_ids=approved
+    )
     register_context_routes(app, config=config, database=database, identity=identity, semantic_search=semantic_search)
     register_wordle_routes(app, config=config, database=database, identity=identity, source=source)
 

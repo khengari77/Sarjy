@@ -20,7 +20,14 @@ class Catalog:
 
 def setup(tmp_path):
     path = tmp_path / "actions.db"
-    app = create_app(Settings(database_url=f"sqlite+aiosqlite:///{path}", _env_file=None), voice_catalog=Catalog())
+    app = create_app(
+        Settings(
+            database_url=f"sqlite+aiosqlite:///{path}",
+            approved_voice_ids="approved",
+            _env_file=None,
+        ),
+        voice_catalog=Catalog(),
+    )
     return app, path
 
 

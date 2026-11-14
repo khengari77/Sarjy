@@ -43,8 +43,8 @@ export function bootStudio(options: StudioBoot) {
   // and every default below matches the missing-storage behaviour.
   const storage = browserStorage();
   if (options.restoreLanguage) options.setArabic(storage?.getItem('sarjy-language') === 'ar');
-  catalog.voiceId = storage?.getItem('sarjy-voice-id') || '';
-  options.hydrateSettings({ captions_visible: storage?.getItem('sarjy-captions') !== 'off' });
+  // Voice selection is server-owned; the retired local-only key is ignored.
+  storage?.removeItem('sarjy-voice-id');
 
   const runtime: VoiceRuntime = createVoiceRuntime();
   const meters = createMeterController(
@@ -53,18 +53,22 @@ export function bootStudio(options: StudioBoot) {
     () => voice.live !== null,
     () => voice.muted,
   );
-  const catalogStore = createCatalogStore(catalog);
+  const catalogStore = createCatalogStore(catalog, {
+    onSettings: (settings) => options.hydrateSettings(settings),
+  });
   const connection = createVoiceConnection(voice, {
     ensureConversation: () => conversations!.ensureConversation(),
     getConversationId: () => conversation.current,
     refresh: () => conversations!.refresh(),
     getRuntime: () => runtime,
     getLanguage: () => options.getLanguage(),
+    applyCommand: (result) => options.applyCommand(result),
+    // The server fell back from a dead or unreachable saved voice: adopt its settings.
+    onVoiceFallback: () => void catalogStore.loadSettings(),
     getVoice: () => {
       const name = catalog.voices.find((entry) => entry.id === catalog.voiceId)?.name || catalog.voiceId;
       return { id: catalog.voiceId, name };
     },
-    applyCommand: (result) => options.applyCommand(result),
     meters,
   });
   const conversations = createConversationStore(conversation, {
@@ -77,17 +81,9 @@ export function bootStudio(options: StudioBoot) {
     bootstrap: () =>
       options.run(async () => {
         await request('demo-session', {});
+        await catalogStore.loadSettings();
         await conversations.reload();
         if (conversation.conversations.length) await conversations.select(conversation.conversations[0].id);
-        try {
-          const saved = await request<SettingsSnapshot>('settings');
-          // Captions are client-owned in this slice; the unused server field
-          // must not overwrite the local preference on reload.
-          options.hydrateSettings({ revision: saved.revision });
-        } catch {
-          // The saved preference is a presentation setting; the local mirror
-          // stays usable when the settings read is unavailable.
-        }
       }),
     getLive: () => voice.live,
     endExpired: () => void options.run(() => connection.end(), options.onVoiceError),

@@ -57,6 +57,8 @@ export interface ConnectionDeps {
   getVoice(): { id: string; name: string };
   /** Apply one backend-authored result to the shared command store. */
   applyCommand(result: CommandResult): void;
+  /** Fired when the server fell back from the saved voice; refresh server settings. */
+  onVoiceFallback?(reason: 'removed' | 'transient'): void;
   meters: MeterController;
 }
 

@@ -23,6 +23,44 @@
         }
       }
     },
+    "/v1/settings/actions": {
+      "post": {
+        "summary": "Update Settings",
+        "operationId": "update_settings_v1_settings_actions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsActionResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/actions": {
       "post": {
         "summary": "Submit",
@@ -1417,17 +1455,6 @@
               }
             ]
           },
-          "captions_visible": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Captions Visible"
-          },
           "navigation": {
             "anyOf": [
               {
@@ -2485,14 +2512,19 @@
             "type": "string"
           },
           "voice_id": {
-            "pattern": "^[A-Za-z0-9_-]{1,100}$",
-            "title": "Voice Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_-]{1,100}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Voice Id"
           }
         },
-        "required": [
-          "voice_id"
-        ],
         "title": "SelectApprovedVoice",
         "type": "object"
       },
@@ -2565,6 +2597,76 @@
           "changed"
         ],
         "title": "SettingsActionResult"
+      },
+      "SettingsSubmission": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "action": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdjustSpeakingSpeed"
+              },
+              {
+                "$ref": "#/components/schemas/SetSpeakingSpeed"
+              },
+              {
+                "$ref": "#/components/schemas/SelectApprovedVoice"
+              },
+              {
+                "$ref": "#/components/schemas/ShowConversationHistory"
+              },
+              {
+                "$ref": "#/components/schemas/OpenMemoryExplorer"
+              },
+              {
+                "$ref": "#/components/schemas/SetCaptionsVisible"
+              },
+              {
+                "$ref": "#/components/schemas/SearchMemory"
+              },
+              {
+                "$ref": "#/components/schemas/ProposeContextExclusion"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreContextOperation"
+              }
+            ],
+            "title": "Action",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "AdjustSpeakingSpeed": "#/components/schemas/AdjustSpeakingSpeed",
+                "OpenMemoryExplorer": "#/components/schemas/OpenMemoryExplorer",
+                "ProposeContextExclusion": "#/components/schemas/ProposeContextExclusion",
+                "RestoreContextOperation": "#/components/schemas/RestoreContextOperation",
+                "SearchMemory": "#/components/schemas/SearchMemory",
+                "SelectApprovedVoice": "#/components/schemas/SelectApprovedVoice",
+                "SetCaptionsVisible": "#/components/schemas/SetCaptionsVisible",
+                "SetSpeakingSpeed": "#/components/schemas/SetSpeakingSpeed",
+                "ShowConversationHistory": "#/components/schemas/ShowConversationHistory"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_revision",
+          "action"
+        ],
+        "title": "SettingsSubmission",
+        "description": "Owner-scoped settings change; no conversation is needed or created."
       },
       "ShowConversationHistory": {
         "additionalProperties": false,

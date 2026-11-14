@@ -1,8 +1,17 @@
 import { expect, it, vi } from 'vitest';
+import type { SessionConfig } from '../api';
 import { createVoiceConnection, initialVoiceState } from './connection';
 const mocks = vi.hoisted(() => ({ start: vi.fn(), end: vi.fn() }));
 vi.mock('../chat/session', () => ({ startVoiceSession: mocks.start, endVoiceSession: mocks.end }));
-const a = { id: 'a', url: 'ws://fixture', token: 'fixture', expires_at: '2099-01-01' };
+const a: SessionConfig = {
+  id: 'a',
+  url: 'ws://fixture',
+  token: 'fixture',
+  expires_at: '2099-01-01',
+  voice: { id: 'voice-1', name: 'Voice', languages: ['en'] },
+  voice_language: 'en',
+  voice_source: 'default',
+};
 const b = { ...a, id: 'b' };
 function deferred() {
   let resolve!: () => void;

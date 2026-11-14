@@ -21,11 +21,20 @@ class Catalog:
                 return voice
         raise VoiceCatalogError("VOICE_UNAVAILABLE", 422)
 
+    async def find_by_name(self, name):
+        wanted = " ".join(name.casefold().split())
+        matches = [voice for voice in self.voices if " ".join(voice.name.casefold().split()) == wanted]
+        return matches[0] if len(matches) == 1 else None
+
 
 def app_for(tmp_path, name="commands"):
     path = tmp_path / f"{name}.db"
     app = create_app(
-        Settings(database_url=f"sqlite+aiosqlite:///{path}", _env_file=None),
+        Settings(
+            database_url=f"sqlite+aiosqlite:///{path}",
+            approved_voice_ids="approved",
+            _env_file=None,
+        ),
         voice_catalog=Catalog(),
     )
     return app, path
@@ -62,6 +71,7 @@ def counts(path):
         return (
             db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0],
             db.execute("SELECT COUNT(*) FROM context_operations").fetchone()[0],
+            db.execute("SELECT COUNT(*) FROM setting_write_requests").fetchone()[0],
         )
 
 
@@ -114,7 +124,7 @@ def test_navigation_voice_and_gui_fixtures_converge_on_one_state_and_handler_tra
     assert spoken["result"]["spoken"]
 
 
-def test_captions_is_a_client_effect_and_writes_no_server_settings(tmp_path):
+def test_captions_and_voice_use_the_one_settings_path(tmp_path):
     app, path = app_for(tmp_path)
     with TestClient(app) as client:
         conversation = chat(client)
@@ -122,18 +132,64 @@ def test_captions_is_a_client_effect_and_writes_no_server_settings(tmp_path):
         result = first.json()["result"]
         assert result["kind"] == "executed"
         assert result["action"] == "SetCaptionsVisible"
-        assert result["captions_visible"] is False
-        assert result["settings"] is None
+        assert result["settings"]["captions_visible"] is False
+        assert result["settings"]["revision"] == 1
         assert result["spoken"] == "Captions hidden."
-        assert counts(path) == (0, 0)
+        assert counts(path) == (1, 0, 1)
 
         duplicate = voice(client, conversation, " Hide   captions. ")
         assert duplicate.json() == first.json()
-        assert counts(path) == (0, 0)
+        assert counts(path) == (1, 0, 1)
 
-        shown = voice(client, conversation, "Show captions.", request="r2", revision=0)
-        assert shown.json()["result"]["captions_visible"] is True
-        assert shown.json()["result"]["spoken"] == "Captions shown."
+        spoken = voice(client, conversation, "Use the Approved Narrator voice.", request="r2", revision=1)
+        voice_result = spoken.json()["result"]
+        assert voice_result["settings"]["approved_voice_id"] == "approved"
+        assert voice_result["settings"]["revision"] == 2
+        assert voice_result["spoken"] == "Voice set to Approved Narrator for the next call."
+        assert counts(path) == (2, 0, 2)
+        assert client.get("/v1/settings").json()["approved_voice_id"] == "approved"
+
+
+def test_unapproved_spoken_voice_is_refused_without_a_write(tmp_path):
+    app, path = app_for(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        response = voice(client, conversation, "Use the British female voice.")
+        result = response.json()["result"]
+        assert result["kind"] == "unsupported"
+        assert result["detail"] == "VOICE_NOT_FOUND"
+        assert "British female" in result["spoken"]
+        assert counts(path) == (0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    ("text", "action"),
+    [
+        ("Hide captions.", {"kind": "SetCaptionsVisible", "visible": False}),
+        ("Use the Approved Narrator voice.", {"kind": "SelectApprovedVoice", "voice_id": "approved"}),
+    ],
+)
+def test_settings_rows_converge_for_voice_and_gui(tmp_path, text, action):
+    spoken_app, spoken_path = app_for(tmp_path, "spoken")
+    with TestClient(spoken_app) as client:
+        conversation = chat(client)
+        spoken = voice(client, conversation, text).json()["result"]
+        spoken_settings = client.get("/v1/settings").json()
+        spoken_counts = counts(spoken_path)
+
+    gui_app, gui_path = app_for(tmp_path, "gui")
+    with TestClient(gui_app) as client:
+        client.post("/v1/demo-session")
+        manual = client.post(
+            "/v1/settings/actions",
+            json={"request_id": "gui-1", "expected_revision": 0, "action": action},
+        ).json()
+        gui_settings = client.get("/v1/settings").json()
+        gui_counts = counts(gui_path)
+
+    assert spoken_settings == gui_settings
+    assert spoken_counts == gui_counts == (1, 0, 1)
+    assert spoken["settings"] == manual["settings"]
 
 
 @pytest.mark.parametrize("text", ["Speak slower.", "Speak faster."])
@@ -149,7 +205,7 @@ def test_speed_is_unsupported_until_it_reaches_the_voice(tmp_path, text):
         assert "Nothing was changed" in result["spoken"]
         assert result["settings"] is None
         assert client.get("/v1/settings").json()["speaking_speed"] == 1.0
-        assert counts(path) == (0, 0)
+        assert counts(path) == (0, 0, 0)
 
 
 def test_duplicate_finalized_navigation_applies_one_effect(tmp_path):
@@ -161,7 +217,7 @@ def test_duplicate_finalized_navigation_applies_one_effect(tmp_path):
         duplicate = voice(client, conversation, " Show   my previous conversations. ")
         assert duplicate.json() == first.json()
         assert handler_trace(path) == ["ShowConversationHistory"]
-        assert counts(path) == (0, 1)
+        assert counts(path) == (0, 1, 0)
 
 
 @pytest.mark.parametrize(
@@ -189,7 +245,7 @@ def test_unwired_parity_rows_are_unsupported_and_mutate_nothing(tmp_path, text):
         assert body["result"]["changed"] is False
         assert body["result"]["spoken"]
         assert client.get("/v1/settings").json()["revision"] == 0
-        assert counts(path) == (0, 0)
+        assert counts(path) == (0, 0, 0)
 
 
 @pytest.mark.parametrize(
@@ -209,7 +265,7 @@ def test_non_commands_fall_through_without_effects(tmp_path, text):
         response = voice(client, conversation, text)
         assert response.status_code == 200
         assert response.json() == {"handled": False}
-        assert counts(path) == (0, 0)
+        assert counts(path) == (0, 0, 0)
 
 
 def test_stale_revision_does_not_block_navigation(tmp_path):
@@ -259,13 +315,13 @@ def test_worker_command_uses_the_stored_final_turn_once(tmp_path):
         assert first.status_code == 200
         command = first.json()["command"]
         assert command["kind"] == "executed" and command["action"] == "SetCaptionsVisible"
-        assert command["captions_visible"] is False
+        assert command["settings"]["captions_visible"] is False
+        assert command["settings"]["revision"] == 1
         assert command["spoken"] == "Captions hidden."
         duplicate = client.post("/internal/agent/command", headers=headers, json={"turn_id": turn_id})
         assert duplicate.json() == first.json()
-        # Captions are a client effect in this slice: no server settings write.
-        assert client.get("/v1/settings").json()["captions_visible"] is True
-        assert counts(file) == (0, 0)
+        assert client.get("/v1/settings").json()["captions_visible"] is False
+        assert counts(file) == (1, 0, 1)
         assert owner
 
         ordinary = client.post(

@@ -15,6 +15,7 @@
   import CallControls from '../lib/chat/CallControls.svelte';
   import Composer from '../lib/chat/Composer.svelte';
   import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
+  import { selectedVoiceOption } from '../lib/chat/voice-state';
   import RightDrawer from '../lib/ui/RightDrawer.svelte';
   import { createAnnouncement } from '../lib/chat/announcement.svelte';
   import { wordsFor } from '../lib/chat/words';
@@ -55,7 +56,7 @@
   const words = $derived(wordsFor(arabic));
 
   // GUI controls and backend-authored voice results both write this store.
-  const commands = createCommandSession();
+  const commands = createCommandSession(catalog);
 
   const phase = $derived<VoicePhase>(
     (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
@@ -252,13 +253,16 @@
           nextVoicePage={catalog.nextPage}
           voiceLoading={catalog.loading}
           voiceError={catalog.error}
-          live={voice.live}
-          activeVoiceName={voice.activeVoiceName}
+          voiceSaving={catalog.saving}
+          settingsError={catalog.settingsError}
+          live={voice.live !== null}
+          selectedVoice={selectedVoiceOption(catalog.voices, catalog.voiceId)}
+          sessionVoice={voice.live?.voice ?? null}
           captionsVisible={commands.state.settings.captions_visible}
           onsearch={() => void catalogStore!.load()}
           onloadmore={() => void catalogStore!.load(true)}
-          onremember={() => catalogStore!.remember()}
-          ontoggleCaptions={() => commands.setCaptions(!commands.state.settings.captions_visible)}
+          onremember={() => void catalogStore!.remember()}
+          ontoggleCaptions={() => void commands.setCaptions(!commands.state.settings.captions_visible)}
         />
       {/snippet}
     </RightDrawer>

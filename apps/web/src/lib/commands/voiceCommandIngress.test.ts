@@ -13,8 +13,13 @@ function command(): CommandResult {
     request_id: 'command:turn-1',
     kind: 'executed',
     action: 'SetCaptionsVisible',
-    settings: null,
-    captions_visible: false,
+    settings: {
+      speaking_speed: 1,
+      captions_visible: false,
+      approved_voice_id: null,
+      response_preference: 'automatic',
+      revision: 1,
+    },
     navigation: null,
     changed: true,
     spoken: 'Captions hidden.',
@@ -24,7 +29,7 @@ function command(): CommandResult {
 
 function harness() {
   const state = initialCommandState();
-  const store = createCommandStore(state, { persist: () => {} });
+  const store = createCommandStore(state);
   const apply = vi.fn((result: CommandResult) => store.apply(result));
   const connection = createVoiceConnection(initialVoiceState(), {
     ensureConversation: async () => 'c1',

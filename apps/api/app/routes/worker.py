@@ -102,12 +102,14 @@ PENDING_MEMORY_INSTRUCTION = (
 )
 
 
-def register_worker_routes(app, *, config: Settings, database, embedder, catalog):
+def register_worker_routes(app, *, config: Settings, database, embedder, catalog, approved_voice_ids=None):
     guard = _session_guard(config)
     _register_budget_routes(app, config=config, database=database)
     _register_session_routes(app, database=database, guard=guard)
     _register_turn_routes(app, config=config, database=database, guard=guard)
-    _register_command_routes(app, database=database, guard=guard, catalog=catalog)
+    _register_command_routes(
+        app, database=database, guard=guard, catalog=catalog, approved_voice_ids=approved_voice_ids
+    )
     _register_tool_routes(app, database=database, guard=guard)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
 
@@ -411,7 +413,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
         return {"id": turn.id}
 
 
-def _register_command_routes(app, *, database, guard, catalog):
+def _register_command_routes(app, *, database, guard, catalog, approved_voice_ids=None):
     @app.post("/internal/agent/command", response_model=CommandResponse)
     async def finalized_command(body: CommandInput, request: Request, db: AsyncSession = Depends(database)):
         """The one worker entry for a finalized user utterance.
@@ -431,14 +433,21 @@ def _register_command_routes(app, *, database, guard, catalog):
         expected_revision = snapshot.get("revision")
         if not isinstance(expected_revision, int):
             expected_revision = conversation.revision
+        model_request = snapshot.get("model_request")
+        settings_revision = model_request.get("settings_revision") if isinstance(model_request, dict) else None
+        if not isinstance(settings_revision, int):
+            settings_row = await db.get(UserSetting, conversation.owner_id)
+            settings_revision = settings_row.revision if settings_row is not None else 0
         result = await handle_finalized_utterance(
             db,
             owner_id=conversation.owner_id,
             conversation_id=turn.conversation_id,
             request_id=command_request_id(turn.id),
             expected_revision=expected_revision,
+            settings_revision=settings_revision,
             text=turn.text,
             catalog=catalog,
+            approved_voice_ids=approved_voice_ids,
             handlers=app.state.action_handlers,
         )
         return {"command": result.model_dump(mode="json") if result is not None else None}

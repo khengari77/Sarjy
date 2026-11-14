@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   createCommandStore,
   initialCommandState,
@@ -23,8 +23,7 @@ function voiceCaptions(overrides: Partial<CommandResult> = {}): CommandResult {
     request_id: 'command:abc',
     kind: 'executed',
     action: 'SetCaptionsVisible',
-    settings: null,
-    captions_visible: false,
+    settings: settings({ captions_visible: false, revision: 1 }),
     navigation: null,
     changed: true,
     spoken: 'Captions hidden.',
@@ -35,44 +34,34 @@ function voiceCaptions(overrides: Partial<CommandResult> = {}): CommandResult {
 
 function harness() {
   const state = initialCommandState();
-  const persist = vi.fn();
-  const store = createCommandStore(state, { persist });
-  return { state, persist, store };
+  const store = createCommandStore(state);
+  return { state, store };
 }
 
 describe('one shared store for GUI and voice', () => {
-  it('converges captions on the same state and typed-action trace', () => {
+  it('converges captions on the same server snapshot and typed-action trace', () => {
     const gui = harness();
-    gui.store.setCaptions(false);
+    gui.store.apply(voiceCaptions());
 
     const voice = harness();
     voice.store.apply(voiceCaptions());
 
     expect(gui.state.settings).toEqual(voice.state.settings);
     expect(gui.state.trace).toEqual(voice.state.trace);
-    expect(gui.state.last?.action).toBe(voice.state.last?.action);
+    expect(gui.state.last).toEqual(voice.state.last);
     expect(gui.state.settings.captions_visible).toBe(false);
-    expect(gui.persist).toHaveBeenLastCalledWith(gui.state.settings);
-    expect(voice.persist).toHaveBeenLastCalledWith(voice.state.settings);
+    expect(gui.state.settings.revision).toBe(1);
   });
 
   it('ignores a duplicate result for the same request id', () => {
-    const { store, state, persist } = harness();
+    const { store, state } = harness();
     expect(store.apply(voiceCaptions())).toBe(true);
     expect(store.apply(voiceCaptions())).toBe(false);
     expect(state.trace).toEqual(['SetCaptionsVisible']);
     expect(state.applied).toEqual(['command:abc']);
-    expect(persist).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the revision from server settings while applying a client captions patch', () => {
-    const { store, state } = harness();
-    store.hydrate(settings({ revision: 4 }));
-    store.apply(voiceCaptions());
-    expect(state.settings).toMatchObject({ captions_visible: false, revision: 4 });
-  });
-
-  it('a late bootstrap read cannot clobber a newer server revision', () => {
+  it('a late bootstrap read cannot clobber a newer revision', () => {
     const { store, state } = harness();
     store.hydrate(settings({ captions_visible: false, revision: 2 }));
     store.hydrate(settings({ captions_visible: true, revision: 1 }));
@@ -87,7 +76,6 @@ describe('one shared store for GUI and voice', () => {
       voiceCaptions({
         action: 'ShowConversationHistory',
         settings: null,
-        captions_visible: null,
         navigation: 'history',
         spoken: 'Opening your previous conversations.',
       }),
@@ -103,7 +91,6 @@ describe('one shared store for GUI and voice', () => {
       kind: 'unsupported',
       action: null,
       settings: null,
-      captions_visible: null,
       navigation: null,
       changed: false,
       spoken: "I can't change speaking speed in the call yet. Nothing was changed.",
@@ -112,6 +99,14 @@ describe('one shared store for GUI and voice', () => {
     expect(state.settings).toEqual(settings());
     expect(state.trace).toEqual(['unsupported']);
     expect(state.last?.kind).toBe('unsupported');
+  });
+
+  it('a failed GUI gesture records a failure without changing state', () => {
+    const { store, state } = harness();
+    store.fail('SetCaptionsVisible', 'captions:0:off', 'SETTINGS_REVISION_CONFLICT');
+    expect(state.settings).toEqual(settings());
+    expect(state.trace).toEqual([]);
+    expect(state.last).toMatchObject({ kind: 'failed', action: 'SetCaptionsVisible' });
   });
 });
 
@@ -123,15 +118,7 @@ describe('result validation', () => {
     expect(normalizeCommandResult({ ...voiceCaptions(), spoken: '' })).toBeNull();
     expect(normalizeCommandResult({ ...voiceCaptions(), changed: 'yes' })).toBeNull();
     expect(normalizeCommandResult({ ...voiceCaptions(), navigation: 'elsewhere' })).toBeNull();
-    expect(normalizeCommandResult({ ...voiceCaptions(), captions_visible: 'off' })).toBeNull();
     expect(normalizeCommandResult({ ...voiceCaptions(), settings: { speaking_speed: 'fast' } })).toBeNull();
     expect(normalizeCommandResult(null)).toBeNull();
-  });
-
-  it('normalizes the client captions patch independently of a settings snapshot', () => {
-    expect(normalizeCommandResult(voiceCaptions())).toMatchObject({
-      captions_visible: false,
-      settings: null,
-    });
   });
 });
