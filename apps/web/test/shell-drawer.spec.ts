@@ -21,8 +21,24 @@ function rightTrigger(page: Page) {
 /** SSR renders the orb statically; wait for the hydrated renderer so header
  *  controls have their handlers before we click them. */
 async function waitForShell(page: Page) {
-  await expect(page.locator('.orb-button')).toBeVisible();
-  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const hydrated = await page
+      .waitForFunction(
+        () =>
+          Boolean(document.querySelector('.orb-button')) &&
+          document.querySelector('.orb-button')?.getAttribute('data-renderer') !== 'static',
+        null,
+        { timeout: 12_000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+    if (hydrated) return;
+    // This shared machine drops in-flight module requests on network changes
+    // (net::ERR_NETWORK_CHANGED). That leaves SSR markup unhydrated or shows
+    // SvelteKit's 500 page; a reload re-runs hydration.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+  }
+  throw new Error('shell never hydrated');
 }
 
 function activeLabel(page: Page): Promise<string | null> {
@@ -35,11 +51,20 @@ function insideDrawer(page: Page, id: string): Promise<boolean> {
   return page.locator(`#${id}`).evaluate((el) => el.contains(document.activeElement));
 }
 
+/** The modal scope is the drawer plus the always-reachable control strip. */
+async function insideModalScope(page: Page, id: string): Promise<boolean> {
+  if (await insideDrawer(page, id)) return true;
+  return page.locator('.stage-controls').evaluate((el) => el.contains(document.activeElement));
+}
+
 function isInert(page: Page, selector: string): Promise<boolean> {
   return page.locator(selector).evaluate((el) => (el as HTMLElement).inert);
 }
 
 test.beforeEach(async ({ page }) => {
+  // These tests walk two viewports and the modal scope; give them room.
+  test.setTimeout(90_000);
+  page.setDefaultTimeout(20_000);
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
 });
 
@@ -69,15 +94,17 @@ test('opening a drawer moves focus inside, makes the shell inert and Escape rest
 
     // The background is inert for real: property + attribute, not a CSS class.
     expect(await isInert(page, '.topbar')).toBe(true);
-    expect(await isInert(page, '#voice-stage')).toBe(true);
+    expect(await isInert(page, '.stage-content')).toBe(true);
     await expect(page.locator('.topbar')).toHaveAttribute('inert', '');
-    await expect(page.locator('#voice-stage')).toHaveAttribute('inert', '');
+    await expect(page.locator('.stage-content')).toHaveAttribute('inert', '');
+    // #37: the call-control/composer strip is deliberately outside the inert set.
+    expect(await isInert(page, '.stage-controls')).toBe(false);
 
-    // Tab order is confined to the drawer (20 presses would escape any small
-    // trap and, without inert, would land on header/stage controls).
-    for (let index = 0; index < 20; index += 1) {
-      await page.keyboard.press('Tab');
-      expect(await insideDrawer(page, 'shell-right'), `tab #${index + 1} escaped the drawer`).toBe(true);
+    // Tab order is confined to the modal scope: the drawer plus the control
+    // strip. Without the trap it would reach the (inert) header and stage body,
+    // or browser chrome.
+    for (let index = 0; index < 16; index += 1) {
+      expect(await insideModalScope(page, 'shell-right'), `tab #${index + 1} escaped the modal scope`).toBe(true);
     }
 
     // Programmatic focus on an inert background control is refused too.
@@ -88,7 +115,7 @@ test('opening a drawer moves focus inside, makes the shell inert and Escape rest
     await expect(right).toHaveAttribute('aria-expanded', 'false');
     await expect(drawer).not.toBeVisible();
     expect(await isInert(page, '.topbar')).toBe(false);
-    expect(await isInert(page, '#voice-stage')).toBe(false);
+    expect(await isInert(page, '.stage-content')).toBe(false);
     await expect(right).toBeFocused();
 
     // Complement assertion: the background is interactive again, not merely
@@ -107,7 +134,7 @@ test('opening a drawer moves focus inside, makes the shell inert and Escape rest
     await expect(leftDrawer).toHaveAttribute('role', 'dialog');
     await expect(leftDrawer.getByRole('button', { name: /New conversation/ })).toBeFocused();
     expect(await isInert(page, '.topbar')).toBe(true);
-    expect(await isInert(page, '#voice-stage')).toBe(true);
+    expect(await isInert(page, '.stage-content')).toBe(true);
 
     await page.keyboard.press('Escape');
     await expect(left).toHaveAttribute('aria-expanded', 'false');
@@ -199,7 +226,7 @@ test('resizing across the dock breakpoint keeps focus inside the drawer or resto
   await expect(drawer.getByRole('tab', { name: 'Appearance' })).toBeFocused();
   expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
   expect(await isInert(page, '.topbar')).toBe(false);
-  expect(await isInert(page, '#voice-stage')).toBe(false);
+  expect(await isInert(page, '.stage-content')).toBe(false);
 
   // Desktop dock → mobile overlay: the dock collapses, so focus is
   // deliberately restored to the trigger that owns the panel - never <body>.

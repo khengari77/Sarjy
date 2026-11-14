@@ -133,6 +133,23 @@
   position: relative;
 }
 
+/* Inertable stage body. The control strip below is a sibling so it can stay
+   reachable while an overlay drawer is modal (#37: Mute/End always usable). */
+.stage-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage-controls {
+  flex: 0 0 auto;
+  /* Above the drawer scrim (25) but below the drawers (30): Mute/End stay
+     clickable while a drawer is open (#37), without covering the drawer. */
+  position: relative;
+  z-index: 26;
+}
+
 .scrim {
   display: none;
   position: fixed;

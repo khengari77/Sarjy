@@ -10,7 +10,8 @@
     themeName,
     type ThemePreference,
   } from './theme';
-  import { firstFocusable, wrapTab } from './drawerFocus';
+  import { createDrawerSession } from './drawerSession.svelte';
+  import { browserStorage } from '../storage';
   import './shell.css';
 
   interface Props {
@@ -21,7 +22,11 @@
     rightLabel?: string;
     left?: Snippet;
     stage?: Snippet;
+    /** Always-reachable control surface (call controls, composer). */
+    controls?: Snippet;
     right?: Snippet;
+    /** A dialog inside the stage has taken over modal ownership. */
+    stageDialogOpen?: boolean;
   }
 
   let {
@@ -32,7 +37,9 @@
     rightLabel = 'Memory and settings',
     left,
     stage,
+    controls,
     right,
+    stageDialogOpen = false,
   }: Props = $props();
 
   // The document ships as English; follow the UI language on the client.
@@ -55,14 +62,16 @@
   let rightButton = $state<HTMLButtonElement | null>(null);
   let leftPanel = $state<HTMLElement | null>(null);
   let rightPanel = $state<HTMLElement | null>(null);
-  let openOrigin = $state<'left' | 'right' | null>(null);
+  let controlsRegion = $state<HTMLElement | null>(null);
 
   // A panel below the dock breakpoint is a modal drawer: the rest of the shell
   // leaves the accessibility tree and the tab order (see `inert` below), and
   // focus lives inside the drawer until it closes. Docked panels are ordinary
   // complementary regions and never trap focus.
   const overlayPanel = $derived(leftOpen && !docked ? 'left' : rightOpen && !docked ? 'right' : null);
-  const backgroundInert = $derived(overlayPanel !== null);
+  // A stage dialog (e.g. the end-call confirmation the drawer itself triggers)
+  // owns the modal layer, so the drawer's inert background must not cover it.
+  const backgroundInert = $derived(overlayPanel !== null && !stageDialogOpen);
 
   // Theme is cosmetic: the preference lives per browser and switching it
   // never touches the voice session, canvas or orb.
@@ -72,7 +81,7 @@
 
   function cycleTheme() {
     preference = nextThemePreference(preference);
-    storeTheme(window.localStorage, preference);
+    storeTheme(browserStorage(), preference);
     applyTheme(document.documentElement, preference, systemDark);
   }
 
@@ -84,22 +93,20 @@
     return panel === 'left' ? leftPanel : rightPanel;
   }
 
-  // Opening an overlay drawer moves focus to its first meaningful control.
-  // The drawer content is always rendered, so this runs after Svelte has made
-  // it visible. Docked panels are not dialogs and never steal focus.
-  let focusedOverlay: 'left' | 'right' | null = null;
-  $effect(() => {
-    const panel = overlayPanel;
-    if (panel === focusedOverlay) return;
-    focusedOverlay = panel;
-    if (!panel) return;
-    void tick().then(() => {
-      firstFocusable(panelFor(panel))?.focus({ preventScroll: true });
-    });
+  const session = createDrawerSession({
+    overlay: () => overlayPanel,
+    panel: panelFor,
+    trigger: triggerFor,
+    controls: () => controlsRegion,
+    openState: (panel) => (panel === 'left' ? leftOpen : rightOpen),
+    dialogOpen: () => stageDialogOpen,
+    closeOverlays: () => {
+      leftOpen = false;
+      rightOpen = false;
+    },
   });
 
   function opening(panel: 'left' | 'right') {
-    openOrigin = panel;
     if (panel === 'left') {
       leftOpen = true;
       if (!docked) rightOpen = false;
@@ -124,24 +131,8 @@
   async function closePanel(panel: 'left' | 'right') {
     if (panel === 'left') leftOpen = false;
     else rightOpen = false;
-    if (openOrigin === panel) openOrigin = null;
     await tick();
     triggerFor(panel)?.focus({ preventScroll: true });
-  }
-
-  /**
-   * Escape target. A modal drawer always owns Escape. A docked panel only
-   * consumes it when focus is inside that panel or on its trigger, so nested
-   * stage dialogs (e.g. the transcript drawer) keep their own Escape handling
-   * instead of the shell closing a dock behind them.
-   */
-  function escapeTarget(): 'left' | 'right' | null {
-    if (overlayPanel) return overlayPanel;
-    const panel = openOrigin ?? (leftOpen ? 'left' : rightOpen ? 'right' : null);
-    if (!panel) return null;
-    const active = document.activeElement as HTMLElement | null;
-    const owns = active && (panelFor(panel)?.contains(active) || triggerFor(panel) === active);
-    return owns ? panel : null;
   }
 
   function onViewportChange(event: MediaQueryListEvent) {
@@ -159,7 +150,6 @@
       // With nothing open, fall back to the desktop default (left dock open).
       leftOpen = leftWasOpen || !rightWasOpen;
       rightOpen = rightWasOpen;
-      openOrigin = null;
       // No focus move needed: the focused element stays rendered and visible.
       return;
     }
@@ -168,7 +158,6 @@
     // from the layout, so deliberately restore focus to the panel's trigger.
     leftOpen = false;
     rightOpen = false;
-    openOrigin = null;
     void tick().then(() => {
       if (focusInLeft) leftButton?.focus({ preventScroll: true });
       else if (focusInRight) rightButton?.focus({ preventScroll: true });
@@ -179,7 +168,7 @@
     const wide = window.matchMedia('(min-width: 1200px)');
     const system = window.matchMedia('(prefers-color-scheme: dark)');
 
-    preference = readStoredTheme(window.localStorage);
+    preference = readStoredTheme(browserStorage());
     systemDark = system.matches;
     docked = wide.matches;
     leftOpen = wide.matches;
@@ -192,11 +181,11 @@
     };
     const onKeydown = (event: KeyboardEvent) => {
       if (event.key === 'Tab') {
-        if (overlayPanel) wrapTab(event, panelFor(overlayPanel));
+        session.onTab(event);
         return;
       }
       if (event.key !== 'Escape') return;
-      const panel = escapeTarget();
+      const panel = session.escapeTarget();
       if (panel) void closePanel(panel);
     };
 
@@ -280,8 +269,13 @@
       </aside>
     {/if}
 
-    <main class="stage" id="voice-stage" inert={backgroundInert ? true : undefined}>
-      {#if stage}{@render stage()}{/if}
+    <main class="stage" id="voice-stage">
+      <div class="stage-content" inert={backgroundInert ? true : undefined}>
+        {#if stage}{@render stage()}{/if}
+      </div>
+      {#if controls}
+        <div class="stage-controls" bind:this={controlsRegion}>{@render controls()}</div>
+      {/if}
     </main>
 
     {#if right}
