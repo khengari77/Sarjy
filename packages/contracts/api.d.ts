@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/settings/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Update Settings */
+        post: operations["update_settings_v1_settings_actions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/actions": {
         parameters: {
             query?: never;
@@ -362,6 +379,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/agent/command": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finalized Command
+         * @description The one worker entry for a finalized user utterance.
+         *
+         *     Reads the already-persisted source turn and its frozen revisions; it
+         *     never accepts a client-supplied revision or transcript.  Returns
+         *     ``{"command": null}`` when the utterance is ordinary conversation.
+         */
+        post: operations["finalized_command_internal_agent_command_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/agent/tool/weather": {
         parameters: {
             query?: never;
@@ -373,6 +414,74 @@ export interface paths {
         put?: never;
         /** Agent Weather */
         post: operations["agent_weather_internal_agent_tool_weather_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/agent/tool/memory-propose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Agent Memory Propose */
+        post: operations["agent_memory_propose_internal_agent_tool_memory_propose_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/agent/tool/memory-forget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Agent Memory Forget */
+        post: operations["agent_memory_forget_internal_agent_tool_memory_forget_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/agent/tool/memory-recall": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Agent Memory Recall */
+        post: operations["agent_memory_recall_internal_agent_tool_memory_recall_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/agent/memory/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Memory Route */
+        post: operations["confirm_memory_route_internal_agent_memory_confirm_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -481,6 +590,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/wordle/today": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Today */
+        get: operations["today_v1_wordle_today_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/wordle/guesses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Guess */
+        post: operations["guess_v1_wordle_guesses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/wordle/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stats */
+        get: operations["stats_v1_wordle_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/wordle/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh */
+        post: operations["refresh_internal_wordle_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -499,7 +676,7 @@ export interface components {
              */
             source: "ui" | "transcript";
             /** Action */
-            action?: (components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"]) | null;
+            action?: (components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"]) | null;
             /** Transcript */
             transcript?: string | null;
             /**
@@ -550,6 +727,47 @@ export interface components {
              * @default 0
              */
             characters: number;
+        };
+        /** CommandInput */
+        CommandInput: {
+            /** Turn Id */
+            turn_id: string;
+        };
+        /**
+         * CommandKind
+         * @enum {string}
+         */
+        CommandKind: "executed" | "unchanged" | "needs_confirmation" | "unsupported" | "failed" | "unknown";
+        /** CommandResponse */
+        CommandResponse: {
+            command?: components["schemas"]["CommandResult"] | null;
+        };
+        /**
+         * CommandResult
+         * @description The single result the UI applies and the worker speaks once.
+         */
+        CommandResult: {
+            /** Request Id */
+            request_id: string;
+            kind: components["schemas"]["CommandKind"];
+            /** Action */
+            action?: string | null;
+            settings?: components["schemas"]["UserSettings"] | null;
+            /** Navigation */
+            navigation?: ("history" | "memory_explorer") | null;
+            /** Theme */
+            theme?: ("light" | "dark" | "system") | null;
+            /**
+             * Changed
+             * @default false
+             */
+            changed: boolean;
+            /** Spoken */
+            spoken: string;
+            /** Detail */
+            detail?: string | null;
+            /** Operation Id */
+            operation_id?: string | null;
         };
         /** ContextAmbiguity */
         ContextAmbiguity: {
@@ -730,6 +948,13 @@ export interface components {
             revision_after: number;
             diff: components["schemas"]["ContextDiff"];
         };
+        /** GuessInput */
+        GuessInput: {
+            /** Guess */
+            guess: string;
+            /** Request Id */
+            request_id: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -743,11 +968,21 @@ export interface components {
              */
             handled: "true";
             /** Result */
-            result: components["schemas"]["SettingsActionResult"] | components["schemas"]["NavigationActionResult"] | {
+            result: components["schemas"]["SettingsActionResult"] | components["schemas"]["NavigationActionResult"] | components["schemas"]["CommandResult"] | {
                 [key: string]: components["schemas"]["JsonValue"];
             };
         };
         JsonValue: unknown;
+        /** MemoryConfirm */
+        MemoryConfirm: {
+            /** Token */
+            token: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "save" | "discard" | "replace";
+        };
         /** MemoryCorrection */
         MemoryCorrection: {
             /** Content */
@@ -797,6 +1032,15 @@ export interface components {
             /** Included In Conversation */
             included_in_conversation?: boolean | null;
         };
+        /** MemoryProposeInput */
+        MemoryProposeInput: {
+            /** Turn Id */
+            turn_id: string;
+            /** Request Id */
+            request_id: string;
+            /** Fact */
+            fact: string;
+        };
         /** MemoryQuery */
         MemoryQuery: {
             /** Conversation Id */
@@ -808,6 +1052,15 @@ export interface components {
              * @default 5
              */
             limit: number;
+        };
+        /** MemoryQueryInput */
+        MemoryQueryInput: {
+            /** Turn Id */
+            turn_id: string;
+            /** Request Id */
+            request_id: string;
+            /** Query */
+            query: string;
         };
         /** MemoryResult */
         MemoryResult: {
@@ -960,7 +1213,10 @@ export interface components {
              * @enum {string}
              */
             kind: "SelectApprovedVoice";
-            /** Voice Id */
+            /**
+             * Voice Id
+             * @default null
+             */
             voice_id: string | null;
         };
         /** SetCaptionsVisible */
@@ -983,6 +1239,26 @@ export interface components {
             /** Speed */
             speed: number;
         };
+        /**
+         * SetTheme
+         * @description A browser-local theme choice.
+         *
+         *     Deliberately absent from :class:`UserSettings`: a theme belongs to one
+         *     browser's presentation, so the server records no preference and the result
+         *     only carries the hint the client applies.
+         */
+        SetTheme: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SetTheme";
+            /**
+             * Theme
+             * @enum {string}
+             */
+            theme: "light" | "dark" | "system";
+        };
         /** SettingsActionResult */
         SettingsActionResult: {
             /**
@@ -993,6 +1269,18 @@ export interface components {
             settings: components["schemas"]["UserSettings"];
             /** Changed */
             changed: boolean;
+        };
+        /**
+         * SettingsSubmission
+         * @description Owner-scoped settings change; no conversation is needed or created.
+         */
+        SettingsSubmission: {
+            /** Request Id */
+            request_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Action */
+            action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
         };
         /** ShowConversationHistory */
         ShowConversationHistory: {
@@ -1083,6 +1371,14 @@ export interface components {
              * @default []
              */
             languages: string[];
+            /** Gender */
+            gender?: string | null;
+            /** Accent */
+            accent?: string | null;
+            /** Age */
+            age?: string | null;
+            /** Description */
+            description?: string | null;
         };
         /** WeatherInput */
         WeatherInput: {
@@ -1317,7 +1613,7 @@ export interface components {
              */
             language: "ar" | "en";
         };
-        Action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
+        Action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
     };
     responses: never;
     parameters: never;
@@ -1343,6 +1639,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserSettings"];
+                };
+            };
+        };
+    };
+    update_settings_v1_settings_actions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsSubmission"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1958,6 +2287,39 @@ export interface operations {
             };
         };
     };
+    finalized_command_internal_agent_command_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommandInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     agent_weather_internal_agent_tool_weather_post: {
         parameters: {
             query?: never;
@@ -1968,6 +2330,138 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["WeatherInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_memory_propose_internal_agent_tool_memory_propose_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryProposeInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_memory_forget_internal_agent_tool_memory_forget_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryQueryInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_memory_recall_internal_agent_tool_memory_recall_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryQueryInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_memory_route_internal_agent_memory_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryConfirm"];
             };
         };
         responses: {
@@ -2189,6 +2683,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    today_v1_wordle_today_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    guess_v1_wordle_guesses_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GuessInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stats_v1_wordle_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    refresh_internal_wordle_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
