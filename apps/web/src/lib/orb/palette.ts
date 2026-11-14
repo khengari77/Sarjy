@@ -170,8 +170,8 @@ export const ORB_STATE_COLORS: Record<ThemeName, OrbStateColors> = {
     memory: '#ffd37e',
     confirmation: '#ffd37e',
     error: '#c94767',
-    muted: '#516b8f',
-    disconnected: '#516b8f',
+    muted: '#4d678a',
+    disconnected: '#4d678a',
   },
   dark: {
     memory: '#ffd37e',
@@ -188,6 +188,7 @@ export function orbStateColors(theme: ThemeName): OrbStateColors {
 
 /** Page background per theme (`--bg-app`), for contrast/fallback decisions. */
 export const THEME_BACKGROUND: Record<ThemeName, string> = {
-  light: '#eaf6ff',
+  // Deliberately deeper than the kit's #eaf6ff: the orb washed out against it.
+  light: '#dceaf7',
   dark: '#080f29',
 };

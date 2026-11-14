@@ -87,14 +87,16 @@
 [data-theme='light'] {
   color-scheme: light;
 
-  --bg-app: #eaf6ff;
-  --bg-sidebar: #f3faff;
+  /* Deeper than the kit's #eaf6ff: the cloud was washing out against a very
+     bright sky. Still a sky tint, but it separates the orb's edges. */
+  --bg-app: #dceaf7;
+  --bg-sidebar: #eaf4fd;
   --surface-elevated: #ffffff;
   --surface-raised: #ffffff;
   --surface-hover: #deedfb;
   --text-primary: #122d52;
   /* Nudged from #526d91 so muted text also clears 4.5:1 on --surface-hover. */
-  --text-muted: #516b8f;
+  --text-muted: #4d678a;
   /* Kit value #c9def2 is only 1.31:1 on the sidebar. Darkened to reach 3:1
      for functional boundaries against every shell surface, including
      --surface-elevated and --surface-hover. */
@@ -129,7 +131,7 @@
     --surface-raised: #ffffff;
     --surface-hover: #deedfb;
     --text-primary: #122d52;
-    --text-muted: #516b8f;
+    --text-muted: #4d678a;
     --border-subtle: #72879e;
     --accent: #2475e6;
     --focus-ring: #185ac4;

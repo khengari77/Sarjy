@@ -9,7 +9,7 @@ test('cancelling during microphone startup clears the live session and skips met
 
   await page.goto('/');
   await ready(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'Cancel connecting', exact: true })).toBeVisible();
   expect(posts).toHaveLength(1);
   await expect.poll(() => page.evaluate(() => window.__race?.hasPendingStartMic())).toBe(true);
@@ -18,7 +18,7 @@ test('cancelling during microphone startup clears the live session and skips met
     if (window.__race) window.__race.audioLevel = 0.8;
   });
   await page.getByRole('button', { name: 'Cancel connecting', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  await expect(page.locator('.orb-button')).toBeVisible();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toHaveCount(0);
 
   await page.evaluate(() => window.__race?.resolveStartMic());
@@ -38,13 +38,13 @@ test('a stalled failure cleanup cannot overwrite a replacement call', async ({ p
 
   await page.goto('/');
   await ready(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.locator('[data-code="MICROPHONE_PERMISSION_DENIED"]')).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__race?.hasPendingDisconnect())).toBe(true);
 
   await page.getByRole('button', { name: 'Cancel connecting', exact: true }).click();
   await page.evaluate(() => window.__race?.setStartMicFail(false));
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect.poll(() => posts.length).toBe(2);
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'listening');
