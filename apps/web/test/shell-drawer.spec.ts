@@ -26,7 +26,9 @@ async function waitForShell(page: Page) {
 }
 
 function activeLabel(page: Page): Promise<string | null> {
-  return page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName ?? null);
+  return page.evaluate(
+    () => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName ?? null,
+  );
 }
 
 function insideDrawer(page: Page, id: string): Promise<boolean> {
@@ -213,7 +215,10 @@ test('resizing across the dock breakpoint keeps focus inside the drawer or resto
   await waitForShell(page);
   const left = leftTrigger(page);
   await expect(left).toHaveAttribute('aria-expanded', 'true');
-  await page.locator('#shell-left').getByRole('button', { name: /New conversation/ }).focus();
+  await page
+    .locator('#shell-left')
+    .getByRole('button', { name: /New conversation/ })
+    .focus();
   expect(await insideDrawer(page, 'shell-left')).toBe(true);
 
   await page.setViewportSize({ width: 800, height: 900 });

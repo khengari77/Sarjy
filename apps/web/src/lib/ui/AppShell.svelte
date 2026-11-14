@@ -10,6 +10,7 @@
     themeName,
     type ThemePreference,
   } from './theme';
+  import { firstFocusable, wrapTab } from './drawerFocus';
   import './shell.css';
 
   interface Props {
@@ -69,34 +70,10 @@
   let systemDark = $state(false);
   const resolvedTheme = $derived(resolveTheme(preference, systemDark));
 
-  function syncTheme() {
-    applyTheme(document.documentElement, preference, systemDark);
-  }
-
   function cycleTheme() {
     preference = nextThemePreference(preference);
     storeTheme(window.localStorage, preference);
-    syncTheme();
-  }
-
-  const FOCUSABLE = [
-    'a[href]',
-    'button:not([disabled])',
-    'input:not([disabled]):not([type="hidden"])',
-    'select:not([disabled])',
-    'textarea:not([disabled])',
-    '[tabindex]:not([tabindex="-1"])',
-  ].join(',');
-
-  /** First element a keyboard user can actually reach inside `root`. */
-  function firstFocusable(root: HTMLElement | null): HTMLElement | null {
-    if (!root) return null;
-    const candidates = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
-    return (
-      candidates.find(
-        (element) => element.tabIndex >= 0 && element.getClientRects().length > 0 && !element.closest('[inert]'),
-      ) ?? null
-    );
+    applyTheme(document.documentElement, preference, systemDark);
   }
 
   function triggerFor(panel: 'left' | 'right'): HTMLButtonElement | null {
@@ -167,36 +144,6 @@
     return owns ? panel : null;
   }
 
-  /**
-   * `inert` removes the background from the tab order, but the browser chrome
-   * sits between the last control and the first one, so the drawer also wraps
-   * Tab/Shift+Tab at its own boundaries. Together they are the focus trap.
-   */
-  function trapTab(event: KeyboardEvent) {
-    const panel = overlayPanel ? panelFor(overlayPanel) : null;
-    if (!panel) return;
-    const focusables = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-      (element) => element.tabIndex >= 0 && element.getClientRects().length > 0,
-    );
-    if (!focusables.length) return;
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    const active = document.activeElement as HTMLElement | null;
-
-    if (!active || !panel.contains(active)) {
-      event.preventDefault();
-      first.focus({ preventScroll: true });
-      return;
-    }
-    if (event.shiftKey && active === first) {
-      event.preventDefault();
-      last.focus({ preventScroll: true });
-    } else if (!event.shiftKey && active === last) {
-      event.preventDefault();
-      first.focus({ preventScroll: true });
-    }
-  }
-
   function onViewportChange(event: MediaQueryListEvent) {
     const active = document.activeElement as HTMLElement | null;
     const focusInLeft = !!active && !!leftPanel?.contains(active);
@@ -236,16 +183,16 @@
     systemDark = system.matches;
     docked = wide.matches;
     leftOpen = wide.matches;
-    syncTheme();
+    applyTheme(document.documentElement, preference, systemDark);
     hydrated = true;
 
     const onSchemeChange = (event: MediaQueryListEvent) => {
       systemDark = event.matches;
-      if (preference === 'system') syncTheme();
+      if (preference === 'system') applyTheme(document.documentElement, preference, systemDark);
     };
     const onKeydown = (event: KeyboardEvent) => {
       if (event.key === 'Tab') {
-        trapTab(event);
+        if (overlayPanel) wrapTab(event, panelFor(overlayPanel));
         return;
       }
       if (event.key !== 'Escape') return;
