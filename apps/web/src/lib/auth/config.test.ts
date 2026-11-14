@@ -7,12 +7,11 @@ describe('DEVELOPMENT_PROTECTED', () => {
     expect(parseProtectedMode('false')).toBe(false);
   });
 
-  it('treats unset/empty as the documented unprotected default', () => {
+  it('treats an unset variable as the documented unprotected default', () => {
     expect(parseProtectedMode(undefined)).toBe(false);
-    expect(parseProtectedMode('')).toBe(false);
   });
 
-  it.each(['TRUE', 'True', '1', 'yes', ' true', 'false '])('refuses the typo %j', (value) => {
+  it.each(['TRUE', '1', 'yes', ' true', '', 'false '])('refuses the ambiguous value %j', (value) => {
     expect(() => parseProtectedMode(value)).toThrow(PROTECTED_MODE_ERROR);
   });
 });

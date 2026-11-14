@@ -1,6 +1,7 @@
 import { defineEnvVars } from '@sveltejs/kit/env';
 export const variables = defineEnvVars({
-  DEVELOPMENT_PROTECTED: { schema: (value) => value || 'false' },
+  // Unset means unprotected; an explicitly empty or misspelled value fails boot.
+  DEVELOPMENT_PROTECTED: { schema: (value) => value },
   // Legacy Basic-auth credentials. No longer read by the gate; kept declared so
   // older deployments can roll forward without touching their env files.
   DEVELOPMENT_USER: { schema: (value) => value || '' },

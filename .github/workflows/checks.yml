@@ -53,6 +53,8 @@ jobs:
       - run: pnpm --dir apps/web test:proxy
       - run: pnpm --dir apps/web test:deadline
       - run: pnpm --dir apps/web test:smoke-setup
+      - name: Reviewer gate (production build)
+        run: pnpm --dir apps/web test:auth:prod
 
   postgres:
     env:

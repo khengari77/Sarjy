@@ -3,6 +3,17 @@
  * a demo-scale gate that makes volume guessing pointless without adding a
  * dependency or a shared store. Counters are per process and reset on restart.
  */
+/**
+ * Key a failure by the forwarded client when the platform supplies one, so a
+ * shared proxy socket does not become one global bucket. `ADDRESS_HEADER` +
+ * `XFF_DEPTH` remain the strict adapter-node configuration; this is the
+ * best-effort fallback for deployments that only set X-Forwarded-For.
+ */
+export function failureKey(request: Request, socketAddress: string): string {
+  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  return forwarded ? `${socketAddress}|${forwarded}` : socketAddress;
+}
+
 export interface RateLimiter {
   blocked(key: string): boolean;
   fail(key: string): void;

@@ -1,6 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions } from './$types';
 import { accessFailures, issueSession, protectedMode, redeem } from '../lib/auth/guard.server';
+import { failureKey } from '../lib/auth/rate-limit';
 import { safeNextPath } from '../lib/auth/redirect';
 
 /**
@@ -15,7 +16,7 @@ export const actions: Actions = {
     const form = await request.formData();
     const submitted = form.get('token');
     const next = safeNextPath(form.get('next')?.toString() ?? url.searchParams.get('next'));
-    const address = getClientAddress();
+    const address = failureKey(request, getClientAddress());
     const reject = (blocked = false) => fail(blocked ? 429 : 400, { error: true, blocked, next });
 
     if (accessFailures.blocked(address)) return reject(true);

@@ -6,6 +6,6 @@ export const PROTECTED_MODE_ERROR = 'DEVELOPMENT_PROTECTED must be exactly "true
 
 export function parseProtectedMode(value: string | undefined | null): boolean {
   if (value === 'true') return true;
-  if (value === 'false' || value === undefined || value === null || value === '') return false;
+  if (value === 'false' || value === undefined || value === null) return false;
   throw new Error(PROTECTED_MODE_ERROR);
 }

@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
 import { accessFailures, issueSession, protectedMode, redeem, sessionIsValid } from '../lib/auth/guard.server';
+import { failureKey } from '../lib/auth/rate-limit';
 import { safeNextPath } from '../lib/auth/redirect';
 
 /**
@@ -9,7 +10,7 @@ import { safeNextPath } from '../lib/auth/redirect';
  * `hooks.server.ts`; this load serves the door and performs the `?token=`
  * exchange server-side, so a valid link lands in the app on the first paint.
  */
-export const load: LayoutServerLoad = async ({ url, cookies, getClientAddress, setHeaders }) => {
+export const load: LayoutServerLoad = async ({ request, url, cookies, getClientAddress, setHeaders }) => {
   if (!protectedMode) return { entry: false, error: false, blocked: false, next: '/', protectedMode };
 
   const next = safeNextPath(url.searchParams.get('next'));
@@ -26,7 +27,7 @@ export const load: LayoutServerLoad = async ({ url, cookies, getClientAddress, s
 
   if (token === null) return { entry: true, error: false, blocked: false, next, protectedMode };
 
-  const address = getClientAddress();
+  const address = failureKey(request, getClientAddress());
   const failure = (blocked: boolean) => ({ entry: true, error: true, blocked, next, protectedMode });
   if (accessFailures.blocked(address)) return failure(true);
 
