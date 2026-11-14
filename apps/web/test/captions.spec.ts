@@ -108,7 +108,7 @@ async function startCall(page: Page) {
   );
   await page.route('**/api/v1/voice/sessions/*/end', (route) => route.fulfill({ json: {} }));
   await waitForReady(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 }
 

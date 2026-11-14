@@ -92,7 +92,7 @@ test('a saved Arabic preference cannot start an Arabic session or reveal the swi
   // The page shell is server-rendered; wait for hydration before clicking.
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
 
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
   await expect(page.locator('.status-line')).toContainText('Listening');
 
@@ -107,5 +107,5 @@ test('a fresh browser defaults to the English interface', async ({ page }) => {
 
   await expect(page.getByRole('heading', { name: 'Speak. Remember. Shape the context.' })).toBeVisible();
   await expect(page.locator('.shell')).toHaveAttribute('dir', 'ltr');
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeEnabled();
+  await expect(page.locator('.orb-button')).toBeEnabled();
 });
