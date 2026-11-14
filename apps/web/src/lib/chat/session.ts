@@ -60,6 +60,16 @@ export async function saveVoiceSelection(voiceId: string, expectedRevision: numb
   return result.settings;
 }
 
+/** Persist the captions preference owner-side; the server snapshot is authoritative. */
+export async function saveCaptionSelection(visible: boolean, expectedRevision: number): Promise<SettingsActionResult> {
+  const requestId = `captions:${expectedRevision}:${visible ? 'on' : 'off'}`;
+  return request<SettingsActionResult>('settings/actions', {
+    request_id: requestId,
+    expected_revision: expectedRevision,
+    action: { kind: 'SetCaptionsVisible', visible },
+  });
+}
+
 export async function endVoiceSession(session: SessionConfig | null): Promise<void> {
   if (session) await request('voice/sessions/' + session.id + '/end', {});
 }

@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.domain.commands import CommandResult
 from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
 from app.domain.contracts import (
     MemoryRecord,
@@ -25,6 +26,7 @@ from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
 from app.infrastructure.database import Conversation, Memory, Turn, UserSetting, VoiceSession
 from app.services.budget import reserve as reserve_development_budget
+from app.services.commands import command_request_id, handle_finalized_utterance
 from app.services.context_assembly import location_evidence, read_context_inputs
 from app.services.memory import MemoryService
 from app.services.memory_capture import (
@@ -72,6 +74,14 @@ class WeatherInput(BaseModel):
     country: str | None = Field(default=None, max_length=120)
 
 
+class CommandInput(BaseModel):
+    turn_id: str = Field(min_length=1, max_length=100)
+
+
+class CommandResponse(BaseModel):
+    command: CommandResult | None = None
+
+
 def _session_guard(config: Settings):
     async def worker_session(request: Request, db: AsyncSession, allow_ended: bool = False):
         secret = request.headers.get("x-agent-secret", "")
@@ -98,11 +108,14 @@ PENDING_MEMORY_INSTRUCTION = (
 )
 
 
-def register_worker_routes(app, *, config: Settings, database, embedder):
+def register_worker_routes(app, *, config: Settings, database, embedder, catalog, approved_voice_ids=None):
     guard = _session_guard(config)
     _register_budget_routes(app, config=config, database=database)
     _register_session_routes(app, database=database, guard=guard)
     _register_turn_routes(app, config=config, database=database, guard=guard)
+    _register_command_routes(
+        app, database=database, guard=guard, catalog=catalog, approved_voice_ids=approved_voice_ids
+    )
     _register_tool_routes(app, database=database, guard=guard)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
 
@@ -437,6 +450,46 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
                 raise
             return {"id": existing.id}
         return {"id": turn.id}
+
+
+def _register_command_routes(app, *, database, guard, catalog, approved_voice_ids=None):
+    @app.post("/internal/agent/command", response_model=CommandResponse)
+    async def finalized_command(body: CommandInput, request: Request, db: AsyncSession = Depends(database)):
+        """The one worker entry for a finalized user utterance.
+
+        Reads the already-persisted source turn and its frozen revisions; it
+        never accepts a client-supplied revision or transcript.  Returns
+        ``{"command": null}`` when the utterance is ordinary conversation.
+        """
+        voice = await guard(request, db)
+        turn = await db.get(Turn, body.turn_id)
+        if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
+            raise HTTPException(404)
+        conversation = await db.get(Conversation, turn.conversation_id)
+        if conversation is None:
+            raise HTTPException(404)
+        snapshot = turn.snapshot or {}
+        expected_revision = snapshot.get("revision")
+        if not isinstance(expected_revision, int):
+            expected_revision = conversation.revision
+        model_request = snapshot.get("model_request")
+        settings_revision = model_request.get("settings_revision") if isinstance(model_request, dict) else None
+        if not isinstance(settings_revision, int):
+            settings_row = await db.get(UserSetting, conversation.owner_id)
+            settings_revision = settings_row.revision if settings_row is not None else 0
+        result = await handle_finalized_utterance(
+            db,
+            owner_id=conversation.owner_id,
+            conversation_id=turn.conversation_id,
+            request_id=command_request_id(turn.id),
+            expected_revision=expected_revision,
+            settings_revision=settings_revision,
+            text=turn.text,
+            catalog=catalog,
+            approved_voice_ids=approved_voice_ids,
+            handlers=app.state.action_handlers,
+        )
+        return {"command": result.model_dump(mode="json") if result is not None else None}
 
 
 def _claim_replay(claim):
