@@ -12,8 +12,9 @@ narrow API that withholds the answer until the game is terminal.
 | `WORDLE_TIMEZONE` | `America/New_York` | Publisher's publication schedule used to resolve "today" and the refresh hour. Not the player's local zone. |
 | `WORDLE_REFRESH_HOUR` | unset | Optional `0`-`23` local hour for the in-process pre-warm. |
 
-The source must return a JSON object with `solution` (exactly five uppercase
-A-Z letters) and `print_date` equal to the requested date. Simulated or
+The source must return a JSON object with `solution` (five A-Z letters in any
+case; stored canonicalised uppercase) and `print_date` equal to the requested
+date. Simulated or
 fixture sources are used in tests; CI makes no live network call. Malformed,
 missing or mismatched responses produce `WORDLE_UNAVAILABLE`; the service never
 falls back to another date or a fabricated answer.

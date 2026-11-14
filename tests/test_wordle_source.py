@@ -89,8 +89,11 @@ def test_duplicate_letter_scoring_matches_two_pass_rule():
 
 def test_answer_and_guess_validation():
     assert validate_answer("CRANE") == "CRANE"
+    # Case is untrusted source input, canonicalised to uppercase on storage.
+    assert validate_answer("crane") == "CRANE"
+    assert validate_answer("  CrAnE ") == "CRANE"
     assert normalize_guess("  crane ") == "CRANE"
-    for invalid in ("CRAN", "CRANES", "CR4NE", "crane", ""):
+    for invalid in ("CRAN", "CRANES", "CR4NE", "CR ANE", "CR\u0410NE", ""):
         with pytest.raises(WordleValidationError):
             validate_answer(invalid)
     with pytest.raises(WordleValidationError):
@@ -118,11 +121,19 @@ def test_source_payload_rejects_wrong_date_and_shape():
     assert parse_source_payload({"solution": "CRANE", "print_date": "2026-11-13"}, DAY, source="fixture").answer == (
         "CRANE"
     )
+    assert parse_source_payload({"solution": "crane", "print_date": "2026-11-13"}, DAY, source="fixture").answer == (
+        "CRANE"
+    )
+    assert parse_source_payload({"solution": "CrAnE", "print_date": "2026-11-13"}, DAY, source="fixture").answer == (
+        "CRANE"
+    )
     for payload in (
         {"solution": "CRANE", "print_date": "2026-11-12"},
         {"solution": "CRANE"},
         {"solution": "CRAN", "print_date": "2026-11-13"},
-        {"solution": "crane", "print_date": "2026-11-13"},
+        {"solution": "CR4NE", "print_date": "2026-11-13"},
+        {"solution": "CR ANE", "print_date": "2026-11-13"},
+        {"solution": "CR\u0410NE", "print_date": "2026-11-13"},
         {"solution": 12345, "print_date": "2026-11-13"},
         ["CRANE"],
     ):

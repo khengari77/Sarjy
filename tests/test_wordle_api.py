@@ -55,6 +55,27 @@ def test_today_starts_one_game_and_keeps_answer_secret(tmp_path):
         assert source.calls == [today()]
 
 
+def test_lowercase_source_answer_is_canonicalised_and_playable(tmp_path):
+    source = FixtureSource(default_answer="crane")
+    with TestClient(create_app(settings(tmp_path), wordle_source=source)) as client:
+        client.post("/v1/demo-session")
+        today_body = client.get("/v1/wordle/today")
+        assert today_body.status_code == 200
+        assert today_body.json()["available"] is True
+        assert today_body.json()["game"]["status"] == "in_progress"
+        assert CRANE not in today_body.text
+
+        won = client.post("/v1/wordle/guesses", json={"guess": "CRANE", "request_id": "lower-win"})
+        assert won.status_code == 200, won.text
+        assert won.json()["status"] == "won"
+        assert won.json()["answer"] == CRANE
+        assert won.json()["marks"] == ["green"] * 5
+
+    with closing(sqlite3.connect(tmp_path / "wordle-api.db")) as db:
+        stored = db.execute("SELECT answer FROM wordle_puzzles").fetchall()
+    assert stored == [(CRANE,)]
+
+
 def test_guess_scoring_duplicate_idempotency_and_duplicate_word(tmp_path):
     source = FixtureSource()
     with TestClient(create_app(settings(tmp_path), wordle_source=source)) as client:

@@ -47,10 +47,17 @@ def resolve_puzzle_date(instant: datetime, timezone: str) -> date:
 
 
 def validate_answer(value: object) -> str:
-    """Validate a source answer: exactly five uppercase A-Z letters."""
-    if not isinstance(value, str) or ANSWER_PATTERN.fullmatch(value) is None:
+    """Validate and canonicalise a source answer to five uppercase A-Z letters.
+
+    Case is untrusted input: the source may publish ``crane`` or ``CrAnE``.
+    Stored answers are always uppercase because scoring compares against them.
+    """
+    if not isinstance(value, str):
         raise WordleValidationError("WORDLE_ANSWER_INVALID")
-    return value
+    normalized = value.strip().upper()
+    if ANSWER_PATTERN.fullmatch(normalized) is None:
+        raise WordleValidationError("WORDLE_ANSWER_INVALID")
+    return normalized
 
 
 def normalize_guess(value: object) -> str:
