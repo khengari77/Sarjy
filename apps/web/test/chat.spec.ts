@@ -32,7 +32,7 @@ test('demo session, English-first controls, history and explicit missing-service
   const before = await page.request.get('/api/v1/conversations');
   expect(before.ok()).toBeTruthy();
   const chats = await before.json();
-  await page.getByRole('button', { name: 'New conversation +', exact: true }).click();
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await expect
     .poll(async () => (await (await page.request.get('/api/v1/conversations')).json()).length)
     .toBe(chats.length + 1);

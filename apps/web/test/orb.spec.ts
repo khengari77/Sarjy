@@ -208,7 +208,7 @@ test('a lost WebGL context falls back to Canvas2D without breaking the session',
   await page.route('**/api/v1/conversations/*/tool-calls', (route) => route.fulfill({ json: [] }));
 
   await page.goto('/');
-  await expect(page.getByText('No conversations yet.')).toBeVisible();
+  await expect(page.getByText('No conversations yet')).toBeVisible();
   await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
   const orb = page.locator('.orb-button');

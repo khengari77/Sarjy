@@ -136,7 +136,8 @@ test('desktop starts with left open, right closed and the orb and composer fit 1
   await page.goto('/');
   await waitForOrb(page);
 
-  await expect(page.getByRole('button', { name: 'Show conversations' })).toHaveAttribute('aria-expanded', 'true');
+  // The kit keeps the history rail permanently docked on wide screens, so its trigger is hidden.
+  await expect(page.getByRole('button', { name: 'Show conversations' })).toBeHidden();
   await expect(page.getByRole('button', { name: 'Show memory and settings' })).toHaveAttribute(
     'aria-expanded',
     'false',
@@ -265,20 +266,19 @@ test('tablet drawers overlay without squeezing the orb', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Show conversations' })).toHaveAttribute('aria-expanded', 'false');
 });
 
-test('desktop docks toggle independently', async ({ page }) => {
+test('the right dock toggles while the history rail stays docked', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/');
   await waitForOrb(page);
 
-  const left = page.getByRole('button', { name: 'Show conversations' });
+  const left = page.locator('#shell-left');
   const right = page.getByRole('button', { name: 'Show memory and settings' });
+  await expect(left).toHaveAttribute('data-open', 'true');
   await right.click();
-  await expect(left).toHaveAttribute('aria-expanded', 'true');
+  await expect(left).toHaveAttribute('data-open', 'true');
   await right.click();
   await expect(right).toHaveAttribute('aria-expanded', 'false');
-  await expect(left).toHaveAttribute('aria-expanded', 'true');
-  await left.click();
-  await expect(left).toHaveAttribute('aria-expanded', 'false');
+  await expect(left).toHaveAttribute('data-open', 'true');
 });
 
 test('the right drawer exposes the three tabs, closes on Escape and returns focus', async ({ page }) => {
@@ -291,7 +291,7 @@ test('the right drawer exposes the three tabs, closes on Escape and returns focu
   await expect(trigger).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#shell-right')).toBeVisible();
   // On desktop the right panel docks next to the still-open left panel.
-  await expect(page.getByRole('button', { name: 'Show conversations' })).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
 
   const tabs = page.locator('#shell-right').getByRole('tab');
   await expect(tabs).toHaveText(['Memories', 'Controls', 'Context']);

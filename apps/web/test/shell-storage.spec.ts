@@ -120,7 +120,7 @@ test('blocked storage does not abort shell initialisation', async ({ page }) => 
   expect(await leftPanel.evaluate((el) => (el as HTMLElement).inert)).toBe(false);
 
   // The theme control still works without storage; persistence is best effort.
-  const theme = page.getByRole('button', { name: /^Theme:/ });
+  const theme = page.getByRole('button', { name: 'Theme: Light', exact: true });
   await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'system');
   await theme.click();
   // Preference advances even though nothing could be persisted.

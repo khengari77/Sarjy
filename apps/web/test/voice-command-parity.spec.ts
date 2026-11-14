@@ -118,27 +118,25 @@ test('voice navigation opens the same panel the GUI control opens', async ({ bro
   const voiceOpen: string[] = [];
 
   await withPage(browser, async (page) => {
-    await page.getByRole('button', { name: 'Show conversations', exact: true }).click();
-    await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'false');
-    await page.getByRole('button', { name: 'Show conversations', exact: true }).click();
-    await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
-    guiOpen.push((await page.locator('.sidebar-left').getAttribute('data-open')) ?? '');
+    await expect(page.locator('#shell-right')).toHaveAttribute('data-open', 'false');
+    await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
+    await expect(page.locator('#shell-right')).toHaveAttribute('data-open', 'true');
+    guiOpen.push((await page.locator('#shell-right').getAttribute('data-open')) ?? '');
   });
 
   await withPage(browser, async (page) => {
-    await page.getByRole('button', { name: 'Show conversations', exact: true }).click();
-    await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'false');
+    await expect(page.locator('#shell-right')).toHaveAttribute('data-open', 'false');
     await emit(page, {
       type: 'command',
       command: command({
-        action: 'ShowConversationHistory',
+        action: 'OpenMemoryExplorer',
         settings: null,
-        navigation: 'history',
-        spoken: 'Opening your previous conversations.',
+        navigation: 'memory_explorer',
+        spoken: 'Opening the memory explorer.',
       }),
     });
-    await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
-    voiceOpen.push((await page.locator('.sidebar-left').getAttribute('data-open')) ?? '');
+    await expect(page.locator('#shell-right')).toHaveAttribute('data-open', 'true');
+    voiceOpen.push((await page.locator('#shell-right').getAttribute('data-open')) ?? '');
   });
 
   expect(voiceOpen).toEqual(guiOpen);
