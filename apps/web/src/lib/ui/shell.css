@@ -1,10 +1,13 @@
 .shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   background: var(--bg-app);
   color: var(--text-primary);
+  transition:
+    background-color var(--transition-state),
+    color var(--transition-state);
 }
 
 .topbar {
@@ -12,6 +15,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-height: var(--header-height);
   padding: 12px 20px;
   padding-top: max(12px, env(safe-area-inset-top));
   border-bottom: 1px solid var(--border-subtle);
@@ -20,6 +24,9 @@
   position: sticky;
   top: 0;
   z-index: 20;
+  transition:
+    background-color var(--transition-state),
+    border-color var(--transition-state);
 }
 
 .brand-row,
@@ -41,14 +48,22 @@
   color: var(--text-muted);
 }
 
-.mode-pill {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border-subtle);
+.theme-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+}
+
+.theme-glyph {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.theme-label {
+  font-size: 12px;
+  letter-spacing: 0.04em;
   color: var(--text-muted);
-  text-transform: uppercase;
 }
 
 .icon-button,
@@ -82,6 +97,7 @@
   flex: 1;
   display: flex;
   min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -91,6 +107,9 @@
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
+  transition:
+    background-color var(--transition-state),
+    border-color var(--transition-state);
 }
 
 .sidebar-left {
@@ -108,9 +127,27 @@
 .stage {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   position: relative;
+}
+
+/* Inertable stage body. The control strip below is a sibling so it can stay
+   reachable while an overlay drawer is modal (#37: Mute/End always usable). */
+.stage-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage-controls {
+  flex: 0 0 auto;
+  /* Above the drawer scrim (25) but below the drawers (30): Mute/End stay
+     clickable while a drawer is open (#37), without covering the drawer. */
+  position: relative;
+  z-index: 26;
 }
 
 .scrim {
@@ -131,8 +168,11 @@
     top: 0;
     bottom: 0;
     z-index: 30;
+    visibility: hidden;
     transform: translateX(-102%);
-    transition: transform var(--transition-state);
+    transition:
+      transform var(--transition-state),
+      visibility 0s linear var(--transition-state);
     max-width: min(88vw, var(--sidebar-right-width));
     box-shadow: 0 0 40px rgb(0 0 0 / 45%);
   }
@@ -148,7 +188,11 @@
   }
 
   .sidebar[data-open='true'] {
+    visibility: visible;
     transform: translateX(0);
+    transition:
+      transform var(--transition-state),
+      visibility 0s;
   }
 
   .scrim {
@@ -164,21 +208,26 @@
   .sidebar-right {
     width: min(92vw, 360px);
   }
-
-  .mode-pill {
-    display: none;
-  }
 }
 
 @media (min-width: 1200px) {
-  .sidebar-left[data-open='false'],
+  /* Before hydration the left dock is already open in CSS, matching the
+     post-mount desktop default so content does not shift on first paint. */
+  .sidebar-left[data-hydrated='false'],
+  .sidebar-left[data-open='true'],
+  .sidebar-right[data-open='true'] {
+    display: flex;
+  }
+
+  .sidebar-left[data-open='false'][data-hydrated='true'],
   .sidebar-right[data-open='false'] {
     display: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sidebar {
+  .sidebar,
+  .sidebar[data-open='true'] {
     transition: none;
   }
 }

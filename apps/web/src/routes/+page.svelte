@@ -1,6 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { VoiceRuntime } from '../lib/audio/voice-runtime';
+  import {
+    friendlyVoiceError,
+    isFatalVoiceError,
+    phaseFromAgentState,
+    phaseFromTransportStatus,
+  } from '../lib/audio/livekitAdapter';
+  import { deriveOrbPresentation, INITIAL_STATE, type VoicePhase } from '../lib/orb/orbState';
   import AppShell from '../lib/ui/AppShell.svelte';
   import ConversationList from '../lib/chat/ConversationList.svelte';
   import VoiceStage from '../lib/chat/VoiceStage.svelte';
@@ -8,7 +15,9 @@
   import CallControls from '../lib/chat/CallControls.svelte';
   import Composer from '../lib/chat/Composer.svelte';
   import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
-  import { voiceStatus } from '../lib/chat/voice-state';
+  import { selectedVoiceOption } from '../lib/chat/voice-state';
+  import RightDrawer from '../lib/ui/RightDrawer.svelte';
+  import { createAnnouncement } from '../lib/chat/announcement.svelte';
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
   import { errorCode } from '../lib/voice/errors';
@@ -16,7 +25,6 @@
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
   import { bootStudio } from '../lib/voice/studio';
   import { createSelectionController } from '../lib/voice/selection';
-  import { deriveStage } from '../lib/voice/stageView';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -27,9 +35,7 @@
   let conversation = $state(initialConversationState());
   let draft = $state('');
   let pendingIntent = $state<PendingIntent>(null);
-  let announcement = $state('');
   let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none');
-  let lastAnnounced = '';
   let busy = $state(false);
   let captionsVisible = $state(true);
   let voice = $state(initialVoiceState());
@@ -47,17 +53,29 @@
     getConversations: () => conversations!,
   });
   const words = $derived(wordsFor(arabic));
-  const selectedVoice = $derived(
-    catalog.voices.find((entry) => entry.id === catalog.voiceId) ??
-      (catalog.voiceId ? { id: catalog.voiceId, name: catalog.voiceId, languages: [] } : null),
-  );
-  // The server resolves the voice for the running call; a worker ACK is still
-  // required before anything is labelled "active" (#112 owns that path).
+  const selectedVoice = $derived(selectedVoiceOption(catalog.voices, catalog.voiceId));
   const sessionVoice = $derived(voice.live?.voice ?? null);
-  const inputVoiceStatus = $derived(
-    voiceStatus({ selected: selectedVoice, session: sessionVoice, confirmed: null, live: voice.live !== null }),
+
+  const phase = $derived<VoicePhase>(
+    (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
+      phaseFromTransportStatus(voice.transportStatus) ??
+      'idle',
   );
-  const view = $derived(deriveStage(voice, arabic, devOverlay));
+  const canInterrupt = $derived(phase === 'thinking' || phase === 'speaking');
+  const fatalError = $derived(voice.voiceErrorCode !== '' && isFatalVoiceError(voice.voiceErrorCode));
+  const voiceErrorText = $derived(voice.voiceErrorCode ? friendlyVoiceError(voice.voiceErrorCode, arabic) : '');
+  const presentation = $derived(
+    deriveOrbPresentation({
+      ...INITIAL_STATE,
+      phase,
+      overlay: devOverlay !== 'none' ? devOverlay : fatalError ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
+      micActive: voice.live !== null && !voice.muted,
+      sessionId: voice.live?.id ?? null,
+      connectionReady: voice.live !== null && !voice.connectionLost,
+      micLevel: voice.micLevel,
+      outputLevel: voice.outputLevel,
+    }),
+  );
 
   async function run(work: () => Promise<void>, onError?: (error: unknown) => void) {
     busy = true;
@@ -78,7 +96,7 @@
   function handleOrb() {
     if (voice.live) {
       if (voice.muted) void toggleMute();
-      else if (view.canInterrupt) void interrupt();
+      else if (canInterrupt) void interrupt();
       return;
     }
     if (!voice.connecting) startConnect();
@@ -93,7 +111,7 @@
   }
 
   async function interrupt() {
-    if (!voice.live || !view.canInterrupt) return;
+    if (!voice.live || !canInterrupt) return;
     await run(() => connection!.interrupt(), onVoiceError);
   }
 
@@ -124,15 +142,7 @@
     localStorage.setItem('sarjy-language', arabic ? 'ar' : 'en');
   }
 
-  $effect(() => {
-    const label = arabic ? view.presentation.statusLabel.ar : view.presentation.statusLabel.en;
-    if (label === lastAnnounced) return;
-    const timer = setTimeout(() => {
-      lastAnnounced = label;
-      announcement = label;
-    }, 300);
-    return () => clearTimeout(timer);
-  });
+  const announcement = createAnnouncement(() => (arabic ? presentation.statusLabel.ar : presentation.statusLabel.en));
 
   onMount(() => {
     const boot = bootStudio({
@@ -162,7 +172,7 @@
 
 <AppShell
   dir={arabic ? 'rtl' : 'ltr'}
-  modeLabel={arabic ? 'بسيط' : 'Simple'}
+  stageDialogOpen={pendingIntent !== null}
   languageLabel={arabic ? 'English' : 'العربية'}
   onLanguage={LANGUAGE_SWITCH_ENABLED ? toggleLanguage : undefined}
   leftLabel={arabic ? 'المحادثات' : 'Conversations'}
@@ -184,7 +194,7 @@
 
   {#snippet stage()}
     <VoiceStage
-      presentation={view.presentation}
+      {presentation}
       micLevel={voice.micLevel}
       outputLevel={voice.outputLevel}
       {arabic}
@@ -192,7 +202,7 @@
       connecting={voice.connecting}
       connectionLost={voice.connectionLost}
       voiceErrorCode={voice.voiceErrorCode}
-      voiceErrorText={view.errorText}
+      {voiceErrorText}
       audioBlocked={voice.audioBlocked}
       {pendingIntent}
       turns={conversation.turns}
@@ -209,13 +219,18 @@
       oncancelintent={() => (pendingIntent = null)}
       onconfirmintent={() => selection.confirmSwitch()}
     />
+  {/snippet}
+
+  <!-- Reachable while an overlay drawer is modal: #37 requires Mute and End to
+       stay available, and the composer is useful beside them. -->
+  {#snippet controls()}
     <CallControls
       live={voice.live}
       connecting={voice.connecting}
       {busy}
       muted={voice.muted}
       connectionLost={voice.connectionLost}
-      canInterrupt={view.canInterrupt}
+      {canInterrupt}
       {words}
       onend={() => run(() => connection!.end(), onVoiceError)}
       oncancel={() => run(() => connection!.cancelConnect(), onVoiceError)}
@@ -228,28 +243,30 @@
   {/snippet}
 
   {#snippet right()}
-    <VoiceSettings
-      {arabic}
-      voices={catalog.voices}
-      bind:voiceId={catalog.voiceId}
-      bind:voiceSearch={catalog.search}
-      nextVoicePage={catalog.nextPage}
-      voiceLoading={catalog.loading}
-      voiceError={catalog.error}
-      voiceSaving={catalog.saving}
-      settingsError={catalog.settingsError}
-      live={voice.live !== null}
-      {selectedVoice}
-      {sessionVoice}
-      confirmedVoice={null}
-      status={inputVoiceStatus}
-      {captionsVisible}
-      onsearch={() => void catalogStore!.load()}
-      onloadmore={() => void catalogStore!.load(true)}
-      onremember={() => void catalogStore!.remember()}
-      ontoggleCaptions={toggleCaptions}
-    />
+    <RightDrawer {arabic}>
+      {#snippet voicePanel()}
+        <VoiceSettings
+          {arabic}
+          voices={catalog.voices}
+          bind:voiceId={catalog.voiceId}
+          bind:voiceSearch={catalog.search}
+          nextVoicePage={catalog.nextPage}
+          voiceLoading={catalog.loading}
+          voiceError={catalog.error}
+          voiceSaving={catalog.saving}
+          settingsError={catalog.settingsError}
+          live={voice.live !== null}
+          {selectedVoice}
+          {sessionVoice}
+          {captionsVisible}
+          onsearch={() => void catalogStore!.load()}
+          onloadmore={() => void catalogStore!.load(true)}
+          onremember={() => void catalogStore!.remember()}
+          ontoggleCaptions={toggleCaptions}
+        />
+      {/snippet}
+    </RightDrawer>
   {/snippet}
 </AppShell>
 
-<p class="sr-only" aria-live="polite" aria-atomic="true">{announcement}</p>
+<p class="sr-only" aria-live="polite" aria-atomic="true">{announcement.message}</p>
