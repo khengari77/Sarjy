@@ -36,6 +36,7 @@ from app.services.memory_capture import (
     propose_memory,
     record_proposal,
 )
+from app.services.memory_tools import memory_forget_tool, memory_propose_tool, memory_recall_tool
 from app.services.tool_operations import (
     ToolOperationError,
     claim_tool_operation,
@@ -72,6 +73,19 @@ class WeatherInput(BaseModel):
     request_id: str = Field(min_length=1, max_length=100)
     city: str = Field(min_length=1, max_length=120)
     country: str | None = Field(default=None, max_length=120)
+
+
+class MemoryToolBase(BaseModel):
+    turn_id: str = Field(min_length=1, max_length=100)
+    request_id: str = Field(min_length=1, max_length=100)
+
+
+class MemoryProposeInput(MemoryToolBase):
+    fact: str = Field(min_length=1, max_length=1000)
+
+
+class MemoryQueryInput(MemoryToolBase):
+    query: str = Field(min_length=1, max_length=500)
 
 
 class CommandInput(BaseModel):
@@ -122,6 +136,7 @@ def register_worker_routes(app, *, config: Settings, database, embedder, catalog
         secret=_memory_secret(config),
     )
     _register_tool_routes(app, database=database, guard=guard)
+    _register_memory_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
 
 
@@ -570,3 +585,88 @@ def _register_tool_routes(app, *, database, guard):
             await db.commit()
             raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"}) from exc
         return result
+
+
+async def _finish_tool_operation(db: AsyncSession, key: str, effect) -> dict:
+    """Run the effect after the durable claim; record exactly one terminal state."""
+    try:
+        result = await effect()
+    except MemoryCaptureError as exc:
+        await db.rollback()
+        await fail_tool_operation(db, operation_key=key, error_code=exc.code)
+        await db.commit()
+        return {"error": exc.code}
+    except Exception:
+        await db.rollback()
+        await unknown_tool_operation(db, operation_key=key, error_code="TOOL_DELIVERY_UNKNOWN")
+        await db.commit()
+        raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"}) from None
+    try:
+        await complete_tool_operation(db, operation_key=key, result=result)
+        await db.commit()
+    except ToolOperationError as exc:
+        await unknown_tool_operation(db, operation_key=key, error_code="TOOL_DELIVERY_UNKNOWN")
+        await db.commit()
+        raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"}) from exc
+    return result
+
+
+async def _run_memory_tool(guard, db: AsyncSession, request: Request, body, name: str, arguments: dict, effect):
+    voice = await guard(request, db)
+    conversation = await db.get(Conversation, voice.conversation_id)
+    turn = await db.get(Turn, body.turn_id)
+    if conversation is None or not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
+        raise HTTPException(404)
+    try:
+        claim = await claim_tool_operation(
+            db, turn_id=body.turn_id, operation_key=body.request_id, name=name, arguments=arguments
+        )
+    except ToolOperationError as exc:
+        raise HTTPException(exc.status, detail={"code": exc.code}) from exc
+    replay = _claim_replay(claim)
+    if replay is not None:
+        return replay
+    await db.commit()
+    return await _finish_tool_operation(
+        db, body.request_id, lambda: effect(conversation.owner_id, voice.conversation_id)
+    )
+
+
+def _register_memory_tool_routes(app, *, config: Settings, database, guard):
+    """Model-facing memory tools. Every route is propose-only or read-only."""
+    secret = _memory_secret(config)
+
+    @app.post("/internal/agent/tool/memory-propose")
+    async def agent_memory_propose(body: MemoryProposeInput, request: Request, db: AsyncSession = Depends(database)):
+        async def effect(owner_id, conversation_id):
+            return await memory_propose_tool(
+                db,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                turn_id=body.turn_id,
+                fact=body.fact,
+                secret=secret,
+            )
+
+        return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)
+
+    @app.post("/internal/agent/tool/memory-forget")
+    async def agent_memory_forget(body: MemoryQueryInput, request: Request, db: AsyncSession = Depends(database)):
+        async def effect(owner_id, conversation_id):
+            return await memory_forget_tool(
+                db,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                request_id=body.request_id,
+                query=body.query,
+                secret=secret,
+            )
+
+        return await _run_memory_tool(guard, db, request, body, "memory_forget", {"query": body.query}, effect)
+
+    @app.post("/internal/agent/tool/memory-recall")
+    async def agent_memory_recall(body: MemoryQueryInput, request: Request, db: AsyncSession = Depends(database)):
+        async def effect(owner_id, conversation_id):
+            return await memory_recall_tool(db, owner_id=owner_id, conversation_id=conversation_id, query=body.query)
+
+        return await _run_memory_tool(guard, db, request, body, "memory_recall", {"query": body.query}, effect)
