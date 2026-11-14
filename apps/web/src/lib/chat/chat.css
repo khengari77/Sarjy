@@ -32,7 +32,6 @@ button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
-
 .sidebar-inner {
   display: flex;
   flex-direction: column;
@@ -42,6 +41,8 @@ button:disabled {
 }
 
 .voice-stage {
+  position: relative;
+  isolation: isolate;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -56,7 +57,88 @@ button:disabled {
   padding: 32px 20px 12px;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: clip;
   text-align: center;
+}
+
+.stage-waves {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.stage-waves .wave {
+  fill: none;
+  stroke-width: 1;
+}
+
+.stage-waves .wave-primary {
+  stroke: var(--border-subtle);
+  opacity: 0.32;
+}
+
+.stage-waves .wave-accent {
+  stroke: var(--accent);
+  opacity: 0.14;
+}
+
+.orb-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.orb-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  pointer-events: none;
+}
+
+.orb-ring-inner {
+  width: min(350px, 88vw);
+  aspect-ratio: 1;
+  opacity: 0.24;
+}
+
+.orb-ring-outer {
+  width: min(420px, 100vw);
+  aspect-ratio: 1;
+  opacity: 0.14;
+}
+
+.orb-glow {
+  position: absolute;
+  width: 118%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, color-mix(in srgb, var(--orb-glow-color) 18%, transparent), transparent 70%);
+}
+
+.orb-wrap > .orb-button {
+  position: relative;
+  z-index: 1;
+}
+
+.status-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 3px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .status-line {
@@ -69,12 +151,31 @@ button:disabled {
   letter-spacing: 0.02em;
 }
 
+.live-phase {
+  font-size: 25px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.connected-pill {
+  margin-top: -6px;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  background: var(--status-success);
   box-shadow: 0 0 10px currentColor;
   transition: background-color var(--transition-state);
+}
+
+.status-pill[data-phase='disconnected'] .status-dot,
+.status-pill[data-phase='error'] .status-dot,
+.status-line[data-phase='disconnected'] .status-dot {
+  background: var(--status-error);
 }
 
 .alert {
@@ -94,6 +195,19 @@ button:disabled {
   gap: 18px;
 }
 
+.voice-stage[data-live='true'] {
+  gap: 12px;
+  padding-top: 18px;
+}
+
+.voice-stage[data-live='true'] .orb-zone {
+  gap: 12px;
+}
+
+.voice-stage[data-live='true'] .orb-zone > .orb-wrap {
+  margin-bottom: 0;
+}
+
 h1 {
   margin: 0;
   font-size: clamp(24px, 3.4vw, 40px);
@@ -101,6 +215,18 @@ h1 {
   letter-spacing: -0.01em;
   max-width: 22ch;
   line-height: 1.2;
+}
+
+.hero-title {
+  font-size: clamp(26px, 3.1vw, 36px);
+}
+
+.stage-heading {
+  margin: 0;
+  font-size: 25px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 
 .intro {
@@ -137,6 +263,87 @@ h1 {
   justify-content: center;
   padding: 8px 20px;
   flex-wrap: wrap;
+}
+
+.end-button {
+  font: inherit;
+  border-radius: var(--radius-control);
+  min-height: var(--control-height);
+  padding: 10px 18px;
+  border: 1px solid color-mix(in srgb, var(--orb-error) 70%, transparent);
+  background: color-mix(in srgb, var(--orb-error) 82%, var(--surface-elevated));
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--transition-quick),
+    border-color var(--transition-quick),
+    opacity var(--transition-quick);
+}
+
+.end-button:hover:enabled {
+  background: color-mix(in srgb, var(--orb-error) 92%, var(--surface-elevated));
+}
+
+.caption-bubble {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.caption-bubble:empty {
+  display: none;
+}
+
+.voice-stage .caption-bubble .captions {
+  width: 100%;
+  max-width: 560px;
+  padding: 12px 20px;
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+  gap: 4px;
+}
+
+.voice-stage .caption-bubble .caption {
+  text-align: center;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.voice-stage .caption-bubble .caption > span:not(.pending) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.voice-stage .caption-bubble .caption.assistant::before {
+  content: '“';
+}
+
+.voice-stage .caption-bubble .caption.assistant::after {
+  content: '”';
+}
+
+.voice-stage .caption-bubble .caption.provisional {
+  border-inline-start: 0;
+  padding-inline-start: 0;
+  font-style: normal;
+  opacity: 1;
+}
+
+@media (max-width: 767px) {
+  .voice-stage .caption-bubble .expand {
+    min-height: var(--min-tap-target);
+  }
+
+  .status-pill {
+    min-height: 32px;
+    padding: 5px 16px;
+  }
 }
 
 .composer {

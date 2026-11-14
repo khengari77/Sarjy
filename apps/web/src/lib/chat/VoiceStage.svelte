@@ -27,6 +27,7 @@
     captionsVisible,
     busy,
     words,
+    returning = false,
     onretrymic,
     onreconnect,
     onend,
@@ -52,6 +53,7 @@
     captionsVisible: boolean;
     busy: boolean;
     words: Words;
+    returning?: boolean;
     onretrymic: () => void;
     onreconnect: () => void;
     onend: () => void;
@@ -60,6 +62,9 @@
     oncancelintent: () => void;
     onconfirmintent: () => void;
   } = $props();
+
+  const idleHero = $derived(!live && !connecting && !turns.length && !provisional);
+  const statusText = $derived(arabic ? presentation.statusLabel.ar : presentation.statusLabel.en);
 
   // The shell owns the modal layer; this dialog is moved into its region so it
   // is never inside the inert stage (see AppShell's `stageDialogOpen`).
@@ -107,7 +112,12 @@
 
 <svelte:window onkeydown={pendingIntent ? onDialogEscape : undefined} />
 
-<section class="voice-stage" dir={arabic ? 'rtl' : 'ltr'}>
+<section class="voice-stage" data-live={live} dir={arabic ? 'rtl' : 'ltr'}>
+  <svg class="stage-waves" viewBox="0 0 1440 900" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+    <path class="wave wave-primary" d="M-40 560 C 220 470 420 650 720 610 S 1180 470 1480 545" />
+    <path class="wave wave-accent" d="M-40 615 C 240 530 460 735 760 670 S 1200 525 1480 600" />
+  </svg>
+
   {#if pendingIntent}
     <div class="confirm-scrim" role="presentation" use:portal>
       <div class="confirm-dialog" role="dialog" aria-modal="true" tabindex="-1" aria-labelledby="switch-title">
@@ -139,10 +149,9 @@
     </div>
   {/if}
 
-  <p class="status-line" data-phase={presentation.effectivePhase} role="status">
-    <span class="status-dot" style:background-color={presentation.primaryColor} aria-hidden="true"></span>
-    {arabic ? presentation.statusLabel.ar : presentation.statusLabel.en}
-  </p>
+  {#if live}
+    <h1 class="stage-heading">{words.conversationTitle}</h1>
+  {/if}
 
   {#if voiceErrorText}
     <div class="alert" role="alert" data-code={voiceErrorCode}>
@@ -174,30 +183,54 @@
   {/if}
 
   <div class="orb-zone">
-    <VoiceOrb
-      {presentation}
-      {micLevel}
-      {outputLevel}
-      label={arabic ? presentation.ariaLabel.ar : presentation.ariaLabel.en}
-      statusLabel={arabic ? presentation.statusLabel.ar : presentation.statusLabel.en}
-      disabled={busy}
-      onactivate={onorb}
-    />
-    {#if !live && !connecting && !turns.length && !provisional}
-      <h1>{words.title}</h1>
-      <p class="intro">{words.intro}</p>
+    <div class="orb-wrap" style:--orb-glow-color={presentation.primaryColor}>
+      <span class="orb-ring orb-ring-inner" aria-hidden="true"></span>
+      <span class="orb-ring orb-ring-outer" aria-hidden="true"></span>
+      <span class="orb-glow" aria-hidden="true"></span>
+      <VoiceOrb
+        {presentation}
+        {micLevel}
+        {outputLevel}
+        label={arabic ? presentation.ariaLabel.ar : presentation.ariaLabel.en}
+        statusLabel={arabic ? presentation.statusLabel.ar : presentation.statusLabel.en}
+        disabled={busy}
+        onactivate={onorb}
+      />
+    </div>
+    {#if live}
+      <p class="status-line live-phase" data-phase={presentation.effectivePhase} role="status">{statusText}</p>
+      <span class="status-pill connected-pill">
+        <span class="status-dot" aria-hidden="true"></span>
+        {words.connected}
+      </span>
+    {:else if connecting}
+      <p class="status-line" data-phase={presentation.effectivePhase} role="status">
+        <span class="status-dot" aria-hidden="true"></span>
+        {statusText}
+      </p>
+    {:else}
+      {#if idleHero}
+        <h1 class="hero-title">{returning ? words.welcomeBack : words.title}</h1>
+        <p class="intro">{words.intro}</p>
+      {/if}
+      <p class="status-pill idle-pill status-line" data-phase={presentation.effectivePhase} role="status">
+        <span class="status-dot" aria-hidden="true"></span>
+        {statusText}
+      </p>
     {/if}
   </div>
 
-  <Transcript
-    {turns}
-    {provisional}
-    {tools}
-    {arabic}
-    {captionsVisible}
-    expanded={transcriptOpen}
-    onexpand={openTranscript}
-  />
+  <div class="caption-bubble">
+    <Transcript
+      {turns}
+      {provisional}
+      {tools}
+      {arabic}
+      {captionsVisible}
+      expanded={transcriptOpen}
+      onexpand={openTranscript}
+    />
+  </div>
 
   {#if live || turns.length || provisional}
     <button class="ghost-button transcript-trigger" bind:this={transcriptButton} type="button" onclick={openTranscript}>
