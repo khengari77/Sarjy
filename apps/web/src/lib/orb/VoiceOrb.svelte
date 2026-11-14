@@ -171,20 +171,23 @@
     aspect-ratio: 1;
     border-radius: 50%;
     background:
+      radial-gradient(circle at 42% 36%, color-mix(in srgb, var(--orb-accent) 52%, white) 0%, transparent 34%),
       radial-gradient(
         circle at 50% 50%,
-        transparent 54%,
-        color-mix(in srgb, var(--orb-color) 26%, transparent) 60%,
-        transparent 68%
+        color-mix(in srgb, var(--orb-color) 80%, white) 0%,
+        color-mix(in srgb, var(--orb-color) 62%, transparent) 36%,
+        color-mix(in srgb, var(--orb-color) 34%, transparent) 62%,
+        transparent 80%
       ),
       radial-gradient(
         circle at 50% 50%,
-        transparent 64%,
-        color-mix(in srgb, var(--orb-accent) 12%, transparent) 74%,
-        transparent 82%
+        transparent 60%,
+        color-mix(in srgb, var(--orb-color) 24%, transparent) 76%,
+        transparent 90%
       );
-    border: 2px solid color-mix(in srgb, var(--orb-color) 40%, transparent);
-    box-shadow: 0 0 48px color-mix(in srgb, var(--orb-color) 22%, transparent);
+    box-shadow:
+      inset 0 0 40px color-mix(in srgb, var(--orb-accent) 30%, transparent),
+      0 0 48px color-mix(in srgb, var(--orb-color) 24%, transparent);
   }
 
   .orb-static-state {
@@ -195,7 +198,7 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    color: color-mix(in srgb, var(--orb-color) 75%, white);
+    color: color-mix(in srgb, var(--orb-color) 55%, var(--text-primary));
     pointer-events: none;
     text-align: center;
     padding: 18%;
