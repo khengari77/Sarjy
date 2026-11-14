@@ -21,6 +21,7 @@
     leftOpen = $bindable(false),
     rightOpen = $bindable(false),
     onthemechange,
+    onthemeready,
   }: ShellProps = $props();
 
   // The document ships as English; follow the UI language on the client.
@@ -61,6 +62,9 @@
 
   // Theme is cosmetic and owned by the shell; the orb subscribes to `resolved`.
   const theme = createThemeSession((value) => onthemechange?.(value));
+  // A voice theme command is presentation-only: it enters through this one
+  // setter, which owns persistence and OS resolution. Never a server write.
+  onthemeready?.({ set: theme.set });
 
   const session = createDrawerSession({
     overlay: () => overlayPanel,

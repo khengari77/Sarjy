@@ -117,6 +117,7 @@ export function createCatalogStore(
       action: 'SelectApprovedVoice',
       settings: saved,
       navigation: null,
+      theme: null,
       changed,
       spoken: changed ? `Voice set to ${name} for the next call.` : `${name} is already saved for the next call.`,
       detail: null,
