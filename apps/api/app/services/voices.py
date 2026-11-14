@@ -1,5 +1,7 @@
 """Account voice discovery and approval. Credentials and raw provider metadata stay server-side."""
 
+from typing import Literal
+
 import httpx
 from pydantic import BaseModel, ConfigDict
 
@@ -54,6 +56,17 @@ def resolve_voice(requested: str | None, saved: str | None, default: str) -> tup
 def require_approved(voice_id: str, approved: frozenset[str]) -> None:
     if voice_id not in approved:
         raise VoiceCatalogError("VOICE_NOT_APPROVED", 422)
+
+
+def saved_voice_outcome(code: str) -> Literal["removed", "transient"]:
+    """Classify a saved-voice catalog failure. A transient failure is not terminal.
+
+    Only ``VOICE_NOT_APPROVED`` and ``VOICE_UNAVAILABLE`` prove the voice is
+    unusable. Everything else (catalog outage, access denied, provider missing)
+    says nothing about the voice, so the preference must survive it.
+    """
+
+    return "removed" if code in {"VOICE_NOT_APPROVED", "VOICE_UNAVAILABLE"} else "transient"
 
 
 def spoken_voice_language(source: str | None, requested: str, option: VoiceOption, default_language: str) -> str:

@@ -9,7 +9,14 @@ import pytest
 from app.config import Settings
 from app.domain.voices import parse_voice_ids
 from app.main import create_app
-from app.services.voices import ElevenLabsVoices, VoiceOption, public_catalog, spoken_voice_language
+from app.services.voices import (
+    ElevenLabsVoices,
+    VoiceCatalogError,
+    VoiceOption,
+    public_catalog,
+    saved_voice_outcome,
+    spoken_voice_language,
+)
 from fastapi.testclient import TestClient
 from hypothesis import given
 from hypothesis import strategies as st
@@ -454,7 +461,7 @@ def test_saved_voice_removed_from_allow_list_falls_back_to_the_default(tmp_path,
         body = response.json()
         assert body["voice"]["id"] == "arabic-voice"
         assert body["voice_source"] == "default"
-        assert body["saved_voice_unavailable"] is True
+        assert body["saved_voice_unavailable"] == "removed"
         # The dead preference is cleared, so the picker cannot keep showing it.
         settings_after = client.get("/v1/settings").json()
         assert settings_after["approved_voice_id"] is None
@@ -462,7 +469,92 @@ def test_saved_voice_removed_from_allow_list_falls_back_to_the_default(tmp_path,
         client.post(f"/v1/voice/sessions/{body['id']}/end")
         second = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
         assert second.status_code == 201, second.text
-        assert second.json()["saved_voice_unavailable"] is False
+        assert second.json()["saved_voice_unavailable"] is None
+
+
+@pytest.mark.parametrize(
+    ("code", "outcome"),
+    [
+        ("VOICE_NOT_APPROVED", "removed"),
+        ("VOICE_UNAVAILABLE", "removed"),
+        ("VOICE_CATALOG_UNAVAILABLE", "transient"),
+        ("VOICE_CATALOG_ACCESS_DENIED", "transient"),
+        ("VOICE_PROVIDER_NOT_CONFIGURED", "transient"),
+    ],
+)
+def test_only_definitive_catalog_codes_count_as_removed(code, outcome):
+    assert saved_voice_outcome(code) == outcome
+
+
+def _saved_setting(tmp_path, owner, voice_id):
+    with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
+        db.execute(
+            "INSERT INTO user_settings"
+            " (owner_id, speaking_speed, captions_visible, approved_voice_id, response_preference, revision, updated_at)"
+            " VALUES (?, 1.0, 1, ?, 'automatic', 1, '2026-01-01T00:00:00+00:00')",
+            (owner, voice_id),
+        )
+
+
+@pytest.mark.parametrize(
+    ("failure", "outcome"),
+    [
+        (lambda request: httpx.Response(500, text="upstream down"), "transient"),
+        (lambda request: httpx.Response(403, text="denied"), "transient"),
+    ],
+)
+def test_transient_saved_voice_failure_keeps_the_preference(tmp_path, livekit_control_plane, failure, outcome):
+    def handler(request):
+        if request.url.params.get("voice_ids") == "gone-voice":
+            return failure(request)
+        return catalog_transport(request)
+
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(handler))
+    settings = configured_with_default(tmp_path, approved_voice_ids="gone-voice,arabic-voice")
+    with TestClient(create_app(settings, voice_catalog=service)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        _saved_setting(tmp_path, owner, "gone-voice")
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert (body["voice"]["id"], body["voice_source"]) == ("arabic-voice", "default")
+        assert body["saved_voice_unavailable"] == outcome
+        # A transient failure must not delete the preference.
+        assert client.get("/v1/settings").json()["approved_voice_id"] == "gone-voice"
+
+
+def test_provider_not_configured_keeps_the_saved_preference(tmp_path, livekit_control_plane):
+    class SelectiveCatalog:
+        async def require(self, voice_id):
+            if voice_id == "gone-voice":
+                raise VoiceCatalogError("VOICE_PROVIDER_NOT_CONFIGURED", 503)
+            return VoiceOption(id=voice_id, name="Default voice", languages=("ar",))
+
+    settings = configured_with_default(tmp_path, approved_voice_ids="gone-voice,arabic-voice")
+    with TestClient(create_app(settings, voice_catalog=SelectiveCatalog())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        _saved_setting(tmp_path, owner, "gone-voice")
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201, response.text
+        assert response.json()["voice"]["id"] == "arabic-voice"
+        assert response.json()["saved_voice_unavailable"] == "transient"
+        assert client.get("/v1/settings").json()["approved_voice_id"] == "gone-voice"
+
+
+def test_voice_unavailable_clears_the_preference(tmp_path, livekit_control_plane):
+    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
+    settings = configured_with_default(tmp_path, approved_voice_ids="gone-voice,arabic-voice")
+    with TestClient(create_app(settings, voice_catalog=service)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        _saved_setting(tmp_path, owner, "gone-voice")
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201, response.text
+        assert response.json()["voice"]["id"] == "arabic-voice"
+        assert response.json()["saved_voice_unavailable"] == "removed"
+        assert client.get("/v1/settings").json()["approved_voice_id"] is None
 
 
 @pytest.mark.parametrize(

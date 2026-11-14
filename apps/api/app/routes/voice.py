@@ -24,6 +24,7 @@ from app.services.voices import (
     approved_voice_ids,
     require_approved,
     resolve_voice,
+    saved_voice_outcome,
     spoken_voice_language,
 )
 
@@ -44,21 +45,24 @@ def _voice_error(exc: VoiceCatalogError, source: str | None) -> HTTPException:
 async def _resolve_call_voice(config: Settings, catalog: ElevenLabsVoices, requested: str | None, saved: str | None):
     """Resolve, approve and catalog-check the call voice.
 
-    A saved voice that was removed from the allow-list or the catalog falls back
-    to the configured default instead of bricking the user; the response reports it.
+    A saved voice that the catalog calls unusable (or a transient catalog failure)
+    falls back to the configured default for this call. Only a definitive
+    ``removed`` outcome clears the stored preference; a ``transient`` failure
+    must never delete user state.
     """
     approved = approved_voice_ids(config.approved_voice_ids, config.default_voice_id)
     source: str | None = None
     try:
         voice_id, source = resolve_voice(requested, saved, config.default_voice_id)
         require_approved(voice_id, approved)
-        return await catalog.require(voice_id), source, False
+        return await catalog.require(voice_id), source, None
     except VoiceCatalogError as exc:
         if source != "saved" or not config.default_voice_id:
             raise _voice_error(exc, source) from exc
+        outcome = saved_voice_outcome(exc.code)
     try:
         require_approved(config.default_voice_id, approved)
-        return await catalog.require(config.default_voice_id), "default", True
+        return await catalog.require(config.default_voice_id), "default", outcome
     except VoiceCatalogError as fallback:
         raise _voice_error(fallback, "default") from fallback
 
@@ -102,7 +106,7 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
         )
         # Serialize reservations across API processes on both SQLite and PostgreSQL.
         await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
-        if saved_voice_unavailable:
+        if saved_voice_unavailable == "removed":
             await clear_saved_voice(db, user.id)
         now = datetime.now(UTC)
         await db.execute(

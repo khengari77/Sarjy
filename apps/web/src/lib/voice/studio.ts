@@ -59,6 +59,8 @@ export function bootStudio(options: StudioBoot) {
     refresh: () => conversations!.refresh(),
     getRuntime: () => runtime,
     getLanguage: () => options.getLanguage(),
+    // The server fell back from a dead or unreachable saved voice: adopt its settings.
+    onVoiceFallback: () => void catalogStore.loadSettings(),
     getVoice: () => {
       const name = catalog.voices.find((entry) => entry.id === catalog.voiceId)?.name || catalog.voiceId;
       return { id: catalog.voiceId, name };
