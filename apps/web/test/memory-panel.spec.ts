@@ -33,7 +33,7 @@ test('the memory explorer mounts in the drawer, scopes the list to the conversat
   // The panel must call this candidacy, not inclusion: the compiler can still
   // trim the prompt to its character budget.
   await expect(panel.locator('[data-included="true"]')).toContainText('Candidate for the next compiled context');
-  const excludedRow = panel.locator('li.memory-row', { hasText: 'Lives in Riyadh' }).first();
+  const excludedRow = panel.locator('li.memory-row[data-excluded="true"]', { hasText: 'Lives in Riyadh' });
   await expect(excludedRow).toContainText('Excluded from this conversation');
   await expect(panel.locator('[data-included="true"]')).toContainText('Candidate');
   await expect(excludedRow).toContainText('Excluded');
