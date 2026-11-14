@@ -15,6 +15,8 @@
   import CallControls from '../lib/chat/CallControls.svelte';
   import Composer from '../lib/chat/Composer.svelte';
   import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
+  import RightDrawer from '../lib/ui/RightDrawer.svelte';
+  import { createAnnouncement } from '../lib/chat/announcement.svelte';
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
   import { errorCode } from '../lib/voice/errors';
@@ -32,9 +34,7 @@
   let conversation = $state(initialConversationState());
   let draft = $state('');
   let pendingIntent = $state<PendingIntent>(null);
-  let announcement = $state('');
   let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none');
-  let lastAnnounced = '';
   let busy = $state(false);
   let captionsVisible = $state(true);
   let voice = $state(initialVoiceState());
@@ -139,15 +139,7 @@
     localStorage.setItem('sarjy-language', arabic ? 'ar' : 'en');
   }
 
-  $effect(() => {
-    const label = arabic ? presentation.statusLabel.ar : presentation.statusLabel.en;
-    if (label === lastAnnounced) return;
-    const timer = setTimeout(() => {
-      lastAnnounced = label;
-      announcement = label;
-    }, 300);
-    return () => clearTimeout(timer);
-  });
+  const announcement = createAnnouncement(() => (arabic ? presentation.statusLabel.ar : presentation.statusLabel.en));
 
   onMount(() => {
     const boot = bootStudio({
@@ -177,7 +169,7 @@
 
 <AppShell
   dir={arabic ? 'rtl' : 'ltr'}
-  modeLabel={arabic ? 'بسيط' : 'Simple'}
+  stageDialogOpen={pendingIntent !== null}
   languageLabel={arabic ? 'English' : 'العربية'}
   onLanguage={LANGUAGE_SWITCH_ENABLED ? toggleLanguage : undefined}
   leftLabel={arabic ? 'المحادثات' : 'Conversations'}
@@ -224,6 +216,11 @@
       oncancelintent={() => (pendingIntent = null)}
       onconfirmintent={() => selection.confirmSwitch()}
     />
+  {/snippet}
+
+  <!-- Reachable while an overlay drawer is modal: #37 requires Mute and End to
+       stay available, and the composer is useful beside them. -->
+  {#snippet controls()}
     <CallControls
       live={voice.live}
       connecting={voice.connecting}
@@ -243,23 +240,27 @@
   {/snippet}
 
   {#snippet right()}
-    <VoiceSettings
-      {arabic}
-      voices={catalog.voices}
-      bind:voiceId={catalog.voiceId}
-      bind:voiceSearch={catalog.search}
-      nextVoicePage={catalog.nextPage}
-      voiceLoading={catalog.loading}
-      voiceError={catalog.error}
-      live={voice.live}
-      activeVoiceName={voice.activeVoiceName}
-      {captionsVisible}
-      onsearch={() => void catalogStore!.load()}
-      onloadmore={() => void catalogStore!.load(true)}
-      onremember={() => catalogStore!.remember()}
-      ontoggleCaptions={toggleCaptions}
-    />
+    <RightDrawer {arabic}>
+      {#snippet voicePanel()}
+        <VoiceSettings
+          {arabic}
+          voices={catalog.voices}
+          bind:voiceId={catalog.voiceId}
+          bind:voiceSearch={catalog.search}
+          nextVoicePage={catalog.nextPage}
+          voiceLoading={catalog.loading}
+          voiceError={catalog.error}
+          live={voice.live}
+          activeVoiceName={voice.activeVoiceName}
+          {captionsVisible}
+          onsearch={() => void catalogStore!.load()}
+          onloadmore={() => void catalogStore!.load(true)}
+          onremember={() => catalogStore!.remember()}
+          ontoggleCaptions={toggleCaptions}
+        />
+      {/snippet}
+    </RightDrawer>
   {/snippet}
 </AppShell>
 
-<p class="sr-only" aria-live="polite" aria-atomic="true">{announcement}</p>
+<p class="sr-only" aria-live="polite" aria-atomic="true">{announcement.message}</p>

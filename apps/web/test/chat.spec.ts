@@ -72,11 +72,14 @@ test('voice picker search, pagination, saved preference and call payload', async
   await page.goto('/');
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
   await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
   await page.getByRole('textbox', { name: 'Search voices' }).fill('British');
   await page.getByRole('button', { name: 'Load voices / Search', exact: true }).click();
   await page.getByRole('button', { name: 'Load more', exact: true }).click();
   await page.getByLabel('Choose voice').selectOption('lady-voice');
   await page.reload();
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
+  await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
   await expect(page.getByLabel('Choose voice')).toHaveValue('lady-voice');
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
