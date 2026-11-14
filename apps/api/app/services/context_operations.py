@@ -19,6 +19,7 @@ Wire format and authorization
 import hashlib
 import re
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Protocol
 from uuid import uuid4
 
@@ -236,6 +237,7 @@ async def create_exclusion_proposal(
     conversation_id: str,
     memory_ids: tuple[str, ...],
     secret: str,
+    expires_at: int | None = None,
 ) -> dict:
     """Preview exclusion of exact stored-fact ids without any mutation.
 
@@ -286,6 +288,7 @@ async def create_exclusion_proposal(
             "exclude": list(ids),
             "excluded_ids": sorted(selection.excluded_ids),
             "kept_ids": sorted(selection.kept_ids),
+            **({"exp": expires_at} if expires_at is not None else {}),
         },
         secret,
     )
@@ -536,6 +539,12 @@ def _validate_exclusion(
         raise ContextOperationError("PROPOSAL_INVALID", 400)
     if payload.get("revision") != expected_revision or conversation.revision != expected_revision:
         raise ContextOperationError("REVISION_CONFLICT")
+    expires_at = payload.get("exp")
+    if expires_at is not None:
+        if not isinstance(expires_at, int):
+            raise ContextOperationError("PROPOSAL_INVALID", 400)
+        if expires_at < int(datetime.now(UTC).timestamp()):
+            raise ContextOperationError("PROPOSAL_EXPIRED")
     if not excluded_ids:
         raise ContextOperationError("NO_CONTEXT_CHANGE")
     if excluded_ids & kept_ids:
