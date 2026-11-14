@@ -15,6 +15,7 @@
   import CallControls from '../lib/chat/CallControls.svelte';
   import Composer from '../lib/chat/Composer.svelte';
   import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
+  import DevModePanel from '../lib/dev/DevModePanel.svelte';
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
   import { errorCode } from '../lib/voice/errors';
@@ -259,6 +260,11 @@
       onremember={() => catalogStore!.remember()}
       ontoggleCaptions={toggleCaptions}
     />
+    <!--
+      Minimal mount for issue #46. The tabbed RightDrawer (#120) replaces this
+      section with the authorized "Context" tab; see lib/dev/README.md.
+    -->
+    <DevModePanel conversationId={conversation.current} {arabic} />
   {/snippet}
 </AppShell>
 
