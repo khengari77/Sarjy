@@ -310,14 +310,48 @@
 
 .chat-history .sidebar-foot {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
   margin-top: auto;
   padding: 16px 2px 0;
   border-top: 1px solid var(--border-subtle);
   color: var(--text-primary);
   font-size: 13px;
   line-height: 1.3;
+}
+
+.chat-history .workspace-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Credit block follows the workspace row, separated by a hairline so it reads
+   as the bottom edge of the rail rather than a floating caption. */
+.chat-history .sidebar-credit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 55%, transparent);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: start;
+}
+
+.chat-history .sidebar-credit a {
+  color: inherit;
+  border-radius: 2px;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentcolor 45%, transparent);
+  text-underline-offset: 2px;
+}
+
+.chat-history .sidebar-credit a:hover {
+  color: var(--text-primary);
 }
 
 .chat-history .workspace-avatar {
@@ -337,6 +371,14 @@
 @keyframes chat-history-pulse {
   50% {
     opacity: 0.45;
+  }
+}
+
+/* The rail is a drawer at this width: keep the credit above the device's
+   bottom safe-area inset instead of letting the home indicator cover it. */
+@media (max-width: 767px) {
+  .chat-history .sidebar-foot {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 }
 

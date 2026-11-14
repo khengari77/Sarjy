@@ -98,21 +98,20 @@ async function mockSessions(page: Page) {
   return ends;
 }
 
-/** The shared machine can drop hydration during a cold vite compile. Wait for
- *  the SSR loading skeleton to resolve, reloading if the module graph never
+/** The shared machine can drop hydration or return a 500 during a cold vite
+ *  compile. Wait for the hydrated shell, reloading if the module graph never
  *  took over, before asserting on real history rows. */
 async function gotoHistory(page: Page) {
-  await page.goto('/');
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
     const ready = await page
-      .locator('.chat-history .skeleton')
-      .waitFor({ state: 'detached', timeout: 15_000 })
+      .locator('.orb-button[data-renderer]:not([data-renderer="static"])')
+      .waitFor({ timeout: 15_000 })
       .then(
         () => true,
         () => false,
       );
     if (ready) return;
-    await page.reload({ waitUntil: 'domcontentloaded' });
   }
 }
 
@@ -215,7 +214,11 @@ test('an empty list shows the filled new-chat action, always-on search and works
   await expect(page.getByText('Start with your voice')).toBeVisible();
   await expect(page.getByText('Or use the message box.')).toBeVisible();
 
-  await expect(page.locator('.sidebar-foot')).toHaveText(/S\s*Your workspace/);
+  const footer = page.locator('.sidebar-foot');
+  await expect(footer).toContainText(/S\s*Your workspace/);
+  const credit = footer.getByRole('link', { name: 'Weather data: Open-Meteo' });
+  await expect(credit).toHaveAttribute('href', 'https://open-meteo.com/');
+  await expect(footer).toContainText('Voice Context Studio');
 });
 
 test('a list failure stays inside the sidebar and leaves the orb idle', async ({ page }) => {
