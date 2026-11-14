@@ -129,6 +129,10 @@
       {/if}
     </div>
   {/each}
+
+  <footer class="drawer-footer">
+    <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Weather data: Open-Meteo</a>
+  </footer>
 </div>
 
 <style>
@@ -136,6 +140,18 @@
     display: flex;
     flex-direction: column;
     min-height: 100%;
+  }
+
+  .drawer-footer {
+    margin-top: auto;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .drawer-footer a {
+    color: inherit;
   }
 
   .tabs {
