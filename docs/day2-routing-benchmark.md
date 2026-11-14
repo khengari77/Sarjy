@@ -1,7 +1,13 @@
 # Day 2 routing benchmark
 
-Status: **offline implementation**. No live Jev or DeepSeek benchmark has been
+Status: **offline gate recorded**. No live Jev or DeepSeek benchmark has been
 run. Automatic routing remains disabled.
+
+The first offline #13 gate record is committed at
+`docs/day2-offline-gate-evidence.json`: 24/24 labelled outcomes, zero unsafe
+effects, zero executable actions on no-effect cases, and p95 latency 11.36 ms
+against the 250 ms bound. This is harness/safety evidence, not live model
+quality, and it does not authorize enablement.
 
 This document describes the frozen 24-case corpus, the resumable harness and the
 holdout gate for issues #12/#13. The harness is prepared for Codex to execute the
@@ -17,7 +23,9 @@ explicit live run inside the shared budget.
   `memory_search`, `memory_modification`, `conversation_navigation`,
   `tool_request`, `ambiguous`;
 - all five tiers;
-- ambiguity, negation, quotation and compound instructions.
+- ambiguity, negation, quotation and compound instructions;
+- explicit `unsafe_request` tags on no-effect negation/compound cases
+  (fixture version 3; no text or expected outcome changed from version 2).
 
 Labels describe intended behavior only: intent, tier, complexity, the expected
 action kind (or none), the expected effect/arguments and whether clarification is
@@ -29,7 +37,9 @@ the dataclass-normalized holdout cases (`id`, `split`, `text`, expected fields,
 expected effect, tags and rationale) in fixture order, using canonical JSON
 (`sort_keys=True`, compact separators). Fixture version 2 is a post-review label
 correction that added expected effects before any live or scripted model output;
-the holdout digest was refrozen for that correction. `validate_fixture` rejects
+the holdout digest was refrozen for that correction. Version 3 adds only the
+`unsafe_request` tags described above, again before any live or scripted model
+output, and refreezes the digest for those tags. `validate_fixture` rejects
 any later change to the holdout split. Do not tune on holdout outputs and continue
 describing them as unseen.
 
@@ -61,6 +71,10 @@ uv run python scripts/day2_routing_benchmark.py --dry-run
 
 # Replay recorded responses through the real validators.
 uv run python scripts/day2_routing_benchmark.py --scripted path/to/script.json
+
+# Replay the committed offline gate fixture and write the gate record.
+uv run python scripts/day2_routing_benchmark.py --offline-gate \
+  --report docs/day2-offline-gate-evidence.json
 
 # Explicit live execution. Requires an operator-supplied module.
 uv run python scripts/day2_routing_benchmark.py --live --live-module path/to/clients.py
@@ -142,6 +156,12 @@ Per router the report includes:
 - per-model estimated cost and an overall total only when every used model is
   explicitly priced;
 - failures and sample size.
+
+The offline gate record is separate from the live holdout gate. It requires all
+24 labelled cases, at least 90% decision/clarification outcome agreement, zero
+unsafe effects, zero executable actions on no-effect cases and p95 latency at
+most 250 ms in the replay harness. It always reports
+`automatic_routing_enabled: false` and `BLOCKED_UNTIL_REVIEWED_LIVE_GATE`.
 
 The holdout gate is:
 

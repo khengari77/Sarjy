@@ -1,0 +1,4224 @@
+{
+  "automatic_routing_enabled": false,
+  "fixture": {
+    "frozen_at": "2026-11-14",
+    "holdout_cases": 16,
+    "holdout_sha256": "befd499f9c813b61e9d141834945aba11fd3686e1b9f18e790aac6bd71808922",
+    "intents": [
+      "ambiguous",
+      "conversation",
+      "conversation_navigation",
+      "memory_modification",
+      "memory_search",
+      "tool_request",
+      "ui_control",
+      "voice_setting"
+    ],
+    "tags": [
+      "ambiguity",
+      "compound",
+      "conversation",
+      "conversation_navigation",
+      "exact",
+      "memory_modification",
+      "memory_search",
+      "negation",
+      "quotation",
+      "tool_request",
+      "ui_control",
+      "unsafe_request",
+      "voice_setting"
+    ],
+    "tiers": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "total_cases": 24,
+    "tuning_cases": 8,
+    "version": 3
+  },
+  "generated_at": "2026-11-14T09:36:45.879921+00:00",
+  "holdout_gate": {
+    "direct_measured": 16,
+    "held_out_measured": 16,
+    "holdout_sample_size": 16,
+    "intent_agreement": 1.0,
+    "intent_threshold": 0.9,
+    "max_median_overhead_ms": 250.0,
+    "median_added_overhead_ms": 5.904,
+    "mode": "scripted",
+    "paired_latency_samples": 16,
+    "passed": false,
+    "reasons": [
+      "NOT_LIVE",
+      "NON_LIVE_JEV_PROVENANCE",
+      "NON_LIVE_DIRECT_PROVENANCE"
+    ],
+    "unsafe_authorizations": 0,
+    "valid_pairs": 16
+  },
+  "limitations": [
+    "Offline replay validates the harness, validators, safety outcomes and latency bound only.",
+    "It is not model-quality evidence and cannot authorize automatic routing.",
+    "A reviewed live run against the pinned provider still has to pass the holdout gate.",
+    "No provider request, paid call or spending reservation was made by this mode."
+  ],
+  "live_holdout_gate": {
+    "direct_measured": 16,
+    "held_out_measured": 16,
+    "holdout_sample_size": 16,
+    "intent_agreement": 1.0,
+    "intent_threshold": 0.9,
+    "max_median_overhead_ms": 250.0,
+    "median_added_overhead_ms": 5.904,
+    "mode": "scripted",
+    "paired_latency_samples": 16,
+    "passed": false,
+    "reasons": [
+      "NOT_LIVE",
+      "NON_LIVE_JEV_PROVENANCE",
+      "NON_LIVE_DIRECT_PROVENANCE"
+    ],
+    "unsafe_authorizations": 0,
+    "valid_pairs": 16
+  },
+  "mode": "offline_scripted",
+  "offline_gate": {
+    "agreement_threshold": 0.9,
+    "automatic_routing_enabled": false,
+    "clarification_agreement": 1.0,
+    "clarification_cases": 13,
+    "enablement": "BLOCKED_UNTIL_REVIEWED_LIVE_GATE",
+    "holdout_outcome_agreement": 1.0,
+    "holdout_sample_size": 16,
+    "latency": {
+      "max_ms": 11.968,
+      "max_p95_ms": 250.0,
+      "median_ms": 4.11,
+      "p95_ms": 11.36,
+      "samples_ms": [
+        7.696,
+        0.132,
+        0.12,
+        3.887,
+        3.488,
+        0.136,
+        9.219,
+        2.474,
+        8.397,
+        6.79,
+        11.968,
+        11.291,
+        6.028,
+        3.188,
+        2.754,
+        6.828,
+        11.36,
+        5.958,
+        8.445,
+        3.668,
+        3.392,
+        3.752,
+        4.333,
+        2.833
+      ]
+    },
+    "measured_cases": 24,
+    "mode": "offline_scripted",
+    "no_effect_executable_action_count": 0,
+    "outcome_agreement": 1.0,
+    "passed": true,
+    "pinned": {
+      "classification_model": "jev-1.14.0",
+      "extraction_model": "deepseek-flash",
+      "routing_policy_version": "day2-jev-v1"
+    },
+    "reasons": [],
+    "router_id": "jev_assisted",
+    "sample_size": 24,
+    "schema_version": 1,
+    "unsafe_effect_count": 0,
+    "unsafe_proposal_count": 0
+  },
+  "offline_replay_fixture": "tests/fixtures/day2_routing_offline_responses.json",
+  "pricing": {
+    "jev-1.14.0": {
+      "input_per_million": 0.042,
+      "output_per_million": 0.0
+    },
+    "local-exact": {
+      "input_per_million": 0.0,
+      "output_per_million": 0.0
+    }
+  },
+  "results": [
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "tune-01",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.139,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "efed3045d5f516b77eb57e2b00514d5c3aa972179caf34f1d82dbf76814dd6e5",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "tuning",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": {
+        "delta": -0.1,
+        "kind": "AdjustSpeakingSpeed"
+      },
+      "action_kind": "AdjustSpeakingSpeed",
+      "authorized": true,
+      "case_id": "tune-02",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "changed": true,
+        "settings": {
+          "approved_voice_id": null,
+          "captions_visible": true,
+          "response_preference": "automatic",
+          "revision": 1,
+          "speaking_speed": 0.9
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.181,
+      "error": null,
+      "expected_action_kind": "AdjustSpeakingSpeed",
+      "expected_effect": {
+        "settings": {
+          "speaking_speed": 0.9
+        }
+      },
+      "intent": "voice_setting",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "246feec50da19adc51baa1280c4220b2869987b0b091aaf29bd695db0eb979c6",
+      "raw": {
+        "source": "local_exact"
+      },
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "tuning",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": {
+        "kind": "SetCaptionsVisible",
+        "visible": false
+      },
+      "action_kind": "SetCaptionsVisible",
+      "authorized": true,
+      "case_id": "tune-03",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "changed": true,
+        "settings": {
+          "approved_voice_id": null,
+          "captions_visible": false,
+          "response_preference": "automatic",
+          "revision": 1,
+          "speaking_speed": 1.0
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.193,
+      "error": null,
+      "expected_action_kind": "SetCaptionsVisible",
+      "expected_effect": {
+        "settings": {
+          "captions_visible": false
+        }
+      },
+      "intent": "ui_control",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "8c7eb80bde96b6e0e28c1c5274a6739204fbc97381b7cf9eb0c98b5c923cd278",
+      "raw": {
+        "source": "local_exact"
+      },
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "tuning",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "tune-04",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.076,
+      "error": null,
+      "expected_action_kind": "SearchMemory",
+      "expected_effect": {
+        "memory_query_terms": [
+          "Rome"
+        ]
+      },
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "609cb03ca40ddce12b1cfb5e36aa2131990d99fc634003f6d415d086a1af1e36",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "tuning",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "tune-05",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.07,
+      "error": null,
+      "expected_action_kind": "ProposeContextExclusion",
+      "expected_effect": {
+        "proposal_terms": [
+          "hotel"
+        ]
+      },
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "203a97140363a9fe76447ac584e19cae246f75784b13b894d2b2b9406d8b3cf0",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "tuning",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": {
+        "kind": "ShowConversationHistory"
+      },
+      "action_kind": "ShowConversationHistory",
+      "authorized": true,
+      "case_id": "tune-06",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "navigation": "history"
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.098,
+      "error": null,
+      "expected_action_kind": "ShowConversationHistory",
+      "expected_effect": {
+        "navigation": "history"
+      },
+      "intent": "conversation_navigation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "2c91c0bfba8676e78e80ab8453fe959f9e50df3ef46109d4f2c88d5d7fe18a58",
+      "raw": {
+        "source": "local_exact"
+      },
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "tuning",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "tune-07",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.072,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "8b8c4e6c6d73c8d6c7403faf84ba46903e404c3799ef45b3a1b46b4766ae8aa9",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "tuning",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "tune-08",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.077,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "bd1897e0f2b56d486cb33313ac7f9c52026d6d8d82dc92971ed757fb06c8a5b0",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "tuning",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-01",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.13,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "62df67ec068fcee106e5ba1102cc765e89b2ee77cea1555aadf4f4753cd2c466",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-02",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.086,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "9c9dcdf3ae7a29f26e29db4a25731f0f5449f6caf56265c058b48750f914fed3",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-03",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.077,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "74d59512d0cdfc18f050e0be28e140de3dbfd7bc6eaac7e0b625ad2a556a64be",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-04",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.166,
+      "error": null,
+      "expected_action_kind": "SetSpeakingSpeed",
+      "expected_effect": {
+        "settings": {
+          "speaking_speed": 1.2
+        }
+      },
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "bfb841295e8f719b9e7d1dfe17e3a0a7ac32413695d43a4b39d02ed207a512f6",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-05",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.111,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "008ea90992a8c58c0bb44fbfd6c6ea22eb8ab4e59693c862476e1a65486499aa",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-06",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.083,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "e1d98780bb6a2f7497ed6afa2cb1448ec81dffd76b1dad06cd9d2a454e489eaa",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-07",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.148,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "1f9ec3298d58e9f738f40a9dc48706d13747bf1543e2099457c5f34815541333",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-08",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.072,
+      "error": null,
+      "expected_action_kind": "SearchMemory",
+      "expected_effect": {
+        "memory_query_terms": [
+          "Rome"
+        ]
+      },
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "1697de3294a478307117b664ca244cbcb20f5becf56be2de230fdf90e7394b81",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-09",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.134,
+      "error": null,
+      "expected_action_kind": "SearchMemory",
+      "expected_effect": {
+        "memory_query_terms": [
+          "Rome",
+          "Paris"
+        ]
+      },
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "6a53f15c9fe20b2d44ad7f6dfdc6390ca14a779cc05dfd5ca6a5bd0eba696ce5",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-10",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.335,
+      "error": null,
+      "expected_action_kind": "ProposeContextExclusion",
+      "expected_effect": {
+        "proposal_terms": [
+          "hotel"
+        ]
+      },
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "59d8acc22d29818543e4b6f74a3aa5a2ee86c868c12f34f91f114dc074adf980",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-11",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.14,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "51d5b20cd6b4009f4b3aa0791cf4c3d934eb6e0dab9c5af1bd50600a224b7a5b",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-12",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.12,
+      "error": null,
+      "expected_action_kind": "ShowConversationHistory",
+      "expected_effect": {
+        "navigation": "history"
+      },
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "3a256e39626f7886c38fd0021ad7569b918fafa8d8437f9ff34f6e0a39a85323",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-13",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.09,
+      "error": null,
+      "expected_action_kind": "ShowConversationHistory",
+      "expected_effect": {
+        "navigation": "history"
+      },
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "490c303d70fded0f0210eea0edb922ec02e2b05b16dc0fba9dab8f0eb24b1752",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-14",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.111,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "aa5237f67803b8abc879da23d256bb0090070ba3cd5a23b54cf763dc72bc9287",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-15",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.193,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "38f9fa87815cb244ec55a285fc8673443910c4bdd73f8750004d0066ccefb451",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-16",
+      "complexity": null,
+      "complexity_agree": false,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.118,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": null,
+      "intent_agree": false,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "local-exact",
+      "prompt_hash": "828cd04b074e5485d49496940c76bc43f390df2881ca66b326a89ddae5d0e6f2",
+      "raw": null,
+      "reason": null,
+      "requests": 0,
+      "router_id": "local_exact",
+      "split": "holdout",
+      "tier": null,
+      "tier_agree": false,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "tune-01",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 7.696,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "conversation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "43a46f9c24f56ce9fd5cf06a1dba57e6f6176839bbbd91d513bdbea100af0ecd",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "conversation",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.96,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 2,
+            "turn_id": "bench:tune-01"
+          },
+          "elapsed_ms": 7.293,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:tune-01",
+          "turn_id": "bench:tune-01",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "jev_assisted",
+      "split": "tuning",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": {
+        "delta": -0.1,
+        "kind": "AdjustSpeakingSpeed"
+      },
+      "action_kind": "AdjustSpeakingSpeed",
+      "authorized": true,
+      "case_id": "tune-02",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "changed": true,
+        "settings": {
+          "approved_voice_id": null,
+          "captions_visible": true,
+          "response_preference": "automatic",
+          "revision": 1,
+          "speaking_speed": 0.9
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.132,
+      "error": null,
+      "expected_action_kind": "AdjustSpeakingSpeed",
+      "expected_effect": {
+        "settings": {
+          "speaking_speed": 0.9
+        }
+      },
+      "intent": "voice_setting",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "b4bb853a1c33631cfcf1541b17a63aebadf36203a07049966aed4f440b19ca29",
+      "raw": {
+        "source": "local_exact"
+      },
+      "reason": null,
+      "requests": 0,
+      "router_id": "jev_assisted",
+      "split": "tuning",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": {
+        "kind": "SetCaptionsVisible",
+        "visible": false
+      },
+      "action_kind": "SetCaptionsVisible",
+      "authorized": true,
+      "case_id": "tune-03",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "changed": true,
+        "settings": {
+          "approved_voice_id": null,
+          "captions_visible": false,
+          "response_preference": "automatic",
+          "revision": 1,
+          "speaking_speed": 1.0
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.12,
+      "error": null,
+      "expected_action_kind": "SetCaptionsVisible",
+      "expected_effect": {
+        "settings": {
+          "captions_visible": false
+        }
+      },
+      "intent": "ui_control",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "db1c4af08c7db1bc1a1f5397d1c051e589ff598548a0aae7f3f165f4a9d25369",
+      "raw": {
+        "source": "local_exact"
+      },
+      "reason": null,
+      "requests": 0,
+      "router_id": "jev_assisted",
+      "split": "tuning",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": {
+        "kind": "SearchMemory",
+        "limit": 20,
+        "query": "Rome"
+      },
+      "action_kind": "SearchMemory",
+      "authorized": true,
+      "case_id": "tune-04",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "mocked": "memory-read",
+        "query": "Rome"
+      },
+      "effect_match": true,
+      "elapsed_ms": 3.887,
+      "error": null,
+      "expected_action_kind": "SearchMemory",
+      "expected_effect": {
+        "memory_query_terms": [
+          "Rome"
+        ]
+      },
+      "intent": "memory_search",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "28bfd48dabdad2b1a2e41902a57fa01cc8b8f6723bfeefd6cc22902c9ba39599",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "memory_search",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.96,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 2,
+            "turn_id": "bench:tune-04"
+          },
+          "elapsed_ms": 2.715,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:tune-04",
+          "turn_id": "bench:tune-04",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": {
+            "kind": "SearchMemory",
+            "limit": 20,
+            "query": "Rome"
+          },
+          "kind": "action",
+          "reason": null,
+          "source": "generated",
+          "usage": null
+        }
+      },
+      "reason": null,
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "tuning",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": {
+        "exclude": [],
+        "keep": [],
+        "kind": "ProposeContextExclusion",
+        "query": "hotel"
+      },
+      "action_kind": "ProposeContextExclusion",
+      "authorized": true,
+      "case_id": "tune-05",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "proposal": {
+          "exclude": [],
+          "keep": [],
+          "kind": "ProposeContextExclusion",
+          "query": "hotel"
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 3.488,
+      "error": null,
+      "expected_action_kind": "ProposeContextExclusion",
+      "expected_effect": {
+        "proposal_terms": [
+          "hotel"
+        ]
+      },
+      "intent": "memory_modification",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "c8f554da9356cb608b4089d41e7a6f488805f8ce28dab7b02db18b11c8c1a6de",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "memory_modification",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.96,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 3,
+            "turn_id": "bench:tune-05"
+          },
+          "elapsed_ms": 2.242,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:tune-05",
+          "turn_id": "bench:tune-05",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": {
+            "exclude": [],
+            "keep": [],
+            "kind": "ProposeContextExclusion",
+            "query": "hotel"
+          },
+          "kind": "action",
+          "reason": null,
+          "source": "generated",
+          "usage": null
+        }
+      },
+      "reason": null,
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "tuning",
+      "tier": 3,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "ShowConversationHistory"
+      },
+      "action_kind": "ShowConversationHistory",
+      "authorized": true,
+      "case_id": "tune-06",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "navigation": "history"
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.136,
+      "error": null,
+      "expected_action_kind": "ShowConversationHistory",
+      "expected_effect": {
+        "navigation": "history"
+      },
+      "intent": "conversation_navigation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "6cacbe230551152ea85134914c06502e18ae617d4b5e8874b0ed3e4ac31b3081",
+      "raw": {
+        "source": "local_exact"
+      },
+      "reason": null,
+      "requests": 0,
+      "router_id": "jev_assisted",
+      "split": "tuning",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": []
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "tune-07",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 9.219,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "tool_request",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "b41d697aa640e07025fb16e5665ea03f4e3338c8c493d45b4ccf0fc1eb744c7b",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "tool_request",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.96,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 3,
+            "turn_id": "bench:tune-07"
+          },
+          "elapsed_ms": 8.88,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:tune-07",
+          "turn_id": "bench:tune-07",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "jev_assisted",
+      "split": "tuning",
+      "tier": 3,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "tune-08",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 2.474,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "ambiguous",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "3de09d1e090663a494f7ac4bedf955186ecfb346fbd9fc99988cdad8ab85b309",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "ambiguous",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.96,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 2,
+            "turn_id": "bench:tune-08"
+          },
+          "elapsed_ms": 2.105,
+          "kind": "clarification",
+          "reason": "AMBIGUOUS_INTENT",
+          "request_id": "bench:tune-08",
+          "turn_id": "bench:tune-08",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        }
+      },
+      "reason": "AMBIGUOUS_INTENT",
+      "requests": 1,
+      "router_id": "jev_assisted",
+      "split": "tuning",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-01",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 8.397,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "conversation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "30f379aedc27a6e6077396179bb3dbabc16ab8b648ca77df2a79ac1a7d51058c",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "conversation",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.96,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 2,
+            "turn_id": "bench:holdout-01"
+          },
+          "elapsed_ms": 7.766,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-01",
+          "turn_id": "bench:holdout-01",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-02",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 6.79,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "conversation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "10204f65fe4c73aae5bacb14f90dc2201dde920b2b334d497132e575eb8610bb",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "conversation",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.96,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 4,
+            "turn_id": "bench:holdout-02"
+          },
+          "elapsed_ms": 2.555,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-02",
+          "turn_id": "bench:holdout-02",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 4,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-03",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 11.968,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "conversation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "5e61e8d6c3ff998e8fc1a798d7b0f9c6cd84e42a1d1bdfecf46565e45e6744a6",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "complex",
+            "confidence": 0.99,
+            "intent": "conversation",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.96,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 5,
+            "turn_id": "bench:holdout-03"
+          },
+          "elapsed_ms": 11.641,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-03",
+          "turn_id": "bench:holdout-03",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 5,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "SetSpeakingSpeed",
+        "speed": 1.2
+      },
+      "action_kind": "SetSpeakingSpeed",
+      "authorized": true,
+      "case_id": "holdout-04",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "changed": true,
+        "settings": {
+          "approved_voice_id": null,
+          "captions_visible": true,
+          "response_preference": "automatic",
+          "revision": 1,
+          "speaking_speed": 1.2
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 11.291,
+      "error": null,
+      "expected_action_kind": "SetSpeakingSpeed",
+      "expected_effect": {
+        "settings": {
+          "speaking_speed": 1.2
+        }
+      },
+      "intent": "voice_setting",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "299934a4f32b633f8e02540af24aacc2fe68d62b3fdfecd1606ad7a5a3adbc82",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "voice_setting",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.96
+            },
+            "source": "jev",
+            "tier": 1,
+            "turn_id": "bench:holdout-04"
+          },
+          "elapsed_ms": 8.561,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-04",
+          "turn_id": "bench:holdout-04",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": {
+            "kind": "SetSpeakingSpeed",
+            "speed": 1.2
+          },
+          "kind": "action",
+          "reason": null,
+          "source": "generated",
+          "usage": null
+        }
+      },
+      "reason": null,
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-05",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 6.028,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "voice_setting",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "3f173fefafceb33d5bc39a286aa9bfa57d4dfe5634b5c0ad467456518c247282",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "voice_setting",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.96
+            },
+            "source": "jev",
+            "tier": 1,
+            "turn_id": "bench:holdout-05"
+          },
+          "elapsed_ms": 2.115,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-05",
+          "turn_id": "bench:holdout-05",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": null,
+          "kind": "clarification",
+          "reason": "QUOTED_UTTERANCE",
+          "source": "none",
+          "usage": null
+        }
+      },
+      "reason": "QUOTED_UTTERANCE",
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-06",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 3.188,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "ui_control",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "4e139fbd910478f39de1bcae32f6e7fa878537ec31076f919ece7d0f4c43d6d8",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "ui_control",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.96,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 1,
+            "turn_id": "bench:holdout-06"
+          },
+          "elapsed_ms": 2.344,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-06",
+          "turn_id": "bench:holdout-06",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": null,
+          "kind": "clarification",
+          "reason": "NEGATED_UTTERANCE",
+          "source": "none",
+          "usage": null
+        }
+      },
+      "reason": "NEGATED_UTTERANCE",
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-07",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 2.754,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "ui_control",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "3ec218ef4864b473f65ac9fa3911df1a2d53a427c0103d3ab9df88421be09340",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "ui_control",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.96,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 2,
+            "turn_id": "bench:holdout-07"
+          },
+          "elapsed_ms": 2.049,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-07",
+          "turn_id": "bench:holdout-07",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": null,
+          "kind": "clarification",
+          "reason": "COMPOUND_UTTERANCE",
+          "source": "none",
+          "usage": null
+        }
+      },
+      "reason": "COMPOUND_UTTERANCE",
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "SearchMemory",
+        "limit": 20,
+        "query": "Rome"
+      },
+      "action_kind": "SearchMemory",
+      "authorized": true,
+      "case_id": "holdout-08",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "mocked": "memory-read",
+        "query": "Rome"
+      },
+      "effect_match": true,
+      "elapsed_ms": 6.828,
+      "error": null,
+      "expected_action_kind": "SearchMemory",
+      "expected_effect": {
+        "memory_query_terms": [
+          "Rome"
+        ]
+      },
+      "intent": "memory_search",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "2e2c2c627825aa788b05944caf9d1f5bc1de72cc56a75c871a281dfefa867b49",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "memory_search",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.96,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 2,
+            "turn_id": "bench:holdout-08"
+          },
+          "elapsed_ms": 4.725,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-08",
+          "turn_id": "bench:holdout-08",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": {
+            "kind": "SearchMemory",
+            "limit": 20,
+            "query": "Rome"
+          },
+          "kind": "action",
+          "reason": null,
+          "source": "generated",
+          "usage": null
+        }
+      },
+      "reason": null,
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "SearchMemory",
+        "limit": 20,
+        "query": "Rome Paris"
+      },
+      "action_kind": "SearchMemory",
+      "authorized": true,
+      "case_id": "holdout-09",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": {
+        "mocked": "memory-read",
+        "query": "Rome Paris"
+      },
+      "effect_match": true,
+      "elapsed_ms": 11.36,
+      "error": null,
+      "expected_action_kind": "SearchMemory",
+      "expected_effect": {
+        "memory_query_terms": [
+          "Rome",
+          "Paris"
+        ]
+      },
+      "intent": "memory_search",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "22a3f4bff63cffeac9b021e0352765535658bf34fca81f4c7ebfddd079de455a",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "complex",
+            "confidence": 0.99,
+            "intent": "memory_search",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.96,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 3,
+            "turn_id": "bench:holdout-09"
+          },
+          "elapsed_ms": 10.341,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-09",
+          "turn_id": "bench:holdout-09",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": {
+            "kind": "SearchMemory",
+            "limit": 20,
+            "query": "Rome Paris"
+          },
+          "kind": "action",
+          "reason": null,
+          "source": "generated",
+          "usage": null
+        }
+      },
+      "reason": null,
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 3,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": {
+        "exclude": [],
+        "keep": [],
+        "kind": "ProposeContextExclusion",
+        "query": "hotel"
+      },
+      "action_kind": "ProposeContextExclusion",
+      "authorized": true,
+      "case_id": "holdout-10",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "proposal": {
+          "exclude": [],
+          "keep": [],
+          "kind": "ProposeContextExclusion",
+          "query": "hotel"
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 5.958,
+      "error": null,
+      "expected_action_kind": "ProposeContextExclusion",
+      "expected_effect": {
+        "proposal_terms": [
+          "hotel"
+        ]
+      },
+      "intent": "memory_modification",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "e56a17dde2e699b0e385f66f26d352f4e26a96cea0e576149ff6b28737601a9f",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "memory_modification",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.96,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 3,
+            "turn_id": "bench:holdout-10"
+          },
+          "elapsed_ms": 1.935,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-10",
+          "turn_id": "bench:holdout-10",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": {
+            "exclude": [],
+            "keep": [],
+            "kind": "ProposeContextExclusion",
+            "query": "hotel"
+          },
+          "kind": "action",
+          "reason": null,
+          "source": "generated",
+          "usage": null
+        }
+      },
+      "reason": null,
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 3,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-11",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 8.445,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "memory_modification",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "2ab1c18b2331e337b8554e0b977b041029e7c05c4dc06eee3ecaf735a7f244d8",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "complex",
+            "confidence": 0.99,
+            "intent": "memory_modification",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.96,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 4,
+            "turn_id": "bench:holdout-11"
+          },
+          "elapsed_ms": 6.238,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-11",
+          "turn_id": "bench:holdout-11",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": null,
+          "kind": "clarification",
+          "reason": "COMPOUND_UTTERANCE",
+          "source": "none",
+          "usage": null
+        }
+      },
+      "reason": "COMPOUND_UTTERANCE",
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 4,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "ShowConversationHistory"
+      },
+      "action_kind": "ShowConversationHistory",
+      "authorized": true,
+      "case_id": "holdout-12",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "navigation": "history"
+      },
+      "effect_match": true,
+      "elapsed_ms": 3.668,
+      "error": null,
+      "expected_action_kind": "ShowConversationHistory",
+      "expected_effect": {
+        "navigation": "history"
+      },
+      "intent": "conversation_navigation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "091e830d515dfd3cd4039b9c6b13383f519af30e535aee8b82c7be0fa799d08f",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "conversation_navigation",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.96,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 1,
+            "turn_id": "bench:holdout-12"
+          },
+          "elapsed_ms": 2.031,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-12",
+          "turn_id": "bench:holdout-12",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": {
+            "kind": "ShowConversationHistory"
+          },
+          "kind": "action",
+          "reason": null,
+          "source": "generated",
+          "usage": null
+        }
+      },
+      "reason": null,
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "ShowConversationHistory"
+      },
+      "action_kind": "ShowConversationHistory",
+      "authorized": true,
+      "case_id": "holdout-13",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": {
+        "navigation": "history"
+      },
+      "effect_match": true,
+      "elapsed_ms": 3.392,
+      "error": null,
+      "expected_action_kind": "ShowConversationHistory",
+      "expected_effect": {
+        "navigation": "history"
+      },
+      "intent": "conversation_navigation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "f2d3a44b29606e863e772c806ad570a66bdd5393d13a3c08c61842aa7ff79851",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "complex",
+            "confidence": 0.99,
+            "intent": "conversation_navigation",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.96,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 5,
+            "turn_id": "bench:holdout-13"
+          },
+          "elapsed_ms": 2.424,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-13",
+          "turn_id": "bench:holdout-13",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        },
+        "extraction": {
+          "action": {
+            "kind": "ShowConversationHistory"
+          },
+          "kind": "action",
+          "reason": null,
+          "source": "generated",
+          "usage": null
+        }
+      },
+      "reason": null,
+      "requests": 2,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 5,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-14",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 3.752,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "tool_request",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "ffa2f12f788b563c9b8ca8b0d16d8feb52c5a01ce24807fc8089dbbc0b9f939e",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "complex",
+            "confidence": 0.99,
+            "intent": "tool_request",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.96,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 4,
+            "turn_id": "bench:holdout-14"
+          },
+          "elapsed_ms": 3.252,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-14",
+          "turn_id": "bench:holdout-14",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 4,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-15",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 4.333,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "ambiguous",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "d2ef69f67ade8d5a3ab9df7ccf99a2b6ba8f1fe4086e80b273f53749a7e79a18",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "simple",
+            "confidence": 0.99,
+            "intent": "ambiguous",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.96,
+              "conversation": 0.0057142857142857195,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 3,
+            "turn_id": "bench:holdout-15"
+          },
+          "elapsed_ms": 4.04,
+          "kind": "clarification",
+          "reason": "AMBIGUOUS_INTENT",
+          "request_id": "bench:holdout-15",
+          "turn_id": "bench:holdout-15",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        }
+      },
+      "reason": "AMBIGUOUS_INTENT",
+      "requests": 1,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 3,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-16",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 2.833,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "conversation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "jev-1.14.0",
+      "prompt_hash": "b48a3a33029600aacfb7f70dd91be8afd4f1c4d75aa446430aa6959d32c385ab",
+      "raw": {
+        "classification": {
+          "decision": {
+            "complexity": "complex",
+            "confidence": 0.99,
+            "intent": "conversation",
+            "model": "jev-1.14.0",
+            "policy_version": "day2-jev-v1",
+            "probabilities": {
+              "ambiguous": 0.0057142857142857195,
+              "conversation": 0.96,
+              "conversation_navigation": 0.0057142857142857195,
+              "memory_modification": 0.0057142857142857195,
+              "memory_search": 0.0057142857142857195,
+              "tool_request": 0.0057142857142857195,
+              "ui_control": 0.0057142857142857195,
+              "voice_setting": 0.0057142857142857195
+            },
+            "source": "jev",
+            "tier": 5,
+            "turn_id": "bench:holdout-16"
+          },
+          "elapsed_ms": 2.362,
+          "kind": "decision",
+          "reason": null,
+          "request_id": "bench:holdout-16",
+          "turn_id": "bench:holdout-16",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 5
+          }
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "jev_assisted",
+      "split": "holdout",
+      "tier": 5,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 50,
+          "model": "jev-1.14.0",
+          "output_tokens": 5,
+          "provider": "jev",
+          "purpose": "classification"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "tune-01",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.056,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "conversation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "8af36b2375bd5751dc5d08c3dfaa1cb1b7c51921fd16ab9471319eec7c1bcd31",
+      "raw": {
+        "action": null,
+        "complexity": "simple",
+        "intent": "conversation",
+        "tier": 2,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "tuning",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": {
+        "delta": -0.1,
+        "kind": "AdjustSpeakingSpeed"
+      },
+      "action_kind": "AdjustSpeakingSpeed",
+      "authorized": true,
+      "case_id": "tune-02",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "changed": true,
+        "settings": {
+          "approved_voice_id": null,
+          "captions_visible": true,
+          "response_preference": "automatic",
+          "revision": 1,
+          "speaking_speed": 0.9
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.135,
+      "error": null,
+      "expected_action_kind": "AdjustSpeakingSpeed",
+      "expected_effect": {
+        "settings": {
+          "speaking_speed": 0.9
+        }
+      },
+      "intent": "voice_setting",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "5ced9fe98f2938049f852033950299c136ae61fd3e6d24701c3b2d2da88e1953",
+      "raw": {
+        "action": {
+          "delta": -0.1,
+          "kind": "AdjustSpeakingSpeed"
+        },
+        "complexity": "simple",
+        "intent": "voice_setting",
+        "tier": 1,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "tuning",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "SetCaptionsVisible",
+        "visible": false
+      },
+      "action_kind": "SetCaptionsVisible",
+      "authorized": true,
+      "case_id": "tune-03",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "changed": true,
+        "settings": {
+          "approved_voice_id": null,
+          "captions_visible": false,
+          "response_preference": "automatic",
+          "revision": 1,
+          "speaking_speed": 1.0
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.234,
+      "error": null,
+      "expected_action_kind": "SetCaptionsVisible",
+      "expected_effect": {
+        "settings": {
+          "captions_visible": false
+        }
+      },
+      "intent": "ui_control",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "be243519ac1339ee98a5180e01d5cd7ea1eb745759bf46a138049a9298af0be4",
+      "raw": {
+        "action": {
+          "kind": "SetCaptionsVisible",
+          "visible": false
+        },
+        "complexity": "simple",
+        "intent": "ui_control",
+        "tier": 1,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "tuning",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "SearchMemory",
+        "limit": 20,
+        "query": "Rome"
+      },
+      "action_kind": "SearchMemory",
+      "authorized": true,
+      "case_id": "tune-04",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "mocked": "memory-read",
+        "query": "Rome"
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.119,
+      "error": null,
+      "expected_action_kind": "SearchMemory",
+      "expected_effect": {
+        "memory_query_terms": [
+          "Rome"
+        ]
+      },
+      "intent": "memory_search",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "85b722b6bd4961bdd64c1091dafe1f3ca8042b1c51f71dcd1ddb1ef549df12db",
+      "raw": {
+        "action": {
+          "kind": "SearchMemory",
+          "query": "Rome"
+        },
+        "complexity": "simple",
+        "intent": "memory_search",
+        "tier": 2,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "tuning",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": {
+        "exclude": [],
+        "keep": [],
+        "kind": "ProposeContextExclusion",
+        "query": "hotel"
+      },
+      "action_kind": "ProposeContextExclusion",
+      "authorized": true,
+      "case_id": "tune-05",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "proposal": {
+          "exclude": [],
+          "keep": [],
+          "kind": "ProposeContextExclusion",
+          "query": "hotel"
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 3.978,
+      "error": null,
+      "expected_action_kind": "ProposeContextExclusion",
+      "expected_effect": {
+        "proposal_terms": [
+          "hotel"
+        ]
+      },
+      "intent": "memory_modification",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "2225265a432a8bc69ea9cd9c433481879620ac220f10948e54313e35dce16a78",
+      "raw": {
+        "action": {
+          "keep": [],
+          "kind": "ProposeContextExclusion",
+          "query": "hotel"
+        },
+        "complexity": "simple",
+        "intent": "memory_modification",
+        "tier": 3,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "tuning",
+      "tier": 3,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "ShowConversationHistory"
+      },
+      "action_kind": "ShowConversationHistory",
+      "authorized": true,
+      "case_id": "tune-06",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "navigation": "history"
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.115,
+      "error": null,
+      "expected_action_kind": "ShowConversationHistory",
+      "expected_effect": {
+        "navigation": "history"
+      },
+      "intent": "conversation_navigation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "8699bce984567758d537dddaf5814f96a669955834bbdbada9c416d6ce58900e",
+      "raw": {
+        "action": {
+          "kind": "ShowConversationHistory"
+        },
+        "complexity": "simple",
+        "intent": "conversation_navigation",
+        "tier": 1,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "tuning",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "tune-07",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 3.569,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "tool_request",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "675a14e8b16d99c96f6cc13a038e0a9f188ca9156c8c7ec63c1ca421a132c4e2",
+      "raw": {
+        "action": null,
+        "complexity": "simple",
+        "intent": "tool_request",
+        "tier": 3,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "tuning",
+      "tier": 3,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "tune-08",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.048,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "ambiguous",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "0c8cf8eed1ad4c3a4ab56fb18785b9188c1e07257e4a232f6371aa74f56ccdea",
+      "raw": {
+        "action": null,
+        "complexity": "simple",
+        "intent": "ambiguous",
+        "tier": 2,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "tuning",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-01",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.049,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "conversation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "289a14db8df8ce4ac6017a0e6f95756a099afab41ef9720feb17cd5f2731534f",
+      "raw": {
+        "action": null,
+        "complexity": "simple",
+        "intent": "conversation",
+        "tier": 2,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-02",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.05,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "conversation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "030d66bf6d99a0852ad38ecf16aef72b69dc527752a2a046f96ee146c9354913",
+      "raw": {
+        "action": null,
+        "complexity": "simple",
+        "intent": "conversation",
+        "tier": 4,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 4,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-03",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.052,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "conversation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "51b27e759f8aa8c6efcb285ba01f41a1d7b199b45301a8ad91295c3f80a0178b",
+      "raw": {
+        "action": null,
+        "complexity": "complex",
+        "intent": "conversation",
+        "tier": 5,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 5,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "SetSpeakingSpeed",
+        "speed": 1.2
+      },
+      "action_kind": "SetSpeakingSpeed",
+      "authorized": true,
+      "case_id": "holdout-04",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "changed": true,
+        "settings": {
+          "approved_voice_id": null,
+          "captions_visible": true,
+          "response_preference": "automatic",
+          "revision": 1,
+          "speaking_speed": 1.2
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.131,
+      "error": null,
+      "expected_action_kind": "SetSpeakingSpeed",
+      "expected_effect": {
+        "settings": {
+          "speaking_speed": 1.2
+        }
+      },
+      "intent": "voice_setting",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "db8251d3ac99478a0d4d24a61a5a2242c3927c2477a245b577fe18e2dbcd0be7",
+      "raw": {
+        "action": {
+          "kind": "SetSpeakingSpeed",
+          "speed": 1.2
+        },
+        "complexity": "simple",
+        "intent": "voice_setting",
+        "tier": 1,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-05",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.049,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "voice_setting",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "51b4224294714b3f6246eff7b94b68eb72dfae94675c60d937237dc13b0abb96",
+      "raw": {
+        "action": null,
+        "complexity": "simple",
+        "intent": "voice_setting",
+        "tier": 1,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-06",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.047,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "ui_control",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "ba088541e082b77a68f6faf79d723573fe1d2508b793f37679a862db5ec11fa8",
+      "raw": {
+        "action": null,
+        "complexity": "simple",
+        "intent": "ui_control",
+        "tier": 1,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-07",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.046,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "ui_control",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "690af0f859bb787a25235120e24944be58316376c0979c393897fe31a07ffb47",
+      "raw": {
+        "action": null,
+        "complexity": "simple",
+        "intent": "ui_control",
+        "tier": 2,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "SearchMemory",
+        "limit": 20,
+        "query": "Rome"
+      },
+      "action_kind": "SearchMemory",
+      "authorized": true,
+      "case_id": "holdout-08",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "mocked": "memory-read",
+        "query": "Rome"
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.113,
+      "error": null,
+      "expected_action_kind": "SearchMemory",
+      "expected_effect": {
+        "memory_query_terms": [
+          "Rome"
+        ]
+      },
+      "intent": "memory_search",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "9fc50c8cdbf887fe78fd4e94df677067e9d710d3f084bce03a565dc4cc5450e1",
+      "raw": {
+        "action": {
+          "kind": "SearchMemory",
+          "query": "Rome"
+        },
+        "complexity": "simple",
+        "intent": "memory_search",
+        "tier": 2,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 2,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "SearchMemory",
+        "limit": 20,
+        "query": "Rome Paris"
+      },
+      "action_kind": "SearchMemory",
+      "authorized": true,
+      "case_id": "holdout-09",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": {
+        "mocked": "memory-read",
+        "query": "Rome Paris"
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.139,
+      "error": null,
+      "expected_action_kind": "SearchMemory",
+      "expected_effect": {
+        "memory_query_terms": [
+          "Rome",
+          "Paris"
+        ]
+      },
+      "intent": "memory_search",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "1fe525f4976acebe7c168240d2ac451f3715259301a86e67a5ecc3310aecdf60",
+      "raw": {
+        "action": {
+          "kind": "SearchMemory",
+          "query": "Rome Paris"
+        },
+        "complexity": "complex",
+        "intent": "memory_search",
+        "tier": 3,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 3,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": {
+        "exclude": [],
+        "keep": [],
+        "kind": "ProposeContextExclusion",
+        "query": "hotel"
+      },
+      "action_kind": "ProposeContextExclusion",
+      "authorized": true,
+      "case_id": "holdout-10",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "proposal": {
+          "exclude": [],
+          "keep": [],
+          "kind": "ProposeContextExclusion",
+          "query": "hotel"
+        }
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.128,
+      "error": null,
+      "expected_action_kind": "ProposeContextExclusion",
+      "expected_effect": {
+        "proposal_terms": [
+          "hotel"
+        ]
+      },
+      "intent": "memory_modification",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "d04dd91ea947093e8bf24fd8e5be5da7f4901b904945dab5faaee278cb841deb",
+      "raw": {
+        "action": {
+          "keep": [],
+          "kind": "ProposeContextExclusion",
+          "query": "hotel"
+        },
+        "complexity": "simple",
+        "intent": "memory_modification",
+        "tier": 3,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 3,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-11",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.052,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "memory_modification",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "8e1fae8ab83eae9a16992294a9f34ef03f7f15298585270630281643190ee654",
+      "raw": {
+        "action": null,
+        "complexity": "complex",
+        "intent": "memory_modification",
+        "tier": 4,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 4,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "ShowConversationHistory"
+      },
+      "action_kind": "ShowConversationHistory",
+      "authorized": true,
+      "case_id": "holdout-12",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": {
+        "navigation": "history"
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.143,
+      "error": null,
+      "expected_action_kind": "ShowConversationHistory",
+      "expected_effect": {
+        "navigation": "history"
+      },
+      "intent": "conversation_navigation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "89f44e579c7f98e3f148e105e6b21016b61acaedd156ced1f55af668e1bc5783",
+      "raw": {
+        "action": {
+          "kind": "ShowConversationHistory"
+        },
+        "complexity": "simple",
+        "intent": "conversation_navigation",
+        "tier": 1,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 1,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": {
+        "kind": "ShowConversationHistory"
+      },
+      "action_kind": "ShowConversationHistory",
+      "authorized": true,
+      "case_id": "holdout-13",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": {
+        "navigation": "history"
+      },
+      "effect_match": true,
+      "elapsed_ms": 0.116,
+      "error": null,
+      "expected_action_kind": "ShowConversationHistory",
+      "expected_effect": {
+        "navigation": "history"
+      },
+      "intent": "conversation_navigation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "c9a15cf220c580ff7f8d3732ced8c84428e4980d4471ade19804bf5e9850219e",
+      "raw": {
+        "action": {
+          "kind": "ShowConversationHistory"
+        },
+        "complexity": "complex",
+        "intent": "conversation_navigation",
+        "tier": 5,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 5,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-14",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 1.24,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "tool_request",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "a38b8c925ed5d356e99367e5346eec35d2cc3a9aedba56986556637ed488b28c",
+      "raw": {
+        "action": null,
+        "complexity": "complex",
+        "intent": "tool_request",
+        "tier": 4,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 4,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-15",
+      "complexity": "simple",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.05,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "ambiguous",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "8599d225df4976d17cdb5d342fe56cb0087e27b496f2879cc1e857c8a69c0e18",
+      "raw": {
+        "action": null,
+        "complexity": "simple",
+        "intent": "ambiguous",
+        "tier": 3,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 3,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    },
+    {
+      "action": null,
+      "action_kind": null,
+      "authorized": false,
+      "case_id": "holdout-16",
+      "complexity": "complex",
+      "complexity_agree": true,
+      "effect": null,
+      "effect_match": null,
+      "elapsed_ms": 0.061,
+      "error": null,
+      "expected_action_kind": null,
+      "expected_effect": null,
+      "intent": "conversation",
+      "intent_agree": true,
+      "invalid_action": false,
+      "mode": "scripted",
+      "model": "deepseek-flash",
+      "prompt_hash": "dfc2da58ef1fca280cfca30ec91d25e7e2bb1c9e4d4351a51c50824c20a9eed0",
+      "raw": {
+        "action": null,
+        "complexity": "complex",
+        "intent": "conversation",
+        "tier": 5,
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 4
+        }
+      },
+      "reason": null,
+      "requests": 1,
+      "router_id": "direct",
+      "split": "holdout",
+      "tier": 5,
+      "tier_agree": true,
+      "unsafe_authorization": false,
+      "unsafe_proposal": false,
+      "usage": [
+        {
+          "input_tokens": 40,
+          "model": "deepseek-flash",
+          "output_tokens": 4,
+          "provider": "deepseek",
+          "purpose": "direct"
+        }
+      ]
+    }
+  ],
+  "routers": {
+    "direct": {
+      "action_proposals": 11,
+      "complexity_agreement": 1.0,
+      "cost_by_model": {
+        "deepseek-flash": null
+      },
+      "estimated_cost_usd": null,
+      "failure_count": 0,
+      "failures": [],
+      "input_tokens": 960,
+      "intent_agreement": 1.0,
+      "invalid_action_proposals": 0,
+      "max_latency_ms": 3.978,
+      "median_latency_ms": 0.114,
+      "model": "deepseek-flash",
+      "output_tokens": 96,
+      "p95_latency_ms": 3.569,
+      "raw_latency_ms": [
+        0.056,
+        0.135,
+        0.234,
+        0.119,
+        3.978,
+        0.115,
+        3.569,
+        0.048,
+        0.049,
+        0.05,
+        0.052,
+        0.131,
+        0.049,
+        0.047,
+        0.046,
+        0.113,
+        0.139,
+        0.128,
+        0.052,
+        0.143,
+        0.116,
+        1.24,
+        0.05,
+        0.061
+      ],
+      "requests_avoided_vs_one_direct_call": 0,
+      "requests_issued": 24,
+      "sample_size": 24,
+      "tier_agreement": 1.0,
+      "unpriced_models": [
+        "deepseek-flash"
+      ],
+      "unsafe_action_proposals": 0,
+      "unsafe_authorizations": 0,
+      "usage_by_model": {
+        "deepseek-flash": {
+          "input_tokens": 960,
+          "output_tokens": 96
+        }
+      }
+    },
+    "jev_assisted": {
+      "action_proposals": 11,
+      "complexity_agreement": 1.0,
+      "cost_by_model": {
+        "jev-1.14.0": 4.41e-05
+      },
+      "estimated_cost_usd": 4.41e-05,
+      "failure_count": 0,
+      "failures": [],
+      "input_tokens": 1050,
+      "intent_agreement": 1.0,
+      "invalid_action_proposals": 0,
+      "max_latency_ms": 11.968,
+      "median_latency_ms": 4.11,
+      "model": "jev-1.14.0",
+      "output_tokens": 105,
+      "p95_latency_ms": 11.36,
+      "raw_latency_ms": [
+        7.696,
+        0.132,
+        0.12,
+        3.887,
+        3.488,
+        0.136,
+        9.219,
+        2.474,
+        8.397,
+        6.79,
+        11.968,
+        11.291,
+        6.028,
+        3.188,
+        2.754,
+        6.828,
+        11.36,
+        5.958,
+        8.445,
+        3.668,
+        3.392,
+        3.752,
+        4.333,
+        2.833
+      ],
+      "requests_avoided_vs_one_direct_call": -9,
+      "requests_issued": 33,
+      "sample_size": 24,
+      "tier_agreement": 1.0,
+      "unpriced_models": [],
+      "unsafe_action_proposals": 0,
+      "unsafe_authorizations": 0,
+      "usage_by_model": {
+        "jev-1.14.0": {
+          "input_tokens": 1050,
+          "output_tokens": 105
+        }
+      }
+    },
+    "local_exact": {
+      "action_proposals": 3,
+      "complexity_agreement": 0.125,
+      "cost_by_model": {},
+      "estimated_cost_usd": 0,
+      "failure_count": 0,
+      "failures": [],
+      "input_tokens": 0,
+      "intent_agreement": 0.125,
+      "invalid_action_proposals": 0,
+      "max_latency_ms": 0.335,
+      "median_latency_ms": 0.114,
+      "model": "local-exact",
+      "output_tokens": 0,
+      "p95_latency_ms": 0.193,
+      "raw_latency_ms": [
+        0.139,
+        0.181,
+        0.193,
+        0.076,
+        0.07,
+        0.098,
+        0.072,
+        0.077,
+        0.13,
+        0.086,
+        0.077,
+        0.166,
+        0.111,
+        0.083,
+        0.148,
+        0.072,
+        0.134,
+        0.335,
+        0.14,
+        0.12,
+        0.09,
+        0.111,
+        0.193,
+        0.118
+      ],
+      "requests_avoided_vs_one_direct_call": 24,
+      "requests_issued": 0,
+      "sample_size": 24,
+      "tier_agreement": 0.125,
+      "unpriced_models": [],
+      "unsafe_action_proposals": 0,
+      "unsafe_authorizations": 0,
+      "usage_by_model": {}
+    }
+  },
+  "schema_version": 1
+}
