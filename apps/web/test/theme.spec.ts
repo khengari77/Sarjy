@@ -2,8 +2,8 @@ import { expect, test, type Page } from '@playwright/test';
 
 test.use({ colorScheme: 'dark' });
 
-function themeButton(page: Page) {
-  return page.getByRole('button', { name: /^Theme:/ });
+function themeButton(page: Page, mode: 'Light' | 'Dark' = 'Light') {
+  return page.getByRole('button', { name: `Theme: ${mode}`, exact: true });
 }
 
 function channel(value: string, index: number): number {
@@ -53,19 +53,19 @@ test('theme control cycles light/dark/system without creating a voice session or
   });
 
   // system → light
-  await themeButton(page).click();
+  await themeButton(page, 'Light').click();
   await expect(html).toHaveAttribute('data-theme', 'light');
   await expect(html).toHaveAttribute('data-theme-preference', 'light');
   expect(await page.evaluate(() => localStorage.getItem('sarjy-theme'))).toBe('light');
-  await expect(themeButton(page)).toHaveAccessibleName('Theme: Light. Activate to switch to Dark.');
+  await expect(themeButton(page, 'Light')).toHaveAttribute('aria-pressed', 'true');
 
   // light → dark
-  await themeButton(page).click();
+  await themeButton(page, 'Dark').click();
   await expect(html).toHaveAttribute('data-theme', 'dark');
   expect(await page.evaluate(() => localStorage.getItem('sarjy-theme'))).toBe('dark');
 
-  // dark → system
-  await themeButton(page).click();
+  // dark → system: activating the selected mode again follows the OS.
+  await themeButton(page, 'Dark').click();
   await expect(html).toHaveAttribute('data-theme', 'dark');
   await expect(html).toHaveAttribute('data-theme-preference', 'system');
   expect(await page.evaluate(() => localStorage.getItem('sarjy-theme'))).toBe('system');
@@ -96,7 +96,7 @@ test('the orb derives from the shell-resolved theme, not its own preference', as
 
   // system → light: the presentation colour and the status dot both change,
   // so the theme reaches the renderer state rather than only a prop.
-  await themeButton(page).click();
+  await themeButton(page, 'Light').click();
   await expect(html).toHaveAttribute('data-theme', 'light');
   await expect(orb).toHaveAttribute('data-theme', 'light');
   await expect.poll(colour).not.toBe(darkColour);
@@ -104,8 +104,8 @@ test('the orb derives from the shell-resolved theme, not its own preference', as
 
   // light → dark → system, then let the OS decide. A locally re-derived theme
   // could not follow this change.
-  await themeButton(page).click();
-  await themeButton(page).click();
+  await themeButton(page, 'Dark').click();
+  await themeButton(page, 'Dark').click();
   await expect(html).toHaveAttribute('data-theme-preference', 'system');
   await expect(orb).toHaveAttribute('data-theme', 'dark');
 
@@ -123,7 +123,7 @@ test('a saved theme applies before paint on reload and SSR never stores it', asy
 
   await page.goto('/');
   await waitForOrb(page);
-  await themeButton(page).click();
+  await themeButton(page, 'Light').click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 
   await page.reload({ waitUntil: 'domcontentloaded' });

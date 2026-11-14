@@ -27,10 +27,19 @@ export function createThemeSession(onResolved?: (theme: ResolvedTheme) => void) 
     onResolved?.(resolved);
   });
 
-  function cycle() {
-    preference = nextThemePreference(preference);
+  /**
+   * Apply an explicit preference (the header's sun/moon buttons) and persist
+   * it. `system` stays reachable by activating the already-selected mode
+   * again; see AppShell's `choose`.
+   */
+  function set(next: ThemePreference) {
+    preference = next;
     storeTheme(browserStorage(), preference);
     applyTheme(document.documentElement, preference, systemDark);
+  }
+
+  function cycle() {
+    set(nextThemePreference(preference));
   }
 
   /** Adopt the saved preference and follow later OS changes. */
@@ -55,6 +64,7 @@ export function createThemeSession(onResolved?: (theme: ResolvedTheme) => void) 
     get preference() {
       return preference;
     },
+    set,
     cycle,
     start,
   };

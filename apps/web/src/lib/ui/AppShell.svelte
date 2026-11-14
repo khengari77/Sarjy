@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, setContext, tick } from 'svelte';
-  import { nextThemePreference, themeName } from './theme';
+  import { themeName } from './theme';
   import type { ShellProps } from './shellTypes';
   import { createDrawerSession } from './drawerSession.svelte';
   import { createThemeSession } from './themeSession.svelte';
@@ -61,6 +61,15 @@
 
   // Theme is cosmetic and owned by the shell; the orb subscribes to `resolved`.
   const theme = createThemeSession((value) => onthemechange?.(value));
+
+  /**
+   * The header shows light/dark as a segmented control. Selecting the mode
+   * that is already the explicit preference returns to `system`, which keeps
+   * the OS-following option reachable without a third pill.
+   */
+  function choose(mode: 'light' | 'dark') {
+    theme.set(theme.preference === mode ? 'system' : mode);
+  }
 
   const session = createDrawerSession({
     overlay: () => overlayPanel,
@@ -151,57 +160,6 @@
 </script>
 
 <div class="shell" {dir}>
-  <!-- While a modal drawer is open the header and stage are inert: no pointer
-       targets, no tab stops and nothing exposed to assistive technology. -->
-  <header class="topbar" inert={backgroundInert ? true : undefined}>
-    <div class="brand-row">
-      {#if left}
-        <button
-          bind:this={leftButton}
-          class="icon-button"
-          aria-label={dir === 'rtl' ? 'إظهار المحادثات' : 'Show conversations'}
-          aria-expanded={leftOpen}
-          aria-controls="shell-left"
-          onclick={() => toggle('left')}
-        >
-          <span aria-hidden="true">☰</span>
-        </button>
-      {/if}
-      <strong class="brand">سَرْجي <span>SARJY</span></strong>
-    </div>
-    <div class="header-actions">
-      <button
-        class="ghost-button theme-button"
-        data-resolved-theme={theme.resolved}
-        aria-label={`Theme: ${themeName(theme.preference)}. Activate to switch to ${themeName(nextThemePreference(theme.preference))}.`}
-        title={`Theme: ${themeName(theme.preference)}`}
-        onclick={theme.cycle}
-      >
-        <span aria-hidden="true" class="theme-glyph"
-          >{theme.preference === 'dark' ? '☾' : theme.preference === 'light' ? '☀' : '◐'}</span
-        >
-        <span class="theme-label" aria-hidden="true">{themeName(theme.preference)}</span>
-      </button>
-      {#if onLanguage}
-        <button class="ghost-button" onclick={onLanguage} lang={dir === 'rtl' ? 'en' : 'ar'}>
-          {languageLabel}
-        </button>
-      {/if}
-      {#if right}
-        <button
-          bind:this={rightButton}
-          class="icon-button"
-          aria-label={dir === 'rtl' ? 'إظهار الذاكرة والإعدادات' : 'Show memory and settings'}
-          aria-expanded={rightOpen}
-          aria-controls="shell-right"
-          onclick={() => toggle('right')}
-        >
-          <span aria-hidden="true">☷</span>
-        </button>
-      {/if}
-    </div>
-  </header>
-
   <div class="body">
     {#if left}
       <aside
@@ -215,23 +173,108 @@
         aria-label={leftLabel}
         inert={!leftOpen ? true : undefined}
       >
+        <div class="sidebar-brand">
+          <span class="brand-orb" aria-hidden="true"></span>
+          <span class="brand">SARJY</span>
+        </div>
         {@render left()}
       </aside>
     {/if}
 
-    <main class="stage" id="voice-stage">
-      <div class="stage-content" inert={backgroundInert ? true : undefined}>
-        {#if stage}{@render stage()}{/if}
-      </div>
-      {#if controls}
-        <div class="stage-controls" bind:this={controlsRegion} inert={stageDialogOpen ? true : undefined}>
-          {@render controls()}
+    <div class="main-column">
+      <!-- While a modal drawer is open the header and stage are inert: no
+           pointer targets, no tab stops and nothing exposed to assistive
+           technology. -->
+      <header class="topbar" inert={backgroundInert ? true : undefined}>
+        <div class="header-left">
+          {#if left}
+            <button
+              bind:this={leftButton}
+              class="icon-button menu-button"
+              aria-label={dir === 'rtl' ? 'إظهار المحادثات' : 'Show conversations'}
+              aria-expanded={leftOpen}
+              aria-controls="shell-left"
+              onclick={() => toggle('left')}
+            >
+              <span aria-hidden="true">☰</span>
+            </button>
+          {/if}
+          <span class="context-label">Voice Context Studio</span>
         </div>
-      {/if}
-      <!-- Portal target for stage dialogs (VoiceStage moves the confirmation
-           here). Never inert, so aria-modal="true" is true. -->
-      <div class="stage-dialog" bind:this={dialogRegion}></div>
-    </main>
+        <div class="header-actions">
+          <div class="theme-control" role="group" aria-label="Theme">
+            <button
+              type="button"
+              class="theme-button"
+              data-active={theme.resolved === 'light'}
+              aria-pressed={theme.preference === 'light'}
+              aria-label="Theme: Light"
+              title={`${themeName('light')} theme${theme.preference === 'light' ? ' — activate to follow your system' : ''}`}
+              onclick={() => choose('light')}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none">
+                <circle cx="12" cy="12" r="4.1" stroke="currentColor" stroke-width="1.6" />
+                <path
+                  d="M12 2.6v2.1M12 19.3v2.1M2.6 12h2.1M19.3 12h2.1M5.3 5.3l1.5 1.5M17.2 17.2l1.5 1.5M18.7 5.3l-1.5 1.5M6.8 17.2l-1.5 1.5"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="theme-button"
+              data-active={theme.resolved === 'dark'}
+              aria-pressed={theme.preference === 'dark'}
+              aria-label="Theme: Dark"
+              title={`${themeName('dark')} theme${theme.preference === 'dark' ? ' — activate to follow your system' : ''}`}
+              onclick={() => choose('dark')}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none">
+                <path
+                  d="M20.1 14.4A8.3 8.3 0 0 1 9.6 3.9a8.3 8.3 0 1 0 10.5 10.5Z"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+          {#if onLanguage}
+            <button class="ghost-button" onclick={onLanguage} lang={dir === 'rtl' ? 'en' : 'ar'}>
+              {languageLabel}
+            </button>
+          {/if}
+          {#if right}
+            <button
+              bind:this={rightButton}
+              class="icon-button"
+              aria-label={dir === 'rtl' ? 'إظهار الذاكرة والإعدادات' : 'Show memory and settings'}
+              aria-expanded={rightOpen}
+              aria-controls="shell-right"
+              onclick={() => toggle('right')}
+            >
+              <span aria-hidden="true">☷</span>
+            </button>
+          {/if}
+        </div>
+      </header>
+
+      <main class="stage" id="voice-stage">
+        <div class="stage-content" inert={backgroundInert ? true : undefined}>
+          {#if stage}{@render stage()}{/if}
+        </div>
+        {#if controls}
+          <div class="stage-controls" bind:this={controlsRegion} inert={stageDialogOpen ? true : undefined}>
+            {@render controls()}
+          </div>
+        {/if}
+        <!-- Portal target for stage dialogs (VoiceStage moves the confirmation
+             here). Never inert, so aria-modal="true" is true. -->
+        <div class="stage-dialog" bind:this={dialogRegion}></div>
+      </main>
+    </div>
 
     {#if right}
       <aside

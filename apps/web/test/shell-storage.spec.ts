@@ -67,7 +67,7 @@ test('a storage object whose getItem throws does not abort shell initialisation'
   // Unreadable storage degrades to the system preference...
   await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'system');
   // ...and a failing write is non-fatal: the preference still advances.
-  const theme = page.getByRole('button', { name: /^Theme:/ });
+  const theme = page.getByRole('button', { name: 'Theme: Light', exact: true });
   await theme.click();
   await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'light');
   expect(errors.filter((message) => /SecurityError|QuotaExceededError/.test(message))).toEqual([]);
@@ -87,10 +87,12 @@ test('a storage object whose setItem throws (quota) is non-fatal', async ({ page
   await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'dark');
   await expect(page.locator('#shell-left')).toHaveAttribute('data-hydrated', 'true');
 
-  const theme = page.getByRole('button', { name: /^Theme:/ });
-  await theme.click();
+  // Selecting the already-saved dark mode returns to system; then pick light.
+  const dark = page.getByRole('button', { name: 'Theme: Dark', exact: true });
+  await dark.click();
   await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'system');
-  await theme.click();
+  const light = page.getByRole('button', { name: 'Theme: Light', exact: true });
+  await light.click();
   await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'light');
   expect(errors.filter((message) => /SecurityError|QuotaExceededError/.test(message))).toEqual([]);
 });

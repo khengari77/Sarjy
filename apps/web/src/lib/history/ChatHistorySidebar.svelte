@@ -74,43 +74,40 @@
       document.removeEventListener('keydown', onKeyDown);
     };
   });
+
+  const searchLabel = $derived(arabic ? 'البحث في المحادثات' : 'Search conversations');
 </script>
 
 <div class="sidebar-inner chat-history" dir={arabic ? 'rtl' : 'ltr'}>
-  <button class="primary-button new-chat" disabled={busy} onclick={oncreate}>
-    {arabic ? 'محادثة جديدة' : 'New conversation'} +
+  <button class="new-chat" disabled={busy} onclick={oncreate}>
+    <svg class="new-chat-icon" aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none">
+      <path d="M12 5.5v13M5.5 12h13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    </svg>
+    <span>{arabic ? 'محادثة جديدة' : 'New conversation'}</span>
   </button>
 
-  <div class="history-head">
-    <p class="sidebar-label">{arabic ? 'المحادثات' : 'Conversations'}</p>
-    {#if hasConversations}
-      <span class="count" aria-live="polite">
-        {filtered.length}/{conversations.length}
-      </span>
+  <label class="search">
+    <span class="sr-only">{searchLabel}</span>
+    <svg class="search-icon" aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none">
+      <circle cx="10.8" cy="10.8" r="6.3" stroke="currentColor" stroke-width="1.7" />
+      <path d="m15.6 15.6 4.1 4.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+    </svg>
+    <input type="search" bind:value={query} placeholder={searchLabel} aria-label={searchLabel} />
+    {#if query}
+      <button
+        type="button"
+        class="clear"
+        onclick={() => (query = '')}
+        aria-label={arabic ? 'مسح البحث' : 'Clear search'}
+      >
+        ✕
+      </button>
     {/if}
-  </div>
+  </label>
 
-  {#if hasConversations}
-    <label class="search">
-      <span class="sr-only">{arabic ? 'البحث في المحادثات' : 'Search conversations'}</span>
-      <input
-        type="search"
-        bind:value={query}
-        placeholder={arabic ? 'ابحث في المحادثات' : 'Search conversations'}
-        aria-label={arabic ? 'البحث في المحادثات' : 'Search conversations'}
-      />
-      {#if query}
-        <button
-          type="button"
-          class="clear"
-          onclick={() => (query = '')}
-          aria-label={arabic ? 'مسح البحث' : 'Clear search'}
-        >
-          ✕
-        </button>
-      {/if}
-    </label>
-  {/if}
+  <div class="history-head">
+    <p class="sidebar-label">{arabic ? 'الأخيرة' : 'RECENT'}</p>
+  </div>
 
   {#if error}
     <div class="panel-error" role="alert" data-code={error}>
@@ -123,12 +120,16 @@
     </div>
   {:else if !hasConversations}
     <div class="empty">
-      <p>{arabic ? 'لا توجد محادثات بعد.' : 'No conversations yet.'}</p>
-      <button class="ghost-button" onclick={oncreate}>{arabic ? 'ابدأ محادثة' : 'Start a conversation'}</button>
+      <p class="empty-title">{arabic ? 'لا توجد محادثات بعد' : 'No conversations yet'}</p>
+      <p class="empty-copy">{arabic ? 'ستظهر محادثاتك هنا.' : 'Your chats will appear here.'}</p>
+      <div class="empty-hint">
+        <p class="empty-hint-title">{arabic ? 'ابدأ بصوتك' : 'Start with your voice'}</p>
+        <p class="empty-hint-copy">{arabic ? 'أو استخدم مربّع الرسائل.' : 'Or use the message box.'}</p>
+      </div>
     </div>
   {:else if noMatches}
     <div class="empty">
-      <p>{arabic ? 'لا توجد نتائج مطابقة.' : 'No matching conversations.'}</p>
+      <p class="empty-title">{arabic ? 'لا توجد نتائج مطابقة.' : 'No matching conversations.'}</p>
       <button class="ghost-button" onclick={() => (query = '')}>{arabic ? 'مسح البحث' : 'Clear search'}</button>
     </div>
   {:else}
@@ -142,6 +143,14 @@
             disabled={busy}
             onclick={() => select(chat.id)}
           >
+            <svg class="chat-glyph" aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none">
+              <path
+                d="M20.4 11.6a7.6 7.6 0 0 1-7.6 7.6H6.2L3.4 21.5v-9.9a7.6 7.6 0 0 1 7.6-7.6h1.8a7.6 7.6 0 0 1 7.6 7.6Z"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linejoin="round"
+              />
+            </svg>
             <span class="title" dir="auto">{chat.title}</span>
           </button>
           <button
@@ -168,5 +177,8 @@
     </nav>
   {/if}
 
-  <p class="sidebar-foot">Voice Context Studio</p>
+  <footer class="sidebar-foot">
+    <span class="workspace-avatar" aria-hidden="true">S</span>
+    <span>{arabic ? 'مساحة عملك' : 'Your workspace'}</span>
+  </footer>
 </div>
