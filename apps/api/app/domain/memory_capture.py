@@ -44,7 +44,30 @@ _REFERENTIAL_WORDS = frozenset(
     }
 )
 _REFERENTIAL_FILLERS = frozenset(
-    {"a", "an", "the", "my", "our", "your", "his", "its", "their", "some", "any", "please", "again", "too", "also"}
+    {
+        "a",
+        "an",
+        "the",
+        "my",
+        "our",
+        "your",
+        "his",
+        "its",
+        "their",
+        "some",
+        "any",
+        "please",
+        "again",
+        "too",
+        "also",
+        # Leading save imperatives carry no fact of their own; without these
+        # "remember it" / "save that" would not be recognised as referential.
+        "remember",
+        "save",
+        "keep",
+        "note",
+        "store",
+    }
 )
 _SLOT_STOPWORDS = frozenset(
     {"a", "an", "the", "my", "our", "your", "his", "her", "its", "their", "now", "instead", "actually", "please"}

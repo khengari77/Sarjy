@@ -60,20 +60,30 @@ def openai_request_within_bounds(serialized: bytes, tools: list, max_output_toke
 def _memory_decision(text: str) -> str | None:
     lowered = " ".join(text.casefold().replace(",", " ").split()).strip(" .!?;:")
     affirmative = {
+        "yes",
+        "yeah",
+        "yep",
+        "sure",
+        "ok",
+        "okay",
+        "please do",
+        "go ahead",
+        "remember it",
         "yes save it",
         "yes please save it",
         "save it",
         "please save it",
-        "remember it",
         "yes remember it",
         "confirm",
     }
     negative = {
         "no",
         "nope",
-        "no thanks",
         "don't",
         "do not",
+        "not now",
+        "skip",
+        "no thanks",
         "don't save",
         "don't save that",
         "do not save that",

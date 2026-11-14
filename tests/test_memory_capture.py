@@ -324,9 +324,9 @@ def test_worker_confirms_pending_memory_only_on_explicit_affirmative():
         ("/internal/agent/memory/confirm", {"token": "signed", "decision": "save"}),
     ]
 
-    paths, remaining, outcome = asyncio.run(exchange("Yes."))
-    assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "Yes."})]
-    assert remaining is None and outcome == "not_saved"
+    paths, remaining, _ = asyncio.run(exchange("Yes."))
+    assert remaining is None
+    assert paths[-1] == ("/internal/agent/memory/confirm", {"token": "signed", "decision": "save"})
 
     paths, remaining, outcome = asyncio.run(exchange("maybe later"))
     assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "maybe later"})]
@@ -1863,6 +1863,7 @@ def test_referential_content_is_never_stored(tmp_path):
     assert is_referential("that thing")
     assert is_referential("this one")
     assert is_referential("something")
+    assert is_referential("remember it")
     assert not is_referential("I prefer tea")
     assert not is_referential("to renew the passport")
 
@@ -1899,8 +1900,15 @@ def test_referential_content_is_never_stored(tmp_path):
     ("reply", "outcome", "contents"),
     [
         ("remember it", "save", ["I prefer tea"]),
-        ("yes", "not_saved", []),
+        ("yes", "save", ["I prefer tea"]),
+        ("yeah", "save", ["I prefer tea"]),
+        ("sure", "save", ["I prefer tea"]),
+        ("ok", "save", ["I prefer tea"]),
+        ("go ahead", "save", ["I prefer tea"]),
         ("no", "discard", []),
+        ("nope", "discard", []),
+        ("not now", "discard", []),
+        ("skip", "discard", []),
         ("that", "not_saved", []),
         ("it", "not_saved", []),
         ("remember this", "not_saved", []),
