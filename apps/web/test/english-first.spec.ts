@@ -85,7 +85,8 @@ test('a saved Arabic preference cannot start an Arabic session or reveal the swi
 
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: 'Speak. Remember. Shape the context.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Meet Sarjy' })).toBeVisible();
+  await expect(page.locator('.status-pill')).toContainText('Ready');
   await expect(page.locator('.shell')).toHaveAttribute('dir', 'ltr');
   await expect(page.getByRole('button', { name: 'العربية' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'English' })).toHaveCount(0);
@@ -105,7 +106,8 @@ test('a fresh browser defaults to the English interface', async ({ page }) => {
   await mockApp(page);
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: 'Speak. Remember. Shape the context.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Meet Sarjy' })).toBeVisible();
+  await expect(page.locator('.status-pill')).toContainText('Ready');
   await expect(page.locator('.shell')).toHaveAttribute('dir', 'ltr');
   await expect(page.locator('.orb-button')).toBeEnabled();
 });

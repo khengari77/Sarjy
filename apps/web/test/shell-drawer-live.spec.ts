@@ -217,7 +217,7 @@ test.describe('mobile overlay drawer during a live call', () => {
     await startCall(page);
     await openLeftDrawer(page);
 
-    await page.locator('#shell-left').getByRole('button', { name: 'New conversation +' }).click();
+    await page.locator('#shell-left').getByRole('button', { name: 'New conversation' }).click();
     const dialog = confirmDialog(page);
     await expect(dialog).toBeVisible();
     expect(await dialog.evaluate((el) => el.closest('[inert]') === null)).toBe(true);
@@ -266,33 +266,20 @@ test.describe('mobile overlay drawer during a live call', () => {
   });
 });
 
-test('Escape closes the open dock that holds focus, not the most recently opened one', async ({ page }) => {
+test('Escape in the right dock leaves the permanently docked history rail open', async ({ page }) => {
   await mockApi(page);
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/');
   await waitForShell(page);
 
-  const left = page.getByRole('button', { name: 'Show conversations' });
   const right = page.getByRole('button', { name: 'Show memory and settings' });
-  await expect(left).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
 
-  // Open the right dock last, then move focus into the left dock.
   await right.click();
   await expect(right).toHaveAttribute('aria-expanded', 'true');
-  await page.locator('#shell-left').getByRole('button', { name: 'Trip to Paris', exact: true }).focus();
-  await expect(page.locator('#shell-left').getByRole('button', { name: 'Trip to Paris', exact: true })).toBeFocused();
-
-  await page.keyboard.press('Escape');
-  await expect(left).toHaveAttribute('aria-expanded', 'false');
-  await expect(right).toHaveAttribute('aria-expanded', 'true');
-  await expect(left).toBeFocused();
-
-  // Mirror: reopen the left dock, focus the right dock, Escape closes right.
-  await left.click();
-  await expect(left).toHaveAttribute('aria-expanded', 'true');
-  await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).focus();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).focus();
   await page.keyboard.press('Escape');
   await expect(right).toHaveAttribute('aria-expanded', 'false');
-  await expect(left).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
   await expect(right).toBeFocused();
 });

@@ -62,8 +62,8 @@ test('the memory explorer mounts in the drawer, scopes the list to the conversat
   // Reachable and legible in both themes without remounting the shell.
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(panel).toBeVisible();
-  // dark → system, which resolves to light under the pinned colour scheme.
-  await page.getByRole('button', { name: /^Theme:/ }).click();
+  // Choose the light theme explicitly.
+  await page.getByRole('button', { name: 'Theme: Light', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('Prefers tea over coffee');

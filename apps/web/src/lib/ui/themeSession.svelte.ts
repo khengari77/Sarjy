@@ -27,20 +27,19 @@ export function createThemeSession(onResolved?: (theme: ResolvedTheme) => void) 
     onResolved?.(resolved);
   });
 
-  function cycle() {
-    set(nextThemePreference(preference));
-  }
-
   /**
-   * Apply one explicit preference (the header cycle target or a voice command).
-   * Persistence and OS resolution stay here so callers never touch storage or
-   * `data-theme` directly. Out-of-range values cannot occur: the command
-   * contract only carries the three supported preferences.
+   * Apply one explicit preference (the header's sun/moon buttons or a voice
+   * command) and persist it. `system` stays reachable by activating the
+   * already-selected mode again; see AppShell's `choose`.
    */
   function set(next: ThemePreference) {
     preference = next;
     storeTheme(browserStorage(), next);
     applyTheme(document.documentElement, preference, systemDark);
+  }
+
+  function cycle() {
+    set(nextThemePreference(preference));
   }
 
   /** Adopt the saved preference and follow later OS changes. */
@@ -65,8 +64,8 @@ export function createThemeSession(onResolved?: (theme: ResolvedTheme) => void) 
     get preference() {
       return preference;
     },
-    cycle,
     set,
+    cycle,
     start,
   };
 }

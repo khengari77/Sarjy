@@ -1,69 +1,110 @@
 .shell {
   display: flex;
-  flex-direction: column;
   height: 100vh;
   height: 100dvh;
   background: var(--bg-app);
   color: var(--text-primary);
+  overflow: hidden;
   transition:
     background-color var(--transition-state),
     color var(--transition-state);
 }
 
+/* Full-height row: left rail, the stage column with its own header, then the
+   optional right dock. */
+.body {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.main-column {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  position: relative;
+}
+
+/* 68px utility header owned by the main column, not the whole shell. */
 .topbar {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-height: var(--header-height);
-  padding: 12px 20px;
-  padding-top: max(12px, env(safe-area-inset-top));
-  border-bottom: 1px solid var(--border-subtle);
-  background: color-mix(in srgb, var(--bg-app) 88%, transparent);
-  backdrop-filter: blur(8px);
-  position: sticky;
-  top: 0;
+  padding: 8px 24px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  background: transparent;
+  position: relative;
   z-index: 20;
-  transition:
-    background-color var(--transition-state),
-    border-color var(--transition-state);
 }
 
-.brand-row,
+.header-left,
 .header-actions {
   display: flex;
   align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.header-left {
   gap: 10px;
 }
 
-.brand {
-  font-size: 20px;
-  letter-spacing: 0.06em;
-  color: var(--text-primary);
+.context-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.brand span {
-  font-size: 10px;
-  letter-spacing: 0.3em;
-  color: var(--text-muted);
+/* Segmented light/dark control. The selected mode uses the raised surface and
+   the accent glyph; the container carries the single hairline border. */
+.theme-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: transparent;
 }
 
 .theme-button {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-}
-
-.theme-glyph {
-  font-size: 16px;
-  line-height: 1;
-}
-
-.theme-label {
-  font-size: 12px;
-  letter-spacing: 0.04em;
+  justify-content: center;
+  width: 36px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
   color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background var(--transition-quick),
+    color var(--transition-quick);
+}
+
+.theme-button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.theme-button[data-active='true'] {
+  background: var(--surface-raised);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.16);
 }
 
 .icon-button,
@@ -81,23 +122,29 @@
     border-color var(--transition-quick);
 }
 
-.icon-button {
-  min-width: var(--control-height);
-  padding: 8px;
-  font-size: 18px;
+.topbar .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 10px;
+  font-size: 17px;
   line-height: 1;
+}
+
+/* The dock breakpoint keeps the left rail permanently docked, so the drawer
+   trigger only belongs to the narrow layouts where it opens an overlay. */
+@media (min-width: 1200px) {
+  .topbar .menu-button {
+    display: none;
+  }
 }
 
 .ghost-button:hover,
 .icon-button:hover {
   background: var(--surface-hover);
-}
-
-.body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-  overflow: hidden;
 }
 
 .sidebar {
@@ -106,7 +153,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   transition:
     background-color var(--transition-state),
     border-color var(--transition-state);
@@ -120,8 +167,49 @@
 .sidebar-right {
   width: var(--sidebar-right-width);
   flex: 0 0 auto;
+  overflow-y: auto;
   border-inline-end: none;
   border-inline-start: 1px solid var(--border-subtle);
+}
+
+/* Brand lives at the top of the left rail, above the scrolling history. */
+.sidebar-brand {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: var(--header-height);
+  padding: 0 24px;
+  padding-top: max(0px, env(safe-area-inset-top));
+}
+
+.brand-orb {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.9) 0%, transparent 38%),
+    radial-gradient(circle at 68% 34%, #ffb6d9 0%, transparent 62%),
+    radial-gradient(circle at 40% 78%, #8fd8ff 0%, transparent 68%),
+    radial-gradient(circle at 55% 50%, #a99bff 0%, #6f8cff 72%, #9f7bff 100%);
+  box-shadow: 0 0 10px rgb(140 130 255 / 0.35);
+}
+
+.brand {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+/* The history snippet fills the rail below the brand; only the conversation
+   list scrolls, so the search and footer stay put. */
+.sidebar-left > .sidebar-inner {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .stage {
@@ -201,6 +289,10 @@
 }
 
 @media (max-width: 767px) {
+  .topbar {
+    padding-inline: 16px;
+  }
+
   .sidebar-left {
     width: min(86vw, 320px);
   }
