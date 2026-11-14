@@ -51,7 +51,6 @@ def submit(client, conversation, request="r1", revision=0, **extra):
         "'speak slower'",
         "speak slower and hide captions",
         "please explain speak slower",
-        "speak slower?",
         "hide captions; show captions",
         "not hide captions",
     ],

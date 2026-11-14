@@ -101,6 +101,12 @@
     });
   }
 
+  /** The composer mic mirrors the orb: start the call, or mute/unmute a live one. */
+  function handleMic() {
+    if (voice.live) void toggleMute();
+    else if (!voice.connecting) startConnect();
+  }
+
   function reconnect() {
     void run(() => connection!.reconnect(), onVoiceError);
   }
@@ -242,7 +248,16 @@
       ontoggle={toggleMute}
       oninterrupt={interrupt}
     />
-    <Composer bind:draft placeholder={words.placeholder} sendLabel={words.send} disabled={busy} onsend={send} />
+    <Composer
+      bind:draft
+      placeholder={words.placeholder}
+      sendLabel={words.send}
+      disabled={busy}
+      onsend={send}
+      micLabel={voice.live ? (voice.muted ? words.micOff : words.micOn) : words.talk}
+      micPressed={voice.live ? !voice.muted : null}
+      onmic={handleMic}
+    />
   {/snippet}
 
   {#snippet right()}
