@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { releasedAnswer } from './wordleVoice';
+import { releasedAnswer, speakWordleReply } from './wordleVoice';
 import { setup, transcript, ZERO_MARKS } from './wordleVoiceSupport';
 
 describe('Wordle voice adapter: transcript gating', () => {
@@ -180,6 +180,47 @@ describe('Wordle voice adapter: spoilers', () => {
     expect(fake.calls.load).toBe(0);
     expect(fake.spoken.at(-1)).toContain("won't reveal");
     expect(fake.spoken.join(' ')).not.toContain('PLANT');
+  });
+
+  it('announces and asks the worker to speak the exact result', async () => {
+    const announced: string[] = [];
+    const said: string[] = [];
+    await speakWordleReply('5 guesses left.', {
+      announce: (text) => announced.push(text),
+      say: async (text) => {
+        said.push(text);
+      },
+    });
+    expect(announced).toEqual(['5 guesses left.']);
+    expect(said).toEqual(['5 guesses left.']);
+  });
+
+  it('still announces a reply when no live voice session can speak it', async () => {
+    const announced: string[] = [];
+    await expect(
+      speakWordleReply('Wordle closed.', {
+        announce: (text) => announced.push(text),
+        say: async () => {
+          throw new Error('CALL_REQUIRED');
+        },
+      }),
+    ).resolves.toBeUndefined();
+    expect(announced).toEqual(['Wordle closed.']);
+  });
+
+  it('tells the worker when a spoiler confirmation starts and stops', async () => {
+    const { fake, voice } = setup({ view: 'playing' });
+    await voice.handleEvent(transcript('reveal the answer', 's1'));
+    await voice.handleEvent(transcript('yes', 's2'));
+    expect(fake.pendingFlags).toEqual([true, false]);
+
+    await voice.handleEvent(transcript('reveal the answer', 's3'));
+    await voice.handleEvent(transcript('no', 's4'));
+    expect(fake.pendingFlags).toEqual([true, false, true, false]);
+
+    await voice.handleEvent(transcript('reveal the answer', 's5'));
+    await voice.handleEvent(transcript('how many guesses left', 's6'));
+    expect(fake.pendingFlags).toEqual([true, false, true, false, true, false]);
   });
 
   it('returns the server answer after confirmation once the game is terminal', async () => {

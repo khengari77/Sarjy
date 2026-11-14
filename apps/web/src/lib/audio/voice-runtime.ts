@@ -24,6 +24,10 @@ export interface VoiceRuntime {
   stopMicrophone(): Promise<void>;
   interrupt(): Promise<void>;
   sendText(text: string): Promise<void>;
+  /** Ask the worker to speak exact text without invoking the conversational LLM. */
+  say(text: string): Promise<void>;
+  /** Publish a validated control flag to the worker (no conversation turn). */
+  sendControl(event: Record<string, unknown>): Promise<void>;
   disconnect(): Promise<void>;
   cancelConnect(): Promise<void>;
   subscribe(handler: (event: VoiceEvent) => void): () => void;
@@ -237,6 +241,28 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   async sendText(text: string) {
     if (!this.room) throw new Error('CALL_REQUIRED');
     await this.room.localParticipant.sendText(text, { topic: 'lk.chat' });
+  }
+
+  async say(text: string) {
+    const agent = this.agentParticipant();
+    if (!this.room || !agent) throw new Error('CALL_REQUIRED');
+    await this.room.localParticipant.performRpc({
+      destinationIdentity: agent.identity,
+      method: 'sarjy.say',
+      payload: JSON.stringify({ text }),
+    });
+  }
+
+  async sendControl(event: Record<string, unknown>) {
+    if (!this.room) return;
+    await this.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(event)), {
+      reliable: true,
+      topic: 'sarjy.control',
+    });
+  }
+
+  private agentParticipant() {
+    return [...(this.room?.remoteParticipants.values() || [])].find((participant) => participant.isAgent);
   }
 
   async interrupt() {

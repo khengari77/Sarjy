@@ -37,6 +37,7 @@ from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
+from wordle_commands import is_wordle_command, parse_say_payload
 
 server = AgentServer()
 
@@ -214,6 +215,7 @@ class SarjyAgent(Agent):
         notify=None,
         fallback_llm=None,
         publish=None,
+        is_command=None,
     ):
         super().__init__(instructions=instructions)
         self.backend = backend
@@ -221,6 +223,7 @@ class SarjyAgent(Agent):
         self.notify = notify
         self.fallback_llm = fallback_llm
         self.publish = publish
+        self.is_command = is_command or (lambda _text: False)
         self.prepared: dict[str, dict] = {}
         self.commands: dict[str, dict | None] = {}
         # Jev's memory_op answer per user message, shared from the single command call; forced at most once.
@@ -259,6 +262,9 @@ class SarjyAgent(Agent):
         if proposal is None:
             return (None, None)
         return (proposal.get("confirmation_id"), proposal.get("confirmation_revision"))
+        # Exact Wordle commands are answered by the web client through
+        # sarjy.say; the conversational LLM must stay silent for those turns.
+        self.suppressed: set[str] = set()
 
     async def compile(self, message):
         if message.id not in self.prepared:
@@ -441,6 +447,9 @@ class SarjyAgent(Agent):
             yield frame
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
+        if self.is_command(new_message.text_content or ""):
+            self.suppressed.add(new_message.id)
+            return
         await self.compile(new_message)
 
     async def command_for(self, message) -> dict | None:
@@ -506,6 +515,9 @@ class SarjyAgent(Agent):
         # Also covers typed input and repeated inference after tool calls.
         user = _user_message(chat_ctx)
         if user is None:
+            return
+        if user.id in self.suppressed:
+            self.suppressed.discard(user.id)
             return
         snapshot = await self.compile(user)
         command = None if self.command_blocked_turn == user.id else await self.command_for(user)
@@ -811,6 +823,61 @@ async def publish_command(room, command: Mapping[str, Any]) -> None:
     await room.local_participant.publish_data(json.dumps(dict(command)).encode(), reliable=True, topic="sarjy.command")
 
 
+class RevealState:
+    """Whether the client is waiting for a spoken spoiler confirmation."""
+
+    pending: bool = False
+
+
+def resolve_say_request(data, participants) -> tuple[str | None, str | None]:
+    """Authenticate a sarjy.say RPC and validate its payload."""
+    caller = participants.get(data.caller_identity)
+    if caller is None or caller.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+        return None, "SARJY_SAY_FORBIDDEN"
+    try:
+        return parse_say_payload(data.payload), None
+    except ValueError:
+        return None, "SARJY_SAY_PAYLOAD_INVALID"
+
+
+async def perform_say(session, data, participants) -> str:
+    """Speak a validated reply without adding it to conversation history."""
+    text, error = resolve_say_request(data, participants)
+    if error is not None or text is None:
+        return json.dumps({"ok": False, "code": error})
+    await session.say(text, allow_interruptions=True, add_to_chat_ctx=False)
+    return json.dumps({"ok": True})
+
+
+def register_voice_controls(ctx, session, reveal: RevealState) -> None:
+    """Expose the client-owned speech RPC and the reveal-pending control flag."""
+
+    @ctx.room.local_participant.register_rpc_method("sarjy.say")
+    async def say(data: rtc.RpcInvocationData):
+        # Client-owned, non-LLM speech for exact commands. add_to_chat_ctx is
+        # false so game replies never become conversation history.
+        return await perform_say(session, data, ctx.room.remote_participants)
+
+    @ctx.room.on("data_received")
+    def on_data(packet: rtc.DataPacket):
+        apply_control(packet, reveal)
+
+
+def apply_control(packet, reveal: RevealState) -> None:
+    """Accept only human control messages, and only the supported flag."""
+    if packet.topic != "sarjy.control" or packet.participant is None:
+        return
+    if packet.participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+        return
+    try:
+        value = json.loads(packet.data)
+    except (TypeError, ValueError):
+        return
+    if not isinstance(value, dict) or value.get("type") != "wordle.reveal_pending":
+        return
+    reveal.pending = value.get("value") is True
+
+
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
     values = read_worker_environment()
@@ -821,6 +888,7 @@ async def entrypoint(ctx: JobContext):
         "x-session-id": session_id,
         "x-room-name": ctx.job.room.name,
     }
+    reveal = RevealState()
     async with httpx.AsyncClient(base_url=values["API_INTERNAL_URL"], headers=headers, timeout=15) as backend:
         response = await backend.post("/internal/agent/bootstrap")
         response.raise_for_status()
@@ -846,6 +914,7 @@ async def entrypoint(ctx: JobContext):
             notify=notify,
             fallback_llm=fallback_llm,
             publish=partial(publish_command, ctx.room),
+            is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending),
         )
         session = AgentSession(
             **providers,
@@ -861,6 +930,8 @@ async def entrypoint(ctx: JobContext):
         async def interrupt(data: rtc.RpcInvocationData):
             await session.interrupt()
             return "ok"
+
+        register_voice_controls(ctx, session, reveal)
 
         gone = asyncio.Event()
 
