@@ -8,12 +8,18 @@ server did not confirm.
 
 ## Mounting in the Memories tab
 
-The Living Cloud shell (`RightDrawer`, PR #120) is not on this branch, so this
-panel does not create a duplicate shell. Mount it once inside the right drawer's
-Memories tab, replacing the tab that currently renders `VoiceSettings`:
+The Living Cloud shell (`RightDrawer`, set up in #120) owns the right drawer.
+This panel does not create a duplicate shell: `RightDrawer` renders it through
+its optional `memoryPanel` snippet in the Memories tab, and
+`apps/web/src/routes/+page.svelte` supplies it once:
 
 ```svelte
-<MemoryPanel conversationId={conversation.current} />
+<RightDrawer {arabic}>
+  {#snippet memoryPanel()}
+    <MemoryPanel conversationId={conversation.current} />
+  {/snippet}
+  ...
+</RightDrawer>
 ```
 
 with:
@@ -21,6 +27,9 @@ with:
 ```ts
 import MemoryPanel from '$lib/memory/MemoryPanel.svelte';
 ```
+
+The Context tab points at the Memories tab for the inclusion/exclusion
+projection; it does not mount a second copy of the panel.
 
 `conversation.current` may be `null`; the panel then shows the owner's stored
 facts without included/excluded annotations and disables exclusion actions.
