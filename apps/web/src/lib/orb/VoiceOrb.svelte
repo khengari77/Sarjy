@@ -27,6 +27,10 @@
   let canvas: HTMLCanvasElement | undefined = $state();
   let tier: RendererTier = $state('static');
   let failed = $state(false);
+  let surfaceKey = $state(0);
+  let starting = false;
+  let surfaceGeneration = 0;
+  let stopRenderer: (() => void) | undefined;
 
   // Plain mutable bridge read by the animation loop; updated by the effect below.
   const renderState: OrbRenderState = {
@@ -52,17 +56,53 @@
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
     const probe = document.createElement('canvas');
     tier = selectRendererTier({ reducedMotion: reduced.matches, webglAvailable: Boolean(probe.getContext('webgl2')) });
-    let stop: (() => void) | undefined;
-    void tick().then(() => {
-      if (!canvas) return;
-      stop = startOrbRenderer(canvas, renderState, {
-        getPulse: () => pulse,
-        onTier: (value) => (tier = value),
-        onFailed: () => (failed = true),
-      });
-    });
-    return () => stop?.();
+    begin();
+    return () => {
+      surfaceGeneration += 1;
+      stopRenderer?.();
+      stopRenderer = undefined;
+    };
   });
+
+  function begin(startTier?: RendererTier) {
+    const token = ++surfaceGeneration;
+    void tick().then(() => {
+      // A newer remount or unmount wins over this pending start.
+      if (token !== surfaceGeneration || !canvas) return;
+      stopRenderer?.();
+      starting = true;
+      stopRenderer = startOrbRenderer(
+        canvas,
+        renderState,
+        {
+          getPulse: () => pulse,
+          onTier: handleTier,
+          onFailed: () => (failed = true),
+        },
+        startTier,
+      );
+      starting = false;
+    });
+  }
+
+  /**
+   * A canvas cannot hand out a 2D context once it owns a WebGL2 context, and a
+   * tier change that adds/removes the canvas leaves the renderer holding a
+   * detached node. Both need a fresh element, so remount the surface and start
+   * the next tier on it instead of collapsing to static.
+   */
+  function handleTier(value: RendererTier) {
+    const previous = tier;
+    tier = value;
+    if (starting) return;
+    const needsSurface =
+      (previous === 'enhanced' && value === 'light') || (previous === 'static' && value !== 'static');
+    if (!needsSurface) return;
+    stopRenderer?.();
+    stopRenderer = undefined;
+    surfaceKey += 1;
+    begin(value);
+  }
 
   $effect(() => {
     // Keep the renderer in sync with the derived presentation without
@@ -120,8 +160,10 @@
       {#if statusLabel}<span class="orb-state-text">{statusLabel}</span>{/if}
     </span>
   {:else}
-    <canvas bind:this={canvas} class="orb-canvas" style:opacity={presentation.motionPreset.opacity} aria-hidden="true"
-    ></canvas>
+    {#key surfaceKey}
+      <canvas bind:this={canvas} class="orb-canvas" style:opacity={presentation.motionPreset.opacity} aria-hidden="true"
+      ></canvas>
+    {/key}
   {/if}
   {#if presentation.showMicSlash}
     <span class="mic-slash" aria-hidden="true">🎙̸</span>

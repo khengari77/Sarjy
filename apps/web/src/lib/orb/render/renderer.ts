@@ -29,11 +29,12 @@ export function startOrbRenderer(
   canvas: HTMLCanvasElement,
   renderState: OrbRenderState,
   hooks: OrbRendererHooks,
+  startTier?: RendererTier,
 ): () => void {
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
   const probe = document.createElement('canvas');
   const webglAvailable = Boolean(probe.getContext('webgl2'));
-  let tier: RendererTier = selectRendererTier({ reducedMotion: reduced.matches, webglAvailable });
+  let tier: RendererTier = startTier ?? selectRendererTier({ reducedMotion: reduced.matches, webglAvailable });
   hooks.onTier(tier);
 
   let disposed = false;
@@ -126,7 +127,11 @@ export function startOrbRenderer(
   }
 
   const onMotionChange = () => {
-    setTier(selectRendererTier({ reducedMotion: reduced.matches, webglAvailable }));
+    const resolved = selectRendererTier({ reducedMotion: reduced.matches, webglAvailable });
+    // The tier ladder is downward-only: a renderer restarted on the 2D tier
+    // must not promote itself back to WebGL when motion preferences change.
+    const next = startTier === 'light' && resolved === 'enhanced' ? 'light' : resolved;
+    setTier(next);
     void tick().then(() => setup());
   };
   const onResize = () => sizer.refreshCss();

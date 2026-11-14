@@ -177,20 +177,63 @@ test.describe('Living Cloud fill and motion', () => {
     expect(stats.center).toBeGreaterThan(10);
     expect(stats.center).toBeGreaterThan(stats.rim * 0.5);
   });
+});
 
-  test('reduced-motion static fallback stays filled and labelled', async ({ page }) => {
-    await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto('/');
-    const orb = page.getByRole('button', { name: 'Start voice conversation' });
-    await expect(orb).toHaveAttribute('data-renderer', 'static');
-    await expect(orb.locator('.orb-static')).toHaveCount(1);
-    await expect(orb.locator('.orb-state-text')).toHaveText('Ready');
-    const stats = await cloudStats(page, await orb.screenshot());
-    expect(stats.center, 'static fallback must still show cloud').toBeGreaterThan(8);
-
-    const first = await orb.screenshot();
-    await page.waitForTimeout(600);
-    const second = await orb.screenshot();
-    expect(first.equals(second)).toBe(true);
+test('a low-FPS downgrade reaches the Canvas2D tier instead of collapsing to static', async ({ page }) => {
+  // ~18 fps: above the 12 fps static floor, below the 30 fps enhanced floor,
+  // so the downward ladder must choose 'light'.
+  await page.addInitScript(() => {
+    let nextId = 1;
+    const timers = new Map<number, number>();
+    window.requestAnimationFrame = (callback: FrameRequestCallback) => {
+      const id = nextId++;
+      const timer = window.setTimeout(() => {
+        timers.delete(id);
+        callback(performance.now());
+      }, 55);
+      timers.set(id, timer);
+      return id;
+    };
+    window.cancelAnimationFrame = (id: number) => {
+      const timer = timers.get(id);
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+        timers.delete(id);
+      }
+    };
   });
+  await page.goto('/?theme=light&phase=idle');
+  const orb = page.locator('.orb-button');
+  await expect(orb).not.toHaveAttribute('data-renderer', 'static', { timeout: 60000 });
+  await expect(orb, 'FPS downgrade must land on the Canvas2D tier').toHaveAttribute('data-renderer', 'light', {
+    timeout: 30000,
+  });
+  await expect(orb.locator('.orb-static')).toHaveCount(0);
+  await expect(orb.locator('canvas.orb-canvas')).toHaveCount(1);
+  const isCanvas2d = await page.evaluate(() => {
+    const surface = document.querySelector<HTMLCanvasElement>('canvas.orb-canvas');
+    return surface ? surface.getContext('2d') !== null : false;
+  });
+  expect(isCanvas2d, 'light tier must own a real 2D surface').toBe(true);
+  await page.waitForTimeout(700);
+  const stats = await cloudStats(page, await orb.screenshot());
+  expect(stats.center, 'Canvas2D downgrade must still draw a filled cloud').toBeGreaterThan(10);
+  expect(stats.center).toBeGreaterThan(stats.rim * 0.5);
+  await expect(page.locator('.status-line')).toHaveText(/Ready/);
+});
+
+test('reduced-motion static fallback stays filled and labelled', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  const orb = page.getByRole('button', { name: 'Start voice conversation' });
+  await expect(orb).toHaveAttribute('data-renderer', 'static');
+  await expect(orb.locator('.orb-static')).toHaveCount(1);
+  await expect(orb.locator('.orb-state-text')).toHaveText('Ready');
+  const stats = await cloudStats(page, await orb.screenshot());
+  expect(stats.center, 'static fallback must still show cloud').toBeGreaterThan(8);
+
+  const first = await orb.screenshot();
+  await page.waitForTimeout(600);
+  const second = await orb.screenshot();
+  expect(first.equals(second)).toBe(true);
 });

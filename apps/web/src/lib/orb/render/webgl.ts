@@ -1,3 +1,4 @@
+import type { ThemeName } from '../palette';
 import { hexToRgb } from './colors';
 import { FRAGMENT, VERTEX } from './shaders';
 import { currentTheme, paletteFor, watchTheme } from './theme';
@@ -35,10 +36,27 @@ function compile(gl: WebGL2RenderingContext, type: number, source: string): WebG
   return shader;
 }
 
+function paletteValues(theme: ThemeName): Float32Array {
+  const colours = paletteFor(theme);
+  const values = new Float32Array(18);
+  for (let index = 0; index < 6; index += 1) {
+    const rgb = hexToRgb(colours[index] ?? colours[0]);
+    values[index * 3] = rgb[0];
+    values[index * 3 + 1] = rgb[1];
+    values[index * 3 + 2] = rgb[2];
+  }
+  return values;
+}
+
 function discardShaders(gl: WebGL2RenderingContext, ...shaders: (WebGLShader | null)[]): void {
   for (const shader of shaders) {
     if (shader) gl.deleteShader(shader);
   }
+}
+
+function releaseProgram(gl: WebGL2RenderingContext, program: WebGLProgram, ...shaders: (WebGLShader | null)[]): void {
+  gl.deleteProgram(program);
+  discardShaders(gl, ...shaders);
 }
 
 export function setupWebgl(options: WebglOptions): (() => void) | null {
@@ -57,9 +75,7 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
   gl.attachShader(program, fs);
   gl.linkProgram(program);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    gl.deleteProgram(program);
-    gl.deleteShader(vs);
-    gl.deleteShader(fs);
+    releaseProgram(gl, program, vs, fs);
     options.onFailed();
     return null;
   }
@@ -85,17 +101,9 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     hasAccent: gl.getUniformLocation(program, 'uHasAccent'),
   };
 
-  const palette = new Float32Array(18);
   function applyPalette() {
     const theme = currentTheme();
-    const colors = paletteFor(theme);
-    for (let index = 0; index < 6; index += 1) {
-      const rgb = hexToRgb(colors[index] ?? colors[0]);
-      palette[index * 3] = rgb[0];
-      palette[index * 3 + 1] = rgb[1];
-      palette[index * 3 + 2] = rgb[2];
-    }
-    gl.uniform3fv(uniforms.colors, palette);
+    gl.uniform3fv(uniforms.colors, paletteValues(theme));
     // Sky Prism needs more body shade and saturation to stay legible on
     // #EAF6FF; Cosmic Cloud is already high contrast on #080F29.
     gl.uniform1f(uniforms.bodyShade, theme === 'light' ? 0.95 : 1);
@@ -112,6 +120,7 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
   let frame = 0;
   const start = performance.now();
   let last = start;
+  let lastFrame = start;
   let lastDrawn = -Infinity;
   const lowPower = typeof navigator !== 'undefined' && (navigator.hardwareConcurrency ?? 8) <= 4;
   const minFrameGap = lowPower ? 1000 / 30 - 1 : 0;
@@ -125,7 +134,14 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
   function draw(now: number) {
     if (options.isDisposed()) return;
     frame = requestAnimationFrame(draw);
-    if (document.hidden) return;
+    if (document.hidden) {
+      lastFrame = now;
+      return;
+    }
+    // Judge the browser's frame delivery, not our own low-power frame cap:
+    // a deliberate 30 fps skip must not read as a slow renderer.
+    const frameDelta = Math.min(64, now - lastFrame);
+    lastFrame = now;
     if (now - lastDrawn < minFrameGap) return;
     lastDrawn = now;
     const delta = Math.min(64, now - last);
@@ -148,7 +164,7 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     ];
     const accent = options.renderState.accent ? hexToRgb(options.renderState.accent) : [0, 0, 0];
     options.smoothMotion(delta);
-    options.monitorFps(delta);
+    options.monitorFps(frameDelta);
     const motion = options.renderState.motion;
 
     gl.uniform2f(uniforms.resolution, canvas.width, canvas.height);
@@ -171,8 +187,8 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     canvas.removeEventListener('webglcontextlost', onLost);
     stopThemeWatch();
     gl.deleteVertexArray(vao);
-    gl.deleteProgram(program);
-    gl.deleteShader(vs);
-    gl.deleteShader(fs);
+    releaseProgram(gl, program, vs, fs);
+    // Drop the GPU context eagerly; the element is about to be replaced.
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
   };
 }
