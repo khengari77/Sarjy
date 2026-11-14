@@ -849,6 +849,67 @@ def test_discard_is_durable_and_replay_cannot_save(tmp_path):
         assert memory_rows(file) == []
 
 
+def test_turn_replay_preserves_proposal_identity_and_terminal_state(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+
+        proposal = turn(client, headers, "I prefer tea", "replay-discard").json()["memory_proposal"]
+        confirmation_id = proposal["confirmation_id"]
+        discarded = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "discard"}
+        )
+        assert discarded.status_code == 200 and discarded.json()["status"] == "discarded"
+
+        with closing(sqlite3.connect(file)) as db:
+            before = db.execute(
+                "SELECT id,text,status,created_at,snapshot FROM turns WHERE request_id='replay-discard'"
+            ).fetchone()
+
+        replayed = turn(client, headers, "I prefer tea", "replay-discard")
+        assert replayed.status_code == 200
+        replayed_proposal = replayed.json()["memory_proposal"]
+        assert replayed_proposal["confirmation_id"] == confirmation_id
+        assert replayed_proposal["confirmation_revision"] == proposal["confirmation_revision"]
+        assert replayed_proposal["token"] is None
+        assert replayed_proposal["state"] == "discarded"
+        assert replayed_proposal["outcome"] == "discarded"
+
+        # The replayed turn cannot be saved: the original token stays terminal
+        # and there is no new writable token.
+        late_save = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "save"}
+        )
+        assert late_save.status_code == 409
+        assert late_save.json()["detail"]["code"] == "MEMORY_PROPOSAL_RESOLVED"
+        assert memory_rows(file) == []
+
+        with closing(sqlite3.connect(file)) as db:
+            after = db.execute(
+                "SELECT id,text,status,created_at,snapshot FROM turns WHERE request_id='replay-discard'"
+            ).fetchone()
+        assert after == before
+
+        saved_proposal = turn(client, headers, "I prefer coffee", "replay-save").json()["memory_proposal"]
+        saved_id = saved_proposal["confirmation_id"]
+        saved = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": saved_proposal["token"], "decision": "save"},
+        )
+        assert saved.status_code == 200 and saved.json()["status"] == "saved"
+
+        replayed_saved = turn(client, headers, "I prefer coffee", "replay-save").json()["memory_proposal"]
+        assert replayed_saved["confirmation_id"] == saved_id
+        assert replayed_saved["token"] is None
+        assert replayed_saved["state"] == "saved"
+        assert replayed_saved["outcome"] == "saved"
+        assert [row[0] for row in memory_rows(file) if row[2] == "active"] == ["I prefer coffee"]
+        assert len([row for row in memory_rows(file) if row[0] == "I prefer coffee"]) == 1
+
+
 def test_replacement_marker_must_be_final_not_an_idiom():
     assert parse_capture("I prefer tea now").replaces is True
     assert parse_capture("I prefer tea instead").replaces is True
@@ -1099,7 +1160,7 @@ def test_discard_clarification_is_terminal(tmp_path):
             json={"token": detail["token"], "decision": "replace"},
         )
         assert replay.status_code == 409
-        assert replay.json()["detail"]["code"] == "DECISION_ALREADY_FINAL"
+        assert replay.json()["detail"]["code"] == "MEMORY_PROPOSAL_RESOLVED"
 
         # Even the pre-clarification token cannot reopen a discarded revision.
         reopened = client.post(
