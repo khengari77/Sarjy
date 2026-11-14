@@ -1,6 +1,8 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
 import { waitForAgent, type StartupSignal } from './agentStartup';
+import { disposeAudioResources } from './disposeAudio';
+import { bindRoomEvents, disconnectRoomInBackground } from './roomLifecycle';
 import { transcriptMetadata } from './transcriptSpeaker';
 
 type VoiceEventBody =
@@ -38,6 +40,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   private sessionEpoch = 0;
   private sawTranscriptionSegments = false;
   private startup: StartupSignal | null = null;
+  private releaseBindings: (() => void) | null = null;
 
   get epoch() {
     return this.sessionEpoch;
@@ -60,7 +63,10 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   }
 
   async connect(config: SessionConfig) {
-    await this.disconnect();
+    // A failed previous-call teardown must never fail the call replacing it.
+    await this.disconnect().catch((error: unknown) =>
+      console.warn('[Sarjy] Previous voice call teardown failed', error instanceof Error ? error.name : 'unknown'),
+    );
     this.sessionEpoch += 1;
     const epoch = this.sessionEpoch;
     this.sawTranscriptionSegments = false;
@@ -68,15 +74,17 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     this.startup = startup;
     const room = new Room();
     this.room = room;
+    const bindings = bindRoomEvents(room);
+    this.releaseBindings = () => bindings.dispose();
 
-    room.on(RoomEvent.TrackSubscribed, (track) => {
+    bindings.on(RoomEvent.TrackSubscribed, (track) => {
       if (!this.active(room, epoch) || track.kind !== Track.Kind.Audio) return;
       const element = track.attach();
       this.audio.add(element);
       document.body.appendChild(element);
       this.attachAnalyser(element);
     });
-    room.on(RoomEvent.TrackUnsubscribed, (track) => {
+    bindings.on(RoomEvent.TrackUnsubscribed, (track) => {
       if (!this.active(room, epoch)) return;
       for (const element of track.detach()) {
         this.detachAnalyser(element);
@@ -84,17 +92,17 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
         this.audio.delete(element);
       }
     });
-    room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+    bindings.on(RoomEvent.AudioPlaybackStatusChanged, () => {
       if (this.active(room, epoch) && !room.canPlaybackAudio)
         this.emit({ type: 'audio-blocked', code: 'AUDIO_PLAYBACK_BLOCKED' });
     });
-    room.on(RoomEvent.Reconnecting, () => {
+    bindings.on(RoomEvent.Reconnecting, () => {
       if (this.active(room, epoch)) this.emit({ type: 'status', source: 'transport', text: 'reconnecting' });
     });
-    room.on(RoomEvent.Reconnected, () => {
+    bindings.on(RoomEvent.Reconnected, () => {
       if (this.active(room, epoch)) this.emit({ type: 'status', source: 'transport', text: 'connected' });
     });
-    room.on(RoomEvent.Disconnected, () => {
+    bindings.on(RoomEvent.Disconnected, () => {
       if (!this.active(room, epoch)) return;
       this.emit({ type: 'status', source: 'transport', text: 'disconnected' });
       if (this.startup === startup) {
@@ -103,11 +111,11 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
         startup.wake = null;
       }
     });
-    room.on(RoomEvent.ParticipantAttributesChanged, (attributes) => {
+    bindings.on(RoomEvent.ParticipantAttributesChanged, (attributes) => {
       const state = attributes['lk.agent.state'];
       if (this.active(room, epoch) && state) this.emit({ type: 'status', source: 'agent', text: state });
     });
-    room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+    bindings.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
       if (!this.active(room, epoch) || topic !== 'sarjy.error' || !participant?.isAgent) return;
       try {
         const event = JSON.parse(new TextDecoder().decode(payload));
@@ -118,13 +126,13 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
         /* malformed control payload: ignore rather than crash the session */
       }
     });
-    room.on(RoomEvent.MediaDevicesError, () => {
+    bindings.on(RoomEvent.MediaDevicesError, () => {
       if (this.active(room, epoch)) this.emit({ type: 'error', code: 'MICROPHONE_UNAVAILABLE' });
     });
     // LiveKit exposes real partial/final segments. Prefer them and keep the
     // text-stream reader only as a fallback for publishers that send no
     // segments; mixing both would duplicate each utterance.
-    room.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
+    bindings.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
       if (!this.active(room, epoch)) return;
       this.sawTranscriptionSegments = true;
       for (const segment of segments) {
@@ -255,25 +263,23 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     await this.disconnectRoom();
   }
 
-  private async disconnectRoom() {
+  private disconnectRoom() {
     this.startup?.wake?.();
     this.startup = null;
     const room = this.room;
     this.room = null;
-    if (room) {
-      await room.disconnect();
-      room.removeAllListeners();
-    }
-    for (const element of this.audio) {
-      this.detachAnalyser(element);
-      element.pause();
-      element.srcObject = null;
-      element.remove();
-    }
-    this.audio.clear();
-    if (this.audioContext) {
-      void this.audioContext.close().catch(() => {});
-      this.audioContext = null;
-    }
+    // Detach resource ownership before awaiting the old room. A replacement
+    // connection may start while disconnect is pending or rejecting, so the
+    // outgoing microphone and playback stop synchronously here first.
+    const audio = this.audio;
+    const analysers = this.analysers;
+    const audioContext = this.audioContext;
+    this.audio = new Set();
+    this.analysers = new Map();
+    this.audioContext = null;
+    disposeAudioResources(audio, analysers, audioContext);
+    this.releaseBindings?.();
+    this.releaseBindings = null;
+    disconnectRoomInBackground(room);
   }
 }

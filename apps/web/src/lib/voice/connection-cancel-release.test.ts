@@ -195,25 +195,46 @@ describe('reconnect after a failed release', () => {
 });
 
 describe('cancel with a stalled local transport', () => {
-  it('releases the backend session without waiting for local teardown', async () => {
+  it('issues the backend release while the local cancel is still running', async () => {
     vi.useFakeTimers();
     const { state, connection, runtime } = await liveConnection();
+    const order: string[] = [];
     let finishLocal!: () => void;
-    runtime.cancelConnect = () =>
-      new Promise<void>((resolve) => {
+    runtime.cancelConnect = () => {
+      order.push('local-cancel-started');
+      return new Promise<void>((resolve) => {
         finishLocal = resolve;
       });
+    };
+    mocks.end.mockImplementationOnce(async () => {
+      order.push('release-issued');
+    });
 
     const cancelling = connection.cancelConnect();
     await vi.advanceTimersByTimeAsync(0);
-    // The local cancel is still pending, yet the server session is released.
-    expect(mocks.end).toHaveBeenCalledWith(config);
+
+    // The release is issued after local teardown starts and without waiting
+    // for it to settle; state.live is already cleared.
+    expect(order).toEqual(['local-cancel-started', 'release-issued']);
     expect(state.live).toBeNull();
 
     finishLocal();
     await vi.advanceTimersByTimeAsync(0);
     await cancelling;
     expect(state.voiceErrorCode).toBe('');
+  });
+
+  it('releases the backend session even when the local cancel never settles', async () => {
+    vi.useFakeTimers();
+    const { state, connection, runtime } = await liveConnection();
+    runtime.cancelConnect = () => new Promise<void>(() => {});
+
+    void connection.cancelConnect();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The local teardown can hang forever; the admitted session is still released.
+    expect(mocks.end).toHaveBeenCalledWith(config);
+    expect(state.live).toBeNull();
   });
 });
 

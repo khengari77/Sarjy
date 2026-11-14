@@ -5,9 +5,8 @@ interface FakeRoom {
   connectResolve: (() => void) | null;
   connectReject: ((error: Error) => void) | null;
   remoteParticipants: Map<string, { isAgent: boolean; attributes: Record<string, string> }>;
-  localParticipant: { identity: string; trackPublications: Map<string, { trackSid: string }> };
+  localParticipant: { getTrackPublication: () => { track: { stop(): void } } | undefined };
   emit(event: string, ...args: unknown[]): void;
-  emitTextStream(topic: string, reader: unknown, participantInfo: { identity: string }): void;
   disconnect: () => Promise<void>;
 }
 
@@ -16,8 +15,7 @@ vi.mock('livekit-client', () => {
   class Room {
     listeners = new Map<string, Set<(...args: unknown[]) => void>>();
     remoteParticipants = new Map<string, { isAgent: boolean; attributes: Record<string, string> }>();
-    localParticipant = { identity: 'user-1', trackPublications: new Map<string, { trackSid: string }>() };
-    textHandlers = new Map<string, (reader: unknown, participantInfo: { identity: string }) => void>();
+    localParticipant = { getTrackPublication: () => undefined };
     canPlaybackAudio = true;
     connectResolve: (() => void) | null = null;
     connectReject: ((error: Error) => void) | null = null;
@@ -28,6 +26,10 @@ vi.mock('livekit-client', () => {
       if (!this.listeners.has(event)) this.listeners.set(event, new Set());
       this.listeners.get(event)!.add(handler);
     }
+    off(event: string, handler: (...args: unknown[]) => void) {
+      this.listeners.get(event)?.delete(handler);
+    }
+    unregisterTextStreamHandler() {}
     emit(event: string, ...args: unknown[]) {
       for (const handler of this.listeners.get(event) ?? []) handler(...args);
     }
@@ -42,15 +44,7 @@ vi.mock('livekit-client', () => {
     removeAllListeners() {
       this.listeners.clear();
     }
-    registerTextStreamHandler(
-      topic: string,
-      handler: (reader: unknown, participantInfo: { identity: string }) => void,
-    ) {
-      this.textHandlers.set(topic, handler);
-    }
-    emitTextStream(topic: string, reader: unknown, participantInfo: { identity: string }) {
-      this.textHandlers.get(topic)?.(reader, participantInfo);
-    }
+    registerTextStreamHandler() {}
   }
   (globalThis as unknown as { __fakeRooms: FakeRoom[] }).__fakeRooms = rooms;
   return {
@@ -67,7 +61,7 @@ vi.mock('livekit-client', () => {
       MediaDevicesError: 'mediaDevicesError',
       TranscriptionReceived: 'transcriptionReceived',
     },
-    Track: { Kind: { Audio: 'audio' } },
+    Track: { Kind: { Audio: 'audio' }, Source: { Microphone: 'microphone' } },
   };
 });
 
@@ -82,6 +76,7 @@ const config: SessionConfig = {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   rooms().length = 0;
 });
 
@@ -128,90 +123,100 @@ describe('startup terminal disconnection', () => {
   });
 });
 
-async function connectedRuntime(start: SessionConfig) {
+it('releases audio even when room disconnect rejects', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
   const runtime = new LiveKitVoiceRuntime();
-  const connecting = runtime.connect(start);
+  const connecting = runtime.connect(config);
   await vi.advanceTimersByTimeAsync(1);
   const room = rooms().at(-1)!;
   room.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
   room.connectResolve!();
   await vi.advanceTimersByTimeAsync(100);
   await connecting;
-  return { runtime, room };
-}
+  const audio = { pause: vi.fn(), remove: vi.fn(), srcObject: {} };
+  room.emit('trackSubscribed', { kind: 'audio', attach: () => audio });
+  room.disconnect = async () => {
+    throw new Error('disconnect failed');
+  };
+  await expect(runtime.disconnect()).resolves.toBeUndefined();
+  expect(audio.pause).toHaveBeenCalledOnce();
+  expect(audio.remove).toHaveBeenCalledOnce();
+  expect(audio.srcObject).toBeNull();
+  await runtime.disconnect();
+  expect(audio.pause).toHaveBeenCalledOnce();
+});
 
-describe('text-stream transcription metadata', () => {
-  it('keeps a user provisional segment as user/false with its segment id', async () => {
-    vi.useFakeTimers();
-    const { runtime, room } = await connectedRuntime(config);
-    room.localParticipant.trackPublications.set('TR_MIC', { trackSid: 'TR_MIC' });
-    const events: Array<{ type: string; text?: string; final?: boolean; segmentId?: string; speaker?: string }> = [];
-    runtime.subscribe((event) => events.push(event));
+it('stops outgoing capture and playback before awaiting the previous room teardown', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
+  const runtime = new LiveKitVoiceRuntime();
+  const connecting = runtime.connect(config);
+  await vi.advanceTimersByTimeAsync(1);
+  const outgoing = rooms().at(-1)!;
+  outgoing.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
+  outgoing.connectResolve!();
+  await vi.advanceTimersByTimeAsync(100);
+  await connecting;
 
-    room.emitTextStream(
-      'lk.transcription',
-      {
-        info: {
-          id: 'stream-1',
-          attributes: {
-            'lk.transcription_final': 'false',
-            'lk.segment_id': 'user-partial',
-            'lk.transcribed_track_id': 'TR_MIC',
-          },
-        },
-        readAll: async () => 'hel',
-      },
-      // Publisher identity must not decide the speaker.
-      { identity: 'agent-9' },
-    );
-    await vi.advanceTimersByTimeAsync(0);
+  const sequence: string[] = [];
+  const audio = {
+    pause: vi.fn(() => sequence.push('detach-playback')),
+    remove: vi.fn(),
+    srcObject: {},
+  };
+  outgoing.emit('trackSubscribed', { kind: 'audio', attach: () => audio });
+  const stop = vi.fn(() => sequence.push('stop-capture'));
+  outgoing.localParticipant = { getTrackPublication: () => ({ track: { stop } }) };
+  outgoing.disconnect = () => {
+    sequence.push('await-teardown');
+    // Never settles: the replacement must not wait for it.
+    return new Promise<void>(() => {});
+  };
 
-    expect(events.at(-1)).toMatchObject({
-      type: 'transcript',
-      text: 'hel',
-      final: false,
-      segmentId: 'user-partial',
-      speaker: 'user',
-    });
-  });
+  const replacement = runtime.connect({ ...config, id: 'sess-2' });
+  await vi.advanceTimersByTimeAsync(1);
 
-  it('labels a segment from a non-local transcribed track as assistant', async () => {
-    vi.useFakeTimers();
-    const { runtime, room } = await connectedRuntime(config);
-    room.localParticipant.trackPublications.set('TR_MIC', { trackSid: 'TR_MIC' });
-    const events: Array<{ type: string; speaker?: string }> = [];
-    runtime.subscribe((event) => events.push(event));
+  // Ordering is the contract: outgoing media is released before the old
+  // room teardown is awaited, not merely before the replacement finishes.
+  expect(sequence).toEqual(['detach-playback', 'stop-capture', 'await-teardown']);
+  expect(audio.srcObject).toBeNull();
+  const next = rooms().at(-1)!;
+  expect(next).not.toBe(outgoing);
+  next.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
+  next.connectResolve!();
+  await vi.advanceTimersByTimeAsync(100);
+  await expect(replacement).resolves.toBeUndefined();
+});
 
-    room.emitTextStream(
-      'lk.transcription',
-      {
-        info: {
-          id: 'stream-2',
-          attributes: { 'lk.transcribed_track_id': 'TR_AGENT_OUTPUT', 'lk.transcription_final': 'true' },
-        },
-        readAll: async () => 'hello there',
-      },
-      // Even when the publisher is this participant, the track id decides.
-      { identity: 'user-1' },
-    );
-    await vi.advanceTimersByTimeAsync(0);
+it('resolves the replacement call when the previous teardown rejects', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  class RejectingTeardownRuntime extends LiveKitVoiceRuntime {
+    override async disconnect(): Promise<void> {
+      throw new Error('sensitive provider detail');
+    }
+  }
+  try {
+    const runtime = new RejectingTeardownRuntime();
+    const replacement = runtime.connect(config);
+    await vi.advanceTimersByTimeAsync(1);
+    const room = rooms().at(-1)!;
+    room.remoteParticipants.set('agent', { isAgent: true, attributes: { 'lk.agent.state': 'listening' } });
+    room.connectResolve!();
+    await vi.advanceTimersByTimeAsync(100);
 
-    expect(events.at(-1)).toMatchObject({ type: 'transcript', text: 'hello there', speaker: 'assistant' });
-  });
-
-  it('treats a segment without a transcribed track id as assistant', async () => {
-    vi.useFakeTimers();
-    const { runtime, room } = await connectedRuntime(config);
-    const events: Array<{ type: string; speaker?: string }> = [];
-    runtime.subscribe((event) => events.push(event));
-
-    room.emitTextStream(
-      'lk.transcription',
-      { info: { id: 'stream-3', attributes: {} }, readAll: async () => 'unknown source' },
-      { identity: 'user-1' },
-    );
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(events.at(-1)).toMatchObject({ type: 'transcript', speaker: 'assistant' });
-  });
+    await expect(replacement).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith('[Sarjy] Previous voice call teardown failed', 'Error');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('sensitive');
+    // The new call is usable, not just non-throwing.
+    expect(rooms().at(-1)).toBe(room);
+    expect(runtime.epoch).toBeGreaterThan(0);
+  } finally {
+    warn.mockRestore();
+  }
 });

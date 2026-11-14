@@ -4,6 +4,8 @@ import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
 import { errorCode } from './errors';
 import { startSessionAttempt } from './sessionAttempt';
 import { createSessionReleaser } from './sessionRelease';
+import { cancelConnection } from './cancelConnection';
+import { applyFailedRelease } from './releaseOutcome';
 import { interruptVoice, sendVoiceText, toggleVoiceMute } from './voiceControls';
 import type { MeterController } from './meters';
 
@@ -87,17 +89,13 @@ function handleVoiceEvent(
   }
 }
 
-function ownsLive(state: VoiceState, sessionId: string) {
-  return state.live?.id === sessionId;
-}
-
 /** Read through a call so a session set while a release was awaited is visible. */
 function liveSessionId(state: VoiceState): string | null {
   return state.live?.id ?? null;
 }
 
 function clearOwnedLive(state: VoiceState, deps: ConnectionDeps, sessionId: string) {
-  if (!ownsLive(state, sessionId)) return;
+  if (state.live?.id !== sessionId) return;
   deps.meters.teardownMeters();
   state.live = null;
   state.muted = true;
@@ -106,55 +104,19 @@ function clearOwnedLive(state: VoiceState, deps: ConnectionDeps, sessionId: stri
   state.provisional = null;
 }
 
-interface CancelContext {
-  state: VoiceState;
-  deps: ConnectionDeps;
-  takeSession(): SessionConfig | null;
-  releaseSession(session: SessionConfig): Promise<boolean>;
-}
-
-async function cancelConnection(ctx: CancelContext): Promise<void> {
-  const { state, deps } = ctx;
-  state.connecting = false;
-  state.voiceErrorCode = '';
-  state.transportStatus = 'idle';
-  state.agentState = null;
-  // A cancel can land after connect() resolved, so a live session is taken and
-  // released too: leaving it admitted while its transport is torn down would
-  // present a dead session as live to the next connect().
-  const session = ctx.takeSession();
-  if (session) clearOwnedLive(state, deps, session.id);
-  // Start the local teardown without awaiting it: media detach happens
-  // synchronously inside cancelConnect(), while a stalled transport must not
-  // gate the backend release (that would leak the admitted session).
-  const localCancel = deps
-    .getRuntime()
-    .cancelConnect()
-    .catch(() => {});
-  if (!session) {
-    await localCancel;
-    return;
-  }
-  const releasedOk = await ctx.releaseSession(session);
-  // A replacement can become live while the release is in flight. Never
-  // overwrite it with the failed old session.
-  const replacedByLive = state.live !== null && state.live.id !== session.id;
-  if (!releasedOk && replacedByLive) {
-    console.warn('[Sarjy] Voice session release failed; replacement kept live', { sessionId: session.id });
-  } else if (!releasedOk) {
-    state.live = session;
-    state.muted = true;
-    state.voiceErrorCode = 'SESSION_RELEASE_FAILED';
-    state.transportStatus = 'disconnected';
-  }
-  await localCancel;
-}
-
 export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   let attemptCounter = 0;
   const endingSessions = new Set<string>();
   let pendingSession: SessionConfig | null = null;
   const releaseSession = createSessionReleaser();
+  // Read through calls so a session created while a release was awaited is
+  // visible to the guards below.
+  const pendingSessionId = () => pendingSession?.id ?? null;
+  const replacingSession = (sessionId: string) => {
+    const liveId = liveSessionId(state);
+    const pendingId = pendingSessionId();
+    return (liveId !== null && liveId !== sessionId) || (pendingId !== null && pendingId !== sessionId);
+  };
   async function connect(microphone: boolean) {
     if (state.live) {
       if (microphone && state.muted) await toggleVoiceMute(state, deps);
@@ -213,6 +175,8 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         return session;
       },
       releaseSession,
+      clearOwnedLive: (sessionId) => clearOwnedLive(state, deps, sessionId),
+      isReplacing: replacingSession,
     });
   }
 
@@ -239,20 +203,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         .disconnect()
         .catch(() => {});
       const releasedOk = await releaseSession(session);
-      if (!releasedOk && session) {
-        const liveId = liveSessionId(state);
-        if (liveId !== null && liveId !== session.id) {
-          // A replacement connected while the release was in flight; keep it.
-          console.warn('[Sarjy] Voice session release failed; replacement kept live', { sessionId: session.id });
-        } else {
-          // Do not report a clean idle state while the backend session may
-          // still be admitted. Keeping it live makes a second End retry it.
-          state.live = session;
-          state.muted = true;
-          state.voiceErrorCode = 'SESSION_RELEASE_FAILED';
-          state.transportStatus = 'disconnected';
-        }
-      }
+      if (!releasedOk && session) applyFailedRelease(state, session, replacingSession(session.id));
       await deps.refresh().catch(() => {});
     } finally {
       if (session) endingSessions.delete(session.id);
