@@ -79,18 +79,14 @@ async function cloudStats(page: Page, png: Buffer): Promise<CloudStats> {
 }
 
 /**
- * Stamp `data-theme` before styles apply. Reading the query string keeps a
- * single init script valid across navigations (registering one per theme would
- * leave the first theme's script running for later loads).
+ * Select the theme for this navigation. The preference goes through
+ * localStorage rather than `data-theme` because app.html resolves storage
+ * before paint and would overwrite an attribute set too early.
  */
 async function installTheme(page: Page) {
   await page.addInitScript(() => {
-    const apply = () => {
-      const value = new URLSearchParams(location.search).get('theme');
-      if (value === 'light' || value === 'dark') document.documentElement.dataset.theme = value;
-    };
-    if (document.documentElement) apply();
-    else document.addEventListener('DOMContentLoaded', apply, { once: true });
+    const value = new URLSearchParams(location.search).get('theme');
+    if (value === 'light' || value === 'dark') localStorage.setItem('sarjy-theme', value);
   });
 }
 
