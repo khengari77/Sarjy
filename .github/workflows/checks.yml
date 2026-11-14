@@ -28,7 +28,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
       - run: uv sync --locked
       - uses: pnpm/action-setup@v4
         with:
@@ -51,6 +51,8 @@ jobs:
           CI: "true"
       - run: pnpm --dir apps/web test:browser
       - run: pnpm --dir apps/web test:proxy
+      - name: Reviewer gate (dev + production build)
+        run: pnpm --dir apps/web test:auth
       - run: pnpm --dir apps/web test:deadline
       - run: pnpm --dir apps/web test:smoke-setup
 
@@ -106,7 +108,7 @@ jobs:
       - name: Dispatcher lease recovery
         run: uv run pytest -q tests/test_action_leases_postgres.py
         env:
-          REQUIRE_DAY2_INTEGRATION: '1'
+          REQUIRE_DAY2_INTEGRATION: "1"
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
       - name: Memory claim concurrency
@@ -115,7 +117,7 @@ jobs:
         # is attributable. A skip fails the step via tests/conftest.py.
         run: uv run pytest -q tests/test_memory_claims_postgres.py
         env:
-          REQUIRE_DAY2_INTEGRATION: '1'
+          REQUIRE_DAY2_INTEGRATION: "1"
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
       - name: Wordle per-game concurrency
@@ -124,8 +126,8 @@ jobs:
         # tests/conftest.py.
         run: uv run pytest -v tests/test_wordle_postgres.py
         env:
-          REQUIRE_DAY2_INTEGRATION: '1'
-          REQUIRE_WORDLE_POSTGRES: '1'
+          REQUIRE_DAY2_INTEGRATION: "1"
+          REQUIRE_WORDLE_POSTGRES: "1"
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
       - name: Real vector and integration checks
@@ -133,6 +135,6 @@ jobs:
           uv run python -c "import sys; sys.path.insert(0, 'apps/api'); import app.services.memory, app.services.context_operations, app.domain.weather_permissions"
           uv run pytest -q tests/test_memory_postgres.py tests/test_memory_capture_postgres.py tests/test_day2_integration.py tests/test_memory_transaction_boundary.py tests/test_tool_operations_postgres.py tests/test_context_bounded_retrieval.py
         env:
-          REQUIRE_DAY2_INTEGRATION: '1'
+          REQUIRE_DAY2_INTEGRATION: "1"
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
