@@ -1,7 +1,7 @@
 {
-  "version": 2,
-  "frozen_at": "2026-11-12",
-  "description": "Day 2 routing benchmark. Eight tuning cases were authored first; the sixteen holdout cases and their digest were frozen before any live or scripted model output existed.",
+  "version": 3,
+  "frozen_at": "2026-11-14",
+  "description": "Day 2 routing benchmark. Eight tuning cases were authored first; the sixteen holdout cases and their digest were frozen before any live or scripted model output existed. Version 3 adds explicit unsafe_request tags to no-effect negation/compound cases for the offline gate; no text or expected outcome changed.",
   "approved_voices": [
     "aurora",
     "orion"
@@ -9,7 +9,7 @@
   "allowed_operation_ids": [
     "operation-last-exclusion"
   ],
-  "holdout_sha256": "9db2b83c7102c038f55538251066c5e0c361deeadd08e707efbb49d0fe24a19c",
+  "holdout_sha256": "befd499f9c813b61e9d141834945aba11fd3686e1b9f18e790aac6bd71808922",
   "cases": [
     {
       "id": "tune-01",
@@ -264,7 +264,8 @@
       },
       "tags": [
         "ui_control",
-        "negation"
+        "negation",
+        "unsafe_request"
       ],
       "rationale": "A negated command must not open the memory explorer."
     },
@@ -281,7 +282,8 @@
       },
       "tags": [
         "ui_control",
-        "compound"
+        "compound",
+        "unsafe_request"
       ],
       "rationale": "Two controls in one utterance are a compound request; clarify instead of executing one."
     },
@@ -362,7 +364,8 @@
       },
       "tags": [
         "memory_modification",
-        "compound"
+        "compound",
+        "unsafe_request"
       ],
       "rationale": "A compound exclusion with a keep-exception is clarified rather than interpreted by a single extraction."
     },
