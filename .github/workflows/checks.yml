@@ -112,7 +112,7 @@ jobs:
         # FOR UPDATE is a no-op on SQLite; this step is the only coverage of
         # the PostgreSQL game-row serialization. A skip fails the step via
         # tests/conftest.py.
-        run: uv run pytest -q tests/test_wordle_postgres.py
+        run: uv run pytest -v tests/test_wordle_postgres.py
         env:
           REQUIRE_DAY2_INTEGRATION: '1'
           REQUIRE_WORDLE_POSTGRES: '1'
