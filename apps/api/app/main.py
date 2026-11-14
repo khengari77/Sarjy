@@ -5,7 +5,8 @@ persistence, providers and middleware together.
 """
 
 import asyncio
-from contextlib import asynccontextmanager, suppress
+import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import event
@@ -39,8 +40,20 @@ async def _stop_refresh_task(task) -> None:
     if task is None:
         return
     task.cancel()
-    with suppress(asyncio.CancelledError):
+    try:
         await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:  # noqa: BLE001 - a failed refresh task must not block shutdown
+        logging.getLogger(__name__).exception("wordle refresh task failed")
+
+
+async def _shutdown(refresh_task, engine) -> None:
+    """Always dispose the engine, whatever the refresh task did."""
+    try:
+        await _stop_refresh_task(refresh_task)
+    finally:
+        await engine.dispose()
 
 
 def create_app(
@@ -84,8 +97,7 @@ def create_app(
                         await db.commit()
             yield
         finally:
-            await _stop_refresh_task(refresh_task)
-            await engine.dispose()
+            await _shutdown(refresh_task, engine)
 
     app = FastAPI(
         title="Sarjy API",

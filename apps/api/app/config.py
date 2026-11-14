@@ -1,4 +1,5 @@
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,6 +41,14 @@ class Settings(BaseSettings):
     # Optional pre-warm hour (0-23) in ``wordle_timezone``.  When unset only
     # the protected refresh endpoint and lazy request-time fetch run.
     wordle_refresh_hour: int | None = Field(default=None, ge=0, le=23)
+
+    @model_validator(mode="after")
+    def validate_wordle_timezone(self):
+        try:
+            ZoneInfo(self.wordle_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("WORDLE_TIMEZONE_INVALID") from exc
+        return self
 
     @model_validator(mode="after")
     def validate_deepseek_budget(self):
