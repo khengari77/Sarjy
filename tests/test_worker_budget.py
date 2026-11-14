@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -72,6 +73,62 @@ def test_exhausted_budget_does_not_forward_synthesis_text(monkeypatch, max_outpu
     asyncio.run(run())
     assert forwarded == []
     assert notifications == ["DAILY_BUDGET_EXHAUSTED"]
+
+
+def test_expanded_pronunciation_is_reserved_before_synthesis(monkeypatch):
+    requests = []
+    forwarded = []
+
+    def backend(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    async def synthesize(agent, text, model_settings):
+        async for part in text:
+            assert requests[-1]["characters"] == len(part)
+            forwarded.append(part)
+            yield "audio"
+
+    monkeypatch.setattr(Agent.default, "tts_node", synthesize)
+
+    async def text():
+        for part in ["It is 20°", "C, wind 15 k", "m/", "h."]:
+            yield part
+
+    async def run():
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = agent_for(client, instructions="Authoritative instructions.")
+            agent.pipeline["llm"]["language"] = "en"
+            assert [frame async for frame in agent.tts_node(text(), None)] == ["audio"]
+
+    asyncio.run(run())
+    spoken = "".join(forwarded)
+    assert spoken == "It is 20 degrees Celsius, wind 15 kilometres per hour."
+    assert sum(r["characters"] for r in requests) == len(spoken)
+
+
+def test_expanded_text_cannot_bypass_denied_budget(monkeypatch):
+    forwarded = []
+
+    async def synthesize(agent, text, model_settings):
+        async for part in text:
+            forwarded.append(part)
+            yield "audio"
+
+    monkeypatch.setattr(Agent.default, "tts_node", synthesize)
+
+    async def text():
+        yield "20°C"
+
+    async def run():
+        transport = httpx.MockTransport(lambda request: httpx.Response(429, json={}))
+        async with httpx.AsyncClient(base_url="http://test", transport=transport) as client:
+            agent = agent_for(client)
+            with pytest.raises(httpx.HTTPStatusError):
+                [frame async for frame in agent.tts_node(text(), None)]
+
+    asyncio.run(run())
+    assert forwarded == []
 
 
 def test_request_bounds_accept_every_published_tier_and_reject_the_rest():

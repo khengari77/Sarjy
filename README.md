@@ -166,7 +166,10 @@ Each remote deletion is bounded to 10 seconds. Results report selected/completed
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before claiming work. Use a separate worktree and branch per issue; open a PR and await coordinator review. Authors must not merge.
 
-
 ### Response-policy deployment order
 
 Deploy the API before the worker: the new worker requires authoritative `instructions` in bootstrap. Verify the API returns those instructions before updating the worker. Keep the existing worker until that check succeeds; roll back the worker before rolling back the API. This PR does not authorize deployment.
+
+## Spoken weather units
+
+English TTS expands `km/h` to “kilometres per hour” and `°C` to “degrees Celsius”, including when model streaming splits a unit across chunks. Expansion occurs only in the TTS input path; original model text and persisted conversation records keep their notation. Expanded characters are reserved before synthesis against the same 500-character daily allowance. Only whole unit tokens are expanded, so unrelated text such as `km` or `C` stays unchanged. Other languages and unsupported scientific abbreviations remain unchanged. This limited pronunciation map is not a general scientific-notation parser.
