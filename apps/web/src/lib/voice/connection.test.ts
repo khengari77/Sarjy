@@ -174,7 +174,7 @@ it.each([false, true])('old cleanup preserves replacement resources (reject=%s)'
   const contexts: { close: ReturnType<typeof vi.fn> }[] = [];
   class AudioContext {
     destination = {};
-    close = vi.fn(() => (contexts[0] === this ? new Promise<void>(() => {}) : Promise.resolve()));
+    close = vi.fn((): Promise<void> => (contexts[0] === this ? new Promise<void>(() => {}) : Promise.resolve()));
     constructor() {
       contexts.push(this);
     }
