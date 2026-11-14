@@ -6,6 +6,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "artifacts/deployment/worker"
+# The worker loads the same authoritative Wordle allowlist as the web app.
+CONTRACT_FILES = (
+    "packages/contracts/wordle_commands.json",
+    "packages/contracts/wordle_command_fixtures.json",
+)
 
 
 def _copy_file(source: Path, target: Path) -> None:
@@ -31,6 +36,8 @@ def _populate(root: Path, staging: Path) -> None:
             if any(parent.is_symlink() for parent in source.parents if parent != root and root in parent.parents):
                 raise ValueError("BUILD_SOURCE_SYMLINK")
             _copy_file(source, staging / source.relative_to(root))
+    for name in CONTRACT_FILES:
+        _copy_file(root / name, staging / name)
     (staging / ".dockerignore").write_text(".env\n.env.*\n.git\n.venv\n__pycache__\n*.db\n*.log\n")
 
 

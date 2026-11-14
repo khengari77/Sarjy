@@ -75,6 +75,7 @@ const config: SessionConfig = {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   rooms().length = 0;
 });
 
@@ -175,4 +176,33 @@ describe('exact command speech', () => {
     const offline = new LiveKitVoiceRuntime();
     await expect(offline.sendControl({ type: 'wordle.reveal_pending', value: false })).resolves.toBeUndefined();
   });
+});
+
+it('releases audio even when room disconnect rejects', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
+  const runtime = new LiveKitVoiceRuntime();
+  const connecting = runtime.connect(config);
+  await vi.advanceTimersByTimeAsync(1);
+  const room = rooms().at(-1)!;
+  room.remoteParticipants.set('agent', {
+    isAgent: true,
+    identity: 'agent',
+    attributes: { 'lk.agent.state': 'listening' },
+  });
+  room.connectResolve!();
+  await vi.advanceTimersByTimeAsync(100);
+  await connecting;
+  const audio = { pause: vi.fn(), remove: vi.fn(), srcObject: {} };
+  room.emit('trackSubscribed', { kind: 'audio', attach: () => audio });
+  room.disconnect = async () => {
+    throw new Error('disconnect failed');
+  };
+  await expect(runtime.disconnect()).rejects.toThrow('disconnect failed');
+  expect(audio.pause).toHaveBeenCalledOnce();
+  expect(audio.remove).toHaveBeenCalledOnce();
+  expect(audio.srcObject).toBeNull();
+  await runtime.disconnect();
+  expect(audio.pause).toHaveBeenCalledOnce();
 });

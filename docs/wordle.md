@@ -118,12 +118,29 @@ LiveKit room; it is compiled out of production builds. Those tests also inject
 a fake runtime through `window.__SARJY_VOICE_RUNTIME_FACTORY__` to observe the
 exact `say`/`sendControl` payloads.
 
-### Merge overlap
+### Audio teardown and merge overlap
 
 This change adds `say`/`sendControl` to `apps/web/src/lib/audio/voice-runtime.ts`
-and moves the remote-audio analyser bookkeeping into
-`apps/web/src/lib/audio/remoteAudio.ts`. #115/#116 also touch the runtime's
-teardown and transcription paths: keep their teardown ordering and re-apply
-`analysers.detach`/`analysers.close` to the new helper when resolving conflicts.
-`voice/connection.ts`, `voice/sessionAttempt.ts`, `orb/*` and the shell are not
-changed by this slice.
+and moves the remote-audio analyser graph into
+`apps/web/src/lib/audio/remoteAudio.ts`. Each connection generation owns one
+`RemoteAudioAnalysers` instance (its own `AudioContext` and node map).
+`disconnectRoom` captures the old `audio` set and analyser instance, swaps in
+fresh ones synchronously, stops the captured audio/analysers and closes only
+the captured context, then awaits `room.disconnect()` and disposes nothing
+else. A replacement call that attaches during that await keeps its own audio,
+analyser nodes and context.
+
+#115 (`coordinator/issue-39-runtime-repair`) is merged into this branch for
+exactly that teardown ordering and its regression test. Merge order on
+`integration/living-cloud` is **#115 → #129**. #116 still touches the runtime's
+release/transcription paths: when it lands, preserve its ordering and keep
+`analysers.detach`/generation swap semantics. `voice/connection.ts`,
+`voice/sessionAttempt.ts`, `orb/*` and the shell are not changed by this slice.
+
+### Worker packaging
+
+The worker reads `packages/contracts/wordle_commands.json` at startup, so
+`scripts/prepare_worker_deployment.py` and `infra/agent.Dockerfile` copy
+`packages/contracts` into the build context at `/app/packages/contracts`. The
+packaging test asserts both contract files are present (and that a missing
+allowlist aborts preparation).

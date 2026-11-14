@@ -1,3 +1,5 @@
+import { disposeAudioResources } from './disposeAudio';
+
 interface AnalyserEntry {
   source: MediaElementAudioSourceNode;
   analyser: AnalyserNode;
@@ -51,10 +53,13 @@ export class RemoteAudioAnalysers {
     return Math.min(1, (total / this.entries.size) * 4);
   }
 
-  close() {
-    this.entries.clear();
-    if (!this.context) return;
-    void this.context.close().catch(() => {});
+  /**
+   * Stop one captured generation. Each connection owns its own instance, so a
+   * replacement call's analysers/context are never touched here.
+   */
+  dispose(audio: Set<HTMLMediaElement>) {
+    const context = this.context;
     this.context = null;
+    disposeAudioResources(audio, this.entries, context);
   }
 }

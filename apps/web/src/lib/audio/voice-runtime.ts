@@ -244,17 +244,17 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     this.startup = null;
     const room = this.room;
     this.room = null;
-    if (room) {
-      await room.disconnect();
-      room.removeAllListeners();
+    // Detach resource ownership before awaiting the old room. A replacement
+    // connection may start while disconnect is pending or rejecting.
+    const audio = this.audio;
+    const analysers = this.analysers;
+    this.audio = new Set();
+    this.analysers = new RemoteAudioAnalysers();
+    analysers.dispose(audio);
+    try {
+      await room?.disconnect();
+    } finally {
+      room?.removeAllListeners();
     }
-    for (const element of this.audio) {
-      this.analysers.detach(element);
-      element.pause();
-      element.srcObject = null;
-      element.remove();
-    }
-    this.audio.clear();
-    this.analysers.close();
   }
 }
