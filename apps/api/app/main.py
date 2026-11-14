@@ -17,11 +17,16 @@ from app.domain.secrets import secret_matches
 from app.infrastructure.database import Base, SessionGate
 from app.services.context_actions import build_context_action_handlers
 from app.services.memory import MemoryService, OpenAIEmbedder
+from app.services.voice_control import RoomVoiceControl
 from app.services.voices import ElevenLabsVoices
 
 
 def create_app(
-    settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None, embedding_adapter=None
+    settings: Settings | None = None,
+    *,
+    voice_catalog: ElevenLabsVoices | None = None,
+    voice_control_delivery=None,
+    embedding_adapter=None,
 ):
     config = settings or Settings()
     # Reject invalid configuration before allocating the engine so a failed
@@ -29,6 +34,9 @@ def create_app(
     if config.development_protected and not config.web_service_secret:
         raise ValueError("WEB_SERVICE_SECRET_REQUIRED")
     catalog = voice_catalog or ElevenLabsVoices(config.eleven_api_key)
+    delivery = voice_control_delivery or RoomVoiceControl(
+        url=config.livekit_url, api_key=config.livekit_api_key, api_secret=config.livekit_api_secret
+    )
     engine = create_async_engine(config.database_url)
     if config.database_url.startswith("sqlite"):
 
@@ -81,7 +89,7 @@ def create_app(
 
     from app.routes.actions import register_action_routes
 
-    register_action_routes(app, database, identity, owned, catalog)
+    register_action_routes(app, database, identity, owned, catalog, config=config, delivery=delivery)
 
     embedder = embedding_adapter or OpenAIEmbedder(config.openai_api_key)
 

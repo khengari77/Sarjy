@@ -9,6 +9,7 @@ import type { ConversationState } from './conversations';
 import { createConversationStore } from './conversations';
 import { bindVoicePage } from './pageLifecycle';
 import { createMeterController } from './meters';
+import { createVoiceActions } from './voiceActions';
 
 export type DevOverlay = 'none' | 'memory_work' | 'confirming' | 'muted' | 'error';
 
@@ -22,6 +23,7 @@ export interface StudioBoot {
   setDevOverlay(value: DevOverlay): void;
   run(work: () => Promise<void>, onError?: (error: unknown) => void): Promise<void>;
   getLanguage(): 'ar' | 'en';
+  getCanInterrupt(): boolean;
   onVoiceError(error: unknown): void;
 }
 
@@ -60,6 +62,18 @@ export function bootStudio(options: StudioBoot) {
     },
     meters,
   });
+  const voiceActions = createVoiceActions({
+    live: () => voice.live !== null,
+    connecting: () => voice.connecting,
+    muted: () => voice.muted,
+    canInterrupt: () => options.getCanInterrupt(),
+    conversationReady: () => conversation.current !== null,
+    getConnection: () => connection,
+    getRuntime: () => runtime,
+    setAudioBlocked: (value) => (voice.audioBlocked = value),
+    run: (work, onError) => options.run(work, onError),
+    onError: options.onVoiceError,
+  });
   const conversations = createConversationStore(conversation, {
     getLive: () => voice.live !== null,
     endVoice: () => connection.end(),
@@ -83,6 +97,7 @@ export function bootStudio(options: StudioBoot) {
     connection,
     conversations,
     catalogStore,
+    voiceActions,
     cleanup: () => {
       meters.teardownMeters();
       dispose();

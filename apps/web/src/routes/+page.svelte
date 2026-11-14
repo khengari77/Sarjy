@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { VoiceRuntime } from '../lib/audio/voice-runtime';
   import {
     friendlyVoiceError,
     isFatalVoiceError,
@@ -22,6 +21,8 @@
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
   import { bootStudio } from '../lib/voice/studio';
   import { createSelectionController } from '../lib/voice/selection';
+  import { initialVoiceSwitchState } from '../lib/voice/voiceSwitch';
+  import { createLiveVoiceSwitch } from '../lib/voice/voiceSwitchController';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -38,10 +39,12 @@
   let busy = $state(false);
   let captionsVisible = $state(true);
   let voice = $state(initialVoiceState());
-  let runtime: VoiceRuntime | undefined;
+  let voiceSwitch = $state(initialVoiceSwitchState());
+  let liveSessionId = $state<string | null>(null);
   let connection: VoiceConnection | undefined;
   let conversations: ConversationStore | undefined;
   let catalogStore: ReturnType<typeof createCatalogStore> | undefined;
+  let voiceActions = $state<ReturnType<typeof bootStudio>['voiceActions']>();
   const selection = createSelectionController({
     voice,
     getPending: () => pendingIntent,
@@ -52,6 +55,25 @@
     getConversations: () => conversations!,
   });
   const words = $derived(wordsFor(arabic));
+  const liveSwitch = createLiveVoiceSwitch({
+    state: voiceSwitch,
+    getSession: () => voice.live,
+    getConversationId: () => conversation.current,
+    getVoiceId: () => catalog.voiceId,
+    getVoices: () => catalog.voices,
+    selectVoice: (voiceId) => (catalog.voiceId = voiceId),
+    remember: () => catalogStore!.remember(),
+    createRequestId: () => crypto.randomUUID(),
+  });
+
+  // A new session (including reconnect) starts from the selected voice; live
+  // pending/confirmed state never leaks across rooms.
+  $effect(() => {
+    const id = voice.live?.id ?? null;
+    if (id === liveSessionId) return;
+    liveSessionId = id;
+    liveSwitch.onSession(id, voice.activeVoiceName);
+  });
 
   const phase = $derived<VoicePhase>(
     (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
@@ -59,6 +81,8 @@
       'idle',
   );
   const canInterrupt = $derived(phase === 'thinking' || phase === 'speaking');
+  const confirmedVoiceName = $derived(voiceSwitch.activeVoiceName || voice.activeVoiceName);
+  const voiceSwitchError = $derived(voiceSwitch.errorCode ? friendlyVoiceError(voiceSwitch.errorCode, arabic) : '');
   const fatalError = $derived(voice.voiceErrorCode !== '' && isFatalVoiceError(voice.voiceErrorCode));
   const voiceErrorText = $derived(voice.voiceErrorCode ? friendlyVoiceError(voice.voiceErrorCode, arabic) : '');
   const presentation = $derived(
@@ -90,44 +114,15 @@
     voice.voiceErrorCode = errorCode(error);
   }
 
-  function handleOrb() {
-    if (voice.live) {
-      if (voice.muted) void toggleMute();
-      else if (canInterrupt) void interrupt();
-      return;
-    }
-    if (!voice.connecting) startConnect();
+  function changeVoice() {
+    void run(() => liveSwitch.change());
   }
 
-  function startConnect() {
-    void connection!.connect(true).catch(onVoiceError);
-  }
-
-  async function toggleMute() {
-    await run(() => connection!.toggleMute(), onVoiceError);
-  }
-
-  async function interrupt() {
-    if (!voice.live || !canInterrupt) return;
-    await run(() => connection!.interrupt(), onVoiceError);
-  }
-
-  async function send() {
-    if (!draft.trim()) return;
-    await run(async () => {
-      if (!voice.live) await connection!.connect(false);
-      if (!voice.live) return;
-      await connection!.sendText(draft.trim());
-      draft = '';
-    }, onVoiceError);
-  }
-
-  async function enableAudio() {
-    await run(async () => {
-      await runtime?.resumeAudio?.();
-      voice.audioBlocked = false;
-    }, onVoiceError);
-  }
+  // A pending change only completes at the next synthesis boundary, so retry
+  // the ACK read when a new turn starts instead of calling silence a failure.
+  $effect(() => {
+    if (voiceSwitch.status === 'pending' && (phase === 'thinking' || phase === 'speaking')) void liveSwitch.resume();
+  });
 
   function toggleCaptions() {
     captionsVisible = !captionsVisible;
@@ -159,13 +154,14 @@
       setCaptions: (value) => (captionsVisible = value),
       setDevOverlay: (value) => (devOverlay = value),
       getLanguage: () => (arabic ? 'ar' : 'en'),
+      getCanInterrupt: () => canInterrupt,
       run: (work, onError) => run(work, onError),
       onVoiceError,
     });
-    runtime = boot.runtime;
     connection = boot.connection;
     conversations = boot.conversations;
     catalogStore = boot.catalogStore;
+    voiceActions = boot.voiceActions;
     return boot.cleanup;
   });
 </script>
@@ -216,11 +212,11 @@
       {captionsVisible}
       {busy}
       {words}
-      onretrymic={startConnect}
+      onretrymic={() => voiceActions?.startConnect()}
       onreconnect={() => run(() => connection!.reconnect(), onVoiceError)}
       onend={() => run(() => connection!.end(), onVoiceError)}
-      onenableaudio={enableAudio}
-      onorb={handleOrb}
+      onenableaudio={() => void voiceActions?.enableAudio()}
+      onorb={() => voiceActions?.handleOrb()}
       oncancelintent={() => (pendingIntent = null)}
       onconfirmintent={() => selection.confirmSwitch()}
     />
@@ -234,11 +230,17 @@
       {words}
       onend={() => run(() => connection!.end(), onVoiceError)}
       oncancel={() => run(() => connection!.cancelConnect(), onVoiceError)}
-      ontoggle={toggleMute}
-      oninterrupt={interrupt}
-      onconnect={startConnect}
+      ontoggle={() => void voiceActions?.toggleMute()}
+      oninterrupt={() => void voiceActions?.interrupt()}
+      onconnect={() => voiceActions?.startConnect()}
     />
-    <Composer bind:draft placeholder={words.placeholder} sendLabel={words.send} disabled={busy} onsend={send} />
+    <Composer
+      bind:draft
+      placeholder={words.placeholder}
+      sendLabel={words.send}
+      disabled={busy}
+      onsend={() => voiceActions?.sendDraft(draft, () => (draft = ''))}
+    />
     <small class="attribution"><a href="https://open-meteo.com/">Weather data: Open-Meteo</a></small>
   {/snippet}
 
@@ -252,11 +254,13 @@
       voiceLoading={catalog.loading}
       voiceError={catalog.error}
       live={voice.live}
-      activeVoiceName={voice.activeVoiceName}
+      {confirmedVoiceName}
+      switchStatus={voiceSwitch.status}
+      switchError={voiceSwitchError}
       {captionsVisible}
       onsearch={() => void catalogStore!.load()}
       onloadmore={() => void catalogStore!.load(true)}
-      onremember={() => catalogStore!.remember()}
+      onvoicechange={changeVoice}
       ontoggleCaptions={toggleCaptions}
     />
   {/snippet}

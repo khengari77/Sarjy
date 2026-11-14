@@ -60,6 +60,32 @@ class VoiceSession(Base):
     expires_at: Mapped[str] = mapped_column(String(40))
     pipeline: Mapped[dict] = mapped_column(JSON)
     room_cleanup_completed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Confirmed worker voice; distinct from the user's selected future voice.
+    active_voice_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    active_settings_revision: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+
+
+class VoiceControl(Base):
+    """One server-authorized live voice change for an exact voice session.
+
+    ``settings_revision`` and ``request_id`` fence duplicate, stale and
+    concurrent changes. ``status`` moves pending -> dispatched -> applied or
+    failed; a newer change supersedes anything still in flight.
+    """
+
+    __tablename__ = "voice_controls"
+    __table_args__ = (UniqueConstraint("session_id", "request_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(100))
+    session_id: Mapped[str] = mapped_column(ForeignKey("voice_sessions.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
+    voice_id: Mapped[str] = mapped_column(String(100))
+    settings_revision: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
 
 
 class SessionGate(Base):

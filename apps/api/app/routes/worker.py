@@ -33,6 +33,7 @@ from app.services.tool_operations import (
     fail_tool_operation,
     unknown_tool_operation,
 )
+from app.services.voice_control import VoiceControlError, apply_ack, session_active_voice
 from app.services.weather import WeatherError, get_current_weather
 
 
@@ -57,6 +58,14 @@ class WeatherInput(BaseModel):
     request_id: str = Field(min_length=1, max_length=100)
     city: str = Field(min_length=1, max_length=120)
     country: str | None = Field(default=None, max_length=120)
+
+
+class VoiceAck(BaseModel):
+    request_id: str = Field(min_length=1, max_length=100)
+    voice_id: str = Field(min_length=1, max_length=100)
+    settings_revision: int = Field(ge=1)
+    status: Literal["applied", "failed"]
+    error_code: str | None = Field(default=None, max_length=60)
 
 
 def _session_guard(config: Settings):
@@ -85,6 +94,7 @@ def register_worker_routes(app, *, config: Settings, database):
     _register_session_routes(app, database=database, guard=guard)
     _register_turn_routes(app, database=database, guard=guard)
     _register_tool_routes(app, database=database, guard=guard)
+    _register_voice_control_routes(app, database=database, guard=guard)
 
 
 def _register_budget_routes(app, *, config: Settings, database):
@@ -128,7 +138,13 @@ def _register_session_routes(app, *, database, guard):
         if not changed.rowcount:
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
         pipeline = normalize_pipeline(voice.pipeline)
-        return {"pipeline": pipeline, "instructions": pipeline_instructions(pipeline), "expires_at": voice.expires_at}
+        return {
+            "pipeline": pipeline,
+            "instructions": pipeline_instructions(pipeline),
+            "expires_at": voice.expires_at,
+            "active_voice_id": session_active_voice(voice),
+            "settings_revision": voice.active_settings_revision or 0,
+        }
 
 
 def _compile_turn_context(
@@ -360,3 +376,23 @@ def _register_tool_routes(app, *, database, guard):
             await db.commit()
             raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"}) from exc
         return result
+
+
+def _register_voice_control_routes(app, *, database, guard):
+    @app.post("/internal/agent/voice/ack")
+    async def voice_ack(body: VoiceAck, request: Request, db: AsyncSession = Depends(database)):
+        # The worker is authenticated by the shared secret plus the exact
+        # session/room bindings; a browser participant cannot reach this.
+        voice = await guard(request, db)
+        try:
+            return await apply_ack(
+                db,
+                voice=voice,
+                request_id=body.request_id,
+                voice_id=body.voice_id,
+                settings_revision=body.settings_revision,
+                status=body.status,
+                error_code=body.error_code,
+            )
+        except VoiceControlError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code}) from exc

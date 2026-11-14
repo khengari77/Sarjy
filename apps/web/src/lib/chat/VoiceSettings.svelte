@@ -10,11 +10,13 @@
     voiceLoading,
     voiceError,
     live,
-    activeVoiceName,
+    confirmedVoiceName,
+    switchStatus,
+    switchError,
     captionsVisible,
     onsearch,
     onloadmore,
-    onremember,
+    onvoicechange,
     ontoggleCaptions,
   }: {
     arabic: boolean;
@@ -25,11 +27,13 @@
     voiceLoading: boolean;
     voiceError: string;
     live: SessionConfig | null;
-    activeVoiceName: string;
+    confirmedVoiceName: string;
+    switchStatus: 'idle' | 'pending' | 'failed';
+    switchError: string;
     captionsVisible: boolean;
     onsearch: () => void;
     onloadmore: () => void;
-    onremember: () => void;
+    onvoicechange: () => void;
     ontoggleCaptions: () => void;
   } = $props();
 </script>
@@ -64,7 +68,7 @@
       </button>
     </form>
     <label class="field-label" for="assistant-voice">{arabic ? 'اختر الصوت' : 'Choose voice'}</label>
-    <select id="assistant-voice" bind:value={voiceId} onchange={onremember}>
+    <select id="assistant-voice" bind:value={voiceId} onchange={onvoicechange}>
       <option value="">{arabic ? 'اختر صوتًا قبل بدء المكالمة' : 'Select a voice before calling'}</option>
       {#if voiceId && !voices.some((voice) => voice.id === voiceId)}
         <option value={voiceId}>{arabic ? 'الصوت المحفوظ (أعد تحميل القائمة)' : 'Saved voice (reload list)'}</option>
@@ -92,10 +96,22 @@
     <small class="muted-text">
       {arabic
         ? 'التغييرات تسري على المكالمة التالية. تسميات اللغة لا تضمن جودة النطق.'
-        : 'Changes apply to the next call. Language labels do not guarantee pronunciation quality.'}
+        : 'Changes apply to the next call. During a call, they apply to the next reply once confirmed.'}
     </small>
     {#if live}
-      <small class="muted-text">{arabic ? 'صوت المكالمة الحالية' : 'Current call voice'}: {activeVoiceName}</small>
+      <p class="voice-active" aria-live="polite">
+        {#if switchStatus === 'pending'}
+          <span>{arabic ? 'جارٍ تحديث الصوت…' : 'Updating voice…'}</span>
+          <small class="muted-text">
+            {arabic ? 'يسري على الردّ التالي.' : 'Applies to the next reply.'}
+          </small>
+        {:else}
+          <span>{arabic ? 'الصوت النشط' : 'Active voice'}: {confirmedVoiceName}</span>
+        {/if}
+      </p>
+      {#if switchStatus === 'failed' && switchError}
+        <p class="voice-error" role="alert">{switchError}</p>
+      {/if}
     {/if}
   </section>
 

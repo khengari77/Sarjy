@@ -21,8 +21,18 @@ from app.domain.contracts import (
     UserSettings,
     apply_settings_action,
 )
-from app.infrastructure.database import ContextOperation, Conversation, SessionGate, SettingRevision, UserSetting, now
+from app.infrastructure.database import (
+    ContextOperation,
+    Conversation,
+    SessionGate,
+    SettingRevision,
+    UserSetting,
+    VoiceControl,
+    VoiceSession,
+    now,
+)
 from app.infrastructure.upsert import insert_ignore
+from app.services.voice_control import voice_state
 
 SETTING_ACTIONS = (AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed)
 PREPARATION_LEASE_SECONDS = 120
@@ -341,7 +351,7 @@ async def _dispatch_transaction(
             if prepared is None:
                 raise HTTPException(409, detail={"code": "ACTION_LEASE_LOST"})
     if isinstance(action, SETTING_ACTIONS):
-        result = await _apply_setting(db, owner_id, expected_revision, action)
+        result = await _apply_setting(db, owner_id, conversation_id, expected_revision, action, request_id)
     elif isinstance(action, (ShowConversationHistory, OpenMemoryExplorer)):
         result = _navigation_result(action)
     else:
@@ -395,7 +405,7 @@ def _replay(existing, owner_id, fingerprint):
     return None
 
 
-async def _apply_setting(db, owner_id, expected_revision, action):
+async def _apply_setting(db, owner_id, conversation_id, expected_revision, action, request_id):
     row = await db.get(UserSetting, owner_id)
     before = settings_value(row)
     if before.revision != expected_revision:
@@ -414,7 +424,63 @@ async def _apply_setting(db, owner_id, expected_revision, action):
                 id=str(uuid4()), owner_id=owner_id, revision=after.revision, settings=after.model_dump(mode="json")
             )
         )
-    return {"kind": action.kind, "settings": after.model_dump(mode="json"), "changed": after != before}
+    result = {"kind": action.kind, "settings": after.model_dump(mode="json"), "changed": after != before}
+    if after != before and isinstance(action, SelectApprovedVoice):
+        control = await _authorize_voice_control(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            voice_id=action.voice_id,
+            settings_revision=after.revision,
+            request_id=request_id,
+        )
+        if control is not None:
+            result["voice_control"] = control
+    return result
+
+
+async def _authorize_voice_control(db, *, owner_id, conversation_id, voice_id, settings_revision, request_id):
+    """Record a server-authorized change when this conversation has a live room.
+
+    A settings row alone never mutates TTS. The worker only receives a signed
+    control after the catalog, owner and exact session/room are validated here.
+    """
+    voice = await db.scalar(
+        select(VoiceSession)
+        .where(
+            VoiceSession.owner_id == owner_id,
+            VoiceSession.conversation_id == conversation_id,
+            VoiceSession.status.in_(["starting", "active"]),
+            VoiceSession.expires_at > now(),
+        )
+        .order_by(VoiceSession.expires_at.desc())
+        .limit(1)
+    )
+    if voice is None:
+        return None
+    await db.execute(
+        update(VoiceControl)
+        .where(
+            VoiceControl.session_id == voice.id,
+            VoiceControl.status.in_(["pending", "dispatched"]),
+        )
+        .values(status="superseded", updated_at=now())
+    )
+    control = VoiceControl(
+        id=str(uuid4()),
+        request_id=request_id,
+        session_id=voice.id,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        voice_id=voice_id,
+        settings_revision=settings_revision,
+        status="pending",
+        created_at=now(),
+        updated_at=now(),
+    )
+    db.add(control)
+    await db.flush()
+    return voice_state(voice, control)
 
 
 def _navigation_result(action) -> dict:

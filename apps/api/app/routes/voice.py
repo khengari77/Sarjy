@@ -14,7 +14,7 @@ from app.config import Settings
 from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy
 from app.domain.pipeline import PipelineConfig, validate_pipeline
 from app.domain.sessions import admission_error
-from app.infrastructure.database import SessionGate, VoiceSession
+from app.infrastructure.database import SessionGate, UserSetting, VoiceSession
 from app.services.pipeline_settings import configured_keys, default_llm
 from app.services.session_cleanup import cleanup_room
 from app.services.voices import ElevenLabsVoices, VoiceCatalogError
@@ -85,6 +85,7 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
         )
         if rejection:
             raise HTTPException(429, detail={"code": rejection})
+        settings_row = await db.get(UserSetting, user.id)
         voice = VoiceSession(
             id=str(uuid4()),
             owner_id=user.id,
@@ -93,6 +94,8 @@ def register_voice_routes(app, *, config: Settings, catalog: ElevenLabsVoices, d
             status="starting",
             expires_at=(now + timedelta(minutes=10)).isoformat(),
             pipeline=pipeline.model_dump(),
+            active_voice_id=body.voice_id,
+            active_settings_revision=settings_row.revision if settings_row is not None else 0,
         )
         db.add(voice)
         await db.commit()
