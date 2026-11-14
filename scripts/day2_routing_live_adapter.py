@@ -83,6 +83,7 @@ DEFAULT_MAX_TOKENS: Final = 250_000
 # figure by one million gives micro-USD per token.
 DEEPSEEK_PEAK_INPUT_MICRO_USD_PER_TOKEN: Final = DEEPSEEK_PEAK_INPUT_MICRO_USD_PER_MILLION / 1_000_000
 DEEPSEEK_PEAK_OUTPUT_MICRO_USD_PER_TOKEN: Final = DEEPSEEK_PEAK_OUTPUT_MICRO_USD_PER_MILLION / 1_000_000
+TIER_NUMBER_BY_LABEL: Final = {label: index for index, label in enumerate(TIER_OPTIONS, start=1)}
 
 _ACTION_EXAMPLES: Final[dict[str, str]] = {
     "AdjustSpeakingSpeed": '{"kind":"AdjustSpeakingSpeed","delta":-0.1}',
@@ -344,7 +345,8 @@ def _direct_prompt(case: harness.Case, fixture: harness.Fixture) -> str:
     return (
         "Classify exactly one finalized English utterance and, only when it clearly "
         "requests one listed action, include that action. Return only one JSON object "
-        'with keys "intent", "tier", "complexity" and "action". Set "action" to null '
+        'with keys "intent", "tier", "complexity" and "action". Set "tier" to the '
+        'integer 1-5 (the documented label is also accepted). Set "action" to null '
         "when no listed action applies. Never invent an ID. Do not explain or add text.\n\n"
         "Allowed values and criteria:\n" + _canonical(instructions) + "\n\nDATA:\n" + _canonical(state)
     )
@@ -429,27 +431,36 @@ class DirectLiveRouter:
         return _direct_output(payload, usage_record, self.fixture)
 
 
+def _tier_number(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 1 <= value <= 5 else None
+    if isinstance(value, str):
+        return TIER_NUMBER_BY_LABEL.get(value)
+    return None
+
+
 def _direct_output(
     payload: Mapping[str, Any],
     usage: harness.UsageRecord,
     fixture: harness.Fixture,
 ) -> harness.RouterOutput:
     intent_value = payload.get("intent")
-    tier = payload.get("tier")
+    tier_value = payload.get("tier")
+    tier = _tier_number(tier_value)
     complexity = payload.get("complexity")
     raw: dict[str, Any] = {
         "source": "direct_live",
         "intent": intent_value,
-        "tier": tier,
+        "tier": tier_value,
         "complexity": complexity,
         "action": None,
     }
     if (
         not isinstance(intent_value, str)
         or intent_value not in {intent.value for intent in Intent}
-        or isinstance(tier, bool)
-        or not isinstance(tier, int)
-        or not 1 <= tier <= 5
+        or tier is None
         or complexity not in {"simple", "complex"}
     ):
         return harness.RouterOutput(
@@ -459,6 +470,7 @@ def _direct_output(
             error="INVALID_DIRECT_PAYLOAD",
             raw=raw,
         )
+    raw["tier_number"] = tier
 
     action = None
     error = None

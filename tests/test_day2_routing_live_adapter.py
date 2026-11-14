@@ -442,6 +442,60 @@ def test_direct_router_records_a_typed_action_and_usage():
     assert "deepseek-test-key" not in serialized
 
 
+@pytest.mark.parametrize(
+    ("tier_value", "expected"),
+    [
+        (1, 1),
+        ("tier_1_short_acknowledgment", 1),
+        ("tier_2_normal_conversation", 2),
+        ("tier_3_moderate_explanation", 3),
+        ("tier_4_detailed_explanation", 4),
+        ("tier_5_explicitly_detailed", 5),
+    ],
+)
+def test_direct_router_accepts_tier_numbers_and_documented_labels(tier_value, expected):
+    content = json.dumps({"intent": "conversation", "tier": tier_value, "complexity": "simple", "action": None})
+
+    def handler(_request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    router = adapter.DirectLiveRouter(
+        FIXTURE,
+        api_key="deepseek-test-key",
+        reserve=AllowReservation(),
+        transport=httpx.MockTransport(handler),
+    )
+    output = asyncio.run(router.route(CASE))
+
+    assert output.intent == "conversation"
+    assert output.tier == expected
+    assert output.complexity == "simple"
+    assert output.authorized is False
+    assert output.error is None
+    assert output.raw["tier"] == tier_value
+    assert output.raw["tier_number"] == expected
+
+
+def test_direct_router_rejects_an_unknown_tier_string():
+    content = json.dumps({"intent": "conversation", "tier": "tier_9_unknown", "complexity": "simple", "action": None})
+
+    def handler(_request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    router = adapter.DirectLiveRouter(
+        FIXTURE,
+        api_key="deepseek-test-key",
+        reserve=AllowReservation(),
+        transport=httpx.MockTransport(handler),
+    )
+    output = asyncio.run(router.route(CASE))
+
+    assert output.tier is None
+    assert output.intent is None
+    assert output.authorized is False
+    assert output.error == "INVALID_DIRECT_PAYLOAD"
+
+
 def test_direct_router_malformed_content_is_a_safe_failure():
     calls = []
 
