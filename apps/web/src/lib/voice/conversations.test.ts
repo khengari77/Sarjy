@@ -34,6 +34,18 @@ it('refreshes the conversation list so a generated title appears', async () => {
   expect(state.turns).toHaveLength(1);
 });
 
+it('does not refetch the list once the conversation has a real title', async () => {
+  const state = initialConversationState();
+  state.current = 'c1';
+  state.conversations = [{ id: 'c1', title: 'Trip planning', revision: 0 }];
+  mocks.fetchConversation.mockResolvedValue({ turns: [], toolCalls: [] });
+
+  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+  await store.refresh();
+
+  expect(mocks.request).not.toHaveBeenCalled();
+});
+
 it('ignores a stale refresh after the selection moved on', async () => {
   const state = initialConversationState();
   state.current = 'c1';
