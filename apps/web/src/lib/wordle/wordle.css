@@ -273,6 +273,17 @@
   margin: 0;
 }
 
+.wordle-voice {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-control);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
 .wordle-answer {
   margin-top: 4px !important;
   color: var(--text-primary);

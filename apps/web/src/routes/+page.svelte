@@ -39,7 +39,7 @@
   let busy = $state(false);
   let captionsVisible = $state(true);
   let voice = $state(initialVoiceState());
-  let runtime: VoiceRuntime | undefined;
+  let runtime = $state<VoiceRuntime>();
   let connection: VoiceConnection | undefined;
   let conversations: ConversationStore | undefined;
   let catalogStore: ReturnType<typeof createCatalogStore> | undefined;
@@ -199,7 +199,7 @@
   {/snippet}
 
   {#snippet stage()}
-    <WordleLauncher compact />
+    <WordleLauncher compact {runtime} />
     <VoiceStage
       {presentation}
       micLevel={voice.micLevel}

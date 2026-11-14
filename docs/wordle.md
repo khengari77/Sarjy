@@ -59,3 +59,47 @@ enter compiled context.
 game key, the unique `(game_id, attempt)` guess order and unique `request_id`.
 Downgrade drops only the Wordle tables. PostgreSQL deployments also get RLS and
 revoked `anon`/`authenticated` grants on the new tables.
+
+## Voice play (#110)
+
+The web client adds a deterministic command adapter that consumes **finalized
+user transcripts only** (`apps/web/src/lib/wordle/wordleVoice.ts`). Partials and
+assistant segments never dispatch. Commands are parsed by
+`wordleCommands.ts`; there is no second board and no second game state — the
+adapter drives the same `createWordleGame` store the stage renders.
+
+| Utterance | Behavior |
+|---|---|
+| "Play Wordle" / "Play today's Wordle" | Opens the stage and resumes today's game once (`GET /v1/wordle/today`). |
+| "Guess CRANE" / "C R A N E" | Normalizes to five A–Z letters and posts once with a replay-safe `request_id`. |
+| "How many guesses left?" | Reads the shared server state. |
+| "What did I guess?" | Reads the stored guesses; never the answer. |
+| "Quit Wordle" / "Back to chat" | Closes the stage; the voice session, mic and transcript are untouched. |
+| "Reveal the answer" | Asks for explicit confirmation. The answer is spoken only if the server has released it at terminal; while the game is live the request is refused. |
+
+Design notes:
+
+- A `request_id` is `scope-date-WORD`, where `scope` is a per-tab random id in
+  `sessionStorage`. Retrying the same word (network failure or a repeated
+  segment) replays the server row; an already-guessed word is rejected locally
+  without a request.
+- Segment ids are deduplicated per epoch, so a replayed finalized event cannot
+  create a second guess or transition.
+- Ambiguous or malformed speech is spoken back as a clarification and mutates
+  nothing. Exact commands never generate a conversational turn, and the adapter
+  has no `sendText` dependency.
+- The answer lives only in the shared store's terminal state. The adapter's
+  `releasedAnswer()` helper returns it only for `won`/`lost`, and the stage and
+  voice reply read from that helper; an answer supplied early by a buggy server
+  is dropped by `normalizeToday`.
+- Replies are delivered through the injected `speak` sink, which currently
+  mirrors them into the stage's single polite live region. Audible delivery via
+  the agent voice requires a non-LLM `say` channel in
+  `apps/web/src/lib/audio/voice-runtime.ts` (out of scope here); until then the
+  existing agent TTS remains the audible path and is not fed the answer.
+
+The command path is covered by `apps/web/src/lib/wordle/wordleCommands.test.ts`,
+`wordleVoice.test.ts` and the mocked-contract Playwright spec
+`apps/web/test/wordle-voice.spec.ts`. A DEV-only `window.__sarjyWordleVoice`
+seam injects finalized/partial transcript events in browser tests without a
+LiveKit room; it is compiled out of production builds.
