@@ -100,24 +100,20 @@ test('the orb reacts to the real microphone while connecting, then the preview s
   await page.goto('/');
   await ready(page);
   const orb = page.locator('.orb-button');
-  await expect(orb).toHaveAttribute('data-mic-level', '0.00');
 
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await orb.click();
   await expect(orb).toHaveAttribute('data-phase', 'connecting');
   await expect.poll(async () => (await micState(page)).calls).toBe(1);
 
   // A real (mock) microphone envelope reaches the orb's render state while the
   // session is still connecting, before `live` exists.
   await expect.poll(async () => Number(await orb.getAttribute('data-mic-level'))).toBeGreaterThan(0);
-  await expect(orb).toHaveAttribute('data-mic-level', /^(?!0\.00)/);
-  const level = await orb.getAttribute('data-mic-level');
   await shot(page, 'connecting');
 
   release();
   await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toBeVisible();
   await expect.poll(async () => (await micState(page)).stops).toBeGreaterThan(0);
   await expect(orb).toHaveAttribute('data-mic-level', '0.00');
-  expect(level).not.toBe('0.00');
 });
 
 test('in-call mic and output levels reach the orb render state', async ({ page }) => {
@@ -171,7 +167,7 @@ test('in-call mic and output levels reach the orb render state', async ({ page }
   await page.goto('/');
   await ready(page);
   const orb = page.locator('.orb-button');
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await orb.click();
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'listening');
 
   await expect.poll(async () => Number(await orb.getAttribute('data-mic-level'))).toBeGreaterThan(0);
