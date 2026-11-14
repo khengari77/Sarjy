@@ -68,6 +68,7 @@ test('rejects an invalid word without losing input, then reveals server marks fo
 test('uses a new request id when the word changes after a failure', async ({ page }) => {
   let attempt = 0;
   const state = await mockWordle(page, {
+    todayDelayMs: 400,
     onGuess: () => {
       attempt += 1;
       return attempt === 1
@@ -161,6 +162,7 @@ test('opens and closes without touching the voice session and restores focus', a
 test('respects reduced motion for the reveal', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await mockWordle(page, {
+    todayDelayMs: 400,
     onGuess: () => ({ marks: ['correct', 'correct', 'correct', 'correct', 'correct'], status: 'won', answer: 'CRANE' }),
   });
   const dialog = await openWordle(page);

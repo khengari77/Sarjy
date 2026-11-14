@@ -15,6 +15,8 @@ export interface Options {
   answer?: string;
   onGuess?: (word: string) => { marks: Mark[]; status?: Status; answer?: string; code?: string };
   statsCode?: number;
+  /** Delay the today response to exercise input races during loading. */
+  todayDelayMs?: number;
 }
 
 /** Mirrors the #108 route shape: the terminal answer lives inside `game`. */
@@ -43,6 +45,7 @@ export async function mockWordle(page: Page, options: Options = {}) {
 
   await page.route('**/api/v1/wordle/today', async (route) => {
     state.todayCalls += 1;
+    if (options.todayDelayMs) await new Promise((resolve) => setTimeout(resolve, options.todayDelayMs));
     await route.fulfill({
       json: state.available
         ? { date: DATE, available: true, game: game() }
@@ -94,5 +97,8 @@ export async function openWordle(page: Page, theme?: 'dark' | 'light') {
     await entry.click();
     await expect(dialog).toBeVisible({ timeout: 1000 });
   }).toPass({ timeout: 20_000 });
+  // Opening is not the same as being ready: today's puzzle must settle before
+  // keyboard input is accepted, otherwise a slow route silently eats guesses.
+  await expect(dialog).not.toHaveAttribute('data-view', 'loading');
   return dialog;
 }
