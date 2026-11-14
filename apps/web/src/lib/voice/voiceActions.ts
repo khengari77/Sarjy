@@ -6,7 +6,6 @@ export interface VoiceActionDeps {
   connecting(): boolean;
   muted(): boolean;
   canInterrupt(): boolean;
-  conversationReady(): boolean;
   getConnection(): VoiceConnection;
   getRuntime(): VoiceRuntime | undefined;
   setAudioBlocked(value: boolean): void;
@@ -53,7 +52,6 @@ export function createVoiceActions(deps: VoiceActionDeps) {
   }
 
   function sendDraft(text: string, clear: () => void) {
-    if (!deps.conversationReady() && !deps.live()) return;
     void sendText(text, clear);
   }
 

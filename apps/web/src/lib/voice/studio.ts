@@ -70,7 +70,6 @@ export function bootStudio(options: StudioBoot) {
     connecting: () => voice.connecting,
     muted: () => voice.muted,
     canInterrupt: () => options.getCanInterrupt(),
-    conversationReady: () => conversation.current !== null,
     getConnection: () => connection,
     getRuntime: () => runtime,
     setAudioBlocked: (value) => (voice.audioBlocked = value),
