@@ -21,6 +21,7 @@ function command(): CommandResult {
       revision: 1,
     },
     navigation: null,
+    theme: null,
     changed: true,
     spoken: 'Captions hidden.',
     detail: null,

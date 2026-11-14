@@ -91,19 +91,21 @@ def test_ui_settings_stay_revision_guarded_and_idempotent(tmp_path):
             assert db.execute("SELECT COUNT(*) FROM context_operations").fetchone()[0] == 1
 
 
-def test_final_transcript_speed_is_not_falsely_applied(tmp_path):
+def test_final_transcript_speed_commits_for_the_next_reply(tmp_path):
     app, path = setup(tmp_path)
     with TestClient(app) as client:
         conversation = chat(client)
         response = submit(client, conversation, source="transcript", transcript=" Speak   slower. ")
         assert response.status_code == 200
         result = response.json()["result"]
-        assert result["kind"] == "unsupported"
-        assert result["detail"] == "SPEED_APPLICATION_UNAVAILABLE"
-        assert "Nothing was changed" in result["spoken"]
-        assert client.get("/v1/settings").json()["speaking_speed"] == 1.0
+        assert result["kind"] == "executed"
+        assert result["action"] == "AdjustSpeakingSpeed"
+        assert result["settings"]["speaking_speed"] == 0.9
+        assert result["settings"]["revision"] == 1
+        assert result["spoken"] == "Slower from my next reply."
+        assert client.get("/v1/settings").json()["speaking_speed"] == 0.9
         with closing(sqlite3.connect(path)) as db, db:
-            assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 0
+            assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 1
 
 
 def test_unsafe_inputs_noops_and_invalid_actions_have_no_effects(tmp_path):
