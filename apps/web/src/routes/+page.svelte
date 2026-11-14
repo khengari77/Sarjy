@@ -197,7 +197,7 @@
   {/snippet}
 
   {#snippet stage()}
-    <WordleLauncher compact />
+    <WordleLauncher compact {runtime} />
     <VoiceStage
       {presentation}
       micLevel={voice.micLevel}

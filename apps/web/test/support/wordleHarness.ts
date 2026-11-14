@@ -17,6 +17,8 @@ export interface Options {
   statsCode?: number;
   /** Delay the today response to exercise input races during loading. */
   todayDelayMs?: number;
+  /** Adversarial fixture: send an answer while the game is still in progress. */
+  leakAnswer?: boolean;
 }
 
 /** Mirrors the #108 route shape: the terminal answer lives inside `game`. */
@@ -39,7 +41,7 @@ export async function mockWordle(page: Page, options: Options = {}) {
       status: state.status,
       attempts_remaining: 6 - state.guesses.length,
       guesses: state.guesses,
-      ...(state.status !== 'in_progress' && state.answer ? { answer: state.answer } : {}),
+      ...((state.status !== 'in_progress' || options.leakAnswer) && state.answer ? { answer: state.answer } : {}),
     };
   }
 
@@ -101,4 +103,55 @@ export async function openWordle(page: Page, theme?: 'dark' | 'light') {
   // keyboard input is accepted, otherwise a slow route silently eats guesses.
   await expect(dialog).not.toHaveAttribute('data-view', 'loading');
   return dialog;
+}
+
+export interface VoiceDebugResult {
+  handled: boolean;
+  command?: string;
+  spoken?: string;
+  ignored?: string;
+}
+
+export interface VoiceDebugInput {
+  text: string;
+  segmentId?: string;
+  epoch?: number;
+  final?: boolean;
+  speaker?: 'user' | 'assistant';
+}
+
+export interface VoiceDebug {
+  finalize(input: VoiceDebugInput): Promise<VoiceDebugResult>;
+  spoken(): Promise<string>;
+  state(): Promise<{ view: string; open: boolean; guesses: number }>;
+}
+
+/** Drive the DEV-only finalized-transcript seam without a live LiveKit room. */
+export async function wordleVoice(page: Page): Promise<VoiceDebug> {
+  if (!page.url().startsWith('http')) await page.goto('/');
+  await page.waitForFunction(() => Boolean((window as unknown as { __sarjyWordleVoice?: unknown }).__sarjyWordleVoice));
+  return {
+    finalize: (input: VoiceDebugInput) =>
+      page.evaluate(
+        (value) =>
+          (
+            window as unknown as {
+              __sarjyWordleVoice: { finalize(input: VoiceDebugInput): Promise<VoiceDebugResult> };
+            }
+          ).__sarjyWordleVoice.finalize(value),
+        input,
+      ),
+    spoken: () =>
+      page.evaluate(() =>
+        (window as unknown as { __sarjyWordleVoice: { spoken(): string } }).__sarjyWordleVoice.spoken(),
+      ),
+    state: () =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __sarjyWordleVoice: { state(): { view: string; open: boolean; guesses: number } };
+          }
+        ).__sarjyWordleVoice.state(),
+      ),
+  };
 }
