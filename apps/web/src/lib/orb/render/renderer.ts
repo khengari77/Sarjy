@@ -1,5 +1,5 @@
 import { tick } from 'svelte';
-import { nextRendererTier, selectRendererTier, type RendererTier } from '../orbState';
+import { nextRendererTier, selectRendererTier, type RendererEnvironment, type RendererTier } from '../orbState';
 import { createBackingSizer, type CssSize } from './backingSize';
 import { startCanvasDrawing } from './canvasLoop';
 import { hexToRgb } from './colors';
@@ -25,6 +25,11 @@ function createSizer(canvas: HTMLCanvasElement) {
   };
 }
 
+function initialTier(environment: RendererEnvironment, tierState: OrbTierState): RendererTier {
+  const selected = selectRendererTier(environment);
+  return tierState.demoted && selected === 'enhanced' ? 'light' : selected;
+}
+
 export function startOrbRenderer(
   canvas: HTMLCanvasElement,
   renderState: OrbRenderState,
@@ -32,12 +37,8 @@ export function startOrbRenderer(
   tierState: OrbTierState,
 ): () => void {
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const probe = document.createElement('canvas');
-  const webglAvailable = Boolean(probe.getContext('webgl2'));
-  const environment = () => ({ reducedMotion: reduced.matches, webglAvailable });
-  const selected = selectRendererTier(environment());
-  // A demoted renderer restarts one step down even on a fresh surface.
-  let tier: RendererTier = tierState.demoted && selected === 'enhanced' ? 'light' : selected;
+  const webglAvailable = Boolean(document.createElement('canvas').getContext('webgl2'));
+  let tier = initialTier({ reducedMotion: reduced.matches, webglAvailable }, tierState);
   hooks.onTier(tier);
 
   let disposed = false;
@@ -136,7 +137,7 @@ export function startOrbRenderer(
   }
 
   const onMotionChange = () => {
-    const resolved = selectRendererTier(environment());
+    const resolved = selectRendererTier({ reducedMotion: reduced.matches, webglAvailable });
     // Demotion is sticky state, not a tier passed into this constructor: once
     // the ladder has dropped, a preference change cannot climb back to WebGL.
     const next = tierState.demoted && resolved === 'enhanced' ? 'light' : resolved;

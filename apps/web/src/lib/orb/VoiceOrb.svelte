@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { selectRendererTier, type OrbPresentation, type RendererTier } from './orbState';
   import { ORB_PALETTES } from './palette';
+  import { staticGlyph } from './staticGlyph';
   import { startOrbRenderer } from './render/renderer';
   import type { OrbRenderState, OrbTierState } from './render/types';
 
@@ -27,8 +28,8 @@
 
   let canvas: HTMLCanvasElement | undefined = $state();
   let tier: RendererTier = $state('static');
-  let failed = $state(false);
-  let surfaceKey = $state(0);
+  let failed = $state(false),
+    surfaceKey = $state(0);
   let starting = false;
   let surfaceGeneration = 0;
   let stopRenderer: (() => void) | undefined;
@@ -122,25 +123,6 @@
       canvas.dataset.accent = presentation.accent ?? '';
     }
   });
-
-  function staticGlyph(phase: string): string {
-    switch (phase) {
-      case 'connecting':
-        return '◌';
-      case 'listening':
-        return '◉';
-      case 'thinking':
-        return '✦';
-      case 'speaking':
-        return '◍';
-      case 'disconnected':
-        return '⊘';
-      case 'error':
-        return '!';
-      default:
-        return '●';
-    }
-  }
 </script>
 
 <button
