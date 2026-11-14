@@ -72,6 +72,8 @@ export interface OrbPresentation {
   statusLabel: LocalizedText;
   ariaLabel: LocalizedText;
   enabledActions: OrbAction[];
+  /** The action the accessible name advertises, always one of enabledActions. */
+  primaryAction: OrbAction | null;
   showMicSlash: boolean;
   /** True when the overlay is an accent over a live voice phase. */
   accentOnly: boolean;
@@ -271,6 +273,7 @@ export function deriveOrbPresentation(state: VoiceUiState, theme: ThemeName): Or
     statusLabel,
     ariaLabel,
     enabledActions,
+    primaryAction: action,
     showMicSlash,
     accentOnly,
   };
