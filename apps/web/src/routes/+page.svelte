@@ -43,10 +43,8 @@
   // server and the first client frame agree before the boot script resolves.
   let theme = $state<ResolvedTheme>('dark');
   let voice = $state(initialVoiceState());
-  let runtime: VoiceRuntime | undefined;
-  let connection: VoiceConnection | undefined;
-  let conversations: ConversationStore | undefined;
-  let catalogStore: ReturnType<typeof createCatalogStore> | undefined;
+  let runtime: VoiceRuntime | undefined, connection: VoiceConnection | undefined;
+  let conversations: ConversationStore | undefined, catalogStore: ReturnType<typeof createCatalogStore> | undefined;
   const selection = createSelectionController({
     voice,
     getPending: () => pendingIntent,
