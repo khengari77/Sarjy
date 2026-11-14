@@ -97,6 +97,56 @@ _VOICE_SELECTION = re.compile(
     r"^(?:use|switch to|change to|choose|select) (?:the )?(?P<name>[a-z0-9][a-z0-9 '\-]{0,98}?) voice$"
 )
 
+# Voice memory exclusion is consent-first: only a simple "forget/exclude
+# <target>" is understood here.  "delete" and "remove" keep their existing
+# refusal because they carry a destructive, potentially global meaning.
+_MEMORY_EXCLUDE = re.compile(r"^(?:please )?(?:forget|exclude) (?:about )?(?P<target>.+)$", re.IGNORECASE)
+_MEMORY_GLOBAL = re.compile(
+    r"\b(everywhere|global(?:ly)?|all (?:of )?(?:my )?(?:chats|conversations|memories)"
+    r"|all (?:my )?chats|from every conversation|everything)\b"
+)
+# "forget the trip but keep the budget" is a compound request with its own
+# keep-exception semantics; it stays unsupported rather than silently dropping
+# the keep clause and excluding everything it matched.
+_MEMORY_COMPOUND = re.compile(r"\b(?:but|and) (?:keep|leave|except)\b|\bexcept\b|\bkeep\b")
+_MEMORY_RESTORE = re.compile(
+    r"^(?:please )?(?:restore (?:the |my )?(?:excluded )?memories\b.*"
+    r"|bring back (?:the |my )?memories\b.*"
+    r"|undo (?:that |the )?(?:memory )?exclusion\b.*)$"
+)
+_REFERENTIAL_TARGETS = frozenset({"it", "that", "this", "them", "those", "these", "everything", "anything", "all"})
+_YES = frozenset(
+    {
+        "yes",
+        "yeah",
+        "yep",
+        "ok",
+        "okay",
+        "sure",
+        "confirm",
+        "exclude it",
+        "exclude that",
+        "do it",
+        "go ahead",
+        "yes please",
+    }
+)
+_NO = frozenset(
+    {
+        "no",
+        "nope",
+        "cancel",
+        "discard it",
+        "dont",
+        "don't",
+        "do not",
+        "never mind",
+        "nevermind",
+        "no thanks",
+        "stop",
+    }
+)
+
 # "Change the voice to a man", "use a female voice": whole utterances only.
 # Checked before the named-voice row so "a male" is never looked up as a name.
 _GENDER_WORDS: dict[str, Literal["male", "female"]] = {
@@ -131,15 +181,6 @@ _UNSUPPORTED_COMMANDS: tuple[tuple[re.Pattern[str], str, str], ...] = (
         ),
         "MEMORY_MUTATION_UNSUPPORTED",
         "I can't change or delete memories by voice yet. Nothing was changed.",
-    ),
-    (
-        re.compile(
-            r"^(?:restore (?:the |my )?(?:excluded )?memories\b.*"
-            r"|bring back (?:the )?memories\b.*"
-            r"|undo (?:that |the )?memory exclusion.*)$"
-        ),
-        "MEMORY_RESTORE_UNSUPPORTED",
-        "I can't restore excluded memories by voice yet. Nothing was changed.",
     ),
     (
         re.compile(r"^clear (?:the )?(?:context|memory)$"),
@@ -183,6 +224,9 @@ class CommandResult(Contract):
     changed: bool = False
     spoken: str = Field(min_length=1, max_length=300)
     detail: str | None = Field(default=None, max_length=100)
+    # Opaque handle for the undo endpoint when a command applied a reversible
+    # context change.  Existing UI normalisation ignores unknown fields.
+    operation_id: str | None = Field(default=None, max_length=36)
 
 
 def parse_exact_command(text: str) -> Action | None:
@@ -223,6 +267,47 @@ def parse_voice_selection(text: str) -> str | None:
     if match is None:
         return None
     return " ".join(normalized[match.start("name") : match.end("name")].split())
+
+
+def parse_memory_exclusion_target(text: str) -> str | None:
+    """Return the spoken target of a simple "forget/exclude <target>" command.
+
+    Compound, global and referential requests are deliberately not parsed here;
+    the caller either refuses them honestly or leaves them to conversation.
+    """
+    normalized = " ".join(text.strip().split()).removesuffix(".")
+    match = _MEMORY_EXCLUDE.match(normalized)
+    if match is None:
+        return None
+    target = match.group("target").strip()
+    if not target or target.casefold() in _REFERENTIAL_TARGETS:
+        return None
+    if _MEMORY_COMPOUND.search(normalized) or memory_request_is_global(normalized):
+        return None
+    return target
+
+
+def memory_request_is_global(text: str) -> bool:
+    """Whether a destructive memory request explicitly asks for every chat."""
+    normalized = " ".join(text.strip().lower().split()).removesuffix(".")
+    if not re.match(r"^(?:please )?(?:forget|exclude|delete|remove)\b", normalized):
+        return False
+    return bool(_MEMORY_GLOBAL.search(normalized))
+
+
+def memory_restore_requested(text: str) -> bool:
+    normalized = " ".join(text.strip().lower().split()).removesuffix(".")
+    return bool(_MEMORY_RESTORE.match(normalized))
+
+
+def parse_exclusion_confirmation(text: str) -> bool | None:
+    """Return the user's yes/no decision, or ``None`` for ordinary speech."""
+    normalized = re.sub(r"[.,!?]+", "", " ".join(text.strip().casefold().split()))
+    if normalized in _YES:
+        return True
+    if normalized in _NO:
+        return False
+    return None
 
 
 def unsupported_command(text: str) -> tuple[str, str] | None:
@@ -333,7 +418,11 @@ __all__ = [
     "CommandResult",
     "command_result",
     "failed_result",
+    "memory_request_is_global",
+    "memory_restore_requested",
     "parse_exact_command",
+    "parse_exclusion_confirmation",
+    "parse_memory_exclusion_target",
     "parse_voice_selection",
     "spoken_outcome",
     "unknown_result",
