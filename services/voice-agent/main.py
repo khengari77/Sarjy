@@ -348,7 +348,10 @@ async def perform_say(session, data, participants) -> str:
     text, error = resolve_say_request(data, participants)
     if error is not None or text is None:
         return json.dumps({"ok": False, "code": error})
-    await session.say(text, allow_interruptions=True, add_to_chat_ctx=False)
+    try:
+        await session.say(text, allow_interruptions=True, add_to_chat_ctx=False)
+    except RuntimeError:
+        return json.dumps({"ok": False, "code": "SARJY_SAY_UNAVAILABLE"})
     return json.dumps({"ok": True})
 
 
