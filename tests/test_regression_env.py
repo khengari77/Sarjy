@@ -37,3 +37,15 @@ def test_migration_preflight_rejects_multiple_heads(tmp_path):
         preflight.validate_head(config)
     (versions / "b.py").unlink()
     preflight.validate_head(config)
+
+
+def test_committed_workflow_preserves_service_and_required_gates():
+    import yaml
+
+    workflow = yaml.safe_load(Path(".github/workflows/checks.yml").read_text())
+    postgres = workflow["jobs"]["postgres"]
+    assert postgres["services"]["postgres"]["image"] == "pgvector/pgvector:pg16"
+    preflight.validate_environment(postgres["env"])
+    commands = [step.get("run", "") for step in workflow["jobs"]["checks"]["steps"]]
+    assert "pnpm --dir apps/web test:deadline" in commands
+    assert "pnpm --dir apps/web test:smoke-setup" in commands

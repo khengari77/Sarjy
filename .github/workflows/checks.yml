@@ -65,9 +65,6 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-    env:
-      TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
-      TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: test-only
