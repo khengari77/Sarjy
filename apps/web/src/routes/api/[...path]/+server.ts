@@ -3,7 +3,7 @@ import type { RequestHandler } from '@sveltejs/kit';
 import { proxyTimeoutMs } from '../../../lib/proxy-deadline';
 import { resolveProxyTarget } from '../../../lib/proxy-path';
 
-const proxy: RequestHandler = async ({ request, params, url }) => {
+const proxy: RequestHandler = async ({ request, params, url, getClientAddress }) => {
   if (!['GET', 'POST'].includes(request.method)) return new Response(null, { status: 405 });
   if (request.method === 'POST' && request.headers.get('origin') !== url.origin) {
     return Response.json({ detail: { code: 'INVALID_ORIGIN' } }, { status: 403 });
@@ -13,6 +13,12 @@ const proxy: RequestHandler = async ({ request, params, url }) => {
   target.search = url.search;
   const headers = new Headers();
   if (WEB_SERVICE_SECRET) headers.set('x-web-service-secret', WEB_SERVICE_SECRET);
+  if (target.pathname === '/v1/reviewer/session') {
+    // Overwrite (never append to) the client header. The API trusts this only
+    // because it arrives with the web-service secret. Behind another proxy,
+    // configure adapter-node's ADDRESS_HEADER for the real client address.
+    headers.set('x-reviewer-source', getClientAddress());
+  }
   for (const name of ['content-type', 'cookie', 'idempotency-key']) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);

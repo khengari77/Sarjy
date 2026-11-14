@@ -1,5 +1,6 @@
 """Reviewer invitation exchange and sanitized session inspection."""
 
+import ipaddress
 import json
 
 from fastapi import Depends, HTTPException, Request
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.dependencies import COOKIE
+from app.domain.secrets import secret_matches
 from app.services.reviewer_access import (
     IDENTITY_TTL,
     ReviewerAccessDenied,
@@ -62,13 +64,31 @@ def _unavailable() -> HTTPException:
     return HTTPException(503, detail={"code": "REVIEWER_UNAVAILABLE"})
 
 
+def attempt_source(request: Request, config: Settings) -> str:
+    """Return a bounded per-source key for the admission limiter.
+
+    The web proxy holds the web-service secret and overwrites
+    ``x-reviewer-source`` from the socket peer, so only the proxy can set it.
+    Missing, malformed or spoofed values fall back to the immediate peer
+    address instead of creating an attacker-chosen bucket.
+    """
+    peer = request.client.host if request.client is not None else "unknown"
+    supplied = request.headers.get("x-reviewer-source", "")
+    if supplied and secret_matches(request.headers.get("x-web-service-secret", ""), config.web_service_secret):
+        try:
+            return str(ipaddress.ip_address(supplied.strip()))
+        except ValueError:
+            return peer
+    return peer
+
+
 def register_reviewer_routes(app, *, config: Settings, database, clock):
     @app.post("/v1/reviewer/session")
     async def create_reviewer_session(request: Request, db: AsyncSession = Depends(database)):
         token = await _invitation_token(request)
         now = clock()
         try:
-            await record_attempt(db, now)
+            await record_attempt(db, now, attempt_source(request, config))
         except ReviewerLimitExceeded as exc:
             raise _limit_error(exc) from None
         except SQLAlchemyError:

@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 
 import pytest
 from app.services.reviewer_access import (
-    ATTEMPT_LIMIT,
     CREATION_LIMIT,
+    SOURCE_ATTEMPT_LIMIT,
     ReviewerAccessDenied,
     ReviewerLimitExceeded,
     admit,
@@ -34,32 +34,54 @@ def test_postgres_attempt_limit_is_exact_under_concurrency():
         engine, factory = await _factory()
         now = datetime(2032, 5, 6, 7, 8, tzinfo=UTC)
         minute = now.replace(second=0, microsecond=0).isoformat()
+        source = "203.0.113.9"
         try:
             async with factory() as db:
                 await db.execute(
-                    text("DELETE FROM reviewer_attempt_windows WHERE minute = :minute"), {"minute": minute}
+                    text("DELETE FROM reviewer_attempt_windows WHERE minute = :minute"),
+                    {"minute": minute},
+                )
+                await db.execute(
+                    text("DELETE FROM reviewer_source_attempt_windows WHERE minute = :minute"),
+                    {"minute": minute},
                 )
                 await db.commit()
 
-            async def attempt():
+            async def attempt(value):
                 async with factory() as db:
                     try:
-                        await record_attempt(db, now)
+                        await record_attempt(db, now, value)
                         return True
                     except ReviewerLimitExceeded:
                         return False
 
-            results = await asyncio.gather(*(attempt() for _ in range(ATTEMPT_LIMIT + 1)))
-            assert sum(results) == ATTEMPT_LIMIT
+            results = await asyncio.gather(*(attempt(source) for _ in range(SOURCE_ATTEMPT_LIMIT + 1)))
+            assert sum(results) == SOURCE_ATTEMPT_LIMIT
+            # A different source is unaffected by the noisy one.
             async with factory() as db:
-                remaining = await db.scalar(
-                    text("SELECT attempts FROM reviewer_attempt_windows WHERE minute = :minute"), {"minute": minute}
+                assert await record_attempt(db, now, "198.51.100.4") is None
+            async with factory() as db:
+                source_remaining = await db.scalar(
+                    text(
+                        "SELECT attempts FROM reviewer_source_attempt_windows "
+                        "WHERE source = :source AND minute = :minute"
+                    ),
+                    {"source": source, "minute": minute},
                 )
-            assert remaining == ATTEMPT_LIMIT
+                global_remaining = await db.scalar(
+                    text("SELECT attempts FROM reviewer_attempt_windows WHERE minute = :minute"),
+                    {"minute": minute},
+                )
+            assert source_remaining == SOURCE_ATTEMPT_LIMIT
+            assert global_remaining == SOURCE_ATTEMPT_LIMIT + 1
         finally:
             async with factory() as db:
                 await db.execute(
                     text("DELETE FROM reviewer_attempt_windows WHERE minute = :minute"), {"minute": minute}
+                )
+                await db.execute(
+                    text("DELETE FROM reviewer_source_attempt_windows WHERE minute = :minute"),
+                    {"minute": minute},
                 )
                 await db.commit()
             await engine.dispose()
@@ -76,7 +98,7 @@ def test_postgres_creation_limit_is_exact_under_concurrency():
         invitation_id = None
         try:
             async with factory() as db:
-                invitation, token = await create_invitation(db, expires_at=None, now=now)
+                invitation, token = await create_invitation(db, expires_at=None, now=now, max_identities=CREATION_LIMIT)
                 invitation_id = invitation.id
             async with factory() as db:
                 await db.execute(
@@ -90,7 +112,7 @@ def test_postgres_creation_limit_is_exact_under_concurrency():
                     try:
                         admitted = await admit(db, "", token, now)
                         return admitted.identity.id
-                    except ReviewerLimitExceeded:
+                    except (ReviewerLimitExceeded, ReviewerAccessDenied):
                         return None
 
             owners = await asyncio.gather(*(create_one() for _ in range(CREATION_LIMIT + 1)))
@@ -139,7 +161,9 @@ def test_postgres_admission_racing_revocation_never_stays_authorized():
         try:
             for _ in range(15):
                 async with factory() as db:
-                    invitation, token = await create_invitation(db, expires_at=None, now=now)
+                    invitation, token = await create_invitation(
+                        db, expires_at=None, now=now, max_identities=CREATION_LIMIT
+                    )
                     invitation_ids.append(invitation.id)
                 async with factory() as admission_db, factory() as revoke_db:
                     admitted, revoked = await asyncio.gather(

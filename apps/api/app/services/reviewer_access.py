@@ -21,14 +21,22 @@ from app.infrastructure.database import (
     ReviewerAttemptWindow,
     ReviewerCreationWindow,
     ReviewerInvitation,
+    ReviewerSourceAttemptWindow,
 )
 from app.infrastructure.upsert import insert_ignore
 
 TOKEN_BYTES = 32
 TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 IDENTITY_TTL = timedelta(days=7)
-ATTEMPT_LIMIT = 60
+INVITATION_TTL = timedelta(hours=72)
+# Per-source limit protects legitimate reviewers from one noisy crawler; the
+# global row is only a high backstop (no single source can reach it alone).
+SOURCE_ATTEMPT_LIMIT = 60
+ATTEMPT_LIMIT = 600
 CREATION_LIMIT = 30
+DEFAULT_MAX_IDENTITIES = 8
+MAX_IDENTITIES_LIMIT = 50
+DEFAULT_MAX_CALLS = 24
 
 
 class ReviewerSessionRequired(Exception):
@@ -97,7 +105,12 @@ def retry_after(value: datetime, *, hourly: bool) -> int:
 def invitation_active(invitation: ReviewerInvitation, now: datetime) -> bool:
     if invitation.revoked_at is not None:
         return False
-    return invitation.expires_at is None or invitation.expires_at > utc_iso(now)
+    # A reviewer credential is never unbounded; a missing expiry is inactive.
+    return invitation.expires_at is not None and invitation.expires_at > utc_iso(now)
+
+
+def remaining_identities(invitation: ReviewerInvitation) -> int:
+    return max(0, invitation.max_identities - invitation.identities_created)
 
 
 async def _lookup_identity(db: AsyncSession, token: str) -> Identity | None:
@@ -140,7 +153,29 @@ async def cleanup_identity(db: AsyncSession, token: str, now: datetime) -> Ident
     return identity
 
 
-async def _claim_attempt(db: AsyncSession, now: datetime) -> None:
+async def _claim_source_attempt(db: AsyncSession, source: str, now: datetime) -> None:
+    minute = _minute_key(now)
+    await insert_ignore(
+        db,
+        ReviewerSourceAttemptWindow,
+        {"source": source, "minute": minute, "attempts": 0},
+        index_elements=["source", "minute"],
+    )
+    changed = await db.execute(
+        update(ReviewerSourceAttemptWindow)
+        .where(
+            ReviewerSourceAttemptWindow.source == source,
+            ReviewerSourceAttemptWindow.minute == minute,
+            ReviewerSourceAttemptWindow.attempts < SOURCE_ATTEMPT_LIMIT,
+        )
+        .values(attempts=ReviewerSourceAttemptWindow.attempts + 1)
+    )
+    if changed.rowcount != 1:
+        await db.rollback()
+        raise ReviewerLimitExceeded(retry_after(now, hourly=False))
+
+
+async def _claim_global_attempt(db: AsyncSession, now: datetime) -> None:
     minute = _minute_key(now)
     await insert_ignore(db, ReviewerAttemptWindow, {"minute": minute, "attempts": 0})
     changed = await db.execute(
@@ -154,23 +189,42 @@ async def _claim_attempt(db: AsyncSession, now: datetime) -> None:
     await db.commit()
 
 
-async def record_attempt(db: AsyncSession, now: datetime) -> None:
-    """Count one POST attempt, committing before the invitation is inspected."""
-    await _claim_attempt(db, now)
+async def record_attempt(db: AsyncSession, now: datetime, source: str) -> None:
+    """Count one POST attempt per source, with the global row as a backstop.
+
+    Both counters commit together before the invitation is inspected. Successful
+    exchanges are counted too: the limiter bounds request volume, not failures.
+    """
+    await _claim_source_attempt(db, source, now)
+    await _claim_global_attempt(db, now)
 
 
-async def _claim_creation(db: AsyncSession, invitation_id: str, now: datetime) -> None:
+async def _claim_creation(db: AsyncSession, invitation: ReviewerInvitation, now: datetime) -> None:
+    # Lifetime cap first: one leaked link must not mint identities forever.
+    lifetime = await db.execute(
+        update(ReviewerInvitation)
+        .where(
+            ReviewerInvitation.id == invitation.id,
+            ReviewerInvitation.identities_created < ReviewerInvitation.max_identities,
+        )
+        .values(identities_created=ReviewerInvitation.identities_created + 1)
+    )
+    if lifetime.rowcount != 1:
+        await db.rollback()
+        # Exhaustion is permanent for this invitation; report it exactly like a
+        # revoked or expired link so it reveals nothing about which it was.
+        raise ReviewerAccessDenied
     hour = _hour_key(now)
     await insert_ignore(
         db,
         ReviewerCreationWindow,
-        {"invitation_id": invitation_id, "hour": hour, "created": 0},
+        {"invitation_id": invitation.id, "hour": hour, "created": 0},
         index_elements=["invitation_id", "hour"],
     )
     changed = await db.execute(
         update(ReviewerCreationWindow)
         .where(
-            ReviewerCreationWindow.invitation_id == invitation_id,
+            ReviewerCreationWindow.invitation_id == invitation.id,
             ReviewerCreationWindow.hour == hour,
             ReviewerCreationWindow.created < CREATION_LIMIT,
         )
@@ -206,7 +260,7 @@ async def admit(db: AsyncSession, cookie_token: str, invitation_token: str, now:
             raise ReviewerAccessDenied
         return AdmittedIdentity(identity=existing, created=False)
 
-    await _claim_creation(db, invitation.id, now)
+    await _claim_creation(db, invitation, now)
     identity_token = new_token()
     identity = Identity(
         id=str(uuid4()),
@@ -222,16 +276,36 @@ async def admit(db: AsyncSession, cookie_token: str, invitation_token: str, now:
 async def create_invitation(
     db: AsyncSession,
     *,
-    expires_at: datetime | None,
+    expires_at: datetime | None = None,
     now: datetime,
+    max_identities: int = DEFAULT_MAX_IDENTITIES,
+    max_calls: int = DEFAULT_MAX_CALLS,
 ) -> tuple[ReviewerInvitation, str]:
-    """Create one reusable invitation; the raw token is returned only to the CLI."""
+    """Create one reusable, bounded invitation.
+
+    An expiry is mandatory. Callers may omit ``expires_at`` to get the 72-hour
+    default; anything already in the past is refused. The lifetime identity cap
+    and call cap are enforced here so no caller can create an unbounded link.
+    """
+    if expires_at is None:
+        expires_at = now + INVITATION_TTL
+    if expires_at.tzinfo is None:
+        raise ValueError("INVITATION_EXPIRY_REQUIRES_UTC_OFFSET")
+    if expires_at <= now:
+        raise ValueError("INVITATION_EXPIRY_IN_PAST")
+    if not 1 <= max_identities <= MAX_IDENTITIES_LIMIT:
+        raise ValueError("INVITATION_MAX_IDENTITIES_INVALID")
+    if not 1 <= max_calls <= 1000:
+        raise ValueError("INVITATION_MAX_CALLS_INVALID")
     token = new_token()
     invitation = ReviewerInvitation(
         id=str(uuid4()),
         token_hash=token_hash(token),
         created_at=utc_iso(now),
-        expires_at=utc_iso(expires_at) if expires_at is not None else None,
+        expires_at=utc_iso(expires_at),
+        max_identities=max_identities,
+        identities_created=0,
+        max_calls=max_calls,
     )
     db.add(invitation)
     await db.commit()
@@ -246,6 +320,10 @@ async def list_invitations(db: AsyncSession) -> list[dict]:
             "created_at": row.created_at,
             "expires_at": row.expires_at,
             "revoked_at": row.revoked_at,
+            "max_identities": row.max_identities,
+            "identities_created": row.identities_created,
+            "remaining_identities": remaining_identities(row),
+            "max_calls": row.max_calls,
         }
         for row in rows
     ]

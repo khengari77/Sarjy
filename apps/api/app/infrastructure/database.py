@@ -23,14 +23,28 @@ class ReviewerInvitation(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     created_at: Mapped[str] = mapped_column(String(40))
-    expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # A reviewer credential is always bounded: the service rejects a missing or
+    # past expiry, and the column is NOT NULL as a second line of defence.
+    expires_at: Mapped[str] = mapped_column(String(40))
     revoked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    max_identities: Mapped[int] = mapped_column(Integer, default=8)
+    identities_created: Mapped[int] = mapped_column(Integer, default=0)
+    max_calls: Mapped[int] = mapped_column(Integer, default=24)
 
 
 class ReviewerAttemptWindow(Base):
-    """Global admission-attempt counter for one UTC fixed minute."""
+    """Global admission-attempt backstop for one UTC fixed minute."""
 
     __tablename__ = "reviewer_attempt_windows"
+    minute: Mapped[str] = mapped_column(String(40), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ReviewerSourceAttemptWindow(Base):
+    """Per-source admission-attempt counter for one UTC fixed minute."""
+
+    __tablename__ = "reviewer_source_attempt_windows"
+    source: Mapped[str] = mapped_column(String(64), primary_key=True)
     minute: Mapped[str] = mapped_column(String(40), primary_key=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
 

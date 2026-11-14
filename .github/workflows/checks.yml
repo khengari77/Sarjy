@@ -58,6 +58,13 @@ jobs:
     # merged into the branch; before that there is nothing real to verify.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # Both disposable URLs are required by tests/conftest.py for every
+    # DB-backed step. Defining them once here means a new step inherits the
+    # full environment instead of failing before collection. Steps that need a
+    # different database override the value locally (see Migration preservation).
+    env:
+      TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
+      TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
     services:
       postgres:
         image: pgvector/pgvector:pg16

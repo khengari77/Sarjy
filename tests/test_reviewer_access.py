@@ -17,8 +17,10 @@ from app.dependencies import COOKIE
 from app.infrastructure.database import Base
 from app.main import create_app
 from app.services.reviewer_access import (
-    ATTEMPT_LIMIT,
     CREATION_LIMIT,
+    DEFAULT_MAX_IDENTITIES,
+    INVITATION_TTL,
+    SOURCE_ATTEMPT_LIMIT,
     ReviewerAccessDenied,
     admit,
     authorize,
@@ -75,13 +77,24 @@ def run(coroutine):
     return asyncio.run(coroutine)
 
 
-def seed_invitation(config, clock, *, expires_at=None):
+def seed_invitation(config, clock, *, expires_at=None, max_identities=DEFAULT_MAX_IDENTITIES, max_calls=24):
     async def execute():
         engine = create_async_engine(config.database_url)
         factory = async_sessionmaker(engine, expire_on_commit=False)
         try:
             async with factory() as db:
-                invitation, token = await create_invitation(db, expires_at=expires_at, now=clock.value)
+                invitation, token = await create_invitation(
+                    db,
+                    expires_at=None if expires_at is not None and expires_at <= clock.value else expires_at,
+                    now=clock.value,
+                    max_identities=max_identities,
+                    max_calls=max_calls,
+                )
+                if expires_at is not None and expires_at <= clock.value:
+                    # The service refuses to create an expired credential; forge
+                    # the stored value to exercise a link that has since expired.
+                    invitation.expires_at = expires_at.isoformat()
+                    await db.commit()
                 return invitation.id, token
         finally:
             await engine.dispose()
@@ -344,32 +357,58 @@ def test_get_session_creates_and_renews_nothing(tmp_path):
         assert rows(config, "SELECT id, expires_at, token_hash FROM identities") == identity_before
 
 
-def test_attempt_limit_is_exact_and_survives_restart(tmp_path):
+def test_per_source_attempt_limit_is_exact_and_survives_restart(tmp_path):
     clock = Clock()
     clock.advance(seconds=15)
     app, config = app_for(tmp_path, clock)
+    source = {"x-reviewer-source": "203.0.113.10"}
     with client_for(app) as client:
-        for _ in range(ATTEMPT_LIMIT):
-            assert client.post("/v1/reviewer/session", json={"invitation_token": "A" * 43}).status_code == 403
-        denied = client.post("/v1/reviewer/session", json={"invitation_token": "A" * 43})
+        for _ in range(SOURCE_ATTEMPT_LIMIT):
+            assert (
+                client.post("/v1/reviewer/session", json={"invitation_token": "A" * 43}, headers=source).status_code
+                == 403
+            )
+        denied = client.post("/v1/reviewer/session", json={"invitation_token": "A" * 43}, headers=source)
         assert denied.status_code == 429
         assert denied.json() == {"detail": {"code": "REVIEWER_ADMISSION_LIMIT"}}
         assert denied.headers["retry-after"] == "45"
-        assert rows(config, "SELECT attempts FROM reviewer_attempt_windows") == [(ATTEMPT_LIMIT,)]
+        assert rows(config, "SELECT attempts FROM reviewer_source_attempt_windows") == [(SOURCE_ATTEMPT_LIMIT,)]
+        # The global row is only a backstop and is far from exhausted.
+        assert rows(config, "SELECT attempts FROM reviewer_attempt_windows") == [(SOURCE_ATTEMPT_LIMIT,)]
 
     with client_for(app) as restarted:
-        denied = restarted.post("/v1/reviewer/session", json={"invitation_token": "A" * 43})
+        denied = restarted.post("/v1/reviewer/session", json={"invitation_token": "A" * 43}, headers=source)
         assert denied.status_code == 429
         assert denied.headers["retry-after"] == "45"
         clock.advance(seconds=45)
-        assert restarted.post("/v1/reviewer/session", json={"invitation_token": "A" * 43}).status_code == 403
+        assert (
+            restarted.post("/v1/reviewer/session", json={"invitation_token": "A" * 43}, headers=source).status_code
+            == 403
+        )
+
+
+def test_one_noisy_source_cannot_lock_out_another_source(tmp_path):
+    clock = Clock()
+    app, config = app_for(tmp_path, clock)
+    noisy = {"x-reviewer-source": "203.0.113.66"}
+    quiet = {"x-reviewer-source": "198.51.100.7"}
+    with client_for(app) as client:
+        for _ in range(SOURCE_ATTEMPT_LIMIT):
+            client.post("/v1/reviewer/session", json={"invitation_token": "A" * 43}, headers=noisy)
+        assert (
+            client.post("/v1/reviewer/session", json={"invitation_token": "A" * 43}, headers=noisy).status_code == 429
+        )
+        _, token = seed_invitation(config, clock)
+        admitted = client.post("/v1/reviewer/session", json={"invitation_token": token}, headers=quiet)
+        assert admitted.status_code == 200
+        assert client.get("/v1/conversations", headers=quiet).status_code == 200
 
 
 def test_creation_limit_is_exact_per_invitation_and_window(tmp_path):
     clock = Clock()
     app, config = app_for(tmp_path, clock)
     with client_for(app) as client:
-        _, token = seed_invitation(config, clock)
+        _, token = seed_invitation(config, clock, max_identities=50)
         owners = set()
         for _ in range(CREATION_LIMIT):
             client.cookies.clear()
@@ -457,6 +496,123 @@ def test_concurrent_admission_and_revocation_converges_to_denied(tmp_path):
     run(run_case())
 
 
+def test_invitation_lifetime_identity_cap_is_permanent(tmp_path):
+    clock = Clock()
+    app, config = app_for(tmp_path, clock)
+    with client_for(app) as client:
+        _, token = seed_invitation(config, clock, max_identities=2)
+        for _ in range(2):
+            client.cookies.clear()
+            assert client.post("/v1/reviewer/session", json={"invitation_token": token}).status_code == 200
+        client.cookies.clear()
+        exhausted = client.post("/v1/reviewer/session", json={"invitation_token": token})
+        assert exhausted.status_code == 403
+        assert exhausted.json() == {"detail": {"code": "REVIEWER_ACCESS_DENIED"}}
+        # Waiting past the hourly window cannot reopen a lifetime-exhausted link.
+        clock.advance(hours=2)
+        client.cookies.clear()
+        assert client.post("/v1/reviewer/session", json={"invitation_token": token}).status_code == 403
+        assert rows(config, "SELECT identities_created, max_identities FROM reviewer_invitations") == [(2, 2)]
+        assert len(rows(config, "SELECT id FROM identities")) == 2
+
+
+def test_invitation_expiry_is_required_and_defaults_to_72_hours(tmp_path):
+    clock = Clock()
+    app, config = app_for(tmp_path, clock)
+    with TestClient(app):
+        pass
+
+    async def execute():
+        engine = create_async_engine(config.database_url)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with factory() as db:
+                invitation, _ = await create_invitation(db, expires_at=None, now=clock.value)
+                assert invitation.expires_at == (clock.value + INVITATION_TTL).isoformat()
+                with pytest.raises(ValueError, match="INVITATION_EXPIRY_IN_PAST"):
+                    await create_invitation(db, expires_at=clock.value - timedelta(seconds=1), now=clock.value)
+                with pytest.raises(ValueError, match="INVITATION_MAX_IDENTITIES_INVALID"):
+                    await create_invitation(db, expires_at=None, now=clock.value, max_identities=0)
+        finally:
+            await engine.dispose()
+
+    run(execute())
+
+
+def test_reviewer_session_and_app_routes_need_no_authorization_header(tmp_path):
+    """B9: reviewer mode keeps API protection but not the shared web password."""
+    clock = Clock()
+    app, config = app_for(tmp_path, clock)
+    with TestClient(app, base_url="https://testserver") as client:  # no Authorization header
+        client.headers.update(HEADERS)
+        _, token = seed_invitation(config, clock)
+        response = client.post("/v1/reviewer/session", json={"invitation_token": token})
+        assert response.status_code == 200
+        assert "authorization" not in {name.lower() for name in response.request.headers}
+        assert client.get("/v1/conversations").status_code == 200
+        assert client.post("/v1/conversations").status_code == 201
+
+
+def test_demo_session_cannot_mint_in_reviewer_mode(tmp_path):
+    clock = Clock()
+    app, config = app_for(tmp_path, clock)
+    with client_for(app) as client:
+        anonymous = client.post("/v1/demo-session")
+        assert anonymous.status_code == 401
+        assert anonymous.json()["detail"]["code"] == "REVIEWER_SESSION_REQUIRED"
+        assert rows(config, "SELECT id FROM identities") == []
+
+        _, token = seed_invitation(config, clock)
+        owner = client.post("/v1/reviewer/session", json={"invitation_token": token}).json()["id"]
+        echoed = client.post("/v1/demo-session")
+        assert echoed.status_code == 200 and echoed.json() == {"id": owner}
+        assert rows(config, "SELECT id FROM identities") == [(owner,)]
+
+
+def test_invitation_call_cap_denies_new_voice_sessions(tmp_path):
+    clock = Clock()
+    config = settings(
+        tmp_path,
+        openai_api_key="test-openai",
+        deepseek_api_key="test-deepseek",
+        deepgram_api_key="test-deepgram",
+        eleven_api_key="test-eleven",
+        default_llm_provider="openai_direct",
+        livekit_url="https://fake.livekit",
+        livekit_api_key="key" * 8,
+        livekit_api_secret="secret" * 8,
+        agent_service_secret="agent-secret" * 4,
+    )
+
+    class FakeCatalog:
+        async def require(self, voice_id):
+            return type("Voice", (), {"id": voice_id, "name": "Test Voice"})()
+
+    app = create_app(config, voice_catalog=FakeCatalog(), clock=lambda: clock.value)
+    with client_for(app) as client:
+        _, token = seed_invitation(config, clock, max_calls=1)
+        owner = client.post("/v1/reviewer/session", json={"invitation_token": token}).json()["id"]
+        conversation = client.post("/v1/conversations").json()["id"]
+        path = config.database_url.removeprefix("sqlite+aiosqlite:///")
+        with closing(sqlite3.connect(path)) as connection, connection:
+            connection.execute(
+                "INSERT INTO voice_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "voice-1",
+                    conversation,
+                    owner,
+                    "room-1",
+                    "ended",
+                    (clock.value + timedelta(minutes=5)).isoformat(),
+                    "{}",
+                    clock.value.isoformat(),
+                ),
+            )
+        denied = client.post("/v1/voice/sessions", json={"conversation_id": conversation, "voice_id": "test-voice"})
+        assert denied.status_code == 429
+        assert denied.json()["detail"]["code"] == "REVIEWER_INVITATION_BUDGET_EXHAUSTED"
+
+
 def test_cli_create_list_revoke_permissions_and_output(tmp_path):
     path = tmp_path / "cli.db"
     database_url = f"sqlite+aiosqlite:///{path}"
@@ -492,7 +648,7 @@ def test_cli_create_list_revoke_permissions_and_output(tmp_path):
     assert created.returncode == 0, created.stderr
     assert link.stat().st_mode & 0o777 == 0o600
     content = link.read_text().strip()
-    assert content.startswith("https://reviewer.example.test/review#invite=")
+    assert content.startswith("https://reviewer.example.test/review#invitation=")
     token = content.rsplit("=", 1)[1]
     assert len(token) == 43
     assert token not in created.stdout + created.stderr
@@ -512,7 +668,17 @@ def test_cli_create_list_revoke_permissions_and_output(tmp_path):
     assert listed.returncode == 0
     metadata = json.loads(listed.stdout)
     assert metadata[0]["id"]
-    assert set(metadata[0]) == {"id", "created_at", "expires_at", "revoked_at"}
+    assert set(metadata[0]) == {
+        "id",
+        "created_at",
+        "expires_at",
+        "revoked_at",
+        "max_identities",
+        "identities_created",
+        "remaining_identities",
+        "max_calls",
+    }
+    assert metadata[0]["remaining_identities"] == DEFAULT_MAX_IDENTITIES
     assert token not in listed.stdout
     assert token_hash(token) not in listed.stdout
 

@@ -55,9 +55,23 @@ def test_reviewer_migration_is_additive_and_has_one_head(tmp_path):
         assert snapshot(connection) == before
         assert connection.execute("SELECT invitation_id FROM identities").fetchall() == [(None,)]
         columns = {row[1] for row in connection.execute("PRAGMA table_info(reviewer_invitations)")}
-        assert columns == {"id", "token_hash", "created_at", "expires_at", "revoked_at"}
+        assert columns == {
+            "id",
+            "token_hash",
+            "created_at",
+            "expires_at",
+            "revoked_at",
+            "max_identities",
+            "identities_created",
+            "max_calls",
+        }
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"reviewer_invitations", "reviewer_attempt_windows", "reviewer_creation_windows"} <= tables
+        assert {
+            "reviewer_invitations",
+            "reviewer_attempt_windows",
+            "reviewer_source_attempt_windows",
+            "reviewer_creation_windows",
+        } <= tables
     alembic(url, "check")
     alembic(url, "downgrade", "0009_dispatcher_leases")
     with closing(sqlite3.connect(tmp_path / "reviewer.db")) as connection, connection:

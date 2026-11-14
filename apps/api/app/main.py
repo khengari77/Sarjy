@@ -28,7 +28,7 @@ from app.services.reviewer_access import (
 from app.services.voices import ElevenLabsVoices
 
 REVIEWER_CLEANUP_PATH = re.compile(r"^/v1/voice/sessions/[^/]+/end$")
-REVIEWER_PUBLIC_PATHS = {"/v1/reviewer/session", "/v1/demo-session"}
+REVIEWER_PUBLIC_PATHS = {"/v1/reviewer/session"}
 
 
 def _reviewer_gate_exempt(path: str) -> bool:

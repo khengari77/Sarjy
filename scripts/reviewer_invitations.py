@@ -24,6 +24,8 @@ sys.path.insert(0, str(ROOT / "apps/api"))
 
 from app.config import Settings  # noqa: E402
 from app.services.reviewer_access import (  # noqa: E402
+    DEFAULT_MAX_CALLS,
+    DEFAULT_MAX_IDENTITIES,
     create_invitation,
     list_invitations,
     now_utc,
@@ -73,11 +75,17 @@ async def _create(args) -> int:
     engine, factory = _session_factory()
     try:
         async with factory() as db:
-            invitation, token = await create_invitation(db, expires_at=expires_at, now=now_utc())
+            invitation, token = await create_invitation(
+                db,
+                expires_at=expires_at,
+                now=now_utc(),
+                max_identities=args.max_identities,
+                max_calls=args.max_calls,
+            )
     finally:
         await engine.dispose()
     try:
-        write_link(link_path, f"{base_url}/review#invite={token}")
+        write_link(link_path, f"{base_url}/review#invitation={token}")
     except FileExistsError:
         print("reviewer-cli: link file already exists", file=sys.stderr)
         return 1
@@ -86,6 +94,10 @@ async def _create(args) -> int:
         return 1
     print(f"invitation_id: {invitation.id}")
     print(f"link_file: {args.link_file}")
+    print(f"expires_at: {invitation.expires_at}")
+    print(f"max_identities: {invitation.max_identities}")
+    print(f"remaining_identities: {invitation.max_identities - invitation.identities_created}")
+    print(f"max_calls: {invitation.max_calls}")
     return 0
 
 
@@ -118,9 +130,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage local reviewer invitations.")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    create = commands.add_parser("create", help="Create one reusable invitation.")
+    create = commands.add_parser("create", help="Create one bounded reusable invitation.")
     create.add_argument("--base-url", required=True)
-    create.add_argument("--expires-at", default=None)
+    create.add_argument(
+        "--expires-at",
+        default=None,
+        help="ISO-8601 expiry with UTC offset (default: now + 72 hours)",
+    )
+    create.add_argument("--max-identities", type=int, default=DEFAULT_MAX_IDENTITIES)
+    create.add_argument("--max-calls", type=int, default=DEFAULT_MAX_CALLS)
     create.add_argument("--link-file", required=True)
     create.set_defaults(handler=_create)
 
