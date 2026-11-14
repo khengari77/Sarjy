@@ -99,9 +99,13 @@ test.describe('Living Cloud fill and motion', () => {
       const orb = page.getByRole('button', { name: 'Start voice conversation' });
       // This test claims to cover the enhanced tier: require it rather than
       // accepting Canvas2D, which also is not "static".
-      await expect(orb).toHaveAttribute('data-renderer', 'enhanced', { timeout: 60000 });
-      // The theme must reach the renderer, not just the page chrome.
+      await expect(orb).toHaveAttribute('data-renderer', 'enhanced');
+      // The theme must reach the renderer, not just the page chrome: the orb
+      // carries the resolved theme and the renderer records the palette it
+      // applied from `renderState.theme`.
+      await expect(orb).toHaveAttribute('data-theme', theme);
       await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);
+      await expect(orb.locator('canvas.orb-canvas')).toHaveAttribute('data-renderer-theme', theme);
       await page.waitForTimeout(700);
       const stats = await cloudStats(page, await orb.screenshot());
       expect(stats.spread).toBeGreaterThan(150);
@@ -118,7 +122,7 @@ test.describe('Living Cloud fill and motion', () => {
   test('WebGL interior billows move between frames', async ({ page }) => {
     await page.goto('/');
     const orb = page.getByRole('button', { name: 'Start voice conversation' });
-    await expect(orb).toHaveAttribute('data-renderer', 'enhanced', { timeout: 60000 });
+    await expect(orb).toHaveAttribute('data-renderer', 'enhanced');
     await page.waitForTimeout(800);
     const first = await orb.screenshot();
     await page.waitForTimeout(1200);
@@ -169,12 +173,35 @@ test.describe('Living Cloud fill and motion', () => {
     });
     await page.goto('/');
     const orb = page.locator('.orb-button');
-    await expect(orb).toHaveAttribute('data-renderer', 'light', { timeout: 60000 });
+    await expect(orb).toHaveAttribute('data-renderer', 'light');
     await page.waitForTimeout(700);
     const stats = await cloudStats(page, await orb.screenshot());
     expect(stats.center).toBeGreaterThan(10);
     expect(stats.center).toBeGreaterThan(stats.rim * 0.5);
   });
+});
+
+test('flipping the theme reaches the orb and the renderer palette', async ({ page }) => {
+  // Resolve the system preference deterministically: system → dark, then the
+  // first theme-control click pins light.
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/');
+  const orb = page.getByRole('button', { name: 'Start voice conversation' });
+  const html = page.locator('html');
+  const canvas = orb.locator('canvas.orb-canvas');
+  // Hydration gate; the tier itself is not what this test asserts.
+  await expect(orb).not.toHaveAttribute('data-renderer', 'static');
+
+  await expect(html).toHaveAttribute('data-theme', 'dark');
+  await expect(orb).toHaveAttribute('data-theme', 'dark');
+  await expect(canvas).toHaveAttribute('data-renderer-theme', 'dark');
+
+  await page.getByRole('button', { name: /^Theme:/ }).click();
+  await expect(html).toHaveAttribute('data-theme', 'light');
+  // Both the orb's own attribute and the renderer's applied palette follow the
+  // shell-resolved theme; neither is re-derived inside the orb.
+  await expect(orb).toHaveAttribute('data-theme', 'light');
+  await expect(canvas).toHaveAttribute('data-renderer-theme', 'light');
 });
 
 test('a low-FPS downgrade reaches the Canvas2D tier instead of collapsing to static', async ({ page }) => {
@@ -202,10 +229,8 @@ test('a low-FPS downgrade reaches the Canvas2D tier instead of collapsing to sta
   });
   await page.goto('/?theme=light&phase=idle');
   const orb = page.locator('.orb-button');
-  await expect(orb).not.toHaveAttribute('data-renderer', 'static', { timeout: 60000 });
-  await expect(orb, 'FPS downgrade must land on the Canvas2D tier').toHaveAttribute('data-renderer', 'light', {
-    timeout: 30000,
-  });
+  await expect(orb).not.toHaveAttribute('data-renderer', 'static');
+  await expect(orb, 'FPS downgrade must land on the Canvas2D tier').toHaveAttribute('data-renderer', 'light');
   await expect(orb.locator('.orb-static')).toHaveCount(0);
   await expect(orb.locator('canvas.orb-canvas')).toHaveCount(1);
   const isCanvas2d = await page.evaluate(() => {
@@ -228,6 +253,9 @@ test('a low-FPS downgrade reaches the Canvas2D tier instead of collapsing to sta
 });
 
 test('reduced-motion static fallback stays filled and labelled', async ({ page }) => {
+  // The demo-session boot request is slow on a cold SSR compile; keep the wait
+  // (and the test's budget) explicitly above the 30 s default, together.
+  test.setTimeout(90_000);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   // `data-renderer="static"` is server-rendered; hydration's bootstrap request
   // disables and dims the button, so let it settle before sampling pixels.

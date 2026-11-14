@@ -53,7 +53,9 @@ test('orb uses the enhanced renderer on capable browsers', async ({ page }) => {
   await page.goto('/');
   const orb = page.getByRole('button', { name: 'Start voice conversation' });
   await expect(orb).toBeVisible();
-  await expect(orb).not.toHaveAttribute('data-renderer', 'static');
+  // Canvas2D is also "not static", so the claim in the title needs the
+  // enhanced tier itself.
+  await expect(orb).toHaveAttribute('data-renderer', 'enhanced');
 });
 
 test('particle field rotates over time while idle', async ({ page }) => {
@@ -70,6 +72,9 @@ test('particle field rotates over time while idle', async ({ page }) => {
 });
 
 test('reduced-motion orb is visually stable across frames', async ({ page }) => {
+  // The demo-session boot request is slow on a cold SSR compile; keep the wait
+  // (and the test's budget) explicitly above the 30 s default, together.
+  test.setTimeout(90_000);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   // The static markup is server-rendered, so `data-renderer="static"` is true
   // before hydration. Wait for hydration's bootstrap request to finish before

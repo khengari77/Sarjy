@@ -1,7 +1,6 @@
-import type { ThemeName } from '../palette';
+import { ORB_PALETTES, type ThemeName } from '../palette';
 import { hexToRgb } from './colors';
 import { FRAGMENT, VERTEX } from './shaders';
-import { paletteFor } from './theme';
 import type { OrbRenderState, Rgb } from './types';
 
 export interface WebglOptions {
@@ -37,7 +36,7 @@ function compile(gl: WebGL2RenderingContext, type: number, source: string): WebG
 }
 
 function paletteValues(theme: ThemeName): Float32Array {
-  const colours = paletteFor(theme);
+  const colours = ORB_PALETTES[theme];
   const values = new Float32Array(18);
   for (let index = 0; index < 6; index += 1) {
     const rgb = hexToRgb(colours[index] ?? colours[0]);
@@ -102,6 +101,9 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
   };
 
   function applyPalette(theme: ThemeName) {
+    // Observable proof that the renderer consumed the presentation's theme,
+    // not merely that the document carries one.
+    canvas.dataset.rendererTheme = theme;
     gl.uniform3fv(uniforms.colors, paletteValues(theme));
     // Sky Prism needs more body shade and saturation to stay legible on
     // #EAF6FF; Cosmic Cloud is already high contrast on #080F29.

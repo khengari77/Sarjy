@@ -1,7 +1,6 @@
 import type { MotionPreset } from '../orbState';
-import type { ThemeName } from '../palette';
+import { ORB_PALETTES, type ThemeName } from '../palette';
 import { hexToRgb } from './colors';
-import { paletteFor } from './theme';
 import type { OrbRenderState, Rgb } from './types';
 
 export interface CanvasLoopOptions {
@@ -141,7 +140,10 @@ export function startCanvasDrawing(options: CanvasLoopOptions): () => void {
     if (theme === cacheTheme && renderState.color === cacheColor && bodyTexture && detailTexture) return;
     cacheTheme = theme;
     cacheColor = renderState.color;
-    const palette = paletteFor(theme);
+    // Observable proof that the renderer consumed the presentation's theme,
+    // not merely that the document carries one.
+    canvas.dataset.rendererTheme = theme;
+    const palette = ORB_PALETTES[theme];
     const phase = hexToRgb(renderState.color);
     bodyTexture = buildCloudTexture(palette, phase, 0x5a17, false);
     detailTexture = buildCloudTexture(palette, phase, 0x9e21, true);
