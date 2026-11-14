@@ -12,10 +12,14 @@ export async function startSessionAttempt(
     isCurrent(): boolean;
     releaseSession(session: SessionConfig | null): Promise<boolean>;
     clearOwnedLive(sessionId: string): void;
+    onSessionCreated?(session: SessionConfig): void;
   },
 ) {
   const voice = deps.getVoice();
   const config = await startVoiceSession(context.conversationId, deps.getLanguage(), voice.id);
+  // Register the server session before awaiting the transport so cancel/end
+  // can release it even while runtime.connect() is still pending.
+  context.onSessionCreated?.(config);
   if (!context.isCurrent()) {
     await context.releaseSession(config);
     return;

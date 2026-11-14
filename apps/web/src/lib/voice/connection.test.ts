@@ -184,3 +184,24 @@ describe('session release failure', () => {
     expect(state.voiceErrorCode).toBe('');
   });
 });
+
+describe('pending session release', () => {
+  it('releases the server session even if the transport connect never resolves', async () => {
+    vi.useFakeTimers();
+    mocks.start.mockResolvedValueOnce(config);
+    const { state, connection } = harness();
+
+    const start = connection.connect(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const room = rooms().at(-1)!;
+
+    await connection.cancelConnect();
+    room.connectResolve!();
+    await vi.advanceTimersByTimeAsync(0);
+    await start;
+
+    expect(mocks.end).toHaveBeenCalledTimes(1);
+    expect(mocks.end).toHaveBeenCalledWith(config);
+    expect(state.live).toBeNull();
+  });
+});

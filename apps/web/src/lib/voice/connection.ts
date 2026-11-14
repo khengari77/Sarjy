@@ -99,6 +99,7 @@ function clearOwnedLive(state: VoiceState, deps: ConnectionDeps, sessionId: stri
 export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   let attemptCounter = 0;
   let ending = false;
+  let pendingSession: SessionConfig | null = null;
   const releaseSession = createSessionReleaser();
 
   async function connect(microphone: boolean) {
@@ -109,6 +110,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     if (state.connecting) return;
 
     const attempt = ++attemptCounter;
+    pendingSession = null;
     state.connecting = true;
     state.voiceErrorCode = '';
     state.connectionLost = false;
@@ -136,7 +138,11 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         isCurrent: () => attempt === attemptCounter && deps.getConversationId() === conversationId,
         releaseSession,
         clearOwnedLive: (sessionId) => clearOwnedLive(state, deps, sessionId),
+        onSessionCreated: (session) => {
+          pendingSession = session;
+        },
       });
+      if (state.live) pendingSession = null;
     } catch (error) {
       if (attempt === attemptCounter) {
         state.voiceErrorCode = errorCode(error);
@@ -154,9 +160,10 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     state.voiceErrorCode = '';
     state.transportStatus = 'idle';
     state.agentState = null;
-    if (wasConnecting && state.live) {
-      const session = state.live;
-      clearOwnedLive(state, deps, session.id);
+    const session = state.live ?? pendingSession;
+    if (wasConnecting && session) {
+      if (state.live) clearOwnedLive(state, deps, session.id);
+      pendingSession = null;
       const releasedOk = await releaseSession(session);
       if (!releasedOk) {
         // Keep the server session retryable; it may still hold admission.
@@ -176,7 +183,8 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     if (ending) return;
     ending = true;
     attemptCounter += 1;
-    const session = state.live;
+    const session = state.live ?? pendingSession;
+    pendingSession = null;
     deps.meters.teardownMeters();
     state.live = null;
     state.muted = true;
