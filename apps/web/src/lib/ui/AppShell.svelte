@@ -8,6 +8,7 @@
     resolveTheme,
     storeTheme,
     themeName,
+    type ResolvedTheme,
     type ThemePreference,
   } from './theme';
   import { createDrawerSession } from './drawerSession.svelte';
@@ -27,6 +28,12 @@
     right?: Snippet;
     /** A dialog inside the stage has taken over modal ownership. */
     stageDialogOpen?: boolean;
+    /**
+     * Reports the resolved (not preferred) theme. The shell owns storage and
+     * OS-preference resolution, so consumers such as the orb must not
+     * re-derive it from `data-theme` or `prefers-color-scheme` themselves.
+     */
+    onthemechange?: (theme: ResolvedTheme) => void;
   }
 
   let {
@@ -40,6 +47,7 @@
     controls,
     right,
     stageDialogOpen = false,
+    onthemechange,
   }: Props = $props();
 
   // The document ships as English; follow the UI language on the client.
@@ -78,6 +86,13 @@
   let preference = $state<ThemePreference>('system');
   let systemDark = $state(false);
   const resolvedTheme = $derived(resolveTheme(preference, systemDark));
+
+  // Publish the resolved theme so the orb derives from the same value the
+  // shell stamps on <html>. Effects only run in the browser, matching the
+  // boot script; SSR keeps the tokens.css dark fallback.
+  $effect(() => {
+    onthemechange?.(resolvedTheme);
+  });
 
   function cycleTheme() {
     preference = nextThemePreference(preference);

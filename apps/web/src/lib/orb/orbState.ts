@@ -241,7 +241,7 @@ function joinAria(parts: LocalizedText[]): LocalizedText {
  * `theme` is a presentation-only input: it may change colours, never phase,
  * overlay, actions, labels or session identity.
  */
-export function deriveOrbPresentation(state: VoiceUiState, theme: ThemeName = 'light'): OrbPresentation {
+export function deriveOrbPresentation(state: VoiceUiState, theme: ThemeName): OrbPresentation {
   const effectivePhase = resolveEffectivePhase(state);
   const priority = resolveOrbPriority(state);
   const stateColors = orbStateColors(theme);

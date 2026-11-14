@@ -161,7 +161,10 @@ describe('labels and accessibility', () => {
   });
 
   it('shows a mic slash and an unmute action when muted', () => {
-    const presentation = deriveOrbPresentation(state({ phase: 'listening', overlay: 'muted', micActive: false }));
+    const presentation = deriveOrbPresentation(
+      state({ phase: 'listening', overlay: 'muted', micActive: false }),
+      'light',
+    );
     expect(presentation.showMicSlash).toBe(true);
     expect(presentation.enabledActions).toContain('unmute');
     expect(presentation.enabledActions).not.toContain('mute');
@@ -169,7 +172,10 @@ describe('labels and accessibility', () => {
   });
 
   it('keeps the speaking state visible while the microphone is muted', () => {
-    const presentation = deriveOrbPresentation(state({ phase: 'speaking', overlay: 'muted', outputLevel: 0.9 }));
+    const presentation = deriveOrbPresentation(
+      state({ phase: 'speaking', overlay: 'muted', outputLevel: 0.9 }),
+      'light',
+    );
     expect(presentation.effectivePhase).toBe('speaking');
     expect(presentation.statusLabel.en).toBe('Speaking…');
     expect(presentation.showMicSlash).toBe(true);
@@ -178,7 +184,7 @@ describe('labels and accessibility', () => {
   });
 
   it('exposes only start from idle and never duplicates start', () => {
-    expect(deriveOrbPresentation(state({})).enabledActions).toEqual(['start']);
+    expect(deriveOrbPresentation(state({}), 'light').enabledActions).toEqual(['start']);
   });
 });
 
@@ -214,14 +220,14 @@ describe('purity', () => {
 
 describe('motion', () => {
   it('drives listening pulse from mic level and clamps input', () => {
-    const quiet = deriveOrbPresentation(state({ phase: 'listening', micLevel: 0 }));
-    const loud = deriveOrbPresentation(state({ phase: 'listening', micLevel: 3 }));
+    const quiet = deriveOrbPresentation(state({ phase: 'listening', micLevel: 0 }), 'light');
+    const loud = deriveOrbPresentation(state({ phase: 'listening', micLevel: 3 }), 'light');
     expect(loud.motionPreset.radialPulse).toBeGreaterThanOrEqual(quiet.motionPreset.radialPulse);
     expect(loud.motionPreset.radialPulse).toBeLessThanOrEqual(1);
   });
 
   it('quiets the orb without changing phase when silent', () => {
-    const silent = deriveOrbPresentation(state({ phase: 'speaking', outputLevel: 0 }));
+    const silent = deriveOrbPresentation(state({ phase: 'speaking', outputLevel: 0 }), 'light');
     expect(silent.effectivePhase).toBe('speaking');
     expect(silent.motionPreset.radialPulse).toBeLessThan(0.5);
   });

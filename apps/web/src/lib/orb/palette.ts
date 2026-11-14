@@ -1,13 +1,16 @@
 /**
  * Theme-aware Living Cloud palette contract.
  *
- * Values are copied verbatim from the v2.1 design kit
- * (`design/tokens/tokens.json`, `themes.light.orbPalette` and
- * `themes.dark.orbPalette`). This module is pure and shared by the orb state
- * derivation (#38) and the renderer (#40) so neither invents its own colours.
+ * Values trace to the v2.1 design kit (`design/tokens/tokens.json`,
+ * `themes.*.orbPalette`) and are mirrored in `ui/tokens.css` as
+ * `--orb-palette-1..6` / `--orb-amber`. `palette.test.ts` parses that file and
+ * fails if the two drift, so the renderer and the shell cannot disagree about
+ * a theme's colours.
  *
  * The renderer requires literal 6-digit hex. Never pass CSS `color-mix()` or
- * named colours across this boundary (regression B01).
+ * named colours across this boundary (regression B01). For the same reason the
+ * semantic colours below reuse the shell token *values* rather than resolving
+ * `var(--status-error)` at runtime.
  */
 
 export type ThemeName = 'light' | 'dark';
@@ -32,12 +35,6 @@ export function orbDominant(theme: ThemeName): readonly [string, string] {
 export function orbAccents(theme: ThemeName): readonly string[] {
   return ORB_PALETTES[theme].slice(2);
 }
-
-/** Page background per theme, for contrast/fallback decisions. */
-export const THEME_BACKGROUND: Record<ThemeName, string> = {
-  light: '#eaf6ff',
-  dark: '#080f29',
-};
 
 /** Voice phases that carry a Living Cloud palette weighting. */
 export type LivingPhase = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'disconnected';
@@ -126,12 +123,13 @@ export function orbPhaseWeights(theme: ThemeName, phase: LivingPhase): readonly 
 }
 
 /**
- * Non-phase colours from the same kit tokens (docs 01 and 02). The orb palette
- * has no semantic error/amber/slate slot, so these stay theme-aware and are
- * kept beside the palette rather than invented by the derivation.
+ * Non-phase colours, tied to the shell's semantic tokens. The orb palette has
+ * no error/amber/slate slot, so these reuse the theme tokens instead of
+ * inventing a second palette:
  *
- * `memory`/`confirmation` use the kit's single amber accent (#FFD37E) in both
- * themes; the dark palette's warm slot (#F67C9F) is reserved for errors.
+ * - memory/confirmation -> `--orb-amber`
+ * - error               -> `--status-error`
+ * - muted/disconnected  -> `--text-muted`
  */
 export interface OrbStateColors {
   readonly memory: string;
@@ -146,8 +144,8 @@ export const ORB_STATE_COLORS: Record<ThemeName, OrbStateColors> = {
     memory: '#ffd37e',
     confirmation: '#ffd37e',
     error: '#c94767',
-    muted: '#526d91',
-    disconnected: '#526d91',
+    muted: '#516b8f',
+    disconnected: '#516b8f',
   },
   dark: {
     memory: '#ffd37e',
@@ -161,3 +159,9 @@ export const ORB_STATE_COLORS: Record<ThemeName, OrbStateColors> = {
 export function orbStateColors(theme: ThemeName): OrbStateColors {
   return ORB_STATE_COLORS[theme];
 }
+
+/** Page background per theme (`--bg-app`), for contrast/fallback decisions. */
+export const THEME_BACKGROUND: Record<ThemeName, string> = {
+  light: '#eaf6ff',
+  dark: '#080f29',
+};
