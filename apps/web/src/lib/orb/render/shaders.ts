@@ -58,6 +58,17 @@ export const FRAGMENT = `#version 300 es
     return value;
   }
 
+  // Three octaves keep the colour islands soft; the fourth octave of fbm()
+  // reads as speckle at these scales.
+  float fbm3(vec2 p) {
+    mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
+    float value = 0.57 * vnoise(p);
+    p = turn * p * 2.02 + 7.3;
+    value += 0.29 * vnoise(p);
+    p = turn * p * 2.02 + 7.3;
+    return value + 0.14 * vnoise(p);
+  }
+
   // Two octaves are enough for the large-scale domain warp; keeping the warp
   // cheap leaves the fragment budget for the body and detail bands.
   float fbm2(vec2 p) {
@@ -84,64 +95,85 @@ export const FRAGMENT = `#version 300 es
 
     float low = fbm(q * 2.0 + drift);
     float mid = fbm(q * 4.1 - drift * 1.35 + low * 0.9);
-    float fine = vnoise(q * 12.0 + vec2(-t * 0.085, t * 0.07));
-    float billow = low * 0.52 + mid * 0.33 + fine * 0.15;
+    float fine = vnoise(q * 9.0 + vec2(-t * 0.085, t * 0.07));
+    float billow = low * 0.56 + mid * 0.34 + fine * 0.10;
 
-    // Circular silhouette with only low-amplitude radial variation. The
-    // boundary fades over ~0.26 of the field, so there is no wire rim.
+    // Circular silhouette with only low-amplitude radial variation. The edge
+    // fades over a wide band so the sphere ends in translucent mist, not a rim.
     float breathe = sin(t * 0.52) * (0.006 + uTurb * 0.006);
-    float radius = 0.865 + (billow - 0.5) * (0.045 + uTurb * 0.03) + breathe + uPulse * 0.02;
+    float radius = 0.84 + (billow - 0.5) * (0.04 + uTurb * 0.03) + breathe + uPulse * 0.02;
     float edge = r - radius;
-    float body = 1.0 - smoothstep(-0.10, 0.18, edge);
-    float core = 1.0 - smoothstep(0.0, 0.84, r);
+    float body = 1.0 - smoothstep(-0.22, 0.14, edge);
+    float core = 1.0 - smoothstep(0.0, 0.62, r);
+    // Mid-radius band where the coloured islands live.
+    float ring = smoothstep(0.12, 0.42, r) * (1.0 - smoothstep(0.66, 0.92, r));
 
-    // The centre keeps at least ~70% of the body's perceived density.
-    float density = body * (0.62 + 0.38 * billow);
-    density = mix(density, 0.94, core * 0.72);
+    float density = body * (0.66 + 0.34 * billow);
+    density = mix(density, 0.96, core * 0.7);
 
-    vec3 col = mix(uColors[0], uColors[1], smoothstep(0.18, 0.82, low));
-    col = mix(col, uColors[2], smoothstep(0.42, 0.92, mid) * 0.62);
-    col = mix(col, uColors[3], (1.0 - smoothstep(0.16, 0.58, abs(low - mid))) * 0.30);
-    col = mix(col, uColors[4], smoothstep(0.58, 0.95, vnoise(q * 2.6 + 8.0)) * 0.24);
+    // A diffuse base of the lightest tone, with several hues drifting through
+    // the mid radii as separate soft islands (cyan, lavender, gold, mint, coral).
+    vec3 col = mix(uColors[0], uColors[5], 0.35);
+    float islandA = smoothstep(0.38, 0.72, fbm3(q * 1.3 + vec2(4.0, 1.0) + drift));
+    float islandB = smoothstep(0.40, 0.74, fbm3(q * 1.35 + vec2(-6.0, 9.0) - drift));
+    float islandC = smoothstep(0.42, 0.76, fbm3(q * 1.4 + vec2(13.0, -3.0) + drift * 1.4));
+    float islandD = smoothstep(0.44, 0.78, fbm3(q * 1.45 + vec2(-2.0, -8.0) - drift * 1.2));
+    col = mix(col, uColors[4], islandA * ring * 0.80);
+    col = mix(col, uColors[2], islandB * ring * 0.78);
+    col = mix(col, uColors[1], islandC * ring * 0.74);
+    col = mix(col, uColors[3], islandD * ring * 0.70);
+    col = mix(col, uColors[0], (1.0 - ring) * (1.0 - core) * 0.45);
 
-    // Sky Prism pastels are close to the page background, so the body is
-    // shaded down and slightly saturated while the luminous core stays pale.
-    // This is shading of the contract palette, not a second invented palette.
+    // Keep the hues from washing out on a pale page, without a flat core.
     float luma = dot(col, vec3(0.299, 0.587, 0.114));
     col = mix(vec3(luma), col, uSaturation) * uBodyShade;
 
-    // The centre stays cloudy and filled: a pale version of the dominant body
-    // colour, not pure white, so density survives against a light page.
-    vec3 coreTint = mix(uColors[0], uColors[5], 0.35);
-    col = mix(col, coreTint, core * uCoreMix);
+    // Bright, diffuse, whitish centre.
+    vec3 coreTint = mix(uColors[0], vec3(1.0), 0.78);
+    col = mix(col, coreTint, core * core * uCoreMix);
 
-    // Depth cue: darker folds sit behind brighter billows.
-    col *= 0.84 + 0.26 * low;
+    // Soft depth cue and diffuse top-left light.
+    col *= 0.92 + 0.14 * low;
+    float light = 1.0 - smoothstep(0.0, 1.2, length(p - vec2(-0.28, 0.32)));
+    col += uColors[5] * light * (0.06 + uGlow * 0.05);
 
-    // Diffuse top-left illumination, strongest through the middle.
-    float light = 1.0 - smoothstep(0.0, 1.35, length(p - vec2(-0.32, 0.36)));
-    col += uColors[5] * light * (0.08 + uGlow * 0.06);
-
-    // Keep the phase colour legible without turning the cloud into confetti.
-    col = mix(col, uPhase, 0.32 * smoothstep(0.15, 0.82, mid));
+    // Phase tint stays legible without turning the cloud into confetti.
+    col = mix(col, uPhase, 0.26 * smoothstep(0.2, 0.85, mid) * (0.4 + 0.6 * ring));
 
     if (uHasAccent > 0.5) {
       float accentField = smoothstep(0.55, 0.95, fbm(q * 2.4 + vec2(17.0, -4.0) + drift * 2.0));
-      col = mix(col, uAccent, accentField * 0.62);
+      col = mix(col, uAccent, accentField * 0.55);
     }
 
-    // Sparse highlights, not a starfield.
-    float sparkle = smoothstep(0.958, 0.997, vnoise(q * 30.0 + vec2(t * 0.4, -t * 0.3)));
-    col += uColors[5] * sparkle * 0.35 * body;
+    // A few thin wisps: contour lines of the billow field, kept to patches.
+    float contour = abs(fract(low * 2.2) - 0.5);
+    float wisp = (1.0 - smoothstep(0.0, 0.022, contour))
+      * smoothstep(0.60, 0.74, vnoise(q * 1.6 + vec2(5.0, 2.0) + drift))
+      * body * (1.0 - core * 0.5);
+    col = mix(col, mix(uColors[5], vec3(1.0), 0.6), wisp * 0.5);
 
-    float alphaBody = body * (0.70 + 0.24 * min(1.0, density));
-    float haloBand = 1.0 - smoothstep(0.90, 1.20, r);
-    float halo = haloBand * (1.0 - body) * (0.06 + 0.09 * (0.5 + 0.5 * low) + uGlow * 0.03);
+    // About ten sparse dots on fixed slots near the rim.
+    float dots = 0.0;
+    for (int i = 0; i < 10; i++) {
+      float fi = float(i);
+      float angle = fi * 2.399 + sin(t * 0.07 + fi) * 0.06;
+      float dotRadius = 0.76 + 0.19 * fract(fi * 0.618 + 0.17);
+      vec2 center = vec2(cos(angle), sin(angle)) * dotRadius;
+      dots = max(dots, 1.0 - smoothstep(0.004, 0.013, length(p - center)));
+    }
+    col = mix(col, vec3(1.0), dots * 0.7);
+
+    // One soft filled halo outside the body, never an outline.
+    float halo = (1.0 - smoothstep(0.62, 1.0, r)) * (1.0 - body) * (0.07 + uGlow * 0.04);
+    float alphaBody = body * (0.74 + 0.22 * min(1.0, density));
     // The canvas is a square; fade every layer out on a circle before the
-    // border so the halo never draws a straight rectangular edge.
+    // border so nothing draws a straight rectangular edge.
     float edgeClip = 1.0 - smoothstep(0.90, 0.985, r);
-    float alpha = max(alphaBody, halo) * uOpacity * edgeClip;
+    float alpha = max(max(alphaBody, halo), dots * 0.75) * uOpacity * edgeClip;
 
     col = clamp(col, 0.0, 1.0);
-    outColor = vec4(col, clamp(alpha, 0.0, 1.0));
+    alpha = clamp(alpha, 0.0, 1.0);
+    // Premultiplied: the canvas is created with premultipliedAlpha, so the
+    // translucent fringe blends toward the page instead of toward black.
+    outColor = vec4(col * alpha, alpha);
   }`;

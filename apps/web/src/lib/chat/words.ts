@@ -9,6 +9,9 @@ export type Words = {
   mute: string;
   unmute: string;
   retryCleanup: string;
+  talk: string;
+  micOn: string;
+  micOff: string;
 };
 
 const EN: Words = {
@@ -22,6 +25,9 @@ const EN: Words = {
   mute: 'Mute',
   unmute: 'Enable microphone',
   retryCleanup: 'Retry ending previous call',
+  talk: 'Talk to Sarjy',
+  micOn: 'Microphone on',
+  micOff: 'Microphone muted',
 };
 
 const AR: Words = {
@@ -35,6 +41,9 @@ const AR: Words = {
   mute: 'كتم الصوت',
   unmute: 'تشغيل الميكروفون',
   retryCleanup: 'إعادة إنهاء المكالمة السابقة',
+  talk: 'تحدث إلى سَرْجي',
+  micOn: 'الميكروفون يعمل',
+  micOff: 'الميكروفون مكتوم',
 };
 
 export function wordsFor(arabic: boolean): Words {
