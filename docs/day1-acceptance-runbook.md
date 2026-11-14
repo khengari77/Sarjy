@@ -291,3 +291,59 @@ Do not create the marker while any gate remains pending.
   record where it stopped, and leave the gate unchecked.
 - `AGENT_START_TIMEOUT` or no audible output: record it as a failure of the gate, not as a pass.
 - A provider or deployment failure that requires a redeploy is coordinator work; do not redeploy mid-run.
+
+## Assisted read-only companion
+
+The companion automates evidence readbacks while you operate a real browser/microphone. It never
+starts calls, sends prompts, reserves spending, ends sessions or repairs orphaned rows. Keep this
+runbook open: a human confirmation still requires actually seeing/hearing the described behavior.
+
+From the acceptance-runner worktree, install locked dependencies with `uv sync --locked`. Inject
+`ACCEPTANCE_DATABASE_URL` through your normal secret mechanism, using `postgresql+asyncpg://` and the
+hosted database. The script does not load `.env`. Do not paste credentials into command arguments,
+prompts or reports. A SELECT-only database account is recommended; every query additionally runs in a
+short read-only transaction with a statement timeout.
+
+```sh
+uv run python scripts/day1_acceptance.py preflight --owner OWNER_ID
+uv run python scripts/day1_acceptance.py run --owner OWNER_ID
+uv run python scripts/day1_acceptance.py resume --owner OWNER_ID --report artifacts/deployment/day1-human-acceptance/RUN_ID/report.json
+```
+
+1. Preflight displays capacity, provider reservations, database revision and schema capabilities.
+   Defaults follow this runbook's 3-per-owner / 80-per-month limits. If deployed limits differ, stop and
+   update the procedure first. Never rotate owners to gain capacity.
+2. In `run`, enter the source revision, actual API/web deployment IDs, worker version, browser and OS as short identifiers
+   (for example `Chrome-130`, `Linux`). English is the baseline; choose an approved voice in the browser.
+   Deployment metadata is operator supplied, not remotely attested by this helper.
+3. The runner allocates only feasible S1–S3 slots and checks capacity again before each new session.
+   Start the call yourself when instructed. Paste only its exact session **ID**, never its token.
+   S2 requires blocking microphone before starting. If no session is admitted, type Ctrl-C, record the
+   denial in the manual record, and stop. The helper cannot bind a nonexistent session.
+4. Answer each checkpoint `passed`, `failed`, `pending` or `stop`. Stop immediately on provider/budget
+   errors, missing voice, admission rejection or failed start. Each answer is saved before proceeding.
+   Do not type a response merely to advance; pending/failed observations stop the current procedure.
+5. For S1, use the runbook's exact continuity prompts. Enter the Celsius temperature you actually heard;
+   the script compares it against the persisted Tripoli/Open-Meteo result. Let output settle before
+   completing the last checkpoint so the pre-reload snapshot contains completed turns.
+6. End/refresh only when instructed. Explicit-end observation is bounded by 30 seconds from the
+   instruction, including time spent answering. S3 refresh reads back immediately, with no invented
+   grace period. Unsupported cleanup columns leave evidence pending; observed orphans fail.
+7. Resume with the same deployment identifiers. It preserves the original allocation, bound session IDs
+   and completed answers. It does not replay browser actions. Failed/pending observations are immutable;
+   record repairs separately. A crash during end/refresh leaves timing pending. A deployment/schema
+   change requires a separate report. Check that any bound session is still usable before continuing;
+   do not start a replacement session for it.
+
+Reports are private JSON/Markdown files under ignored
+`artifacts/deployment/day1-human-acceptance/<run-id>/`. They contain per-check human confirmations,
+exact IDs, cleanup observations, hashes of ordered turn content (not raw transcripts), weather
+comparison, session consumption and provider/day ledger deltas. Ledger values are reservations,
+not invoices; other activity can contribute to deltas. Review artifacts before sharing.
+
+The script does not prove microphone input from database text, remotely verify deployed revisions,
+or inspect provider delete calls. Repeated-end idempotency requires the separate evidence described
+above, so D1.6 stays pending for coordinator review. D1.8 is always pending. Copy reviewed results and
+artifact references into the acceptance record; never automatically close #3 or create a release marker.
+A zero process exit means the report was saved, not that acceptance passed. Missing readback or invalid
+input exits nonzero without printing driver errors or credentials; partial saved observations remain.

@@ -194,3 +194,11 @@ compare runs. Do not put it in git.
 - Hosted revisions can drift after this run. Record the exact revisions used and re-run any gate that was
   tested against a different revision.
 - No release marker may be created while any gate above remains pending.
+
+
+## Assisted runner reports
+
+The [read-only companion](day1-acceptance-runbook.md#assisted-read-only-companion) creates private
+JSON/Markdown evidence under the ignored acceptance artifact directory. Record the reviewed report
+path here after a real session. Runner reports do not replace human audio observations or the separate
+repeated-end verification. This scaffold remains pending until actual evidence is reviewed.
