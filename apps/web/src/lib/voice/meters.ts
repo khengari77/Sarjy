@@ -1,5 +1,5 @@
-import { createEnvelopeMeter, type EnvelopeMeter } from '../orb/audioEnvelope';
 import type { VoiceRuntime } from '../audio/voice-runtime';
+import { createEnvelopeMeter, type EnvelopeMeter } from '../orb/audioEnvelope';
 
 export interface LevelState {
   micLevel: number;
@@ -31,12 +31,28 @@ export function createMeterController(
   }
 
   function startMicMeter() {
+    // Replacing a meter must release the previous analyser: one envelope per
+    // track, and the current track may have changed after unmute.
     stopMicMeter();
     if (!getLive() || getMuted()) return;
-    const runtime = getRuntime();
-    const stream = runtime?.microphoneStream?.();
+    const stream = getRuntime()?.microphoneStream?.();
     if (!stream) return;
     micMeter = createEnvelopeMeter(stream);
+  }
+
+  /**
+   * LiveKit publishes the local track asynchronously, so the first attempt
+   * after `startMicrophone()` can see no stream. Retry from the level timer
+   * until it exists; this is a fallback, not a second capture.
+   */
+  function ensureMicMeter() {
+    if (!getLive() || getMuted()) {
+      if (micMeter) stopMicMeter();
+      return;
+    }
+    if (micMeter) return;
+    const stream = getRuntime()?.microphoneStream?.();
+    if (stream) micMeter = createEnvelopeMeter(stream);
   }
 
   function stopOutputMeter() {
@@ -48,6 +64,7 @@ export function createMeterController(
   function startOutputMeter() {
     if (meterTimer) return;
     meterTimer = setInterval(() => {
+      ensureMicMeter();
       levels.micLevel = micMeter?.level() ?? 0;
       levels.outputLevel = getRuntime()?.remoteAudioLevel?.() ?? 0;
     }, 80);

@@ -1,5 +1,4 @@
 import type { SessionConfig } from '../api';
-import { ensureMicrophoneAccess } from '../audio/microphone';
 import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
 import type { CommandResult } from '../commands/commandStore';
 import { errorCode } from './errors';
@@ -9,6 +8,7 @@ import { cancelConnection } from './cancelConnection';
 import { applyFailedRelease, retryFailedCleanup } from './releaseOutcome';
 import { interruptVoice, sendVoiceText, toggleVoiceMute } from './voiceControls';
 import type { MeterController } from './meters';
+import { createConnectingPreview, startConnectingPreview } from './connectingPreview';
 
 export interface ProvisionalTranscript {
   id: string;
@@ -116,6 +116,34 @@ function clearOwnedLive(state: VoiceState, deps: ConnectionDeps, sessionId: stri
   state.provisional = null;
 }
 
+function beginAttempt(state: VoiceState) {
+  state.connecting = true;
+  // The orb must show the connecting phase from the tap, including while the
+  // microphone permission prompt is open and before a session exists.
+  state.transportStatus = 'connecting';
+  state.voiceErrorCode = '';
+  state.connectionLost = false;
+}
+
+function markMicrophoneFailure(state: VoiceState, attempt: number, generation: number, error: unknown) {  if (attempt !== generation) return;
+  state.voiceErrorCode = errorCode(error);
+  // A microphone refusal is not a transport attempt; return to idle so the
+  // orb does not advertise a connection that never started.
+  state.transportStatus = 'idle';
+}
+
+function sessionReplaced(
+  state: VoiceState,
+  epoch: number,
+  generation: number,
+  pendingSession: SessionConfig | null,
+  sessionId: string,
+): boolean {
+  if (generation !== epoch) return true;
+  const liveId = liveSessionId(state);
+  return (liveId !== null && liveId !== sessionId) || (pendingSession !== null && pendingSession.id !== sessionId);
+}
+
 export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   // Ownership epoch: bumped before admission starts so an attempt, not a
   // session id, owns the connection state.
@@ -123,15 +151,17 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   const endingSessions = new Set<string>();
   let pendingSession: SessionConfig | null = null;
   const releaseSession = createSessionReleaser();
+  // Connecting preview: one short-lived capture opened only after connect(true)
+  // is called from an explicit user gesture. It is released on cancel, error,
+  // unmount, or as soon as the live session publishes its own microphone.
+  const preview = createConnectingPreview(state);
+
   // Read through calls so a session created while a release was awaited is
   // visible to the guards below.
   // A teardown that began at `epoch` has been replaced if a newer attempt
   // started since, id or no id yet; ids catch a session installed in place.
-  const replacingSession = (epoch: number, sessionId: string) => {
-    if (generation !== epoch) return true;
-    const liveId = liveSessionId(state);
-    return (liveId !== null && liveId !== sessionId) || (pendingSession !== null && pendingSession.id !== sessionId);
-  };
+  const replacingSession = (epoch: number, sessionId: string) =>
+    sessionReplaced(state, epoch, generation, pendingSession, sessionId);
   async function connect(microphone: boolean) {
     if (state.live) {
       if (microphone && state.muted) await toggleVoiceMute(state, deps);
@@ -140,9 +170,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     if (state.connecting) return;
     const attempt = ++generation;
     pendingSession = null;
-    state.connecting = true;
-    state.voiceErrorCode = '';
-    state.connectionLost = false;
+    beginAttempt(state);
     try {
       let conversationId = deps.getConversationId();
       if (!conversationId) {
@@ -150,13 +178,12 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         if (attempt !== generation) return;
       }
       if (microphone) {
-        try {
-          await ensureMicrophoneAccess();
-        } catch (error) {
-          if (attempt === generation) state.voiceErrorCode = errorCode(error);
-          return;
-        }
-        if (attempt !== generation) return;
+        const ready = await startConnectingPreview(
+          preview,
+          () => attempt === generation,
+          (error) => markMicrophoneFailure(state, attempt, generation, error),
+        );
+        if (!ready) return;
       }
       await startSessionAttempt(state, deps, {
         microphone,
@@ -165,6 +192,9 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         isCurrent: () => attempt === generation && deps.getConversationId() === conversationId,
         releaseSession,
         clearOwnedLive: (sessionId) => clearOwnedLive(state, deps, sessionId),
+        // The live session owns capture from here: release the preview before
+        // LiveKit publishes its own microphone track.
+        onSessionLive: preview.stop,
         onSessionCreated: (session, attempt) => {
           // A stale admission must not claim pending ownership.
           if (attempt === generation) pendingSession = session;
@@ -177,11 +207,15 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         state.transportStatus = 'disconnected';
       }
     } finally {
-      if (attempt === generation) state.connecting = false;
+      if (attempt === generation) {
+        state.connecting = false;
+        preview.stop();
+      }
     }
   }
 
   async function cancelConnect() {
+    preview.stop();
     const epoch = ++generation;
     await cancelConnection({
       state,
@@ -198,6 +232,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   }
 
   async function end() {
+    preview.stop();
     const session: SessionConfig | null = state.live ?? pendingSession;
     // Teardown ownership follows the session, not the module: ending call A
     // must never make End a no-op for a replacement call B.
@@ -244,6 +279,8 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     toggleMute: () => toggleVoiceMute(state, deps),
     interrupt: () => interruptVoice(state, deps),
     sendText: (text: string) => sendVoiceText(state, deps, text),
+    /** Release an in-flight connecting preview on page unmount. */
+    disposePreview: preview.stop,
     handleEvent: (event: VoiceEvent) =>
       handleVoiceEvent(state, deps, event, (sessionId) => endingSessions.has(sessionId)),
   };

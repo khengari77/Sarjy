@@ -3,6 +3,7 @@
   import { selectRendererTier, type OrbPresentation, type RendererTier } from './orbState';
   import { ORB_PALETTES } from './palette';
   import { staticGlyph } from './staticGlyph';
+  import { clampLevel, levelForPhase } from './levels';
   import { startOrbRenderer } from './render/renderer';
   import type { OrbRenderState, OrbTierState } from './render/types';
 
@@ -44,6 +45,7 @@
     theme: 'dark',
     color: ORB_PALETTES.dark[0],
     accent: null,
+    idle: true,
     motion: {
       breath: 0.2,
       flowRate: 0.18,
@@ -56,9 +58,9 @@
     },
   };
 
-  const isListening = $derived(presentation.effectivePhase === 'listening');
-  const isSpeaking = $derived(presentation.effectivePhase === 'speaking');
-  const pulse = $derived(isListening ? micLevel : isSpeaking ? outputLevel : 0);
+  const pulse = $derived(levelForPhase(presentation.effectivePhase, micLevel, outputLevel));
+  const measuredMic = $derived(clampLevel(micLevel));
+  const measuredOutput = $derived(clampLevel(outputLevel));
 
   onMount(() => {
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -123,6 +125,7 @@
     renderState.color = presentation.primaryColor;
     renderState.accent = presentation.accent;
     renderState.motion = presentation.motionPreset;
+    renderState.idle = presentation.effectivePhase === 'idle';
     if (canvas) {
       canvas.dataset.phase = presentation.effectivePhase;
       canvas.dataset.color = presentation.primaryColor;
@@ -139,8 +142,8 @@
   data-renderer={failed ? 'static' : tier}
   data-theme={presentation.theme}
   data-phase={presentation.effectivePhase}
-  data-mic-level={micLevel.toFixed(2)}
-  data-output-level={outputLevel.toFixed(2)}
+  data-mic-level={measuredMic.toFixed(2)}
+  data-output-level={measuredOutput.toFixed(2)}
   onclick={() => onactivate?.()}
 >
   {#if tier === 'static' || failed}

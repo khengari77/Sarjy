@@ -99,6 +99,7 @@ export function bootStudio(options: StudioBoot) {
     catalogStore,
     cleanup: () => {
       meters.teardownMeters();
+      connection.disposePreview();
       dispose();
     },
   };

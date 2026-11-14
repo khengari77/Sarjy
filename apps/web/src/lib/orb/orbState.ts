@@ -7,6 +7,7 @@
  */
 
 import { mixHexColors } from './render/colors';
+import { clampLevel } from './levels';
 import {
   orbPalette,
   orbPhaseWeights,
@@ -146,11 +147,6 @@ const MOTION: Record<VoicePhase | 'error', MotionPreset> = {
   disconnected: motion(0.04, 0.05, 0.05, 0.12, 0.04, 0, 0, 0.7),
   error: motion(0.1, 0.3, 0.5, 0.45, 0.3, 0, 0, 1),
 };
-
-function clampLevel(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
-}
 
 /**
  * Resolve the effective base phase using the spec priority order:

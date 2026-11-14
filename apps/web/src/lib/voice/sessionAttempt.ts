@@ -13,6 +13,8 @@ export async function startSessionAttempt(
     isCurrent(): boolean;
     releaseSession(session: SessionConfig | null): Promise<boolean>;
     clearOwnedLive(sessionId: string): void;
+    /** The session owns capture from here; stop any connecting preview. */
+    onSessionLive?(): void;
     onSessionCreated?(session: SessionConfig, attempt: number): void;
   },
 ) {
@@ -50,6 +52,7 @@ export async function startSessionAttempt(
     state.live = config;
     state.activeVoiceName = voice.name;
     state.muted = !context.microphone;
+    context.onSessionLive?.();
     if (context.microphone) await runtime.startMicrophone();
     if (!context.isCurrent()) {
       context.clearOwnedLive(config.id);

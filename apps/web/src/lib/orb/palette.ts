@@ -13,16 +13,39 @@
  * `var(--status-error)` at runtime.
  */
 
+import { mixHexColors } from './render/colors';
+
 export type ThemeName = 'light' | 'dark';
 
-/** 4-6 blended colours per theme: 2 dominant + 1-3 accents. */
-export const ORB_PALETTES: Record<ThemeName, readonly string[]> = {
+/** 4-6 blended colours per theme: 2 dominant + 1-3 accents. */export const ORB_PALETTES: Record<ThemeName, readonly string[]> = {
   light: ['#9cdbff', '#7cdcc7', '#ffd37e', '#ff9ab0', '#b5a0ff', '#d6f6ff'],
   dark: ['#548fff', '#3b6fff', '#9a74f7', '#baa7ff', '#57d7d2', '#f67c9f'],
 };
 
 export function orbPalette(theme: ThemeName): readonly string[] {
   return ORB_PALETTES[theme];
+}
+
+/**
+ * Renderer copy of the palette.
+ *
+ * The light kit pastels are deliberately pale, which read as a milky blob on
+ * the bright page. Render slots deepen and lightly saturate those exact hues
+ * (dark is byte-for-byte unchanged) so the cloud keeps the kit's colours but
+ * gains internal structure. `palette.test.ts` pins the hue relationship.
+ */
+export const ORB_RENDER_PALETTES: Record<ThemeName, readonly string[]> = {
+  light: ['#5ac3ff', '#45dcbb', '#ffbe41', '#ff597d', '#815eff', '#8be6ff'],
+  dark: ORB_PALETTES.dark,
+};
+
+export function orbRenderPalette(theme: ThemeName): readonly string[] {
+  return ORB_RENDER_PALETTES[theme];
+}
+
+/** Deepen the phase tint against the light page; dark keeps its exact tint. */
+export function orbRenderColor(theme: ThemeName, color: string): string {
+  return theme === 'light' ? mixHexColors(color, '#33507a', 0.28) : color;
 }
 
 /** Dominant pair used for the cloud body; the remainder are accents. */

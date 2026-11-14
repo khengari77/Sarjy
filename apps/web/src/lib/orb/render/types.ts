@@ -7,6 +7,11 @@ export interface OrbRenderState {
   color: string;
   accent: string | null;
   motion: MotionPreset;
+  /**
+   * True only while the presentation is idle. The renderer then adds its
+   * synthetic time-based breathing envelope; live phases are driven by levels.
+   */
+  idle: boolean;
 }
 
 export interface OrbRendererHooks {

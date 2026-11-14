@@ -1,6 +1,8 @@
 import type { MotionPreset } from '../orbState';
-import { ORB_PALETTES, type ThemeName } from '../palette';
+import { idleEnvelope, STILL_ENVELOPE } from '../idleEnvelope';
+import { orbRenderColor, orbRenderPalette, type ThemeName } from '../palette';
 import { hexToRgb } from './colors';
+import { orbSurfaceStyle } from './style';
 import type { OrbRenderState, Rgb } from './types';
 
 export interface CanvasLoopOptions {
@@ -143,8 +145,8 @@ export function startCanvasDrawing(options: CanvasLoopOptions): () => void {
     // Observable proof that the renderer consumed the presentation's theme,
     // not merely that the document carries one.
     canvas.dataset.rendererTheme = theme;
-    const palette = ORB_PALETTES[theme];
-    const phase = hexToRgb(renderState.color);
+    const palette = orbRenderPalette(theme);
+    const phase = hexToRgb(orbRenderColor(theme, renderState.color));
     bodyTexture = buildCloudTexture(palette, phase, 0x5a17, false);
     detailTexture = buildCloudTexture(palette, phase, 0x9e21, true);
   }
@@ -163,16 +165,17 @@ export function startCanvasDrawing(options: CanvasLoopOptions): () => void {
     last = now;
     const time = (now - start) / 1000;
     const pulse = Math.min(1, Math.max(0, options.getPulse()));
+    const ambient = renderState.idle ? idleEnvelope(time) : STILL_ENVELOPE;
     options.smoothMotion(delta);
     options.monitorFps(delta);
-    angle += (delta / 1000) * (0.05 + currentMotion.flowRate * 0.3 + pulse * 0.1);
+    angle += (delta / 1000) * (0.05 + currentMotion.flowRate * 0.3 + pulse * 0.1 + ambient.flow * 0.08);
 
     options.resize();
     const width = canvas.width;
     const height = canvas.height;
     if (width < 1 || height < 1) return;
 
-    const target = hexToRgb(renderState.color);
+    const target = hexToRgb(orbRenderColor(renderState.theme, renderState.color));
     const ratio = Math.min(1, delta / 320);
     currentColor.rgb = [
       currentColor.rgb[0] + (target[0] - currentColor.rgb[0]) * ratio,
@@ -187,17 +190,40 @@ export function startCanvasDrawing(options: CanvasLoopOptions): () => void {
     context.translate(width / 2, height / 2);
 
     const size = Math.min(width, height);
-    const breathe = 1 + Math.sin(time * 0.52) * 0.012 + pulse * 0.028 + currentMotion.radialPulse * 0.01;
+    const breathe =
+      1 +
+      Math.sin(time * 0.52) * 0.012 +
+      ambient.breath * 0.02 +
+      ambient.pulse * 0.012 +
+      pulse * 0.028 +
+      currentMotion.radialPulse * 0.01;
+    const surface = orbSurfaceStyle(renderState.theme);
     context.globalAlpha = Math.min(1, currentMotion.opacity);
     context.rotate(angle * 0.22);
     context.scale(breathe, breathe);
-    if (bodyTexture) context.drawImage(bodyTexture, -size / 2, -size / 2, size, size);
+    // A second body pass lifts the light-mode core toward opaque without
+    // flattening the cached billows; dark mode keeps its single pass.
+    const bodyPasses = Math.ceil(surface.textureAlpha);
+    for (let pass = 0; pass < bodyPasses && bodyTexture; pass += 1) {
+      context.drawImage(bodyTexture, -size / 2, -size / 2, size, size);
+    }
 
     // Second cached layer drifts the other way, so the interior billows move
     // without the silhouette spinning like a rigid ball.
     context.rotate(-angle * 0.62 + Math.sin(time * 0.31) * 0.08);
     context.globalAlpha = Math.min(1, currentMotion.opacity * (0.55 + currentMotion.edgeGlow * 0.35));
     if (detailTexture) context.drawImage(detailTexture, -size / 2, -size / 2, size, size);
+
+    if (surface.ringAlpha > 0) {
+      context.globalAlpha = 1;
+      context.strokeStyle = rgba(currentColor.rgb, surface.ringAlpha * 0.6 * currentMotion.opacity);
+      context.lineWidth = Math.max(1, size * 0.003);
+      for (const radius of [size * 0.4375, size * 0.4625]) {
+        context.beginPath();
+        context.arc(0, 0, radius, 0, Math.PI * 2);
+        context.stroke();
+      }
+    }
 
     context.restore();
     context.globalAlpha = 1;

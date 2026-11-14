@@ -23,6 +23,10 @@ export const FRAGMENT = `#version 300 es
   uniform float uBodyShade;
   uniform float uSaturation;
   uniform float uCoreMix;
+  uniform float uBodyBase;
+  uniform float uDensityGain;
+  uniform float uEdgeSoft;
+  uniform float uRingAlpha;
   uniform vec3 uColors[6];
   uniform vec3 uPhase;
   uniform vec3 uAccent;
@@ -92,7 +96,7 @@ export const FRAGMENT = `#version 300 es
     float breathe = sin(t * 0.52) * (0.006 + uTurb * 0.006);
     float radius = 0.865 + (billow - 0.5) * (0.045 + uTurb * 0.03) + breathe + uPulse * 0.02;
     float edge = r - radius;
-    float body = 1.0 - smoothstep(-0.10, 0.18, edge);
+    float body = 1.0 - smoothstep(-0.10, uEdgeSoft, edge);
     float core = 1.0 - smoothstep(0.0, 0.84, r);
 
     // The centre keeps at least ~70% of the body's perceived density.
@@ -134,13 +138,20 @@ export const FRAGMENT = `#version 300 es
     float sparkle = smoothstep(0.958, 0.997, vnoise(q * 30.0 + vec2(t * 0.4, -t * 0.3)));
     col += uColors[5] * sparkle * 0.35 * body;
 
-    float alphaBody = body * (0.70 + 0.24 * min(1.0, density));
+    float alphaBody = body * (uBodyBase + uDensityGain * min(1.0, density));
     float haloBand = 1.0 - smoothstep(0.90, 1.20, r);
     float halo = haloBand * (1.0 - body) * (0.06 + 0.09 * (0.5 + 0.5 * low) + uGlow * 0.03);
     // The canvas is a square; fade every layer out on a circle before the
     // border so the halo never draws a straight rectangular edge.
     float edgeClip = 1.0 - smoothstep(0.90, 0.985, r);
-    float alpha = max(alphaBody, halo) * uOpacity * edgeClip;
+    // Two boundary rings keep the silhouette legible on the light page.
+    // Dark mode passes uRingAlpha = 0, so its output is untouched.
+    float innerRing = 1.0 - smoothstep(0.0, 0.011, abs(r - 0.875));
+    float outerRing = 1.0 - smoothstep(0.0, 0.013, abs(r - 0.925));
+    float ringMask = max(innerRing * 0.85, outerRing) * uRingAlpha * edgeClip;
+    vec3 ringColour = mix(uPhase, vec3(0.14, 0.26, 0.4), 0.25);
+    col = mix(col, ringColour, ringMask * 0.75);
+    float alpha = max(max(alphaBody, halo), ringMask) * uOpacity * edgeClip;
 
     col = clamp(col, 0.0, 1.0);
     outColor = vec4(col, clamp(alpha, 0.0, 1.0));

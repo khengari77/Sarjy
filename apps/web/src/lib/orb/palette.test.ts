@@ -1,6 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ORB_PALETTES, ORB_STATE_COLORS, THEME_BACKGROUND, orbAccents, orbDominant, type ThemeName } from './palette';
+import {
+  ORB_PALETTES,
+  ORB_STATE_COLORS,
+  THEME_BACKGROUND,
+  orbAccents,
+  orbDominant,
+  orbRenderColor,
+  orbRenderPalette,
+  type ThemeName,
+} from './palette';
 import { parseHexColor } from './render/colors';
 
 const THEMES: readonly ThemeName[] = ['light', 'dark'];
@@ -120,5 +129,51 @@ describe('palette mirrors the shell tokens', () => {
       expect(accents.length).toBeGreaterThanOrEqual(2);
       expect([...dominant, ...accents]).toEqual([...ORB_PALETTES[theme]]);
     }
+  });
+});
+
+describe('light-mode render palette gains depth without changing hues', () => {
+  function channels(hex: string): [number, number, number] {
+    return [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16) / 255) as [number, number, number];
+  }
+
+  function hue(hex: string): number {
+    const [r, g, b] = channels(hex);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    if (max === min) return 0;
+    const delta = max - min;
+    const raw =
+      max === r ? ((g - b) / delta) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+    return ((raw * 60) % 360 + 360) % 360;
+  }
+
+  it('leaves the dark render palette byte-for-byte unchanged', () => {
+    expect(orbRenderPalette('dark')).toEqual(ORB_PALETTES.dark);
+  });
+
+  it('deepens every light slot while keeping its hue', () => {
+    const light = orbRenderPalette('light');
+    expect(light).toHaveLength(ORB_PALETTES.light.length);
+    light.forEach((colour, index) => {
+      expect(colour, `slot ${index + 1}`).toMatch(/^#[0-9a-f]{6}$/);
+      const base = ORB_PALETTES.light[index]!;
+      expect(colour, `slot ${index + 1}`).not.toBe(base);
+      const hueDelta = Math.abs(hue(colour) - hue(base));
+      expect(Math.min(hueDelta, 360 - hueDelta), `slot ${index + 1} hue`).toBeLessThan(6);
+      const luma = channels(colour).reduce((sum, value) => sum + value, 0);
+      const baseLuma = channels(base).reduce((sum, value) => sum + value, 0);
+      expect(luma, `slot ${index + 1} depth`).toBeLessThan(baseLuma);
+    });
+  });
+
+  it('keeps the phase tint exact in dark mode and deeper in light mode', () => {
+    const phase = '#9cdbff';
+    expect(orbRenderColor('dark', phase)).toBe(phase);
+    const light = orbRenderColor('light', phase);
+    expect(light).not.toBe(phase);
+    expect(channels(light).reduce((sum, value) => sum + value, 0)).toBeLessThan(
+      channels(phase).reduce((sum, value) => sum + value, 0),
+    );
   });
 });

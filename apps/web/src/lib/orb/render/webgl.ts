@@ -1,5 +1,7 @@
-import { ORB_PALETTES, type ThemeName } from '../palette';
+import { orbRenderColor, orbRenderPalette, type ThemeName } from '../palette';
+import { idleEnvelope, STILL_ENVELOPE } from '../idleEnvelope';
 import { hexToRgb } from './colors';
+import { orbSurfaceStyle } from './style';
 import { FRAGMENT, VERTEX } from './shaders';
 import type { OrbRenderState, Rgb } from './types';
 
@@ -36,7 +38,7 @@ function compile(gl: WebGL2RenderingContext, type: number, source: string): WebG
 }
 
 function paletteValues(theme: ThemeName): Float32Array {
-  const colours = ORB_PALETTES[theme];
+  const colours = orbRenderPalette(theme);
   const values = new Float32Array(18);
   for (let index = 0; index < 6; index += 1) {
     const rgb = hexToRgb(colours[index] ?? colours[0]);
@@ -56,6 +58,32 @@ function discardShaders(gl: WebGL2RenderingContext, ...shaders: (WebGLShader | n
 function releaseProgram(gl: WebGL2RenderingContext, program: WebGLProgram, ...shaders: (WebGLShader | null)[]): void {
   gl.deleteProgram(program);
   discardShaders(gl, ...shaders);
+}
+
+function bindContextLoss(canvas: HTMLCanvasElement, onLost: () => void): () => void {
+  const handler = (event: Event) => {
+    event.preventDefault();
+    onLost();
+  };
+  canvas.addEventListener('webglcontextlost', handler);
+  return () => canvas.removeEventListener('webglcontextlost', handler);
+}
+
+function applySurfaceStyle(
+  gl: WebGL2RenderingContext,
+  uniforms: {
+    bodyBase: WebGLUniformLocation | null;
+    densityGain: WebGLUniformLocation | null;
+    edgeSoft: WebGLUniformLocation | null;
+    ringAlpha: WebGLUniformLocation | null;
+  },
+  theme: ThemeName,
+) {
+  const surface = orbSurfaceStyle(theme);
+  gl.uniform1f(uniforms.bodyBase, surface.bodyBase);
+  gl.uniform1f(uniforms.densityGain, surface.densityGain);
+  gl.uniform1f(uniforms.edgeSoft, surface.edgeSoftness);
+  gl.uniform1f(uniforms.ringAlpha, surface.ringAlpha);
 }
 
 export function setupWebgl(options: WebglOptions): (() => void) | null {
@@ -94,6 +122,10 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     bodyShade: gl.getUniformLocation(program, 'uBodyShade'),
     saturation: gl.getUniformLocation(program, 'uSaturation'),
     coreMix: gl.getUniformLocation(program, 'uCoreMix'),
+    bodyBase: gl.getUniformLocation(program, 'uBodyBase'),
+    densityGain: gl.getUniformLocation(program, 'uDensityGain'),
+    edgeSoft: gl.getUniformLocation(program, 'uEdgeSoft'),
+    ringAlpha: gl.getUniformLocation(program, 'uRingAlpha'),
     colors: gl.getUniformLocation(program, 'uColors[0]'),
     phase: gl.getUniformLocation(program, 'uPhase'),
     accent: gl.getUniformLocation(program, 'uAccent'),
@@ -110,6 +142,7 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     gl.uniform1f(uniforms.bodyShade, theme === 'light' ? 0.95 : 1);
     gl.uniform1f(uniforms.saturation, theme === 'light' ? 1.6 : 1);
     gl.uniform1f(uniforms.coreMix, theme === 'light' ? 0.18 : 0.42);
+    applySurfaceStyle(gl, uniforms, theme);
   }
   let appliedTheme = options.renderState.theme;
   applyPalette(appliedTheme);
@@ -126,11 +159,7 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
   const lowPower = typeof navigator !== 'undefined' && (navigator.hardwareConcurrency ?? 8) <= 4;
   const minFrameGap = lowPower ? 1000 / 30 - 1 : 0;
 
-  const onLost = (event: Event) => {
-    event.preventDefault();
-    options.onContextLost();
-  };
-  canvas.addEventListener('webglcontextlost', onLost);
+  const unbindContextLoss = bindContextLoss(canvas, options.onContextLost);
 
   function draw(now: number) {
     if (options.isDisposed()) return;
@@ -149,6 +178,7 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     last = now;
     const time = (now - start) / 1000;
     const pulse = Math.min(1, Math.max(0, options.getPulse()));
+    const ambient = options.renderState.idle ? idleEnvelope(time) : STILL_ENVELOPE;
 
     if (options.renderState.theme !== appliedTheme) {
       appliedTheme = options.renderState.theme;
@@ -161,7 +191,7 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    const target = hexToRgb(options.renderState.color);
+    const target = hexToRgb(orbRenderColor(appliedTheme, options.renderState.color));
     const ratio = Math.min(1, delta / 320);
     options.currentColor.rgb = [
       options.currentColor.rgb[0] + (target[0] - options.currentColor.rgb[0]) * ratio,
@@ -175,9 +205,9 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
 
     gl.uniform2f(uniforms.resolution, canvas.width, canvas.height);
     gl.uniform1f(uniforms.time, time);
-    gl.uniform1f(uniforms.pulse, pulse);
+    gl.uniform1f(uniforms.pulse, Math.min(1, pulse + ambient.breath * 0.35));
     gl.uniform1f(uniforms.turb, motion.turbulence);
-    gl.uniform1f(uniforms.flow, Math.max(0.05, motion.flowRate));
+    gl.uniform1f(uniforms.flow, Math.max(0.05, motion.flowRate + ambient.flow * 0.25));
     gl.uniform1f(uniforms.glow, motion.edgeGlow);
     gl.uniform1f(uniforms.opacity, motion.opacity);
     gl.uniform3f(uniforms.phase, options.currentColor.rgb[0], options.currentColor.rgb[1], options.currentColor.rgb[2]);
@@ -190,7 +220,7 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
 
   return () => {
     cancelAnimationFrame(frame);
-    canvas.removeEventListener('webglcontextlost', onLost);
+    unbindContextLoss();
     gl.deleteVertexArray(vao);
     releaseProgram(gl, program, vs, fs);
     // Drop the GPU context eagerly; the element is about to be replaced.
