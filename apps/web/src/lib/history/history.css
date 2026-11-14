@@ -1,0 +1,216 @@
+.chat-history .new-chat {
+  font: inherit;
+  min-height: var(--control-height);
+  padding: 10px 16px;
+  border-radius: var(--radius-control);
+  border: 1px solid color-mix(in srgb, var(--orb-idle) 45%, var(--border-subtle));
+  background: color-mix(in srgb, var(--orb-idle) 18%, transparent);
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--transition-quick),
+    opacity var(--transition-quick);
+}
+
+.chat-history .new-chat:hover:enabled {
+  background: color-mix(in srgb, var(--orb-idle) 28%, transparent);
+}
+
+.chat-history .new-chat:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.chat-history .chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-history .chat-item {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 14px;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background var(--transition-quick),
+    color var(--transition-quick),
+    border-color var(--transition-quick);
+}
+
+.chat-history .chat-item .title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-history .chat-item:hover:enabled {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.chat-history .chat-item.chosen,
+.chat-history .chat-item[aria-current='page'] {
+  background: color-mix(in srgb, var(--orb-listening) 16%, transparent);
+  border-color: color-mix(in srgb, var(--orb-listening) 38%, var(--border-subtle));
+  box-shadow: inset 3px 0 0 var(--orb-listening);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.chat-history .chat-item:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.chat-history .history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chat-history .count {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.chat-history .search {
+  position: relative;
+  display: block;
+}
+
+.chat-history .search input {
+  width: 100%;
+  padding: 8px 30px 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-sunken, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.chat-history .clear {
+  position: absolute;
+  inset-inline-end: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.chat-history .chat-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.chat-history .chat-row .chat-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-history .menu-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.menu-toggle:hover,
+.chat-history .menu-toggle:focus-visible {
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+}
+
+.chat-history .menu {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  min-width: 200px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+}
+
+.chat-history .menu button {
+  display: block;
+  width: 100%;
+  text-align: start;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+}
+
+.chat-history .menu p {
+  margin: 6px 8px 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.chat-history .empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.chat-history .empty p {
+  margin: 0;
+}
+
+.chat-history .skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.chat-history .skeleton span {
+  height: 32px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--surface-elevated), transparent);
+  animation: chat-history-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes chat-history-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-history .skeleton span {
+    animation: none;
+  }
+}

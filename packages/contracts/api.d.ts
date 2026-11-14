@@ -4,6 +4,91 @@
  */
 
 export interface paths {
+    "/v1/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings */
+        get: operations["get_settings_v1_settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit */
+        post: operations["submit_v1_actions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create */
+        post: operations["create_v1_conversations__conversation_id__memories_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memories/{memory_id}/correct": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Correct */
+        post: operations["correct_v1_memories__memory_id__correct_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memories/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search */
+        post: operations["search_v1_memories_search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -65,6 +150,23 @@ export interface paths {
         };
         /** Turns */
         get: operations["turns_v1_conversations__conversation_id__turns_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/tool-calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Tool Calls */
+        get: operations["tool_calls_v1_conversations__conversation_id__tool_calls_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -260,17 +362,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/conversations/{conversation_id}/tool-calls": {
+    "/v1/conversations/{conversation_id}/context": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Tool Calls */
-        get: operations["tool_calls_v1_conversations__conversation_id__tool_calls_get"];
+        /** Get Context */
+        get: operations["get_context_v1_conversations__conversation_id__context_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/context/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Context Operations */
+        get: operations["get_context_operations_v1_conversations__conversation_id__context_operations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/context/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Propose Context */
+        post: operations["propose_context_v1_conversations__conversation_id__context_proposals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/context/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Context */
+        post: operations["confirm_context_v1_conversations__conversation_id__context_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/context/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Undo Context */
+        post: operations["undo_context_v1_conversations__conversation_id__context_undo_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -281,6 +451,40 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActionSubmission */
+        ActionSubmission: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Request Id */
+            request_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "ui" | "transcript";
+            /** Action */
+            action?: (components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"]) | null;
+            /** Transcript */
+            transcript?: string | null;
+            /**
+             * Finalized
+             * @default true
+             * @constant
+             */
+            finalized: true;
+        };
+        /** AdjustSpeakingSpeed */
+        AdjustSpeakingSpeed: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "AdjustSpeakingSpeed";
+            /** Delta */
+            delta: number;
+        };
         /** AgentInput */
         AgentInput: {
             /** Request Id */
@@ -306,17 +510,257 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "openai" | "elevenlabs";
+            provider: "openai" | "elevenlabs" | "deepseek";
             /**
              * Characters
              * @default 0
              */
             characters: number;
         };
+        /** ContextAmbiguity */
+        ContextAmbiguity: {
+            /** Id */
+            id: string;
+            /** Content */
+            content: string;
+            /** Reason */
+            reason: string;
+        };
+        /** ContextConfirmInput */
+        ContextConfirmInput: {
+            /** Proposal */
+            proposal: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+        };
+        /** ContextConfirmation */
+        ContextConfirmation: {
+            /** Operation Id */
+            operation_id: string;
+            /** Status */
+            status: string;
+            /** Idempotent */
+            idempotent: boolean;
+            /** Excluded Ids */
+            excluded_ids: string[];
+            /** Kept Ids */
+            kept_ids: string[];
+            /** Revision Before */
+            revision_before: number;
+            /** Revision After */
+            revision_after: number;
+            diff: components["schemas"]["ContextDiff"];
+        };
+        /** ContextDiff */
+        ContextDiff: {
+            /** Added */
+            added: string[];
+            /** Removed */
+            removed: string[];
+            /** Kept */
+            kept: string[];
+            /** Revision Before */
+            revision_before: number;
+            /** Revision After */
+            revision_after: number;
+        };
+        /** ContextMatch */
+        ContextMatch: {
+            /** Id */
+            id: string;
+            /** Content */
+            content: string;
+            /** Source Turn Id */
+            source_turn_id: string | null;
+            /** Score */
+            score: number;
+            /** Kind */
+            kind: string;
+        };
+        /** ContextOperationItem */
+        ContextOperationItem: {
+            /** Id */
+            id: string;
+            /** Command Type */
+            command_type: string;
+            /** Outcome */
+            outcome: string;
+            /** Revision Before */
+            revision_before?: number | null;
+            /** Revision After */
+            revision_after?: number | null;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Created At */
+            created_at: string;
+            diff: components["schemas"]["ContextDiff"] | null;
+        };
+        /** ContextOperationList */
+        ContextOperationList: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Revision */
+            revision: number;
+            /** Operations */
+            operations: components["schemas"]["ContextOperationItem"][];
+        };
+        /** ContextPreserved */
+        ContextPreserved: {
+            /** Id */
+            id: string;
+            /** Content */
+            content: string;
+            /** Reason */
+            reason: string;
+        };
+        /** ContextProposal */
+        ContextProposal: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Query */
+            query: string;
+            /** Revision */
+            revision: number;
+            /** Proposal */
+            proposal: string;
+            /** Matches */
+            matches: components["schemas"]["ContextMatch"][];
+            /** Preserved */
+            preserved: components["schemas"]["ContextPreserved"][];
+            /** Ambiguous */
+            ambiguous: components["schemas"]["ContextAmbiguity"][];
+            /** Requires Clarification */
+            requires_clarification: boolean;
+            diff: components["schemas"]["ContextDiff"];
+        };
+        /** ContextProposalInput */
+        ContextProposalInput: {
+            /** Query */
+            query: string;
+            /**
+             * Keep
+             * @default []
+             */
+            keep: string[];
+            /**
+             * Exclude
+             * @default []
+             */
+            exclude: string[];
+            /**
+             * Limit
+             * @default 20
+             */
+            limit: number;
+        };
+        /** ContextState */
+        ContextState: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Revision */
+            revision: number;
+            /** Excluded Ids */
+            excluded_ids: string[];
+        };
+        /** ContextUndoInput */
+        ContextUndoInput: {
+            /** Operation Id */
+            operation_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+        };
+        /** ContextUndoResult */
+        ContextUndoResult: {
+            /** Operation Id */
+            operation_id: string;
+            /** Restored Operation Id */
+            restored_operation_id: string;
+            /** Status */
+            status: string;
+            /** Idempotent */
+            idempotent: boolean;
+            /** Restored Ids */
+            restored_ids: string[];
+            /** Revision Before */
+            revision_before: number;
+            /** Revision After */
+            revision_after: number;
+            diff: components["schemas"]["ContextDiff"];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HandledAction */
+        HandledAction: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            handled: "true";
+            /** Result */
+            result: components["schemas"]["SettingsActionResult"] | components["schemas"]["NavigationActionResult"] | {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+        };
+        JsonValue: unknown;
+        /** MemoryCorrection */
+        MemoryCorrection: {
+            /** Content */
+            content: string;
+            /** Expected Version */
+            expected_version: number;
+            /** Source Turn Id */
+            source_turn_id?: string | null;
+            /** Idempotency Key */
+            idempotency_key: string;
+        };
+        /** MemoryQuery */
+        MemoryQuery: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Query */
+            query: string;
+            /**
+             * Limit
+             * @default 5
+             */
+            limit: number;
+        };
+        /** MemoryResult */
+        MemoryResult: {
+            /** Id */
+            id: string;
+            /** Owner Id */
+            owner_id: string;
+            /** Content */
+            content: string;
+            /** Version */
+            version: number;
+            /** Source Conversation Id */
+            source_conversation_id: string;
+            /** Source Turn Id */
+            source_turn_id: string | null;
+            /** Status */
+            status: string;
+            /** Supersedes Id */
+            supersedes_id: string | null;
+            /** Distance */
+            distance?: number | null;
+        };
+        /** MemoryWrite */
+        MemoryWrite: {
+            /** Content */
+            content: string;
+            /** Source Turn Id */
+            source_turn_id?: string | null;
+            /** Idempotency Key */
+            idempotency_key: string;
         };
         /** ModelChoice */
         ModelChoice: {
@@ -332,7 +776,33 @@ export interface components {
             /** Voice Id */
             voice_id?: string | null;
         };
-        /** PipelineConfig */
+        /** NavigationActionResult */
+        NavigationActionResult: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "ShowConversationHistory" | "OpenMemoryExplorer";
+            /**
+             * Navigation
+             * @enum {string}
+             */
+            navigation: "history" | "memory_explorer";
+        };
+        /** OpenMemoryExplorer */
+        OpenMemoryExplorer: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OpenMemoryExplorer";
+        };
+        /**
+         * PipelineConfig
+         * @description Already-resolved session configuration, including valid preference overrides.
+         *
+         *     The output cap is derived, never supplied.
+         */
         PipelineConfig: {
             /**
              * Runtime
@@ -344,15 +814,116 @@ export interface components {
             llm: components["schemas"]["ModelChoice"];
             tts: components["schemas"]["ModelChoice"];
             /**
-             * Max Output Tokens
-             * @default 96
+             * Response Tier
+             * @default 2
              */
-            max_output_tokens: number;
+            response_tier: number;
+            /** @default automatic */
+            response_preference: components["schemas"]["ResponsePreference"];
             /**
              * Revision
-             * @default 1
+             * @default 2
              */
             revision: number;
+        };
+        /** ProposeContextExclusion */
+        ProposeContextExclusion: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ProposeContextExclusion";
+            /** Query */
+            query: string;
+            /**
+             * Keep
+             * @default []
+             */
+            keep: string[];
+            /**
+             * Exclude
+             * @default []
+             */
+            exclude: string[];
+        };
+        /**
+         * ResponsePreference
+         * @enum {string}
+         */
+        ResponsePreference: "automatic" | "brief" | "balanced" | "detailed";
+        /** RestoreContextOperation */
+        RestoreContextOperation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "RestoreContextOperation";
+            /** Operation Id */
+            operation_id: string;
+        };
+        /** SearchMemory */
+        SearchMemory: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SearchMemory";
+            /** Query */
+            query: string;
+            /**
+             * Limit
+             * @default 20
+             */
+            limit: number;
+        };
+        /** SelectApprovedVoice */
+        SelectApprovedVoice: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SelectApprovedVoice";
+            /** Voice Id */
+            voice_id: string;
+        };
+        /** SetCaptionsVisible */
+        SetCaptionsVisible: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SetCaptionsVisible";
+            /** Visible */
+            visible: boolean;
+        };
+        /** SetSpeakingSpeed */
+        SetSpeakingSpeed: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SetSpeakingSpeed";
+            /** Speed */
+            speed: number;
+        };
+        /** SettingsActionResult */
+        SettingsActionResult: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "AdjustSpeakingSpeed" | "SetSpeakingSpeed" | "SelectApprovedVoice" | "SetCaptionsVisible";
+            settings: components["schemas"]["UserSettings"];
+            /** Changed */
+            changed: boolean;
+        };
+        /** ShowConversationHistory */
+        ShowConversationHistory: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ShowConversationHistory";
         };
         /** StartVoice */
         StartVoice: {
@@ -360,12 +931,49 @@ export interface components {
             conversation_id: string;
             /**
              * Language
-             * @default ar
+             * @default en
              * @enum {string}
              */
             language: "ar" | "en";
             /** Voice Id */
             voice_id?: string | null;
+            /** Response Tier */
+            response_tier?: number | null;
+            /** @default automatic */
+            response_preference: components["schemas"]["ResponsePreference"];
+        };
+        /** UnhandledAction */
+        UnhandledAction: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            handled: "false";
+        };
+        /** UserSettings */
+        UserSettings: {
+            /**
+             * Speaking Speed
+             * @default 1
+             */
+            speaking_speed: number;
+            /**
+             * Captions Visible
+             * @default true
+             */
+            captions_visible: boolean;
+            /**
+             * Approved Voice Id
+             * @default null
+             */
+            approved_voice_id: string | null;
+            /** @default automatic */
+            response_preference: components["schemas"]["ResponsePreference"];
+            /**
+             * Revision
+             * @default 0
+             */
+            revision: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -410,6 +1018,229 @@ export interface components {
             /** Country */
             country?: string | null;
         };
+        /**
+         * ResponsePolicy
+         * @description One validated tier. The cap is a ceiling, never a target length.
+         */
+        ResponsePolicy: {
+            /** Tier */
+            tier: number;
+            /** Max Output Tokens */
+            max_output_tokens: number;
+            /** @default automatic */
+            preference: components["schemas"]["ResponsePreference"];
+        };
+        /**
+         * Complexity
+         * @enum {string}
+         */
+        Complexity: "simple" | "complex";
+        /**
+         * DecisionSource
+         * @enum {string}
+         */
+        DecisionSource: "local_exact" | "jev" | "bypass";
+        /**
+         * Intent
+         * @enum {string}
+         */
+        Intent: "conversation" | "ui_control" | "voice_setting" | "memory_search" | "memory_modification" | "conversation_navigation" | "tool_request" | "ambiguous";
+        /**
+         * Decision
+         * @description Validated routing output. Vendor confidence is informational, not evidence.
+         */
+        Decision: {
+            /** Turn Id */
+            turn_id: string;
+            intent: components["schemas"]["Intent"];
+            /** Probabilities */
+            probabilities: {
+                [key: string]: number;
+            };
+            /**
+             * Confidence
+             * @description Vendor distribution confidence, not the selected probability.
+             */
+            confidence: number;
+            /** Tier */
+            tier: number;
+            complexity: components["schemas"]["Complexity"];
+            source: components["schemas"]["DecisionSource"];
+            /** Model */
+            model: string;
+            /** Policy Version */
+            policy_version: string;
+        };
+        /** MemorySource */
+        MemorySource: {
+            /**
+             * Turn Id
+             * @default null
+             */
+            turn_id: string | null;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** MemoryRecord */
+        MemoryRecord: {
+            /** Id */
+            id: string;
+            /** Owner Id */
+            owner_id: string;
+            /** Content */
+            content: string;
+            source: components["schemas"]["MemorySource"];
+            /** Version */
+            version: number;
+            /**
+             * Status
+             * @default active
+             * @enum {string}
+             */
+            status: "active" | "superseded" | "excluded";
+            /**
+             * Embedding Model
+             * @default text-embedding-3-small
+             */
+            embedding_model: string;
+            /**
+             * Embedding
+             * @default null
+             */
+            embedding: number[] | null;
+        };
+        /** ContextEntry */
+        ContextEntry: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "system" | "user" | "assistant" | "memory" | "tool";
+            /** Text */
+            text: string;
+        };
+        /** ContextSelection */
+        ContextSelection: {
+            /** Revision */
+            revision: number;
+            /**
+             * Included
+             * @default []
+             */
+            included: components["schemas"]["ContextEntry"][];
+            /**
+             * Excluded Ids
+             * @default []
+             */
+            excluded_ids: string[];
+        };
+        /** ToolSpec */
+        ToolSpec: {
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+        };
+        /** AssistantContinuation */
+        AssistantContinuation: {
+            /**
+             * Kind
+             * @default assistant
+             * @constant
+             */
+            kind: "assistant";
+            /** Content */
+            content: string;
+            /**
+             * Interrupted
+             * @default false
+             */
+            interrupted: boolean;
+        };
+        /** ModelMessage */
+        ModelMessage: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "system" | "user" | "assistant";
+            /** Content */
+            content: string;
+        };
+        /** ModelToolItem */
+        ModelToolItem: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "call" | "result";
+            /** Call Id */
+            call_id: string;
+            /** Name */
+            name: string;
+            /** Content */
+            content: string;
+            /**
+             * Is Error
+             * @default false
+             */
+            is_error: boolean;
+        };
+        /** ModelRequest */
+        ModelRequest: {
+            /** Turn Id */
+            turn_id: string;
+            /** Attempt Id */
+            attempt_id: string;
+            /** Instructions */
+            instructions: string;
+            selection: components["schemas"]["ContextSelection"];
+            response_policy: components["schemas"]["ResponsePolicy"];
+            settings: components["schemas"]["UserSettings"] | null;
+            /**
+             * Messages
+             * @default []
+             */
+            messages: components["schemas"]["ModelMessage"][];
+            /**
+             * Tool History
+             * @default []
+             */
+            tool_history: (components["schemas"]["ModelToolItem"] | components["schemas"]["AssistantContinuation"])[];
+            /**
+             * Memories
+             * @default []
+             */
+            memories: components["schemas"]["MemoryRecord"][];
+            /**
+             * Tools
+             * @default []
+             */
+            tools: components["schemas"]["ToolSpec"][];
+            /**
+             * Settings Revision
+             * @default 0
+             */
+            settings_revision: number | null;
+            /**
+             * Language
+             * @default en
+             * @enum {string}
+             */
+            language: "ar" | "en";
+        };
+        Action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
     };
     responses: never;
     parameters: never;
@@ -419,6 +1250,162 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_settings_v1_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserSettings"];
+                };
+            };
+        };
+    };
+    submit_v1_actions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActionSubmission"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandledAction"] | components["schemas"]["UnhandledAction"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_v1_conversations__conversation_id__memories_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    correct_v1_memories__memory_id__correct_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                memory_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryCorrection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_v1_memories_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryQuery"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryResult"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_healthz_get: {
         parameters: {
             query?: never;
@@ -500,6 +1487,37 @@ export interface operations {
         };
     };
     turns_v1_conversations__conversation_id__turns_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tool_calls_v1_conversations__conversation_id__tool_calls_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -863,7 +1881,7 @@ export interface operations {
             };
         };
     };
-    tool_calls_v1_conversations__conversation_id__tool_calls_get: {
+    get_context_v1_conversations__conversation_id__context_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -880,7 +1898,143 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContextState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_context_operations_v1_conversations__conversation_id__context_operations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextOperationList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    propose_context_v1_conversations__conversation_id__context_proposals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContextProposalInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextProposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_context_v1_conversations__conversation_id__context_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContextConfirmInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextConfirmation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    undo_context_v1_conversations__conversation_id__context_undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContextUndoInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextUndoResult"];
                 };
             };
             /** @description Validation Error */

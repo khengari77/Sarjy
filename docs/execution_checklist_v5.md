@@ -224,7 +224,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 ### D1.1 — Review/release pending session-start proxy deadline fix; preserve unrelated working changes
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -237,11 +237,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Review existing proxy diff; check/build web; reproduce delayed dispatch with a fake upstream and run one hosted startup after release.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** [Hosted release verification](day1-hosted-verification.md); source 4a80697, database 0004_voice_cleanup, actual session start/end and historical reconciliation passed. Issue #2 closed. Human voice/lifecycle gates remain in D1.3–D1.6.
 
 ### D1.2 — Verify failed startup, abandoned sessions, expiry and room cleanup release capacity without resetting quotas
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -254,7 +254,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Use isolated sessions for each failure, inspect session rows and room existence before/after; assert ledger unchanged except legitimate reservations.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** [Hosted release verification](day1-hosted-verification.md); source 4a80697, database 0004_voice_cleanup, actual session start/end and historical reconciliation passed. Issue #2 closed. Human voice/lifecycle gates remain in D1.3–D1.6.
 
 ### D1.3 — Verify hosted English microphone input, audible response and durable turns
 
@@ -268,7 +268,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - Real microphone speech yields final English transcript and relevant audible response.
 - reload shows completed user/assistant turns.
 
-**Verification:** Perform one short authenticated hosted conversation, end it and reload; text-only or simulated microphone evidence cannot satisfy this gate.
+**Verification:** Perform one short authenticated hosted conversation, end it and reload; text-only or simulated microphone evidence cannot satisfy this gate. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
@@ -284,7 +284,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - Missing city prompts clarification.
 - explicit Tripoli/LY triggers actual Open-Meteo data and an audible factual answer matching tool output.
 
-**Verification:** Ask weather without city, then supply Tripoli, Libya; inspect persisted tool result and response location/temperature.
+**Verification:** Ask weather without city, then supply Tripoli, Libya; inspect persisted tool result and response location/temperature. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
@@ -300,7 +300,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - Typed follow-up uses the preceding spoken fact and vice versa.
 - both appear once in the same conversation.
 
-**Verification:** Speak a unique harmless fact, ask about it by text, then speak a follow-up; reload and inspect ordered turns.
+**Verification:** Speak a unique harmless fact, ask about it by text, then speak a follow-up; reload and inspect ordered turns. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
@@ -318,7 +318,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - reconnect/refresh/end release or recover state.
 - denied permission offers recovery.
 
-**Verification:** Run each scenario separately; record state transitions, room/session cleanup and absence of late stale text/audio.
+**Verification:** Run each scenario separately; record state transitions, room/session cleanup and absence of late stale text/audio. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
@@ -334,7 +334,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - Evidence names code/deployment revisions, input mode, observed result and ledger delta.
 - no secret or raw voice enters git.
 
-**Verification:** Record evidence in ignored artifacts/deployment; distinguish manual microphone, synthetic audio and text-only checks.
+**Verification:** Record evidence in ignored artifacts/deployment; distinguish manual microphone, synthetic audio and text-only checks. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
@@ -350,7 +350,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 - Current docs match observed deployments.
 - every D1 acceptance gate has evidence before release marking.
 
-**Verification:** Review D1.1–D1.7 records and git revision; do not create a baseline release marker while any gate remains pending.
+**Verification:** Review D1.1–D1.7 records and git revision; do not create a baseline release marker while any gate remains pending. Procedure: [Day 1 human acceptance runbook](day1-acceptance-runbook.md); record: [pending evidence](day1-acceptance-evidence.md).
 
 **Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
 
@@ -361,7 +361,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 ### D2.1 — Define immutable decision, action, settings, context and model-request contracts
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -374,11 +374,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Add pure contract/property tests and regenerate API contracts; run pytest and frontend check.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** PR #23, cdbaef4; merged 0382d68; 62 contract tests and CI passed. Recorded 12 November 2026; implementation/local verification, not hosted acceptance.
 
 ### D2.2 — Add additive migrations: pgvector, atomic memory/provenance, settings, revisions, proposals, operations, snapshots and metrics
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -391,11 +391,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Apply migrations to disposable PostgreSQL fixtures, inspect schema and compare seeded records before/after; do not reset hosted data.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** PR #23; single chain through 0007_memory_write_requests; disposable pgvector migrations 5 passed; no hosted migration. Recorded 12 November 2026; implementation/local verification, not hosted acceptance.
 
 ### D2.3 — Extend tenant restrictions and shared budget accounting to every new path
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -408,11 +408,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Create two-owner fixtures; exercise every new read/write endpoint and fake external boundaries; inspect grants.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** Reviewed PRs #31–#36, integrated at `730c03c`, plus closure verification PR #50. Backend baseline 210 passed; required PostgreSQL, frontend and browser CI passed. Additional checks cover all Day 2 table privileges, authoritative worker input, weather exclusion/Undo and generated exclusion/protection/revision laws. Local/CI acceptance; no hosted voice claim.
 
 ### D2.4 — Implement explicit memory persistence, embeddings, correction versions and cross-conversation recall
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -425,11 +425,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Seed city and budget separately, restart test service, retrieve in another conversation, correct city and inspect provenance/results.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** Reviewed PRs #31–#36, integrated at `730c03c`, plus closure verification PR #50. Backend baseline 210 passed; required PostgreSQL, frontend and browser CI passed. Additional checks cover all Day 2 table privileges, authoritative worker input, weather exclusion/Undo and generated exclusion/protection/revision laws. Local/CI acceptance; no hosted voice claim.
 
 ### D2.5 — Compile permitted history/memory/tool results under one revision
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -442,11 +442,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Add compiler properties and worker integration with stale in-memory history; inspect canonical messages and included IDs.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** Reviewed PRs #31–#36, integrated at `730c03c`, plus closure verification PR #50. Backend baseline 210 passed; required PostgreSQL, frontend and browser CI passed. Additional checks cover all Day 2 table privileges, authoritative worker input, weather exclusion/Undo and generated exclusion/protection/revision laws. Local/CI acceptance; no hosted voice claim.
 
 ### D2.6 — Implement shared UI/voice action dispatcher and exact local-command parser
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -458,11 +458,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Use table-driven parser fixtures and handler spies; compare resulting state and action IDs for equivalent submissions.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** Reviewed PRs #31–#36, integrated at `730c03c`, plus closure verification PR #50. Backend baseline 210 passed; required PostgreSQL, frontend and browser CI passed. Additional checks cover all Day 2 table privileges, authoritative worker input, weather exclusion/Undo and generated exclusion/protection/revision laws. Local/CI acceptance; no hosted voice claim.
 
 ### D2.7 — Implement semantic search, keep-exceptions, preview, confirmation, atomic exclusion and revision-safe Undo by text
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -470,17 +470,17 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Acceptance criteria:**
 - Preview alone changes nothing.
-- confirmation excludes only authorized IDs while preserving budget.
+- confirmation excludes only authorized IDs while preserving explicitly kept budget records; budget matches without signed keep/exclude authority (including a lost parser keep argument) are surfaced as ambiguous instead of silently kept or removed.
 - stale/duplicate confirmation is safe.
 - Undo restores exact operation.
 
 **Verification:** Seed atomic trip dates/hotel/budget, run full text workflow and assert rows/revisions/diffs after every step.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** Reviewed PRs #31–#36, integrated at `730c03c`, plus closure verification PR #50. Backend baseline 210 passed; required PostgreSQL, frontend and browser CI passed. Additional checks cover all Day 2 table privileges, authoritative worker input, weather exclusion/Undo and generated exclusion/protection/revision laws. Local/CI acceptance; no hosted voice claim.
 
 ### D2.8 — Ensure weather cannot bypass excluded location context
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -494,11 +494,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Use a fixture with no alternate location and a recording fake weather boundary; assert when called and its city argument.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** Reviewed PRs #31–#36, integrated at `730c03c`, plus closure verification PR #50. Backend baseline 210 passed; required PostgreSQL, frontend and browser CI passed. Additional checks cover all Day 2 table privileges, authoritative worker input, weather exclusion/Undo and generated exclusion/protection/revision laws. Local/CI acceptance; no hosted voice claim.
 
 ### D2.9 — Implement configurable five-tier response policy and update current 800-token bound safely
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -511,11 +511,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Add tier/property tests and inspect outgoing adapter requests, including tier 5 and exhausted speech allowance.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** PR #24, merged 8451e4b; full suite 131 passed, 1 PostgreSQL-only skip; frontend and CI passed. Recorded 12 November 2026; implementation/local verification, not hosted acceptance.
 
 ### D2.10 — Introduce provider-independent streaming request/response adapters
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -526,11 +526,11 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Feed the same immutable request into fake provider transports and compare semantic payloads and normalized event sequences.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** [Provider verification](day2-provider-verification.md), 12 November 2026: shared typed streaming boundary; both SDKs tested through fake HTTP streams; funded DeepSeek streaming check returned OK (12 input / 1 output / 0 reasoning tokens); DeepSeek default persisted in new sessions and bootstrap. No hosted deployment or speech check. Final PR CI records backend, PostgreSQL, frontend and browser results.
 
 ### D2.11 — Explicitly disable DeepSeek thinking; activate primary only after user confirms funding
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -543,7 +543,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Inspect fake transport payload then, only after funding confirmation, perform one bounded access check and verify configured primary.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** [Provider verification](day2-provider-verification.md), 12 November 2026: shared typed streaming boundary; both SDKs tested through fake HTTP streams; funded DeepSeek streaming check returned OK (12 input / 1 output / 0 reasoning tokens); DeepSeek default persisted in new sessions and bootstrap. No hosted deployment or speech check. Final PR CI records backend, PostgreSQL, frontend and browser results.
 
 ### D2.12 — Implement eligible pre-output OpenAI fallback, deadlines, budget denial and partial-output handling
 
@@ -1018,7 +1018,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 ### V1 — Hypothesis: determinism, exclusion idempotence, protected records, tenant isolation, revisions, Undo, tier bounds, dispatch and concurrent spending
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -1029,7 +1029,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Add missing properties and run uv run pytest -q; retain failing seeds and resolved counterexamples.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** Reviewed PRs #31–#36, integrated at `730c03c`, plus closure verification PR #50. Backend baseline 210 passed; required PostgreSQL, frontend and browser CI passed. Additional checks cover all Day 2 table privileges, authoritative worker input, weather exclusion/Undo and generated exclusion/protection/revision laws. Local/CI acceptance; no hosted voice claim.
 
 ### V2 — Jev: valid/unknown/malformed outputs, low confidence, conflicting intents, timeout, missing key, depleted credit and graceful bypass
 
@@ -1048,7 +1048,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 ### V3 — Commands: negation/quotation/compound safety, authorized arguments and UI/voice state equivalence
 
-- [ ] Accomplished
+- [x] Accomplished
 
 **Depends on:** See prerequisite map below; independent checks may run once their feature exists.
 
@@ -1060,7 +1060,7 @@ Execute in order; keep mandatory gates ahead of optional work.
 
 **Verification:** Run table-driven parser/dispatcher tests with ownership-invalid arguments and compare effects.
 
-**Completion evidence:** Pending. Record command/procedure, observed result, code/deployment revision and non-secret evidence path. Leave unchecked until every criterion passes.
+**Completion evidence:** Reviewed PRs #31–#36, integrated at `730c03c`, plus closure verification PR #50. Backend baseline 210 passed; required PostgreSQL, frontend and browser CI passed. Additional checks cover all Day 2 table privileges, authoritative worker input, weather exclusion/Undo and generated exclusion/protection/revision laws. Local/CI acceptance; no hosted voice claim.
 
 ### V4 — Failover: eligible early failure, no retry after text/tool emission, no duplicated effects, no fallback on cancellation/configuration/quota errors
 
@@ -1152,6 +1152,6 @@ Wake words, browser-local speech, extra providers, speculative partial routing, 
 
 ## Prerequisite map and completion rules
 
-D1 starts from M0; D2 starts after baseline acceptance. D2.2 follows D2.1; D2.3–D2.5 follow schema/contracts; D2.6 follows contracts; D2.7 follows retrieval/compiler/dispatcher; D2.8 follows D2.5 and D2.7. D2.9–D2.10 follow contracts; D2.11 follows adapters and funding confirmation; D2.12 follows adapters/budgets; D2.13 follows operation schema; D2.14 requires key setup; D2.15 requires dispatcher and Jev adapter; D2.16 requires classifications and funded primary; D2.17 requires D2.4–D2.13. D3 consumes the corresponding D2 capabilities; D3.5–D3.6 follow settings/dispatcher; D3.9 follows context operations/explorer; D3.13–D3.14 follow mandatory feature acceptance. D4 follows feature freeze. V1–V6 verify their corresponding implemented subsystems; P1/P2 require frozen deployed features.
+D1 starts from M0; Day 2 local implementation proceeds from reviewed merged contracts/schema while #3 human acceptance remains pending. Hosted release and human acceptance stay separate. D2.2 follows D2.1; D2.3–D2.5 follow schema/contracts; D2.6 follows contracts; D2.7 follows retrieval/compiler/dispatcher; D2.8 follows D2.5 and D2.7. D2.9–D2.10 follow contracts; D2.11 follows adapters and funding confirmation; D2.12 follows adapters/budgets; D2.13 follows operation schema; D2.14 requires key setup; D2.15 requires dispatcher and Jev adapter; D2.16 requires classifications and funded primary; D2.17 requires D2.4–D2.13. D3 consumes the corresponding D2 capabilities; D3.5–D3.6 follow settings/dispatcher; D3.9 follows context operations/explorer; D3.13–D3.14 follow mandatory feature acceptance. D4 follows feature freeze. V1–V6 verify their corresponding implemented subsystems; P1/P2 require frozen deployed features.
 
 Checked items retain their original implementation/verification scope. A new broader requirement gets a pending follow-up. Missing account access or human verification is pending, never a pass. Evidence distinguishes local implementation, local tests, deployment and hosted acceptance. Secrets and media stay ignored; all paid checks use the shared ledger.
