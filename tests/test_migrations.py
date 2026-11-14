@@ -187,16 +187,38 @@ async def _postgres_migration():
         )
         invitation_links = await connection.fetch("SELECT invitation_id FROM identities")
         reviewer_tables = await connection.fetch("SELECT tablename FROM pg_tables WHERE tablename LIKE 'reviewer_%'")
+        invitation_columns = {
+            row["column_name"]: row["is_nullable"]
+            for row in await connection.fetch(
+                "SELECT column_name, is_nullable FROM information_schema.columns "
+                "WHERE table_name='reviewer_invitations'"
+            )
+        }
+        source_columns = {
+            row["column_name"]: row["is_nullable"]
+            for row in await connection.fetch(
+                "SELECT column_name, is_nullable FROM information_schema.columns "
+                "WHERE table_name='reviewer_source_attempt_windows'"
+            )
+        }
     finally:
         await connection.close()
     assert invitation_column["is_nullable"] == "YES"
     assert [row["invitation_id"] for row in invitation_links] == [None]
+    # Order mirrors TABLES in the migration so the next table is obvious.
     assert {row["tablename"] for row in reviewer_tables} == {
         "reviewer_invitations",
         "reviewer_attempt_windows",
         "reviewer_source_attempt_windows",
         "reviewer_creation_windows",
     }
+    # The lifetime cap and mandatory expiry are schema guarantees, not just
+    # service checks: a future migration that drops them must fail here.
+    assert invitation_columns["expires_at"] == "NO"
+    assert invitation_columns["revoked_at"] == "YES"
+    for column in ("max_identities", "identities_created", "max_calls"):
+        assert invitation_columns[column] == "NO", column
+    assert source_columns == {"source": "NO", "minute": "NO", "attempts": "NO"}
     assert embedding == "vector(1536)"
     assert extension
     assert after == before
