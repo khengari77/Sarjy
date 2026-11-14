@@ -152,9 +152,19 @@
     triggerFor(panel)?.focus({ preventScroll: true });
   }
 
-  /** Escape/scrim target: the modal drawer, else the last opened dock. */
-  function activePanel(): 'left' | 'right' | null {
-    return overlayPanel ?? openOrigin ?? (leftOpen ? 'left' : rightOpen ? 'right' : null);
+  /**
+   * Escape target. A modal drawer always owns Escape. A docked panel only
+   * consumes it when focus is inside that panel or on its trigger, so nested
+   * stage dialogs (e.g. the transcript drawer) keep their own Escape handling
+   * instead of the shell closing a dock behind them.
+   */
+  function escapeTarget(): 'left' | 'right' | null {
+    if (overlayPanel) return overlayPanel;
+    const panel = openOrigin ?? (leftOpen ? 'left' : rightOpen ? 'right' : null);
+    if (!panel) return null;
+    const active = document.activeElement as HTMLElement | null;
+    const owns = active && (panelFor(panel)?.contains(active) || triggerFor(panel) === active);
+    return owns ? panel : null;
   }
 
   /**
@@ -239,7 +249,7 @@
         return;
       }
       if (event.key !== 'Escape') return;
-      const panel = activePanel();
+      const panel = escapeTarget();
       if (panel) void closePanel(panel);
     };
 

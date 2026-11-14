@@ -223,3 +223,29 @@ test('resizing across the dock breakpoint keeps focus inside the drawer or resto
   expect(await activeLabel(page)).toBe(LEFT_TRIGGER);
   expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
 });
+
+test('Escape in the stage does not close a docked panel behind a stage dialog', async ({ page }) => {
+  // Docked panels only consume Escape when focus is in the panel or on its
+  // trigger; nested stage dialogs (transcript, intent confirm) keep their own
+  // Escape handling and their own focus restoration.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/');
+  await waitForShell(page);
+
+  const left = leftTrigger(page);
+  await expect(left).toHaveAttribute('aria-expanded', 'true');
+  const composer = page.locator('#voice-stage textarea').first();
+  await composer.focus();
+  await expect(composer).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(left).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#shell-left')).toBeVisible();
+  await expect(composer).toBeFocused();
+
+  // ... but Escape from the trigger itself still closes the dock.
+  await left.focus();
+  await page.keyboard.press('Escape');
+  await expect(left).toHaveAttribute('aria-expanded', 'false');
+  await expect(left).toBeFocused();
+});
