@@ -66,7 +66,10 @@
   let switchCancel: HTMLButtonElement | undefined = $state();
 
   $effect(() => {
-    if (pendingIntent) switchCancel?.focus();
+    if (!pendingIntent) return;
+    // A drawer may have been open when this dialog was requested; the shell
+    // hands off modal ownership asynchronously, so focus once that settles.
+    void tick().then(() => switchCancel?.focus());
   });
 
   async function openTranscript() {
