@@ -4,7 +4,8 @@ Routes live in :mod:`app.routes`; this module only wires configuration,
 persistence, providers and middleware together.
 """
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import event
@@ -18,10 +19,36 @@ from app.infrastructure.database import Base, SessionGate
 from app.services.context_actions import build_context_action_handlers
 from app.services.memory import MemoryService, OpenAIEmbedder
 from app.services.voices import ElevenLabsVoices
+from app.services.wordle import HttpWordleSource, wordle_refresh_loop
+
+
+def _wordle_refresh_task(config: Settings, sessions, source):
+    if not config.wordle_enabled or config.wordle_refresh_hour is None:
+        return None
+    return asyncio.create_task(
+        wordle_refresh_loop(
+            sessions,
+            source,
+            timezone=config.wordle_timezone,
+            hour=config.wordle_refresh_hour,
+        )
+    )
+
+
+async def _stop_refresh_task(task) -> None:
+    if task is None:
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
 
 
 def create_app(
-    settings: Settings | None = None, *, voice_catalog: ElevenLabsVoices | None = None, embedding_adapter=None
+    settings: Settings | None = None,
+    *,
+    voice_catalog: ElevenLabsVoices | None = None,
+    embedding_adapter=None,
+    wordle_source=None,
 ):
     config = settings or Settings()
     # Reject invalid configuration before allocating the engine so a failed
@@ -29,6 +56,7 @@ def create_app(
     if config.development_protected and not config.web_service_secret:
         raise ValueError("WEB_SERVICE_SECRET_REQUIRED")
     catalog = voice_catalog or ElevenLabsVoices(config.eleven_api_key)
+    source = wordle_source or HttpWordleSource(config.wordle_source_url)
     engine = create_async_engine(config.database_url)
     if config.database_url.startswith("sqlite"):
 
@@ -44,6 +72,7 @@ def create_app(
     async def lifespan(app):
         # Dispose on every exit path: startup failure, normal shutdown and an
         # exception raised while the application is serving requests.
+        refresh_task = _wordle_refresh_task(config, sessions, source)
         try:
             # Local bootstrap only. Production uses Alembic before application startup.
             if config.database_url.startswith("sqlite"):
@@ -55,6 +84,7 @@ def create_app(
                         await db.commit()
             yield
         finally:
+            await _stop_refresh_task(refresh_task)
             await engine.dispose()
 
     app = FastAPI(
@@ -116,12 +146,14 @@ def create_app(
     from app.routes.context import register_context_routes, register_exclusion_routes
     from app.routes.system import register_system_routes
     from app.routes.voice import register_voice_routes
+    from app.routes.wordle import register_wordle_routes
     from app.routes.worker import register_worker_routes
 
     register_system_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
     register_voice_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
-    register_worker_routes(app, config=config, database=database)
+    register_worker_routes(app, config=config, database=database, embedder=embedder)
     register_context_routes(app, config=config, database=database, identity=identity, semantic_search=semantic_search)
     register_exclusion_routes(app, config=config, database=database, identity=identity)
+    register_wordle_routes(app, config=config, database=database, identity=identity, source=source)
 
     return app
