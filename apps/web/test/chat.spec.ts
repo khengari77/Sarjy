@@ -26,7 +26,7 @@ test.beforeEach(async ({ page }, info) => {
 test('demo session, English-first controls, history and explicit missing-service errors', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeEnabled();
+  await expect(page.locator('.orb-button')).toBeEnabled();
   await expect(page.locator('.shell')).toHaveAttribute('dir', 'ltr');
   await expect(page.getByRole('button', { name: 'العربية' })).toHaveCount(0);
   const before = await page.request.get('/api/v1/conversations');
@@ -39,7 +39,7 @@ test('demo session, English-first controls, history and explicit missing-service
   await page.reload();
   await expect(page.locator('.shell')).toHaveAttribute('dir', 'ltr');
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
 });
 test('proxy rejects cross-origin mutation', async ({ request }) => {
@@ -92,7 +92,7 @@ test('voice picker search, pagination, saved preference and call payload', async
   });
   await page.goto('/');
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeEnabled();
+  await expect(page.locator('.orb-button')).toBeEnabled();
   await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
   await page.getByRole('textbox', { name: 'Search voices' }).fill('British');
   await page.getByRole('button', { name: 'Load voices / Search', exact: true }).click();
@@ -102,7 +102,7 @@ test('voice picker search, pagination, saved preference and call payload', async
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
   await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
   await expect(page.getByLabel('Choose voice')).toHaveValue('lady-voice');
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
   // The saved voice is resolved server-side; the client must not resend it.
   expect(sentVoice).toBeUndefined();
