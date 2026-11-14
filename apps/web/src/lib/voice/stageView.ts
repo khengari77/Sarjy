@@ -11,6 +11,7 @@ import {
   type OrbPresentation,
   type VoicePhase,
 } from '../orb/orbState';
+import type { ThemeName } from '../orb/palette';
 import type { VoiceState } from './connection';
 
 export interface StageView {
@@ -20,8 +21,11 @@ export interface StageView {
   presentation: OrbPresentation;
 }
 
-/** Pure projection from connection state to stage copy, phase and orb presentation. */
-export function deriveStage(voice: VoiceState, arabic: boolean, overlay: OrbOverlay): StageView {
+/**
+ * Pure projection from connection state to stage copy, phase and orb
+ * presentation. `theme` is the shell's resolved theme (presentation only).
+ */
+export function deriveStage(voice: VoiceState, arabic: boolean, overlay: OrbOverlay, theme: ThemeName): StageView {
   const phase =
     (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
     phaseFromTransportStatus(voice.transportStatus) ??
@@ -31,15 +35,18 @@ export function deriveStage(voice: VoiceState, arabic: boolean, overlay: OrbOver
     phase,
     canInterrupt: phase === 'thinking' || phase === 'speaking',
     errorText: voice.voiceErrorCode ? friendlyVoiceError(voice.voiceErrorCode, arabic) : '',
-    presentation: deriveOrbPresentation({
-      ...INITIAL_STATE,
-      phase,
-      overlay: overlay !== 'none' ? overlay : fatalError ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
-      micActive: voice.live !== null && !voice.muted,
-      sessionId: voice.live?.id ?? null,
-      connectionReady: voice.live !== null && !voice.connectionLost,
-      micLevel: voice.micLevel,
-      outputLevel: voice.outputLevel,
-    }),
+    presentation: deriveOrbPresentation(
+      {
+        ...INITIAL_STATE,
+        phase,
+        overlay: overlay !== 'none' ? overlay : fatalError ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
+        micActive: voice.live !== null && !voice.muted,
+        sessionId: voice.live?.id ?? null,
+        connectionReady: voice.live !== null && !voice.connectionLost,
+        micLevel: voice.micLevel,
+        outputLevel: voice.outputLevel,
+      },
+      theme,
+    ),
   };
 }

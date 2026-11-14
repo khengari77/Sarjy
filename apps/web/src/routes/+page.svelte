@@ -1,13 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { VoiceRuntime } from '../lib/audio/voice-runtime';
-  import {
-    friendlyVoiceError,
-    isFatalVoiceError,
-    phaseFromAgentState,
-    phaseFromTransportStatus,
-  } from '../lib/audio/livekitAdapter';
-  import { deriveOrbPresentation, INITIAL_STATE, type VoicePhase } from '../lib/orb/orbState';
+  import { activateOrb } from '../lib/orb/orbActions';
+  import type { ResolvedTheme } from '../lib/ui/theme';
   import AppShell from '../lib/ui/AppShell.svelte';
   import ConversationList from '../lib/chat/ConversationList.svelte';
   import VoiceStage from '../lib/chat/VoiceStage.svelte';
@@ -23,6 +18,7 @@
   import { storeLanguage } from '../lib/preferences';
   import { createCatalogStore, initialCatalogState } from '../lib/voice/catalog';
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
+  import { deriveStage } from '../lib/voice/stageView';
   import { bootStudio } from '../lib/voice/studio';
   import { createSelectionController } from '../lib/voice/selection';
   import { createCommandSession } from '../lib/commands/commandSession.svelte';
@@ -39,11 +35,13 @@
   let pendingIntent = $state<PendingIntent>(null);
   let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none');
   let busy = $state(false);
+  // The shell owns storage and OS-preference resolution and reports the answer
+  // through onthemechange. `dark` matches the tokens.css SSR fallback, so the
+  // server and the first client frame agree before the boot script resolves.
+  let theme = $state<ResolvedTheme>('dark');
   let voice = $state(initialVoiceState());
-  let runtime: VoiceRuntime | undefined;
-  let connection: VoiceConnection | undefined;
-  let conversations: ConversationStore | undefined;
-  let catalogStore: ReturnType<typeof createCatalogStore> | undefined;
+  let runtime: VoiceRuntime | undefined, connection: VoiceConnection | undefined;
+  let conversations: ConversationStore | undefined, catalogStore: ReturnType<typeof createCatalogStore> | undefined;
   const selection = createSelectionController({
     voice,
     getPending: () => pendingIntent,
@@ -64,26 +62,12 @@
   const panels = $state({ history: false, memory_explorer: false });
   const commands = createCommandSession(catalog, panels);
 
-  const phase = $derived<VoicePhase>(
-    (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
-      phaseFromTransportStatus(voice.transportStatus) ??
-      'idle',
-  );
-  const canInterrupt = $derived(phase === 'thinking' || phase === 'speaking');
-  const fatalError = $derived(voice.voiceErrorCode !== '' && isFatalVoiceError(voice.voiceErrorCode));
-  const voiceErrorText = $derived(voice.voiceErrorCode ? friendlyVoiceError(voice.voiceErrorCode, arabic) : '');
-  const presentation = $derived(
-    deriveOrbPresentation({
-      ...INITIAL_STATE,
-      phase,
-      overlay: devOverlay !== 'none' ? devOverlay : fatalError ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
-      micActive: voice.live !== null && !voice.muted,
-      sessionId: voice.live?.id ?? null,
-      connectionReady: voice.live !== null && !voice.connectionLost,
-      micLevel: voice.micLevel,
-      outputLevel: voice.outputLevel,
-    }),
-  );
+  // One projection owns the phase, copy and orb presentation; the orb button
+  // dispatches whatever action that presentation advertises.
+  const stage = $derived(deriveStage(voice, arabic, devOverlay, theme));
+  const canInterrupt = $derived(stage.canInterrupt);
+  const voiceErrorText = $derived(stage.errorText);
+  const presentation = $derived(stage.presentation);
 
   async function run(work: () => Promise<void>, onError?: (error: unknown) => void) {
     busy = true;
@@ -102,12 +86,19 @@
   }
 
   function handleOrb() {
-    if (voice.live) {
-      if (voice.muted) void toggleMute();
-      else if (canInterrupt) void interrupt();
-      return;
-    }
-    if (!voice.connecting) startConnect();
+    activateOrb(presentation, {
+      start: startConnect,
+      cancel: () => void run(() => connection!.cancelConnect(), onVoiceError),
+      mute: () => void toggleMute(),
+      interrupt: () => void interrupt(),
+      retry: () => (voice.live ? reconnect() : startConnect()),
+      reconnect,
+      end: () => void run(() => connection!.end(), onVoiceError),
+    });
+  }
+
+  function reconnect() {
+    void run(() => connection!.reconnect(), onVoiceError);
   }
 
   function startConnect() {
@@ -183,6 +174,7 @@
   onLanguage={LANGUAGE_SWITCH_ENABLED ? toggleLanguage : undefined}
   leftLabel={arabic ? 'المحادثات' : 'Conversations'}
   rightLabel={arabic ? 'الذاكرة والإعدادات' : 'Memory and settings'}
+  onthemechange={(value) => (theme = value)}
 >
   {#snippet left()}
     <ConversationList

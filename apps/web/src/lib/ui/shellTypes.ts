@@ -1,4 +1,5 @@
 import type { Snippet } from 'svelte';
+import type { ResolvedTheme } from './theme';
 
 export interface ShellProps {
   dir?: 'ltr' | 'rtl';
@@ -16,4 +17,10 @@ export interface ShellProps {
   /** Panel state is shared with the command store so voice can open panels. */
   leftOpen?: boolean;
   rightOpen?: boolean;
+  /**
+   * Reports the resolved (not preferred) theme. The shell owns storage and
+   * OS-preference resolution, so consumers such as the orb must not
+   * re-derive it from `data-theme` or `prefers-color-scheme` themselves.
+   */
+  onthemechange?: (theme: ResolvedTheme) => void;
 }

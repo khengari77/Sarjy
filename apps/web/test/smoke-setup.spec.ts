@@ -7,6 +7,9 @@ test('English smoke selectors reach real controls without starting a call', asyn
   });
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
   await page.goto('/');
+  // The drawer trigger is inert until Svelte hydrates; a click before then is
+  // dropped and the drawer never opens. Wait for the hydrated renderer first.
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static', { timeout: 30000 });
   await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
   // The shell is server-rendered before it hydrates; clicking a trigger early is a
   // no-op and the closed drawer stays inert (absent from the a11y tree), so wait for

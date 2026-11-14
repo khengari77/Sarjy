@@ -1,18 +1,10 @@
 <script lang="ts">
   import { onMount, setContext, tick } from 'svelte';
-  import {
-    applyTheme,
-    nextThemePreference,
-    readStoredTheme,
-    resolveTheme,
-    storeTheme,
-    themeName,
-    type ThemePreference,
-  } from './theme';
+  import { nextThemePreference, themeName } from './theme';
   import type { ShellProps } from './shellTypes';
   import { createDrawerSession } from './drawerSession.svelte';
+  import { createThemeSession } from './themeSession.svelte';
   import { wrapTab } from './drawerFocus';
-  import { browserStorage } from '../storage';
   import './shell.css';
 
   let {
@@ -28,7 +20,10 @@
     stageDialogOpen = false,
     leftOpen = $bindable(false),
     rightOpen = $bindable(false),
+    onthemechange,
   }: ShellProps = $props();
+
+  // The document ships as English; follow the UI language on the client.
   $effect(() => {
     document.documentElement.lang = dir === 'rtl' ? 'ar' : 'en';
   });
@@ -64,17 +59,8 @@
   // region stays interactive. The drawer has already handed off (see below).
   const backgroundInert = $derived(overlayPanel !== null || stageDialogOpen);
 
-  // Theme is cosmetic: the preference lives per browser and switching it
-  // never touches the voice session, canvas or orb.
-  let preference = $state<ThemePreference>('system');
-  let systemDark = $state(false);
-  const resolvedTheme = $derived(resolveTheme(preference, systemDark));
-
-  function cycleTheme() {
-    preference = nextThemePreference(preference);
-    storeTheme(browserStorage(), preference);
-    applyTheme(document.documentElement, preference, systemDark);
-  }
+  // Theme is cosmetic and owned by the shell; the orb subscribes to `resolved`.
+  const theme = createThemeSession((value) => onthemechange?.(value));
 
   const session = createDrawerSession({
     overlay: () => overlayPanel,
@@ -135,19 +121,11 @@
 
   onMount(() => {
     const wide = window.matchMedia('(min-width: 1200px)');
-    const system = window.matchMedia('(prefers-color-scheme: dark)');
-
-    preference = readStoredTheme(browserStorage());
-    systemDark = system.matches;
+    const stopTheme = theme.start();
     docked = wide.matches;
     leftOpen = wide.matches;
-    applyTheme(document.documentElement, preference, systemDark);
     hydrated = true;
 
-    const onSchemeChange = (event: MediaQueryListEvent) => {
-      systemDark = event.matches;
-      if (preference === 'system') applyTheme(document.documentElement, preference, systemDark);
-    };
     const onKeydown = (event: KeyboardEvent) => {
       if (event.key === 'Tab') {
         // One trap at a time: the stage dialog wins over the drawer.
@@ -163,12 +141,11 @@
     };
 
     wide.addEventListener('change', onViewportChange);
-    system.addEventListener('change', onSchemeChange);
     window.addEventListener('keydown', onKeydown);
     return () => {
       wide.removeEventListener('change', onViewportChange);
-      system.removeEventListener('change', onSchemeChange);
       window.removeEventListener('keydown', onKeydown);
+      stopTheme();
     };
   });
 </script>
@@ -195,15 +172,15 @@
     <div class="header-actions">
       <button
         class="ghost-button theme-button"
-        data-resolved-theme={resolvedTheme}
-        aria-label={`Theme: ${themeName(preference)}. Activate to switch to ${themeName(nextThemePreference(preference))}.`}
-        title={`Theme: ${themeName(preference)}`}
-        onclick={cycleTheme}
+        data-resolved-theme={theme.resolved}
+        aria-label={`Theme: ${themeName(theme.preference)}. Activate to switch to ${themeName(nextThemePreference(theme.preference))}.`}
+        title={`Theme: ${themeName(theme.preference)}`}
+        onclick={theme.cycle}
       >
         <span aria-hidden="true" class="theme-glyph"
-          >{preference === 'dark' ? '☾' : preference === 'light' ? '☀' : '◐'}</span
+          >{theme.preference === 'dark' ? '☾' : theme.preference === 'light' ? '☀' : '◐'}</span
         >
-        <span class="theme-label" aria-hidden="true">{themeName(preference)}</span>
+        <span class="theme-label" aria-hidden="true">{themeName(theme.preference)}</span>
       </button>
       {#if onLanguage}
         <button class="ghost-button" onclick={onLanguage} lang={dir === 'rtl' ? 'en' : 'ar'}>
