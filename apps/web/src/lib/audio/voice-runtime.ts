@@ -63,7 +63,9 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
 
   async connect(config: SessionConfig) {
     // A failed previous-call teardown must never fail the call replacing it.
-    await this.disconnect().catch(() => console.debug('[Sarjy] Previous voice call teardown failed'));
+    await this.disconnect().catch((error: unknown) =>
+      console.warn('[Sarjy] Previous voice call teardown failed', error instanceof Error ? error.name : 'unknown'),
+    );
     this.sessionEpoch += 1;
     const epoch = this.sessionEpoch;
     this.sawTranscriptionSegments = false;

@@ -195,7 +195,7 @@ it('resolves the replacement call when the previous teardown rejects', async () 
   vi.useFakeTimers();
   vi.stubGlobal('window', {});
   vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
-  const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   class RejectingTeardownRuntime extends LiveKitVoiceRuntime {
     override async disconnect(): Promise<void> {
       throw new Error('sensitive provider detail');
@@ -211,12 +211,12 @@ it('resolves the replacement call when the previous teardown rejects', async () 
     await vi.advanceTimersByTimeAsync(100);
 
     await expect(replacement).resolves.toBeUndefined();
-    expect(debug).toHaveBeenCalledWith('[Sarjy] Previous voice call teardown failed');
-    expect(JSON.stringify(debug.mock.calls)).not.toContain('sensitive');
+    expect(warn).toHaveBeenCalledWith('[Sarjy] Previous voice call teardown failed', 'Error');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('sensitive');
     // The new call is usable, not just non-throwing.
     expect(rooms().at(-1)).toBe(room);
     expect(runtime.epoch).toBeGreaterThan(0);
   } finally {
-    debug.mockRestore();
+    warn.mockRestore();
   }
 });
