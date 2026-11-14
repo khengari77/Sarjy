@@ -24,10 +24,13 @@ export function createConversationStore(
     const id = state.current;
     const epoch = ++selectionEpoch;
     if (!id) return;
-    const history = await fetchConversation(id);
+    // A title is generated after the turn is durable, so refetch the list
+    // alongside the transcript; otherwise the sidebar keeps the sentinel.
+    const [history, list] = await Promise.all([fetchConversation(id), request<Conversation[]>('conversations')]);
     if (state.current === id && epoch === selectionEpoch) {
       state.turns = history.turns;
       state.toolCalls = history.toolCalls;
+      state.conversations = list;
     }
   }
 
