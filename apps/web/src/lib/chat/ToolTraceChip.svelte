@@ -29,16 +29,13 @@
 <span class="chip">{label}</span>
 
 <style>
+  /* Audit detail, not conversation: quiet italic text in the full transcript
+     drawer only. Never a pill under the live answer. */
   .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    border: 1px solid var(--border-subtle);
-    background: var(--surface-elevated);
+    display: inline;
     color: var(--text-muted);
     font-size: 12px;
+    font-style: italic;
     white-space: nowrap;
   }
 </style>

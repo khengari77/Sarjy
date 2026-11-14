@@ -125,7 +125,7 @@ test('denied microphone shows retry copy, creates no session and leaves text usa
 
   await page.goto('/');
   await waitForReady(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
 
   const alert = page.locator('[data-code="MICROPHONE_PERMISSION_DENIED"]');
   await expect(alert).toBeVisible();
@@ -141,13 +141,13 @@ test('starting and ending a session releases the exact session id', async ({ pag
 
   await page.goto('/');
   await waitForReady(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'listening');
   expect(sessions).toEqual(['sess-1']);
 
   await page.getByRole('button', { name: 'End call', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  await expect(page.locator('.orb-button')).toBeVisible();
   expect(ends.some((url) => url.endsWith('/sess-1/end'))).toBe(true);
 });
 
@@ -158,7 +158,7 @@ test('cancelling a pending connection ends the session it already created', asyn
 
   await page.goto('/');
   await waitForReady(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   const cancel = page.getByRole('button', { name: 'Cancel connecting', exact: true });
   await expect(cancel).toBeVisible();
   // Cancel is offered as soon as admission starts, but admission creates the
@@ -168,7 +168,7 @@ test('cancelling a pending connection ends the session it already created', asyn
   await expect.poll(() => sessions.length).toBe(1);
   await cancel.click();
 
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  await expect(page.locator('.orb-button')).toBeVisible();
   await expect.poll(() => ends.some((url) => url.endsWith('/sess-1/end')), { timeout: 5000 }).toBe(true);
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toHaveCount(0);
 });
@@ -180,7 +180,7 @@ test('transport loss offers an explicit reconnect and never loops', async ({ pag
 
   await page.goto('/');
   await waitForReady(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
   await page.evaluate(() =>
@@ -200,7 +200,7 @@ test('orb interrupts only while the agent is speaking or thinking', async ({ pag
 
   await page.goto('/');
   await waitForReady(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
   await page.evaluate(() => window.__fakeRuntime?.simulate({ type: 'status', source: 'agent', text: 'speaking' }));
@@ -216,7 +216,7 @@ test('muting the microphone keeps the assistant envelope and speaking state live
 
   await page.goto('/');
   await waitForReady(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
   await page.evaluate(() => {
@@ -249,7 +249,7 @@ test('events from a replaced session epoch are ignored', async ({ page }) => {
 
   await page.goto('/');
   await waitForReady(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
   await page.evaluate(() => window.__fakeRuntime?.simulateStale({ type: 'error', code: 'DAILY_BUDGET_EXHAUSTED' }));

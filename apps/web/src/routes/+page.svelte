@@ -236,10 +236,8 @@
       oncancel={() => run(() => connection!.cancelConnect(), onVoiceError)}
       ontoggle={toggleMute}
       oninterrupt={interrupt}
-      onconnect={startConnect}
     />
     <Composer bind:draft placeholder={words.placeholder} sendLabel={words.send} disabled={busy} onsend={send} />
-    <small class="attribution"><a href="https://open-meteo.com/">Weather data: Open-Meteo</a></small>
   {/snippet}
 
   {#snippet right()}
@@ -252,10 +250,12 @@
       {selectedVoice}
       {sessionVoice}
       live={voice.live !== null}
+      speakingSpeed={commands.state.settings.speaking_speed}
       captionsVisible={commands.state.settings.captions_visible}
       onsearch={() => void catalogStore!.load()}
       onloadmore={() => void catalogStore!.load(true)}
       onremember={() => void catalogStore!.remember()}
+      onspeed={(speed) => commands.setSpeakingSpeed(speed)}
       ontoggleCaptions={() => void commands.setCaptions(!commands.state.settings.captions_visible)}
     />
   {/snippet}

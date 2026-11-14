@@ -70,6 +70,19 @@ export async function saveCaptionSelection(visible: boolean, expectedRevision: n
   });
 }
 
+/**
+ * Persist the speaking-speed preference owner-side. The worker reads it from
+ * the frozen turn snapshot, so a change applies to the next turn (#136).
+ */
+export async function saveSpeakingSpeed(speed: number, expectedRevision: number): Promise<SettingsActionResult> {
+  const requestId = `speed:${expectedRevision}:${speed.toFixed(1)}`;
+  return request<SettingsActionResult>('settings/actions', {
+    request_id: requestId,
+    expected_revision: expectedRevision,
+    action: { kind: 'SetSpeakingSpeed', speed },
+  });
+}
+
 export async function endVoiceSession(session: SessionConfig | null): Promise<void> {
   if (session) await request('voice/sessions/' + session.id + '/end', {});
 }

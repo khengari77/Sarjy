@@ -167,6 +167,4 @@
       {/each}
     </nav>
   {/if}
-
-  <p class="sidebar-foot">Voice Context Studio</p>
 </div>
