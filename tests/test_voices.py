@@ -38,13 +38,10 @@ def test_settings_reject_a_malformed_approved_voice_list():
         Settings(approved_voice_ids="good,bad id", _env_file=None)
 
 
-def test_voice_configuration_requires_an_approved_or_default_voice():
-    with pytest.raises(ValueError, match="APPROVED_VOICE_IDS"):
-        Settings(eleven_api_key="tts-test", _env_file=None)
-    # A configured default is itself approved, so it alone is enough.
+def test_voice_configuration_is_not_a_boot_requirement():
+    # Voice is a per-session user setting (#148): a missing voice fails the session, not startup.
+    assert Settings(eleven_api_key="tts-test", _env_file=None).approved_voice_ids == ""
     assert Settings(eleven_api_key="tts-test", default_voice_id="voice-1", _env_file=None).default_voice_id == "voice-1"
-    # No voice provider configured: no requirement yet.
-    assert Settings(eleven_api_key="", _env_file=None).approved_voice_ids == ""
 
 
 @given(st.lists(st.tuples(st.text(min_size=1), st.text()), max_size=20))
