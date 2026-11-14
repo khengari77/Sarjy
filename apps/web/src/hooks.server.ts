@@ -1,28 +1,54 @@
 import type { Handle } from '@sveltejs/kit/hooks';
-import { DEVELOPMENT_PROTECTED, DEVELOPMENT_USER, DEVELOPMENT_PASSWORD, WEB_SERVICE_SECRET } from '$app/env/private';
-const protectedMode = DEVELOPMENT_PROTECTED === 'true';
-if (protectedMode && (!DEVELOPMENT_USER || !DEVELOPMENT_PASSWORD || !WEB_SERVICE_SECRET))
-  throw new Error('DEVELOPMENT_ACCESS_SECRETS_REQUIRED');
-async function equal(a: string, b: string) {
-  const hash = (s: string) => crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-  const [x, y] = await Promise.all([hash(a), hash(b)]);
-  const u = new Uint8Array(x),
-    v = new Uint8Array(y);
-  let diff = 0;
-  for (let i = 0; i < u.length; i++) diff |= u[i] ^ v[i];
-  return diff === 0;
+import { assertAccessConfigured, protectedMode, sessionIsValid } from './lib/auth/guard.server';
+
+assertAccessConfigured();
+
+const PUBLIC_PATHS = new Set(['/healthz', '/logout', '/favicon.ico', '/favicon.svg', '/favicon.png', '/robots.txt']);
+const PUBLIC_PREFIXES = ['/_app/', '/@vite/', '/@fs/', '/@id/', '/node_modules/', '/src/', '/.svelte-kit/'];
+
+function isPublic(pathname: string): boolean {
+  return PUBLIC_PATHS.has(pathname) || PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
+
+function isPageRequest(request: Request): boolean {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return false;
+  return (request.headers.get('accept') ?? '').includes('text/html');
+}
+
+function secure(response: Response, entry = false): Response {
+  response.headers.set('referrer-policy', 'no-referrer');
+  const type = response.headers.get('content-type') ?? '';
+  if (entry || type.includes('text/html')) response.headers.set('cache-control', 'no-store');
+  return response;
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
-  if (protectedMode) {
-    const expected = 'Basic ' + btoa(DEVELOPMENT_USER + ':' + DEVELOPMENT_PASSWORD);
-    if (!(await equal(event.request.headers.get('authorization') || '', expected)))
-      return new Response('Authentication required', {
-        status: 401,
-        headers: {
-          'WWW-Authenticate': 'Basic realm="Sarjy development", charset="UTF-8"',
-          'Cache-Control': 'no-store',
-        },
-      });
+  // Unprotected development is unchanged: no gate, no redirects, no headers.
+  if (!protectedMode) return resolve(event);
+
+  const { pathname, search } = event.url;
+  if (isPublic(pathname)) return secure(await resolve(event));
+
+  if (sessionIsValid(event.cookies)) return secure(await resolve(event));
+
+  // The root is the door: it renders the token field, serves the `?token=`
+  // exchange and accepts the no-JavaScript form post.
+  if (pathname === '/') return secure(await resolve(event), true);
+
+  if (isPageRequest(event.request)) {
+    const next = `${pathname}${search}`;
+    return new Response(null, {
+      status: 303,
+      headers: {
+        location: `/?next=${encodeURIComponent(next)}`,
+        'referrer-policy': 'no-referrer',
+        'cache-control': 'no-store',
+      },
+    });
   }
-  return resolve(event);
+
+  return new Response('Authentication required', {
+    status: 401,
+    headers: { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' },
+  });
 };

@@ -1,0 +1,63 @@
+import { describe, expect, it } from 'vitest';
+import { SESSION_COOKIE, secureEqual, signSession, tokenFingerprint, verifySession } from './session';
+
+const SECRET = 'session-secret-for-tests-only';
+const FINGERPRINT = tokenFingerprint('access-token-value', SECRET);
+const HOUR = 3_600_000;
+
+function sign(now: number, expiresAt: number) {
+  return signSession(SECRET, { fingerprint: FINGERPRINT, expiresAt, now });
+}
+
+describe('review session cookie', () => {
+  it('round-trips a signed session and uses the documented four fields', () => {
+    const now = 1_700_000_000_000;
+    const signed = sign(now, now + 12 * HOUR);
+    expect(signed).not.toBeNull();
+    expect(signed!.token.split('.')).toHaveLength(4);
+    expect(verifySession(signed!.token, SECRET, { fingerprint: FINGERPRINT, maxExpiresAt: now + 12 * HOUR, now })).toBe(
+      true,
+    );
+    expect(signed!.token).not.toContain('access-token-value');
+    expect(SESSION_COOKIE).toBe('sarjy_review_session');
+  });
+
+  it('rejects a tampered signature', () => {
+    const now = 1_700_000_000_000;
+    const signed = sign(now, now + HOUR)!;
+    const parts = signed.token.split('.');
+    parts[3] = `${parts[3].slice(0, -1)}${parts[3].endsWith('A') ? 'B' : 'A'}`;
+    expect(verifySession(parts.join('.'), SECRET, { fingerprint: FINGERPRINT, maxExpiresAt: now + HOUR, now })).toBe(
+      false,
+    );
+  });
+
+  it('rejects an expired cookie', () => {
+    const now = 1_700_000_000_000;
+    const signed = sign(now, now + HOUR)!;
+    expect(
+      verifySession(signed.token, SECRET, { fingerprint: FINGERPRINT, maxExpiresAt: now + HOUR, now: now + HOUR }),
+    ).toBe(false);
+  });
+
+  it('rejects a cookie issued for a rotated access token', () => {
+    const now = 1_700_000_000_000;
+    const signed = sign(now, now + HOUR)!;
+    const rotated = tokenFingerprint('rotated-token', SECRET);
+    expect(verifySession(signed.token, SECRET, { fingerprint: rotated, maxExpiresAt: now + HOUR, now })).toBe(false);
+  });
+
+  it('never accepts a cookie that outlives the absolute token expiry', () => {
+    const now = 1_700_000_000_000;
+    const signed = sign(now, now + HOUR)!;
+    expect(verifySession(signed.token, SECRET, { fingerprint: FINGERPRINT, maxExpiresAt: now + HOUR / 2, now })).toBe(
+      false,
+    );
+  });
+
+  it('compares secrets without early exit on length', () => {
+    expect(secureEqual('same-value', 'same-value')).toBe(true);
+    expect(secureEqual('same-value', 'same-valuf')).toBe(false);
+    expect(secureEqual('short', 'a much longer value')).toBe(false);
+  });
+});
