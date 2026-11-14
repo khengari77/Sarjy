@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionm
 
 from app.domain.context_operations import sign_proposal, verify_proposal
 from app.domain.memory_capture import MemoryCapture, is_referential, parse_capture, resolve_subject
-from app.infrastructure.database import Memory, now
+from app.infrastructure.database import Memory, MemoryWriteRequest, now
+from app.infrastructure.upsert import insert_ignore
 from app.services.leases import lease_expired, lease_expiry
 from app.services.memory import MemoryService, memory_result
 
@@ -189,6 +190,168 @@ def _clarification_token(payload: dict, secret: str, *, target: Memory) -> tuple
         "target_version": target.version,
     }
     return sign_proposal(revised, secret), revision
+
+
+async def record_proposal(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    proposal: dict | None,
+) -> None:
+    """Persist the proposal identity; the unique key makes retries idempotent."""
+    if proposal is None:
+        return
+    confirmation_id = proposal["confirmation_id"]
+    await insert_ignore(
+        db,
+        MemoryWriteRequest,
+        {
+            "id": str(uuid4()),
+            "owner_id": owner_id,
+            "conversation_id": conversation_id,
+            "request_key": confirmation_id,
+            "fingerprint": hashlib.sha256(proposal["token"].encode()).hexdigest(),
+            "state": "proposed",
+            "result": {"proposal": proposal},
+            "created_at": now(),
+            "updated_at": now(),
+        },
+        index_elements=["owner_id", "request_key"],
+    )
+
+
+async def load_proposal(db: AsyncSession, *, owner_id: str, confirmation_id: str):
+    """Return ``(proposal, state)`` for a recorded proposal, or ``(None, None)``."""
+    row = await db.scalar(
+        select(MemoryWriteRequest).where(
+            MemoryWriteRequest.owner_id == owner_id,
+            MemoryWriteRequest.request_key == confirmation_id,
+        )
+    )
+    if row is None:
+        return None, None
+    proposal = (row.result or {}).get("proposal")
+    return (proposal if isinstance(proposal, dict) else None), row.state
+
+
+async def _ensure_proposal(db: AsyncSession, *, owner_id: str, conversation_id: str, payload: dict, token: str) -> None:
+    proposal = {
+        "token": token,
+        "text": payload["content"],
+        "confirmation_id": payload["confirmation_id"],
+        "confirmation_revision": int(payload["revision"]),
+        "question": _confirmation_question(payload["content"]),
+    }
+    await record_proposal(db, owner_id=owner_id, conversation_id=conversation_id, proposal=proposal)
+
+
+async def _claim_proposal(db: AsyncSession, *, owner_id: str, confirmation_id: str, decision: str) -> bool:
+    """Atomically claim a proposal; terminal rows are never claimable.
+
+    A row already claimed by the same decision may be retried. A different
+    decision may take over only after the claim goes stale.
+    """
+    row = await db.scalar(
+        select(MemoryWriteRequest).where(
+            MemoryWriteRequest.owner_id == owner_id,
+            MemoryWriteRequest.request_key == confirmation_id,
+        )
+    )
+    if row is None:
+        return False
+    if row.state not in {"proposed", "claimed"}:
+        return False
+    result = dict(row.result or {})
+    if row.state == "claimed" and result.get("claimed_decision") != decision:
+        claimed_at = result.get("claimed_at")
+        if not isinstance(claimed_at, str) or not _claim_stale(claimed_at):
+            return False
+    stale = row.updated_at
+    merged = {**result, "claimed_decision": decision, "claimed_at": now()}
+    claimed = await db.execute(
+        update(MemoryWriteRequest)
+        .where(
+            MemoryWriteRequest.owner_id == owner_id,
+            MemoryWriteRequest.request_key == confirmation_id,
+            MemoryWriteRequest.state == row.state,
+            MemoryWriteRequest.updated_at == stale,
+        )
+        .values(state="claimed", updated_at=now(), result=merged)
+    )
+    await db.commit()
+    return claimed.rowcount == 1
+
+
+def _claim_stale(claimed_at: str) -> bool:
+    try:
+        return (datetime.now(UTC) - datetime.fromisoformat(claimed_at)).total_seconds() > 30
+    except ValueError:
+        return True
+
+
+async def _finish_proposal(
+    db: AsyncSession, *, owner_id: str, confirmation_id: str, state: str, decision: str, result: dict
+) -> None:
+    await db.execute(
+        update(MemoryWriteRequest)
+        .where(
+            MemoryWriteRequest.owner_id == owner_id,
+            MemoryWriteRequest.request_key == confirmation_id,
+            MemoryWriteRequest.state == "claimed",
+        )
+        .values(
+            state=state,
+            updated_at=now(),
+            result={
+                **(await _proposal_result(db, owner_id, confirmation_id)),
+                "decision": decision,
+                "response": result,
+            },
+        )
+    )
+
+
+async def _proposal_result(db: AsyncSession, owner_id: str, confirmation_id: str) -> dict:
+    row = await db.scalar(
+        select(MemoryWriteRequest).where(
+            MemoryWriteRequest.owner_id == owner_id,
+            MemoryWriteRequest.request_key == confirmation_id,
+        )
+    )
+    return dict(row.result or {}) if row is not None else {}
+
+
+async def _release_proposal(db: AsyncSession, *, owner_id: str, confirmation_id: str) -> None:
+    await db.execute(
+        update(MemoryWriteRequest)
+        .where(
+            MemoryWriteRequest.owner_id == owner_id,
+            MemoryWriteRequest.request_key == confirmation_id,
+            MemoryWriteRequest.state == "claimed",
+        )
+        .values(state="proposed", updated_at=now())
+    )
+    await db.commit()
+
+
+async def _resolved_proposal_response(
+    db: AsyncSession, *, owner_id: str, confirmation_id: str, revision: int, decision: str
+) -> dict | None:
+    """Replay a matching terminal decision, otherwise refuse a resolved proposal."""
+    _, state = await load_proposal(db, owner_id=owner_id, confirmation_id=confirmation_id)
+    if state not in {"saved", "discarded"}:
+        return None
+    row = await db.scalar(
+        select(MemoryWriteRequest).where(
+            MemoryWriteRequest.owner_id == owner_id,
+            MemoryWriteRequest.request_key == confirmation_id,
+        )
+    )
+    stored = dict(row.result or {}) if row is not None else {}
+    if stored.get("decision") == decision and isinstance(stored.get("response"), dict):
+        return {**stored["response"], "idempotent": True}
+    raise MemoryCaptureError("MEMORY_PROPOSAL_RESOLVED", 409, confirmation_id=confirmation_id)
 
 
 async def _decision(db: AsyncSession, confirmation_id: str, revision: int, owner_id: str):
@@ -662,9 +825,9 @@ async def confirm_memory(
 ) -> dict:
     """Apply a signed proposal revision only after explicit consent.
 
-    Consent is bound to ``(confirmation_id, revision)``. A clarification mints
-    a new revision token with an exact target id/version; the previous revision
-    can never authorize a replacement.
+    Consent is bound to ``(confirmation_id, revision)``. The proposal row's
+    state is authoritative: a valid signature alone can no longer write, and a
+    decided proposal can never be resurrected by replaying its token.
     """
     if not secret:
         raise MemoryCaptureError("MEMORY_CAPTURE_NOT_CONFIGURED", 503)
@@ -678,17 +841,81 @@ async def confirm_memory(
     confirmation_id = payload["confirmation_id"]
     revision = int(payload["revision"])
 
+    replayed = await _resolved_proposal_response(
+        db, owner_id=owner_id, confirmation_id=confirmation_id, revision=revision, decision=decision
+    )
+    if replayed is not None:
+        return replayed
+
     existing = await _decision(db, confirmation_id, revision, owner_id)
     if existing is not None:
         if existing.outcome == "applying":
-            # A live claim is not a receipt: never report success for an effect
-            # whose outcome this process cannot observe. An expired claim falls
-            # through so the fenced claim path can take it over.
             if not lease_expired(existing.lease_expires_at):
                 raise MemoryCaptureError("MEMORY_DECISION_IN_PROGRESS", 409, decision=existing.decision)
         elif existing.outcome != "awaiting_confirmation":
+            await _finish_proposal(
+                db,
+                owner_id=owner_id,
+                confirmation_id=confirmation_id,
+                state="saved" if decision != "discard" else "discarded",
+                decision=decision,
+                result=_replay_response(existing, decision, payload),
+            )
+            await db.commit()
             return _replay_response(existing, decision, payload)
 
+    await _ensure_proposal(db, owner_id=owner_id, conversation_id=conversation_id, payload=payload, token=token)
+    if not await _claim_proposal(db, owner_id=owner_id, confirmation_id=confirmation_id, decision=decision):
+        await db.rollback()
+        raise MemoryCaptureError("MEMORY_PROPOSAL_RESOLVED", 409, confirmation_id=confirmation_id)
+
+    try:
+        result = await _apply_consent_decision(
+            db,
+            memory_service,
+            decision=decision,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            proposed_turn=proposed_turn,
+            source_turn_id=source_turn_id,
+            capture=capture,
+            payload=payload,
+            token=token,
+            secret=secret,
+            existing=existing,
+            revision=revision,
+        )
+    except Exception:
+        await _release_proposal(db, owner_id=owner_id, confirmation_id=confirmation_id)
+        raise
+    await _finish_proposal(
+        db,
+        owner_id=owner_id,
+        confirmation_id=confirmation_id,
+        state="discarded" if decision == "discard" else "saved",
+        decision=decision,
+        result=result,
+    )
+    await db.commit()
+    return result
+
+
+async def _apply_consent_decision(
+    db: AsyncSession,
+    memory_service: MemoryService,
+    *,
+    decision: str,
+    owner_id: str,
+    conversation_id: str,
+    proposed_turn: str,
+    source_turn_id: str | None,
+    capture: MemoryCapture,
+    payload: dict,
+    token: str,
+    secret: str,
+    existing,
+    revision: int,
+) -> dict:
     if decision == "discard":
         return await _discard(
             db,

@@ -33,7 +33,7 @@ from livekit.agents import (
 )
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
-from provider_factory import build_providers
+from provider_factory import SpeakingSpeedController, build_providers
 from snapshot_request import snapshot_request
 
 server = AgentServer()
@@ -214,6 +214,7 @@ class SarjyAgent(Agent):
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
+        self.speaking_speed_control = SpeakingSpeedController()
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
         self.memory_message: str | None = None
@@ -240,6 +241,7 @@ class SarjyAgent(Agent):
             self.prepared[message.id] = response.json()
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
+        self._apply_speaking_speed(result["context"])
         decided = False
         # A confirmation/rejection utterance is never itself a capture, with or
         # without a pending proposal.
@@ -294,6 +296,25 @@ class SarjyAgent(Agent):
             self.memory_proposal = proposal
             self.memory_question_turn = result["turn_id"]
         return result["context"]
+
+    def _apply_speaking_speed(self, context):
+        """Apply the turn's stored pace before this turn's reply is synthesized.
+
+        ``speaking_speed`` is part of the frozen turn snapshot, so a change made
+        during the previous turn is picked up at this turn's synthesis boundary.
+        Legacy snapshots without a model request keep the provider default.
+        """
+        request = context.get("model_request") if isinstance(context, Mapping) else None
+        settings = request.get("settings") if isinstance(request, Mapping) else None
+        speed = settings.get("speaking_speed") if isinstance(settings, Mapping) else None
+        try:
+            session = self.session
+        except RuntimeError:
+            # Unit callers may compile outside a running session; nothing to configure.
+            return
+        tts = getattr(session, "tts", None)
+        if tts is not None:
+            self.speaking_speed_control.apply(tts, speed)
 
     async def _resolve_memory(self, decision: str) -> None:
         proposal = self.memory_proposal

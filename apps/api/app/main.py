@@ -5,7 +5,8 @@ persistence, providers and middleware together.
 """
 
 import asyncio
-from contextlib import asynccontextmanager, suppress
+import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import event
@@ -39,8 +40,20 @@ async def _stop_refresh_task(task) -> None:
     if task is None:
         return
     task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+    try:
+        await asyncio.wait_for(task, timeout=5)
+    except (asyncio.CancelledError, TimeoutError):
+        pass
+    except Exception:  # noqa: BLE001 - a failed refresh task must not block shutdown
+        logging.getLogger(__name__).exception("wordle refresh task failed")
+
+
+async def _shutdown(refresh_task, engine) -> None:
+    """Always dispose the engine, whatever the refresh task did."""
+    try:
+        await _stop_refresh_task(refresh_task)
+    finally:
+        await engine.dispose()
 
 
 def create_app(
@@ -84,8 +97,7 @@ def create_app(
                         await db.commit()
             yield
         finally:
-            await _stop_refresh_task(refresh_task)
-            await engine.dispose()
+            await _shutdown(refresh_task, engine)
 
     app = FastAPI(
         title="Sarjy API",
@@ -150,7 +162,7 @@ def create_app(
 
     app.include_router(memory_router(database, identity, embedder))
 
-    from app.routes.context import register_context_routes
+    from app.routes.context import register_context_routes, register_exclusion_routes
     from app.routes.system import register_system_routes
     from app.routes.voice import register_voice_routes
     from app.routes.wordle import register_wordle_routes
@@ -160,6 +172,7 @@ def create_app(
     register_voice_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
     register_worker_routes(app, config=config, database=database, embedder=embedder)
     register_context_routes(app, config=config, database=database, identity=identity, semantic_search=semantic_search)
+    register_exclusion_routes(app, config=config, database=database, identity=identity)
     register_wordle_routes(app, config=config, database=database, identity=identity, source=source)
 
     return app

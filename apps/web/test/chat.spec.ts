@@ -104,6 +104,7 @@ test('voice picker search, pagination, saved preference and call payload', async
   await expect(page.getByLabel('Choose voice')).toHaveValue('lady-voice');
   await page.getByRole('button', { name: 'Start call', exact: true }).click();
   await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
-  expect(sentVoice).toBe('lady-voice');
+  // The saved voice is resolved server-side; the client must not resend it.
+  expect(sentVoice).toBeUndefined();
   expect(sentLanguage).toBe('en');
 });

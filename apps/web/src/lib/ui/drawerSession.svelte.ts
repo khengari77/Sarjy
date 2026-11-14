@@ -25,6 +25,7 @@ export interface DrawerSessionOptions {
   /** Always-reachable control strip (call controls, composer). */
   controls: () => HTMLElement | null;
   openState: (panel: Panel) => boolean;
+  setOpen: (panel: Panel, open: boolean) => void;
   /** A stage dialog has taken over the modal layer. */
   dialogOpen: () => boolean;
   closeOverlays: () => void;
@@ -71,6 +72,28 @@ export function createDrawerSession(options: DrawerSessionOptions) {
     if (panel) wrapTab(event, [options.panel(panel), options.controls()]);
   }
 
+  /**
+   * Breakpoint crossed between overlay drawers and docked panels. Docked
+   * panels keep the focused element mounted; collapsing docks deliberately
+   * restore focus to the panel's trigger (both docks collapse at phone width,
+   * which is the responsive default even when focus is in neither).
+   */
+  function onBreakpoint(docked: boolean): void {
+    const active = document.activeElement as HTMLElement | null;
+    const focusIn =
+      (['left', 'right'] as const).find((panel) => active && options.panel(panel)?.contains(active)) ?? null;
+
+    if (docked) {
+      options.setOpen('left', options.openState('left') || !options.openState('right'));
+      return;
+    }
+    options.setOpen('left', false);
+    options.setOpen('right', false);
+    void tick().then(() => {
+      if (focusIn) options.trigger(focusIn)?.focus({ preventScroll: true });
+    });
+  }
+
   /** Escape target for docked panels: the open dock that holds focus. */
   function escapeTarget(): Panel | null {
     const modal = options.overlay();
@@ -84,5 +107,5 @@ export function createDrawerSession(options: DrawerSessionOptions) {
     return null;
   }
 
-  return { onTab, escapeTarget };
+  return { onTab, escapeTarget, onBreakpoint };
 }

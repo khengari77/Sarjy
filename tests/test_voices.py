@@ -710,3 +710,39 @@ def test_legacy_bootstrap_and_snapshot_share_effective_configuration(tmp_path, l
             assert first["context"]["pipeline_config"] == bootstrap["pipeline"]
             assert bootstrap["pipeline"]["max_output_tokens"] == (128 if legacy else 1024)
             assert first["context"]["messages"][0]["content"] == bootstrap["instructions"]
+
+
+def test_committed_settings_receipt_replays_during_catalog_outage(tmp_path):
+    class FlakyCatalog:
+        failing = False
+
+        async def require(self, voice_id):
+            if self.failing:
+                raise VoiceCatalogError("VOICE_CATALOG_UNAVAILABLE", 503)
+            return VoiceOption(id=voice_id, name="Voice")
+
+    catalog = FlakyCatalog()
+    with TestClient(create_app(configured(tmp_path), voice_catalog=catalog)) as client:
+        client.post("/v1/demo-session")
+        body = {
+            "request_id": "committed-before-outage",
+            "expected_revision": 0,
+            "action": {"kind": "SelectApprovedVoice", "voice_id": "other-voice"},
+        }
+        first = client.post("/v1/settings/actions", json=body)
+        assert first.status_code == 200, first.text
+        catalog.failing = True
+        replay = client.post("/v1/settings/actions", json=body)
+        assert replay.status_code == 200, replay.text
+        assert replay.json() == first.json()
+        # An unseen key still needs the provider and fails honestly.
+        unseen = client.post(
+            "/v1/settings/actions",
+            json={
+                "request_id": "new-during-outage",
+                "expected_revision": 1,
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+            },
+        )
+        assert unseen.status_code == 503
+        assert unseen.json()["detail"]["code"] == "VOICE_CATALOG_UNAVAILABLE"

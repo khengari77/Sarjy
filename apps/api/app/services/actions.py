@@ -348,16 +348,21 @@ async def dispatch_setting(db, *, owner_id, request_id, expected_revision, actio
 
     if not isinstance(action, SETTING_ACTIONS):
         raise HTTPException(422, detail={"code": "INVALID_SETTING_ACTION"})
-    if isinstance(action, SelectApprovedVoice) and action.voice_id is not None:
-        if approved_voice_ids is not None and action.voice_id not in approved_voice_ids:
-            raise VoiceCatalogError("VOICE_NOT_APPROVED", 422)
-        await catalog.require(action.voice_id)
     key = _setting_key(owner_id, request_id)
     fingerprint = _setting_fingerprint(expected_revision, action)
     # Own the transaction like ``dispatch_action``: never commit or roll back a
     # session the caller may still be using for reads.
     bind = db.bind
     factory = async_sessionmaker(bind.engine if isinstance(bind, AsyncConnection) else bind, expire_on_commit=False)
+    # Replay must not depend on the voice provider: a committed receipt is
+    # authoritative even while ElevenLabs is down, so check it before validating.
+    replayed = await _setting_receipt(factory, owner_id, key, fingerprint)
+    if replayed is not None:
+        return replayed
+    if isinstance(action, SelectApprovedVoice) and action.voice_id is not None:
+        if approved_voice_ids is not None and action.voice_id not in approved_voice_ids:
+            raise VoiceCatalogError("VOICE_NOT_APPROVED", 422)
+        await catalog.require(action.voice_id)
     async with factory() as effects, effects.begin():
         # Serialize against conversation-scoped setting writes on the same gate.
         await effects.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
@@ -381,6 +386,21 @@ async def dispatch_setting(db, *, owner_id, request_id, expected_revision, actio
             )
         )
     return result
+
+
+async def _setting_receipt(factory, owner_id, key, fingerprint):
+    """Return a committed settings result, or None when the key is unseen."""
+    async with factory() as receipt_db:
+        existing = await receipt_db.scalar(
+            select(SettingWriteRequest).where(
+                SettingWriteRequest.owner_id == owner_id, SettingWriteRequest.request_key == key
+            )
+        )
+    if existing is None:
+        return None
+    if existing.fingerprint != fingerprint:
+        raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+    return existing.result
 
 
 async def _dispatch_transaction(

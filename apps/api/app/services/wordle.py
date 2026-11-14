@@ -786,16 +786,22 @@ async def wordle_refresh_loop(sessions, source: WordleSource, *, timezone: str, 
     """Optional in-process daily pre-warm; the DB remains the real guarantee."""
     while True:
         try:
-            await asyncio.sleep(seconds_until_hour(timezone, hour))
-        except WordleValidationError as exc:
-            logger.warning("wordle scheduled refresh disabled code=%s", exc.code)
-            return
-        async with sessions() as db:
             try:
-                await ensure_today(db, source=source, timezone=timezone)
-            except (WordleServiceError, WordleValidationError) as exc:
-                code = getattr(exc, "code", type(exc).__name__)
-                logger.warning("wordle scheduled refresh failed code=%s", code)
+                await asyncio.sleep(seconds_until_hour(timezone, hour))
+            except WordleValidationError as exc:
+                logger.warning("wordle scheduled refresh disabled code=%s", exc.code)
+                return
+            async with sessions() as db:
+                try:
+                    await ensure_today(db, source=source, timezone=timezone)
+                except (WordleServiceError, WordleValidationError) as exc:
+                    code = getattr(exc, "code", type(exc).__name__)
+                    logger.warning("wordle scheduled refresh failed code=%s", code)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - log the death where it happens
+            logger.exception("wordle refresh loop died")
+            raise
 
 
 __all__ = [
