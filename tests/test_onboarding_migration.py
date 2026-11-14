@@ -20,7 +20,7 @@ def alembic(url, *commands):
 def test_onboarding_table_is_additive_and_reversible(tmp_path):
     path = tmp_path / "onboarding.db"
     url = f"sqlite+aiosqlite:///{path}"
-    alembic(url, "upgrade", "0010_context_retrieval_indexes")
+    alembic(url, "upgrade", "0011_wordle")
     with closing(sqlite3.connect(path)) as db, db:
         db.execute("INSERT INTO identities VALUES ('owner','hash','2030-01-01T00:00:00+00:00')")
         db.execute("INSERT INTO conversations VALUES ('chat','owner','Test',0,'2026-11-11')")
@@ -46,7 +46,7 @@ def test_onboarding_table_is_additive_and_reversible(tmp_path):
         } == columns
         assert db.execute("SELECT id,title FROM conversations").fetchone() == ("chat", "Test")
     alembic(url, "check")
-    alembic(url, "downgrade", "0010_context_retrieval_indexes")
+    alembic(url, "downgrade", "0011_wordle")
     with closing(sqlite3.connect(path)) as db:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "onboarding_progress" not in tables

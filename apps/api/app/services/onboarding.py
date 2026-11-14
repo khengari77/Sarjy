@@ -7,7 +7,6 @@ settings store, so onboarding does not introduce a parallel preference store.
 
 from uuid import uuid4
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -34,6 +33,7 @@ from app.domain.onboarding import (
     reduce,
 )
 from app.infrastructure.database import OnboardingRecord, SettingRevision, UserSetting, now
+from app.infrastructure.upsert import insert_ignore
 from app.services.actions import settings_value
 
 
@@ -70,9 +70,32 @@ def _store(row: OnboardingRecord, progress: OnboardingProgress) -> None:
     row.updated_at = now()
 
 
-def _new_record(owner_id: str, progress: OnboardingProgress) -> OnboardingRecord:
-    row = OnboardingRecord(owner_id=owner_id)
-    _store(row, progress)
+def _values(owner_id: str, progress: OnboardingProgress) -> dict:
+    return {
+        "owner_id": owner_id,
+        "schema_version": progress.schema_version,
+        "stage": progress.stage.value,
+        "revision": progress.revision,
+        "preferred_name": progress.preferred_name,
+        "selected_voice_id": progress.selected_voice_id,
+        "selected_pace": progress.selected_pace.value if progress.selected_pace else None,
+        "intro_played_at": progress.intro_played_at,
+        "started_at": progress.started_at,
+        "completed_at": progress.completed_at,
+        "suspended_from": progress.suspended_from.value if progress.suspended_from else None,
+        "last_event_id": progress.last_event_id,
+        "applied_events": [list(entry) for entry in sorted(progress.applied_events)],
+        "updated_at": now(),
+    }
+
+
+async def _create_once(db: AsyncSession, owner_id: str, progress: OnboardingProgress) -> OnboardingRecord:
+    """Insert the first row atomically; concurrent creators keep the winner."""
+
+    await insert_ignore(db, OnboardingRecord, _values(owner_id, progress), index_elements=["owner_id"])
+    row = await db.get(OnboardingRecord, owner_id, with_for_update=True)
+    if row is None:
+        raise RuntimeError("ONBOARDING_RECORD_MISSING")
     return row
 
 
@@ -111,31 +134,20 @@ class OnboardingService:
         """Read progress, creating the first instance exactly once."""
 
         row = await self.db.get(OnboardingRecord, owner_id, with_for_update=True)
-        if row is not None:
-            return _domain(row)
-        progress = initial_progress(now())
-        self.db.add(_new_record(owner_id, progress))
-        try:
-            await self.db.flush()
-        except IntegrityError:
-            await self.db.rollback()
-            row = await self.db.get(OnboardingRecord, owner_id)
-            if row is None:
-                raise
-            return _domain(row)
-        return progress
+        if row is None:
+            row = await _create_once(self.db, owner_id, initial_progress(now()))
+        return _domain(row)
 
     async def apply(self, owner_id: str, event: OnboardingEvent) -> OnboardingProgress:
         at = now()
         row = await self.db.get(OnboardingRecord, owner_id, with_for_update=True)
-        progress = initial_progress(at) if row is None else _domain(row)
+        if row is None:
+            row = await _create_once(self.db, owner_id, initial_progress(at))
+        progress = _domain(row)
         updated = reduce(progress, event, at=at, capabilities=self.capabilities)
         if updated is progress:
             return progress
-        if row is None:
-            self.db.add(_new_record(owner_id, updated))
-        else:
-            _store(row, updated)
+        _store(row, updated)
         if updated.selected_voice_id and updated.selected_voice_id != progress.selected_voice_id:
             await persist_setting(self.db, owner_id, SelectApprovedVoice(voice_id=updated.selected_voice_id))
         if updated.selected_pace is not None and updated.selected_pace != progress.selected_pace:

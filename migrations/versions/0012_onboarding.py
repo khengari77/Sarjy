@@ -5,16 +5,15 @@ transparent because memory is on by default, not consent-gated.  ``applied_event
 holds the bounded set of ``(event_id, payload fingerprint)`` pairs used to make
 retries idempotent.
 
-The down revision intentionally points at ``0010_context_retrieval_indexes``
-because ``0011_wordle`` is still in flight; rebase this migration onto 0011 (and
-keep 0013 for memory) before integration.
+This sits after ``0011_wordle`` so the integration chain keeps exactly one head;
+memory work should parent ``0012_onboarding``.
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "0012_onboarding"
-down_revision = "0010_context_retrieval_indexes"
+down_revision = "0011_wordle"
 
 
 def upgrade():

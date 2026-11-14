@@ -1,4 +1,5 @@
-import { request as apiRequest } from '../api';
+import { request as apiRequest, type VoiceOption } from '../api';
+import { interpretVoiceAnswer, type VoiceUtterance } from './voiceAnswers';
 
 export type OnboardingStage =
   | 'not_started'
@@ -134,10 +135,39 @@ export function createOnboardingController(state: OnboardingState, deps: Partial
     return state.progress !== null && !isTerminal(state.progress.stage) && !isSuspended(state.progress.stage);
   }
 
+  const handledUtterances = new Set<string>();
+
+  /** Only finalized user transcripts advance; partials and replays return false. */
+  async function handleVoiceUtterance(utterance: VoiceUtterance, voices: VoiceOption[]): Promise<boolean> {
+    if (!utterance.final || utterance.speaker !== 'user' || !state.progress) return false;
+    const key = utterance.id ?? `${state.progress.stage}:${utterance.text.trim()}`;
+    if (handledUtterances.has(key)) return false;
+    handledUtterances.add(key);
+    const progress = state.progress;
+    const action = interpretVoiceAnswer(progress, utterance, voices);
+    if (action.type === 'ignore') return false;
+    if (action.type === 'submit_name') {
+      if (progress.stage === 'greeting') await send('greeting_played');
+      await send('submit_name', { name: action.name });
+    } else if (action.type === 'choose_voice') {
+      await send('choose_voice', { voice_id: action.voiceId ?? undefined });
+    } else if (action.type === 'choose_pace') {
+      await send('choose_pace', { pace: action.pace });
+    } else if (action.type === 'acknowledge_voice') {
+      await send('acknowledge_voice');
+    } else if (action.type === 'finish') {
+      await send('acknowledge_capabilities');
+    } else {
+      await send(action.type);
+    }
+    return true;
+  }
+
   return {
     load,
     send,
     active,
+    handleVoiceUtterance,
     greetingShown: () => send('greeting_played'),
     submitName: (name: string) => send('submit_name', { name }),
     chooseVoice: (voiceId: string | null) => send('choose_voice', { voice_id: voiceId ?? undefined }),

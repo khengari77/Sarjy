@@ -22,8 +22,7 @@
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
   import { bootStudio } from '../lib/voice/studio';
   import { createSelectionController } from '../lib/voice/selection';
-  import OnboardingHost from '../lib/onboarding/OnboardingHost.svelte';
-  import { createOnboarding } from '../lib/onboarding/state.svelte';
+  import { OnboardingHost, createOnboarding } from '../lib/onboarding';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -123,6 +122,7 @@
       if (!voice.live) await connection!.connect(false);
       if (!voice.live) return;
       await connection!.sendText(draft.trim());
+      onboarding.noteTyped(draft.trim());
       draft = '';
     }, onVoiceError);
   }
@@ -204,7 +204,7 @@
   {/snippet}
 
   {#snippet stage()}
-    <OnboardingHost {onboarding} {busy} {catalog} {voice} />
+    <OnboardingHost {onboarding} {busy} {catalog} {voice} {conversation} />
     <VoiceStage
       {presentation}
       micLevel={voice.micLevel}

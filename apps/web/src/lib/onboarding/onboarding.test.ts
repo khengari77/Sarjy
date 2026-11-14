@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { VoiceOption } from '../api';
 import {
   createOnboardingController,
   initialOnboardingState,
@@ -95,6 +96,75 @@ describe('onboarding controller', () => {
     await controller.submitName('Sam');
     expect(state.error).toBe('ONBOARDING_TRANSITION_INVALID');
     expect(state.progress?.stage).toBe('capability_intro');
+  });
+});
+
+describe('onboarding voice advancement', () => {
+  it('ignores partial transcripts without calling the API', async () => {
+    const state = initialOnboardingState();
+    state.progress = progress();
+    state.status = 'active';
+    const request = vi.fn();
+    const controller = createOnboardingController(state, { request });
+    expect(await controller.handleVoiceUtterance({ final: false, speaker: 'user', text: 'Sam', id: 't1' }, [])).toBe(
+      false,
+    );
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('advances a finalized greeting answer through the same typed events', async () => {
+    const state = initialOnboardingState();
+    state.progress = progress({ stage: 'greeting', intro_played_at: null });
+    state.status = 'active';
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(progress({ stage: 'preferred_name', revision: 2 }))
+      .mockResolvedValueOnce(progress({ stage: 'voice_choice', preferred_name: 'Sam', revision: 3 }));
+    const controller = createOnboardingController(state, { request, nextEventId: () => 'voice-1' });
+    const handled = await controller.handleVoiceUtterance(
+      { final: true, speaker: 'user', text: 'My name is Sam', id: 'turn-9' },
+      [],
+    );
+    expect(handled).toBe(true);
+    expect(request.mock.calls.map((call) => call[1].type)).toEqual(['greeting_played', 'submit_name']);
+    expect(state.progress?.preferred_name).toBe('Sam');
+  });
+
+  it('does not re-apply a replayed final transcript', async () => {
+    const state = initialOnboardingState();
+    state.progress = progress();
+    state.status = 'active';
+    const request = vi.fn().mockResolvedValue(progress({ stage: 'voice_choice', preferred_name: 'Sam' }));
+    const controller = createOnboardingController(state, { request });
+    const utterance = { final: true, speaker: 'user' as const, text: 'Sam', id: 'turn-7' };
+    expect(await controller.handleVoiceUtterance(utterance, [])).toBe(true);
+    expect(await controller.handleVoiceUtterance(utterance, [])).toBe(false);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('suspends on an unrelated finalized request and chooses a catalog voice by name', async () => {
+    const voices: VoiceOption[] = [{ id: 'voice_warm', name: 'Warm Friend', languages: ['en'] }];
+    const state = initialOnboardingState();
+    state.progress = progress({ stage: 'voice_choice' });
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(progress({ stage: 'suspended', suspended_from: 'voice_choice' }))
+      .mockResolvedValueOnce(progress({ stage: 'capability_intro', selected_voice_id: 'voice_warm' }));
+    const controller = createOnboardingController(state, { request });
+    expect(
+      await controller.handleVoiceUtterance(
+        { final: true, speaker: 'user', text: 'What is the weather?', id: 't8' },
+        voices,
+      ),
+    ).toBe(true);
+    expect(state.progress?.stage).toBe('suspended');
+    state.progress = progress({ stage: 'voice_choice' });
+    await controller.handleVoiceUtterance({ final: true, speaker: 'user', text: 'Warm Friend', id: 't9' }, voices);
+    expect(request.mock.calls.at(-1)?.[1]).toEqual({
+      event_id: expect.any(String),
+      type: 'choose_voice',
+      voice_id: 'voice_warm',
+    });
   });
 
   it('stops being active after skip or suspension', async () => {

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.domain.budget import DEEPSEEK_MINIMUM_REQUEST_MICRO_USD
@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     demo_calls_per_identity: int = 3
     # Enable only once the TTS runtime actually applies a speed parameter.
     speaking_pace_supported: bool = False
+    # Daily Wordle kill switch.  Off by default so an unconfigured deployment
+    # never reaches the external source.
+    wordle_enabled: bool = False
+    wordle_source_url: str = "https://www.nytimes.com/svc/wordle/v2/{date}.json"
+    wordle_timezone: str = "Africa/Tripoli"
+    # Optional pre-warm hour (0-23) in ``wordle_timezone``.  When unset only
+    # the protected refresh endpoint and lazy request-time fetch run.
+    wordle_refresh_hour: int | None = Field(default=None, ge=0, le=23)
 
     @model_validator(mode="after")
     def validate_deepseek_budget(self):
