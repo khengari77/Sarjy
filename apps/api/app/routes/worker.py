@@ -114,7 +114,12 @@ def register_worker_routes(app, *, config: Settings, database, embedder, catalog
     _register_session_routes(app, database=database, guard=guard)
     _register_turn_routes(app, config=config, database=database, guard=guard)
     _register_command_routes(
-        app, database=database, guard=guard, catalog=catalog, approved_voice_ids=approved_voice_ids
+        app,
+        database=database,
+        guard=guard,
+        catalog=catalog,
+        approved_voice_ids=approved_voice_ids,
+        secret=_memory_secret(config),
     )
     _register_tool_routes(app, database=database, guard=guard)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
@@ -452,7 +457,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
         return {"id": turn.id}
 
 
-def _register_command_routes(app, *, database, guard, catalog, approved_voice_ids=None):
+def _register_command_routes(app, *, database, guard, catalog, approved_voice_ids=None, secret=""):
     @app.post("/internal/agent/command", response_model=CommandResponse)
     async def finalized_command(body: CommandInput, request: Request, db: AsyncSession = Depends(database)):
         """The one worker entry for a finalized user utterance.
@@ -488,6 +493,7 @@ def _register_command_routes(app, *, database, guard, catalog, approved_voice_id
             catalog=catalog,
             approved_voice_ids=approved_voice_ids,
             handlers=app.state.action_handlers,
+            secret=secret,
         )
         return {"command": result.model_dump(mode="json") if result is not None else None}
 

@@ -18,7 +18,11 @@ from app.domain.commands import (
     CommandResult,
     command_result,
     failed_result,
+    memory_request_is_global,
+    memory_restore_requested,
     parse_exact_command,
+    parse_exclusion_confirmation,
+    parse_memory_exclusion_target,
     parse_voice_selection,
     unknown_result,
     unsupported_command,
@@ -33,7 +37,14 @@ from app.domain.contracts import (
     UserSettings,
 )
 from app.services.actions import dispatch_action, dispatch_setting
-from app.services.context_operations import ContextOperationError
+from app.services.context_operations import ContextOperationError, MemorySearcher, keyword_search
+from app.services.voice_exclusions import (
+    discard_pending,
+    global_retraction_refusal,
+    propose_exclusion,
+    propose_restore,
+    resolve_confirmation,
+)
 from app.services.voices import VoiceCatalogError
 
 
@@ -55,6 +66,8 @@ async def handle_finalized_utterance(
     catalog,
     approved_voice_ids: frozenset[str] | None = None,
     handlers,
+    secret: str = "",
+    search: MemorySearcher = keyword_search,
 ) -> CommandResult | None:
     """Interpret and, when deterministic, execute exactly one action.
 
@@ -63,6 +76,27 @@ async def handle_finalized_utterance(
     explicit unsupported/failed/unknown outcome.  One call never applies more
     than one effect.
     """
+    memory_result = await _handle_memory_confirmation(
+        db,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        request_id=request_id,
+        text=text,
+        secret=secret,
+    )
+    if memory_result is None:
+        memory_result = await _handle_memory_mutation(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            request_id=request_id,
+            text=text,
+            secret=secret,
+            search=search,
+        )
+    if memory_result is not None:
+        return memory_result
+
     action = parse_exact_command(text)
     voice_name: str | None = None
     if action is None:
@@ -84,11 +118,13 @@ async def handle_finalized_utterance(
             voice_name = resolved.name
             action = SelectApprovedVoice(voice_id=resolved.id)
     if action is None:
-        unsupported = unsupported_command(text)
-        if unsupported is not None:
-            detail, spoken = unsupported
-            return unsupported_result(request_id=request_id, detail=detail, spoken=spoken)
-        return None
+        return await _unsupported_result(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            request_id=request_id,
+            text=text,
+        )
 
     # Truthful routing for an effect that is not wired end-to-end yet. Speed is
     # stored but never reaches the TTS voice settings (#44), so no success is
@@ -137,6 +173,82 @@ async def handle_finalized_utterance(
         catalog=catalog,
         handlers=handlers,
     )
+
+
+async def _unsupported_result(
+    db, *, owner_id: str, conversation_id: str, request_id: str, text: str
+) -> CommandResult | None:
+    unsupported = unsupported_command(text)
+    if unsupported is None:
+        return None
+    detail, spoken = unsupported
+    if detail.startswith("MEMORY_"):
+        await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
+    return unsupported_result(request_id=request_id, detail=detail, spoken=spoken)
+
+
+async def _handle_memory_confirmation(
+    db, *, owner_id: str, conversation_id: str, request_id: str, text: str, secret: str
+) -> CommandResult | None:
+    confirmation = parse_exclusion_confirmation(text)
+    if confirmation is None:
+        return None
+    try:
+        return await resolve_confirmation(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            confirmed=confirmation,
+            request_id=request_id,
+            secret=secret,
+        )
+    except ContextOperationError as exc:
+        return failed_result(request_id=request_id, detail=exc.code)
+    except Exception:
+        return unknown_result(request_id=request_id, detail="MEMORY_DECISION_DELIVERY_UNKNOWN")
+
+
+async def _handle_memory_mutation(
+    db, *, owner_id: str, conversation_id: str, request_id: str, text: str, secret: str, search: MemorySearcher
+) -> CommandResult | None:
+    if memory_request_is_global(text):
+        await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
+        return global_retraction_refusal(request_id)
+    if memory_restore_requested(text):
+        return await _run_memory_command(
+            propose_restore(
+                db,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                request_id=request_id,
+                secret=secret,
+            ),
+            request_id=request_id,
+        )
+    target = parse_memory_exclusion_target(text)
+    if target is None:
+        return None
+    return await _run_memory_command(
+        propose_exclusion(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            target=target,
+            request_id=request_id,
+            secret=secret,
+            search=search,
+        ),
+        request_id=request_id,
+    )
+
+
+async def _run_memory_command(operation, *, request_id: str) -> CommandResult:
+    try:
+        return await operation
+    except ContextOperationError as exc:
+        return failed_result(request_id=request_id, detail=exc.code)
+    except Exception:
+        return unknown_result(request_id=request_id, detail="MEMORY_COMMAND_DELIVERY_UNKNOWN")
 
 
 async def _run_setting(
