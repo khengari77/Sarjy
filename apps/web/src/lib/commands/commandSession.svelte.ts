@@ -4,8 +4,9 @@ import { saveCaptionSelection } from '../chat/session';
 import type { CatalogState } from '../voice/catalog';
 import { createCommandStore, initialCommandState, type CommandResult } from './commandStore';
 
-export function createCommandSession(catalog?: CatalogState) {
+export function createCommandSession(catalog?: CatalogState, panels?: { history: boolean; memory_explorer: boolean }) {
   const state = $state(initialCommandState());
+  if (panels) state.panels = panels;
   const store = createCommandStore(state);
 
   function apply(result: CommandResult): boolean {

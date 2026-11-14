@@ -59,8 +59,10 @@
   // Any finalised turn can save a memory server-side; the panel uses this to
   // invalidate a list it loaded before the save.
   const memoryRevision = $derived(`${conversation.current ?? ''}:${conversation.turns.length}`);
-  // GUI controls and backend-authored voice results both write this store.
-  const commands = createCommandSession(catalog);
+  // Panel state is a top-level reactive object so the shell bindings and the
+  // command store share one source of truth.
+  const panels = $state({ history: false, memory_explorer: false });
+  const commands = createCommandSession(catalog, panels);
 
   const phase = $derived<VoicePhase>(
     (voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
@@ -173,8 +175,8 @@
 </svelte:head>
 
 <AppShell
-  bind:leftOpen={commands.state.panels.history}
-  bind:rightOpen={commands.state.panels.memory_explorer}
+  bind:leftOpen={panels.history}
+  bind:rightOpen={panels.memory_explorer}
   dir={arabic ? 'rtl' : 'ltr'}
   stageDialogOpen={pendingIntent !== null}
   languageLabel={arabic ? 'English' : 'العربية'}

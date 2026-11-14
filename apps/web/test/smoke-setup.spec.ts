@@ -8,6 +8,9 @@ test('English smoke selectors reach real controls without starting a call', asyn
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  // The shell is rendered server-side; wait for hydration before exercising
+  // controls, otherwise an early click is lost and this becomes a race.
+  await page.locator('#shell-left[data-hydrated="true"]').waitFor();
   const settings = page.getByRole('button', { name: 'Show memory and settings', exact: true });
   if ((await settings.getAttribute('aria-expanded')) !== 'true') await settings.click();
   await expect(page.getByRole('button', { name: 'Load voices / Search', exact: true })).toBeVisible();
