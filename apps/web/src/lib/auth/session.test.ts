@@ -26,7 +26,12 @@ describe('review session cookie', () => {
     const now = 1_700_000_000_000;
     const signed = sign(now, now + HOUR)!;
     const parts = signed.token.split('.');
-    parts[3] = `${parts[3].slice(0, -1)}${parts[3].endsWith('A') ? 'B' : 'A'}`;
+    // Mutate a decoded byte. Rewriting the final base64url character is not a
+    // reliable tamper: it carries padding bits, so some replacements decode to
+    // the same signature and the MAC still verifies (about 1 run in 16).
+    const signature = Buffer.from(parts[3]!, 'base64url');
+    signature[0] = (signature[0] ?? 0) ^ 0x01;
+    parts[3] = signature.toString('base64url');
     expect(verifySession(parts.join('.'), SECRET, { fingerprint: FINGERPRINT, maxExpiresAt: now + HOUR, now })).toBe(
       false,
     );
