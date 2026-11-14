@@ -167,6 +167,23 @@ describe('onboarding voice advancement', () => {
     });
   });
 
+  it('suspends instead of saving an unrelated final as the name', async () => {
+    const state = initialOnboardingState();
+    state.progress = progress();
+    state.status = 'active';
+    const request = vi
+      .fn()
+      .mockResolvedValue(progress({ stage: 'suspended', suspended_from: 'preferred_name', revision: 3 }));
+    const controller = createOnboardingController(state, { request });
+    await controller.handleVoiceUtterance(
+      { final: true, speaker: 'user', text: 'I want weather', id: 'unrelated-1' },
+      [],
+    );
+    expect(request.mock.calls.at(-1)?.[1]).toEqual({ event_id: expect.any(String), type: 'suspend' });
+    expect(state.progress?.stage).toBe('suspended');
+    expect(state.progress?.preferred_name).toBeNull();
+  });
+
   it('stops being active after skip or suspension', async () => {
     const state = initialOnboardingState();
     state.progress = progress();

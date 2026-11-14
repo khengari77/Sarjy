@@ -51,6 +51,33 @@ describe('finalized voice answers', () => {
     });
   });
 
+  it.each(['I want weather', "play today's Wordle", 'tell me a joke', 'what can you do'])(
+    'never captures an unrelated request as a name: %s',
+    (text) => {
+      expect(interpretVoiceAnswer(progress('preferred_name'), say(text), VOICES)).toEqual({ type: 'suspend' });
+    },
+  );
+
+  it('accepts a real name with an explicit prefix but rejects state phrases', () => {
+    expect(interpretVoiceAnswer(progress('preferred_name'), say('My name is Sam'), VOICES)).toEqual({
+      type: 'submit_name',
+      name: 'Sam',
+    });
+    expect(interpretVoiceAnswer(progress('preferred_name'), say("I'm Ada"), VOICES)).toEqual({
+      type: 'submit_name',
+      name: 'Ada',
+    });
+    expect(interpretVoiceAnswer(progress('preferred_name'), say("I'm bored"), VOICES)).toEqual({ type: 'suspend' });
+  });
+
+  it('accepts a short bare name but not a bare capability word', () => {
+    expect(interpretVoiceAnswer(progress('preferred_name'), say('Sam'), VOICES)).toEqual({
+      type: 'submit_name',
+      name: 'Sam',
+    });
+    expect(interpretVoiceAnswer(progress('preferred_name'), say('memory'), VOICES)).toEqual({ type: 'suspend' });
+  });
+
   it('chooses a voice by catalog name or id, and keeps the current one on request', () => {
     expect(interpretVoiceAnswer(progress('voice_choice'), say('British Narrator'), VOICES)).toEqual({
       type: 'choose_voice',
