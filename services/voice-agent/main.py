@@ -309,6 +309,33 @@ class SarjyAgent(Agent):
         return result.json()
 
 
+async def speak_onboarding_greeting(backend, session, greeting: str) -> None:
+    """Speak the fixed intro once, inside the ElevenLabs ledger.
+
+    ``session.say`` bypasses the budget-observing ``tts_node``, so reserve the
+    exact character count first.  A failed reservation or TTS attempt leaves
+    ``intro_played_at`` unset and the next connection may retry.
+    """
+
+    reservation = await backend.post(
+        "/internal/development/reserve", json={"provider": "elevenlabs", "characters": len(greeting)}
+    )
+    if reservation.status_code >= 400:
+        return
+    try:
+        handle = session.say(greeting, allow_interruptions=True, add_to_chat_ctx=False)
+        await handle.wait_for_playout()
+    except Exception:
+        return
+    await backend.post("/internal/agent/onboarding/greeting-played")
+
+
+async def maybe_speak_greeting(backend, session, bootstrap: dict) -> None:
+    greeting = bootstrap.get("onboarding_greeting")
+    if greeting:
+        await speak_onboarding_greeting(backend, session, greeting)
+
+
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
     values = read_worker_environment()
@@ -379,6 +406,7 @@ async def entrypoint(ctx: JobContext):
         await session.start(
             agent, room=ctx.room, record=False, room_options=room_io.RoomOptions(close_on_disconnect=False)
         )
+        await maybe_speak_greeting(backend, session, bootstrap)
         expiry = datetime.fromisoformat(bootstrap["expires_at"])
         remaining = max(0, (expiry - datetime.now(UTC)).total_seconds())
         try:

@@ -13,6 +13,7 @@
     left?: Snippet;
     stage?: Snippet;
     right?: Snippet;
+    rightOpen?: boolean;
   }
 
   let {
@@ -25,15 +26,25 @@
     left,
     stage,
     right,
+    rightOpen = $bindable(true),
   }: Props = $props();
 
   let leftOpen = $state(true);
-  let rightOpen = $state(true);
 
   onMount(() => {
     const wide = window.matchMedia('(min-width: 1200px)').matches;
     leftOpen = wide;
     rightOpen = wide;
+    // A plain `#memory-explorer` link works without JS; with JS it reveals the
+    // real drawer and moves focus there.
+    const openMemory = () => {
+      if (window.location.hash !== '#memory-explorer') return;
+      rightOpen = true;
+      requestAnimationFrame(() => document.getElementById('memory-explorer')?.focus());
+    };
+    openMemory();
+    window.addEventListener('hashchange', openMemory);
+    return () => window.removeEventListener('hashchange', openMemory);
   });
 </script>
 

@@ -1,0 +1,99 @@
+.onboarding {
+  width: min(640px, 100%);
+  margin: 0 auto 18px;
+  padding: 16px 18px;
+  border: 1px solid color-mix(in srgb, var(--orb-idle) 35%, var(--border-subtle));
+  border-radius: var(--radius-panel, 18px);
+  background: color-mix(in srgb, var(--surface-raised, #fff) 92%, var(--orb-idle) 8%);
+  text-align: start;
+}
+
+.onboarding-head,
+.onboarding-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.onboarding-row {
+  align-items: flex-start;
+}
+
+.onboarding-step {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.onboarding-question {
+  margin: 10px 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.onboarding-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.onboarding-actions,
+.onboarding-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.onboarding-choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+}
+
+.onboarding-capabilities {
+  margin: 8px 0;
+  padding-inline-start: 20px;
+  display: grid;
+  gap: 4px;
+}
+
+.onboarding-transparency,
+.onboarding-error {
+  margin: 14px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.onboarding-transparency a {
+  color: inherit;
+}
+
+.onboarding-error {
+  color: var(--danger, #b3261e);
+}
+
+.onboarding-pause {
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .onboarding {
+    margin-bottom: 12px;
+    padding: 14px;
+  }
+}
