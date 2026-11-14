@@ -119,6 +119,15 @@ async function openLeftDrawer(page: Page) {
   return trigger;
 }
 
+function isInert(page: Page, selector: string): Promise<boolean> {
+  return page.locator(selector).evaluate((el) => (el as HTMLElement).inert);
+}
+
+/** The shell's modal layer: the confirmation is portalled into this region. */
+function dialogRegion(page: Page) {
+  return page.locator('.stage-dialog');
+}
+
 function confirmDialog(page: Page) {
   return page.getByRole('dialog', { name: 'End the current voice session?' });
 }
@@ -144,20 +153,42 @@ test.describe('mobile overlay drawer during a live call', () => {
     const dialog = confirmDialog(page);
     await expect(dialog).toBeVisible();
 
-    // The drawer handed off: it is closed, so the stage (and the dialog in it)
-    // are no longer inside an inert subtree, and the drawer's trigger is not
-    // where focus went.
-    expect(await dialog.evaluate((el) => el.closest('[inert]') === null)).toBe(true);
-    expect(await page.locator('.stage-content').evaluate((el) => (el as HTMLElement).inert)).toBe(false);
+    // The drawer handed off. The confirmation is the modal layer: the stage
+    // body, header and control strip are all inert, and the dialog itself is
+    // the only interactive region - so aria-modal="true" is true, not a claim.
     await expect(page.locator('#shell-left')).toBeHidden();
+    expect(await dialog.evaluate((el) => el.closest('[inert]') === null)).toBe(true);
+    expect(await isInert(page, '.stage-dialog')).toBe(false);
+    expect(await isInert(page, '.stage-content')).toBe(true);
+    expect(await isInert(page, '.topbar')).toBe(true);
+    expect(await isInert(page, '.stage-controls')).toBe(true);
+    await expect(page.locator('.stage-content')).toHaveAttribute('inert', '');
+    await expect(page.locator('.topbar')).toHaveAttribute('inert', '');
     await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
     expect(api.ends).toHaveLength(0);
 
-    // Cancel is genuinely clickable while the drawer state settles.
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    // A Tab walk from Cancel never leaves the dialog region (no native trap on
+    // a div role=dialog, so this only holds if the shell wraps it).
+    for (let index = 0; index < 10; index += 1) {
+      await page.keyboard.press('Tab');
+      expect(
+        await dialogRegion(page).evaluate((el) => el.contains(document.activeElement)),
+        `dialog tab #${index + 1} escaped the modal layer`,
+      ).toBe(true);
+    }
+
+    // Escape dismisses the dialog from wherever the walk left focus.
+    await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
-    // Nothing took focus after the dialog closed, so it returns to the trigger.
+    // Inert is cleared again, focus returns to the drawer trigger that opened
+    // the flow, and the previously-inert control strip works.
+    expect(await isInert(page, '.stage-content')).toBe(false);
+    expect(await isInert(page, '.topbar')).toBe(false);
+    expect(await isInert(page, '.stage-controls')).toBe(false);
     await expect(trigger).toBeFocused();
+    const mute = page.getByRole('button', { name: 'Mute', exact: true });
+    await mute.focus();
+    await expect(mute).toBeFocused();
     await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
     // Same flow through the confirm path.
@@ -178,6 +209,8 @@ test.describe('mobile overlay drawer during a live call', () => {
     const dialog = confirmDialog(page);
     await expect(dialog).toBeVisible();
     expect(await dialog.evaluate((el) => el.closest('[inert]') === null)).toBe(true);
+    expect(await isInert(page, '.stage-content')).toBe(true);
+    expect(await isInert(page, '.topbar')).toBe(true);
     await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
 
     await dialog.getByRole('button', { name: 'End & start' }).click();

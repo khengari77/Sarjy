@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { getContext, tick } from 'svelte';
   import type { Turn } from '../api';
   import type { OrbPresentation } from '../orb/orbState';
   import VoiceOrb from '../orb/VoiceOrb.svelte';
@@ -61,6 +61,25 @@
     onconfirmintent: () => void;
   } = $props();
 
+  // The shell owns the modal layer; this dialog is moved into its region so it
+  // is never inside the inert stage (see AppShell's `stageDialogOpen`).
+  const dialogRegion = getContext<(() => HTMLElement | null) | undefined>('shell-dialog-region');
+
+  function portal(node: HTMLElement) {
+    const target = dialogRegion?.();
+    if (!target) return;
+    target.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      },
+    };
+  }
+
+  function onDialogEscape(event: KeyboardEvent) {
+    if (event.key === 'Escape') oncancelintent();
+  }
+
   let transcriptOpen = $state(false);
   let transcriptButton: HTMLButtonElement | undefined = $state();
   let switchCancel: HTMLButtonElement | undefined = $state();
@@ -83,9 +102,11 @@
   }
 </script>
 
+<svelte:window onkeydown={pendingIntent ? onDialogEscape : undefined} />
+
 <section class="voice-stage" dir={arabic ? 'rtl' : 'ltr'}>
   {#if pendingIntent}
-    <div class="confirm-scrim" role="presentation">
+    <div class="confirm-scrim" role="presentation" use:portal>
       <div
         class="confirm-dialog"
         role="dialog"
