@@ -217,7 +217,16 @@ test('tablet drawers overlay without squeezing the orb', async ({ page }) => {
   expect(await orbWidth()).toBe(before);
   expect(before).toBeGreaterThanOrEqual(220);
 
-  await page.locator('.scrim').click({ position: { x: 880, y: 700 } });
+  // The call-control strip sits above the scrim (z 26 vs 25) so Mute/End stay
+  // clickable while a drawer is open (#37). Its bottom band therefore does not
+  // dismiss the drawer; the scrim above it still does.
+  const strip = await page.locator('.stage-controls').boundingBox();
+  expect(strip).not.toBeNull();
+  expect(strip!.y).toBeLessThan(720);
+  await page.mouse.click(880, (strip!.y + 720) / 2);
+  await expect(page.getByRole('button', { name: 'Show conversations' })).toHaveAttribute('aria-expanded', 'true');
+
+  await page.locator('.scrim').click({ position: { x: 880, y: 300 } });
   await expect(page.getByRole('button', { name: 'Show conversations' })).toHaveAttribute('aria-expanded', 'false');
 });
 
