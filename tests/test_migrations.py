@@ -186,6 +186,56 @@ async def _postgres_migration():
     assert after == before
 
 
+RETRIEVAL_INDEXES = (
+    "ix_turns_conversation_status_created",
+    "ix_memories_owner_status_updated",
+    "ix_memories_supersedes_id",
+    "ix_tool_calls_turn_state",
+)
+
+
+def test_retrieval_indexes_upgrade_and_downgrade_on_sqlite(tmp_path):
+    path = tmp_path / "retrieval.db"
+    url = f"sqlite+aiosqlite:///{path}"
+    alembic(url, "upgrade", "head")
+    with closing(sqlite3.connect(path)) as connection:
+        indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    assert set(RETRIEVAL_INDEXES) <= indexes
+    alembic(url, "downgrade", "0009_dispatcher_leases")
+    with closing(sqlite3.connect(path)) as connection:
+        indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert not set(RETRIEVAL_INDEXES) & indexes
+    assert {"turns", "memories", "tool_calls"} <= tables, "downgrade must not drop data tables"
+    alembic(url, "upgrade", "head")
+    alembic(url, "check")
+
+
+def test_retrieval_indexes_upgrade_and_downgrade_on_postgres():
+    if not POSTGRES_URL:
+        pytest.skip("TEST_POSTGRES_URL not set; disposable PostgreSQL required")
+
+    async def index_names():
+        import asyncpg
+
+        plain = POSTGRES_URL.replace("postgresql+asyncpg://", "postgresql://")
+        connection = await asyncpg.connect(plain)
+        try:
+            rows = await connection.fetch(
+                "SELECT indexname FROM pg_indexes WHERE tablename IN ('turns','memories','tool_calls')"
+            )
+        finally:
+            await connection.close()
+        return {row["indexname"] for row in rows}
+
+    alembic(POSTGRES_URL, "upgrade", "head")
+    assert set(RETRIEVAL_INDEXES) <= asyncio.run(index_names())
+    alembic(POSTGRES_URL, "downgrade", "0009_dispatcher_leases")
+    assert not set(RETRIEVAL_INDEXES) & asyncio.run(index_names())
+    alembic(POSTGRES_URL, "upgrade", "head")
+    assert set(RETRIEVAL_INDEXES) <= asyncio.run(index_names())
+
+
 def test_cleanup_migration_preserves_existing_sessions_and_ledger(tmp_path):
     import sqlite3
 

@@ -1,36 +1,35 @@
 <script lang="ts">
   import type { Turn } from '../api';
+  import LiveCaptionPreview from './LiveCaptionPreview.svelte';
+  import ToolTraceChip from './ToolTraceChip.svelte';
+  import type { ProvisionalTranscript } from '../voice/connection';
 
   let {
     turns,
-    toolCalls,
-    title,
-    intro,
+    provisional = null,
+    tools,
+    arabic,
+    captionsVisible,
+    expanded,
+    onexpand,
   }: {
     turns: Turn[];
-    toolCalls: { id: string; name: string; result: unknown }[];
-    title: string;
-    intro: string;
+    provisional?: ProvisionalTranscript | null;
+    tools: { id: string; name: string; result: unknown }[];
+    arabic: boolean;
+    captionsVisible: boolean;
+    expanded: boolean;
+    onexpand: () => void;
   } = $props();
 </script>
 
-<section>
-  {#if turns.length}
-    {#each turns as turn (turn.id)}
-      <article dir="auto">
-        <small>{turn.role} · {turn.status}</small>
-        <p>{turn.text}</p>
-      </article>
-    {/each}
-  {:else}
-    <div class="orb">س</div>
-    <h1>{title}</h1>
-    <p>{intro}</p>
+{#if turns.length || provisional}
+  <LiveCaptionPreview {turns} {provisional} {arabic} {captionsVisible} {expanded} {onexpand} />
+  {#if tools.length}
+    <div class="trace-row">
+      {#each tools as tool (tool.id)}
+        <ToolTraceChip name={tool.name} result={tool.result} {arabic} />
+      {/each}
+    </div>
   {/if}
-  {#each toolCalls as tool (tool.id)}
-    <details>
-      <summary>{tool.name} · Open-Meteo</summary>
-      <pre dir="ltr">{JSON.stringify(tool.result, null, 2)}</pre>
-    </details>
-  {/each}
-</section>
+{/if}
