@@ -16,6 +16,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL", "")
+REQUIRE_POSTGRES = os.environ.get("REQUIRE_WORDLE_POSTGRES") == "1"
+
+if REQUIRE_POSTGRES and not POSTGRES_URL:
+    raise RuntimeError("REQUIRE_WORDLE_POSTGRES=1 but TEST_POSTGRES_URL is empty; refusing to skip")
 
 pytestmark = pytest.mark.skipif(
     not POSTGRES_URL,

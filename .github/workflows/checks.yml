@@ -115,7 +115,9 @@ jobs:
         run: uv run pytest -q tests/test_wordle_postgres.py
         env:
           REQUIRE_DAY2_INTEGRATION: '1'
+          REQUIRE_WORDLE_POSTGRES: '1'
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
+          TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
       - name: Real vector and integration checks
         run: |
           uv run python -c "import sys; sys.path.insert(0, 'apps/api'); import app.services.memory, app.services.context_operations, app.domain.weather_permissions"
