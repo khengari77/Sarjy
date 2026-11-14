@@ -5,10 +5,11 @@ from typing import Annotated, Literal
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from app.domain.commands import parse_exact_command
+from app.domain.commands import CommandResult
 from app.domain.contracts import Action, UserSettings, parse_action
 from app.infrastructure.database import UserSetting
 from app.services.actions import dispatch_action, settings_value
+from app.services.commands import handle_finalized_utterance
 from app.services.context_operations import ContextOperationError
 from app.services.voices import VoiceCatalogError
 
@@ -55,7 +56,7 @@ class NavigationActionResult(BaseModel):
 
 class HandledAction(BaseModel):
     handled: Literal[True]
-    result: SettingsActionResult | NavigationActionResult | dict[str, JsonValue]
+    result: SettingsActionResult | NavigationActionResult | CommandResult | dict[str, JsonValue]
 
 
 class UnhandledAction(BaseModel):
@@ -76,11 +77,24 @@ def register_action_routes(app, database, identity, owned, catalog):
     async def submit(body: ActionSubmission, user=Depends(identity), db=Depends(database)):
         await owned(body.conversation_id, user, db)
         if body.source == "transcript":
-            action = parse_exact_command(body.transcript)
-            if action is None:
+            # Finalized transcripts go through the same authoritative seam as
+            # the worker.  The adapter has one revision on the wire, so it is
+            # used for the setting compare-and-set and the context revision.
+            command = await handle_finalized_utterance(
+                db,
+                owner_id=user.id,
+                conversation_id=body.conversation_id,
+                request_id=body.request_id,
+                expected_revision=body.expected_revision,
+                settings_revision=body.expected_revision,
+                text=body.transcript,
+                catalog=catalog,
+                handlers=app.state.action_handlers,
+            )
+            if command is None:
                 return {"handled": False}
-        else:
-            action = body.action
+            return {"handled": True, "result": command}
+        action = body.action
         try:
             result = await dispatch_action(
                 db,

@@ -151,7 +151,7 @@ def create_app(
 
     register_system_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
     register_voice_routes(app, config=config, catalog=catalog, database=database, identity=identity, owned=owned)
-    register_worker_routes(app, config=config, database=database, embedder=embedder)
+    register_worker_routes(app, config=config, database=database, embedder=embedder, catalog=catalog)
     register_context_routes(app, config=config, database=database, identity=identity, semantic_search=semantic_search)
     register_wordle_routes(app, config=config, database=database, identity=identity, source=source)
 

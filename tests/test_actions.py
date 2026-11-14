@@ -67,7 +67,10 @@ def test_ui_and_final_transcript_share_persisted_settings_and_idempotency(tmp_pa
         assert first.status_code == 200
         assert first.json()["result"]["settings"]["speaking_speed"] == 0.9
         retry = submit(client, conversation, source="transcript", transcript=" Speak   slower. ")
-        assert retry.json() == first.json()
+        assert retry.status_code == 200
+        assert retry.json()["result"]["settings"]["speaking_speed"] == 0.9
+        assert retry.json()["result"]["kind"] == "executed"
+        assert retry.json()["result"]["action"] == "AdjustSpeakingSpeed"
         next_response = submit(
             client, conversation, request="r2", revision=1, source="transcript", transcript="speak slower"
         )
