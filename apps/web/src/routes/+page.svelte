@@ -252,10 +252,12 @@
       {selectedVoice}
       {sessionVoice}
       live={voice.live !== null}
+      speakingSpeed={commands.state.settings.speaking_speed}
       captionsVisible={commands.state.settings.captions_visible}
       onsearch={() => void catalogStore!.load()}
       onloadmore={() => void catalogStore!.load(true)}
       onremember={() => void catalogStore!.remember()}
+      onspeed={(speed) => commands.setSpeakingSpeed(speed)}
       ontoggleCaptions={() => void commands.setCaptions(!commands.state.settings.captions_visible)}
     />
   {/snippet}

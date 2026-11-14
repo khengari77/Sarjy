@@ -17,10 +17,12 @@
     selectedVoice,
     sessionVoice,
     confirmedVoice = null,
+    speakingSpeed,
     captionsVisible,
     onsearch,
     onloadmore,
     onremember,
+    onspeed,
     ontoggleCaptions,
   }: {
     arabic: boolean;
@@ -36,12 +38,18 @@
     selectedVoice: VoiceOption | null;
     sessionVoice: VoiceOption | null;
     confirmedVoice?: VoiceOption | null;
+    speakingSpeed: number;
     captionsVisible: boolean;
     onsearch: () => void;
     onloadmore: () => void;
     onremember: () => void;
+    onspeed: (speed: number) => Promise<boolean>;
     ontoggleCaptions: () => void;
   } = $props();
+
+  // Mirrors the server contract (SPEAKING_SPEED_MIN/MAX/STEP). The server still
+  // validates every write; this only decides which options the picker offers.
+  const SPEEDS = [0.8, 0.9, 1, 1.1, 1.2];
 
   const status = $derived(
     voiceStatus({ selected: selectedVoice, session: sessionVoice, confirmed: confirmedVoice, live }),
@@ -49,18 +57,27 @@
   const statusText = $derived(
     voiceStatusText({ selected: selectedVoice, session: sessionVoice, confirmed: confirmedVoice, live }, arabic),
   );
+
+  let speedSaving = $state(false);
+  let speedError = $state('');
+
+  async function changeSpeed(event: Event) {
+    const speed = Number((event.currentTarget as HTMLSelectElement).value);
+    speedSaving = true;
+    speedError = '';
+    try {
+      if (!(await onspeed(speed))) {
+        speedError = arabic
+          ? 'تعذّر حفظ سرعة النطق. لم يتغيّر شيء.'
+          : 'Speaking speed could not be saved. Nothing changed.';
+      }
+    } finally {
+      speedSaving = false;
+    }
+  }
 </script>
 
 <div class="sidebar-inner" dir={arabic ? 'rtl' : 'ltr'}>
-  <section class="panel-block">
-    <h2>{arabic ? 'الذاكرة والسياق' : 'Memory & Context'}</h2>
-    <p class="muted-text">
-      {arabic
-        ? 'ابحث في ما يتذكّره سَرْجي وراجع السياق قبل استخدامه.'
-        : 'Search what Sarjy remembers and review context before it is used.'}
-    </p>
-  </section>
-
   <section class="panel-block">
     <h2>{arabic ? 'الصوت' : 'Voice'}</h2>
     <p class="voice-status" data-voice-status={status}>{statusText}</p>
@@ -108,9 +125,15 @@
     {/if}
     {#if voices.length === 0 && !voiceLoading && !voiceError}
       <small class="muted-text">
-        {arabic
-          ? 'سيُستخدم الصوت الافتراضي. حمّل الأصوات لاختيار صوت آخر.'
-          : 'The default voice will be used. Load voices to choose a different one.'}
+        {#if voiceId}
+          {arabic
+            ? 'الصوت المحفوظ ليس في القائمة المحمّلة. حمّل الأصوات لتأكيد الاسم.'
+            : 'The saved voice is not in the loaded list. Load voices to confirm its name.'}
+        {:else}
+          {arabic
+            ? 'سيُستخدم الصوت الافتراضي. حمّل الأصوات لاختيار صوت آخر.'
+            : 'The default voice will be used. Load voices to choose a different one.'}
+        {/if}
       </small>
     {/if}
     <small class="muted-text">
@@ -121,17 +144,40 @@
   </section>
 
   <section class="panel-block">
-    <h2>{arabic ? 'التجربة' : 'Experience'}</h2>
+    <h2>{arabic ? 'سرعة النطق' : 'Speed'}</h2>
+    <label class="field-label" for="assistant-speed">{arabic ? 'سرعة المتحدث' : 'Speaking speed'}</label>
+    <select
+      id="assistant-speed"
+      value={speakingSpeed}
+      disabled={speedSaving}
+      onchange={changeSpeed}
+      aria-describedby="assistant-speed-note"
+    >
+      {#each SPEEDS as speed (speed)}
+        <option value={speed}>{speed.toFixed(1)}×</option>
+      {/each}
+    </select>
+    <small class="muted-text" id="assistant-speed-note">
+      {arabic ? 'تسري السرعة على الدور التالي في المكالمة.' : 'Speed applies to the next turn in the call.'}
+    </small>
+    {#if speedSaving}
+      <small class="muted-text">{arabic ? 'جارٍ حفظ السرعة…' : 'Saving speed…'}</small>
+    {/if}
+    {#if speedError}
+      <p class="voice-error" role="alert">{speedError}</p>
+    {/if}
+  </section>
+
+  <section class="panel-block">
+    <h2>{arabic ? 'العرض' : 'Display'}</h2>
     <label class="toggle-row">
       <input type="checkbox" checked={captionsVisible} onchange={ontoggleCaptions} />
       <span>{arabic ? 'إظهار الترجمة' : 'Show captions'}</span>
     </label>
-    {#if live}
-      <small class="muted-text">
-        {arabic
-          ? 'تغيير الصوت أثناء المكالمة يسري على المكالمة التالية.'
-          : 'Changing the voice mid-call applies to the next call.'}
-      </small>
-    {/if}
+    <small class="muted-text">
+      {arabic
+        ? 'تظهر الترجمة المباشرة على المسرح؛ لا تغيّر الصوت ولا ما يسمعه المساعد.'
+        : 'Live captions appear on the stage; they do not change the voice or what the assistant hears.'}
+    </small>
   </section>
 </div>

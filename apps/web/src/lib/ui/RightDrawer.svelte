@@ -1,7 +1,15 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
-  export type TabId = 'memories' | 'voice' | 'appearance' | 'context';
+  /**
+   * Three panels, one concern each:
+   *  - Controls: every interactive setting (voice, speed, captions).
+   *  - Memories: the memory/context search and explorer.
+   *  - Context: the compiled-context inspector.
+   * Appearance was removed: its theme control lives in the header and captions
+   * moved into Controls, so the panel would have been empty.
+   */
+  export type TabId = 'memories' | 'controls' | 'context';
 
   interface Tab {
     id: TabId;
@@ -10,7 +18,7 @@
 
   interface Props {
     arabic?: boolean;
-    /** Existing voice controls stay reachable in the Voice tab (#41 owns their contents). */
+    /** Functional settings stay reachable in the Controls tab. */
     voicePanel?: Snippet;
     /** Transparent memory/context explorer (#43). Rendered in its own tab;
      *  the argument is true while that tab is visible. */
@@ -19,12 +27,11 @@
     activeTab?: TabId;
   }
 
-  let { arabic = false, voicePanel, memoryPanel, activeTab = $bindable<TabId>('voice') }: Props = $props();
+  let { arabic = false, voicePanel, memoryPanel, activeTab = $bindable<TabId>('controls') }: Props = $props();
 
   const tabs: Tab[] = [
     { id: 'memories', label: 'Memories' },
-    { id: 'voice', label: 'Voice' },
-    { id: 'appearance', label: 'Appearance' },
+    { id: 'controls', label: 'Controls' },
     { id: 'context', label: 'Context' },
   ];
 
@@ -80,7 +87,7 @@
   </div>
 
   {#each tabs as tab (tab.id)}
-    <!-- Every tab owns a real panel: all four ids exist in the DOM so each
+    <!-- Every tab owns a real panel: all three ids exist in the DOM so each
          tab's aria-controls resolves. Only the selected panel is shown. -->
     <div
       class="panel"
@@ -90,25 +97,12 @@
       tabindex={activeTab === tab.id ? 0 : -1}
       hidden={activeTab !== tab.id}
     >
-      {#if tab.id === 'voice'}
+      {#if tab.id === 'controls'}
         {#if voicePanel}
           {@render voicePanel()}
         {:else}
-          <p class="placeholder">Voice settings arrive in #46.</p>
+          <p class="placeholder">Voice controls are unavailable.</p>
         {/if}
-      {:else if tab.id === 'appearance'}
-        <section class="placeholder-block">
-          <h2>Appearance</h2>
-          <p>Theme is available from the header control. Further appearance options arrive in #46.</p>
-        </section>
-        <section class="placeholder-block">
-          <h2>Workspace mode</h2>
-          <p>
-            Simple and Developer modes move here once the switch ships in #46. The header keeps only controls that do
-            something.
-          </p>
-          <p class="mode-preview" aria-hidden="true"><span>Simple</span><span>Developer</span></p>
-        </section>
       {:else if tab.id === 'memories'}
         {#if memoryPanel}
           {@render memoryPanel(activeTab === 'memories')}
@@ -185,10 +179,6 @@
     padding: 16px;
   }
 
-  .placeholder-block + .placeholder-block {
-    margin-top: 20px;
-  }
-
   .placeholder-block h2 {
     margin: 0 0 6px;
     font-size: 14px;
@@ -201,24 +191,5 @@
     color: var(--text-muted);
     font-size: 13px;
     line-height: 1.5;
-  }
-
-  .mode-preview {
-    display: inline-flex;
-    gap: 4px;
-    padding: 4px;
-    border: 1px dashed var(--border-subtle);
-    border-radius: 999px;
-    font-size: 11px;
-  }
-
-  .mode-preview span {
-    padding: 3px 10px;
-    border-radius: 999px;
-  }
-
-  .mode-preview span:first-child {
-    background: var(--surface-hover);
-    color: var(--text-primary);
   }
 </style>

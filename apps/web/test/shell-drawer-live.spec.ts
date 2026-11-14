@@ -290,7 +290,7 @@ test('Escape closes the open dock that holds focus, not the most recently opened
   // Mirror: reopen the left dock, focus the right dock, Escape closes right.
   await left.click();
   await expect(left).toHaveAttribute('aria-expanded', 'true');
-  await page.locator('#shell-right').getByRole('tab', { name: 'Voice' }).focus();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).focus();
   await page.keyboard.press('Escape');
   await expect(right).toHaveAttribute('aria-expanded', 'false');
   await expect(left).toHaveAttribute('aria-expanded', 'true');

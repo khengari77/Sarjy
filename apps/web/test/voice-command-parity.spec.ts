@@ -7,6 +7,7 @@ test('GUI captions action and a voice result converge through the one settings p
 
   await withPage(browser, async (page, backend) => {
     await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
+    await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).click();
     await page.getByRole('checkbox', { name: 'Show captions' }).uncheck();
     await expect(page.locator('[data-command-kind]')).toHaveAttribute('data-command-kind', 'executed');
     guiState = await snapshot(page);
@@ -106,9 +107,9 @@ test('"open the memory explorer" shows the Memories panel, not the voice picker'
     });
     await expect(page.locator('#shell-right')).toHaveAttribute('data-open', 'true');
     await expect(page.locator('#drawer-tab-memories')).toHaveAttribute('aria-selected', 'true');
-    await expect(page.locator('#drawer-tab-voice')).toHaveAttribute('aria-selected', 'false');
+    await expect(page.locator('#drawer-tab-controls')).toHaveAttribute('aria-selected', 'false');
     await expect(page.locator('#drawer-panel-memories')).toBeVisible();
-    await expect(page.locator('#drawer-panel-voice')).toBeHidden();
+    await expect(page.locator('#drawer-panel-controls')).toBeHidden();
   });
 });
 
