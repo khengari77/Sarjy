@@ -9,3 +9,14 @@ export function parseProtectedMode(value: string | undefined | null): boolean {
   if (value === 'false' || value === undefined || value === null) return false;
   throw new Error(PROTECTED_MODE_ERROR);
 }
+
+/** Whether a configured ORIGIN points at a developer's own machine. */
+export function isLocalOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  try {
+    const host = new URL(origin).hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  } catch {
+    return false;
+  }
+}

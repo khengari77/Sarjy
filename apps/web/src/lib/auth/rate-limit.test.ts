@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRateLimiter, failureKey } from './rate-limit';
+import { createFailureTrackers, createRateLimiter, failureKey } from './rate-limit';
 
 describe('failure cap keys', () => {
   it('separates reviewers behind one shared proxy socket', () => {
@@ -22,5 +22,25 @@ describe('rate limiter', () => {
     expect(limiter.blocked('b')).toBe(false);
     now = 1_000;
     expect(limiter.blocked('a')).toBe(false);
+  });
+});
+
+describe('two-layer failure trackers', () => {
+  it('lets a valid token from another address through after 100 scans at one address', () => {
+    let now = 0;
+    const trackers = createFailureTrackers({ windowMs: 1_000, now: () => now });
+    for (let attempt = 0; attempt < 100; attempt += 1) trackers.fail('203.0.113.7', `garbage-${attempt}`);
+    expect(trackers.blocked('203.0.113.7', 'valid-token')).toBe(true);
+    expect(trackers.blocked('198.51.100.9', 'valid-token')).toBe(false);
+    now = 1_000;
+    expect(trackers.blocked('203.0.113.7', 'valid-token')).toBe(false);
+  });
+
+  it('stops one address hammering one token without blocking other tokens', () => {
+    const now = 0;
+    const trackers = createFailureTrackers({ windowMs: 1_000, now: () => now });
+    for (let attempt = 0; attempt < 10; attempt += 1) trackers.fail('203.0.113.7', 'one-token');
+    expect(trackers.blocked('203.0.113.7', 'one-token')).toBe(true);
+    expect(trackers.blocked('203.0.113.7', 'another-token')).toBe(false);
   });
 });

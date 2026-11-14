@@ -12,9 +12,9 @@ import {
 } from '$app/env/private';
 import { createAccessStateStore } from './access-state';
 import { redeemAccessToken, type AccessResult } from './access';
-import { parseProtectedMode } from './config';
+import { isLocalOrigin, parseProtectedMode } from './config';
 import { resolveAccessExpiry } from './expiry';
-import { createRateLimiter } from './rate-limit';
+import { createFailureTrackers } from './rate-limit';
 import { SESSION_COOKIE, signSession, tokenFingerprint, verifySession } from './session';
 
 /**
@@ -22,7 +22,13 @@ import { SESSION_COOKIE, signSession, tokenFingerprint, verifySession } from './
  * Nothing here is importable from the client bundle (`$app/env/private` is a
  * server-only module and this file is named `.server.ts`).
  */
-export const protectedMode = parseProtectedMode(DEVELOPMENT_PROTECTED);
+const protectedSetting = DEVELOPMENT_PROTECTED;
+export const protectedMode = parseProtectedMode(protectedSetting);
+// A deploy that forgets the flag but configures a real ORIGIN must not serve
+// the app unprotected. Local development (no ORIGIN, or localhost) is exempt.
+if (protectedSetting === undefined && !isLocalOrigin(process.env.ORIGIN)) {
+  throw new Error('DEVELOPMENT_PROTECTED must be set explicitly when ORIGIN is not localhost');
+}
 export const sessionSecret = SESSION_SECRET || WEB_SERVICE_SECRET;
 export const accessToken = REVIEW_ACCESS_TOKEN;
 export const maxUses = Number.parseInt(REVIEW_ACCESS_MAX_USES, 10);
@@ -34,7 +40,7 @@ export const accessExpiresAt = protectedMode ? resolveAccessExpiry(REVIEW_ACCESS
 export const accessState = createAccessStateStore({
   path: resolve(REVIEW_ACCESS_STATE_PATH || join(tmpdir(), 'sarjy-review-access-state.json')),
 });
-export const accessFailures = createRateLimiter({ limit: 10, windowMs: 15 * 60_000 });
+export const accessFailures = createFailureTrackers({ addressLimit: 100, tokenLimit: 10, windowMs: 15 * 60_000 });
 
 const fingerprint = sessionSecret ? tokenFingerprint(accessToken, sessionSecret) : '';
 

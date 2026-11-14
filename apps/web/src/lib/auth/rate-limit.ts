@@ -20,6 +20,48 @@ export interface RateLimiter {
   reset(key: string): void;
 }
 
+export interface FailureTrackers {
+  /** Blocked when the address has spent its total budget or this token's bucket. */
+  blocked(address: string, tokenId: string): boolean;
+  fail(address: string, tokenId: string): void;
+  /** A successful exchange clears this token's bucket, not the address budget. */
+  reset(address: string, tokenId: string): void;
+}
+
+/**
+ * Two layers: a high address budget bounds scanning volume, while a small
+ * per-(address, token) bucket stops one address from hammering one token.
+ * Distinct garbage tokens therefore cannot spend a valid token's allowance.
+ */
+export function createFailureTrackers(
+  options: { addressLimit?: number; tokenLimit?: number; windowMs?: number; now?: () => number } = {},
+): FailureTrackers {
+  const address = createRateLimiter({
+    limit: options.addressLimit ?? 100,
+    windowMs: options.windowMs ?? 15 * 60_000,
+    now: options.now,
+  });
+  const token = createRateLimiter({
+    limit: options.tokenLimit ?? 10,
+    windowMs: options.windowMs ?? 15 * 60_000,
+    now: options.now,
+  });
+  const tokenKey = (addressKey: string, tokenId: string) => `${addressKey}|${tokenId}`;
+
+  return {
+    blocked(addressKey, tokenId) {
+      return address.blocked(addressKey) || token.blocked(tokenKey(addressKey, tokenId));
+    },
+    fail(addressKey, tokenId) {
+      address.fail(addressKey);
+      token.fail(tokenKey(addressKey, tokenId));
+    },
+    reset(addressKey, tokenId) {
+      token.reset(tokenKey(addressKey, tokenId));
+    },
+  };
+}
+
 interface Attempt {
   count: number;
   resetAt: number;

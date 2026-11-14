@@ -1,6 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions } from './$types';
 import { accessFailures, issueSession, protectedMode, redeem } from '../lib/auth/guard.server';
+import { tokenKey } from '../lib/auth/access-state';
 import { failureKey } from '../lib/auth/rate-limit';
 import { safeNextPath } from '../lib/auth/redirect';
 
@@ -17,12 +18,13 @@ export const actions: Actions = {
     const submitted = form.get('token');
     const next = safeNextPath(form.get('next')?.toString() ?? url.searchParams.get('next'));
     const address = failureKey(request, getClientAddress());
+    const candidate = typeof submitted === 'string' ? submitted.trim() : '';
+    const tokenId = tokenKey(candidate);
     const reject = (blocked = false) => fail(blocked ? 429 : 400, { error: true, blocked, next });
 
-    if (accessFailures.blocked(address)) return reject(true);
-    const candidate = typeof submitted === 'string' ? submitted.trim() : '';
+    if (accessFailures.blocked(address, tokenId)) return reject(true);
     if (!candidate) {
-      accessFailures.fail(address);
+      accessFailures.fail(address, tokenId);
       return reject();
     }
 
@@ -30,10 +32,10 @@ export const actions: Actions = {
     if (!result.ok) {
       // Missing storage is not a failed guess; never spend the visitor's
       // failure budget on an internal outage.
-      if (result.reason !== 'unavailable') accessFailures.fail(address);
+      if (result.reason !== 'unavailable') accessFailures.fail(address, tokenId);
       return reject();
     }
-    accessFailures.reset(address);
+    accessFailures.reset(address, tokenId);
     if (!issueSession(cookies, result)) return reject();
     throw redirect(303, next);
   },

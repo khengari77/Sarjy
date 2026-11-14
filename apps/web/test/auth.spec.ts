@@ -182,12 +182,21 @@ test('the door works with JavaScript disabled', async ({ browser }) => {
   await context.close();
 });
 
-test('repeated failures return a distinct wait message', async () => {
-  let body = '';
-  for (let attempt = 0; attempt < 14; attempt += 1) {
-    const response = await exchange('definitely-wrong');
-    body = await response.text();
-    if (body.includes('Too many attempts.')) break;
+test('one address scanning volume does not lock out another reviewer', async () => {
+  const scanner = { 'x-forwarded-for': '203.0.113.7' };
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    await fetch(`${BASE}/?token=garbage-${attempt}`, { redirect: 'manual', headers: scanner });
   }
-  expect(body).toContain('Too many attempts. Try again shortly.');
+
+  // The exhausted address is told to wait, not that its link is invalid.
+  const blocked = await fetch(`${BASE}/?token=${TOKEN}`, { redirect: 'manual', headers: scanner });
+  expect(blocked.status).toBe(200);
+  expect(await blocked.text()).toContain('Too many attempts. Try again shortly.');
+
+  // A different reviewer with the same valid token is unaffected.
+  const allowed = await fetch(`${BASE}/?token=${TOKEN}`, {
+    redirect: 'manual',
+    headers: { 'x-forwarded-for': '198.51.100.9' },
+  });
+  expect(allowed.status).toBe(303);
 });
