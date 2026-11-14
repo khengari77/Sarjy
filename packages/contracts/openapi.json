@@ -76,6 +76,45 @@
         }
       }
     },
+    "/v1/voice/sessions/{session_id}/voice": {
+      "get": {
+        "summary": "Voice Control State",
+        "operationId": "voice_control_state_v1_voice_sessions__session_id__voice_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceControlState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/conversations/{conversation_id}/memories": {
       "post": {
         "summary": "Create",
@@ -199,6 +238,62 @@
                   },
                   "type": "array",
                   "title": "Response Search V1 Memories Search Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/onboarding": {
+      "get": {
+        "summary": "Get Onboarding",
+        "operationId": "get_onboarding_v1_onboarding_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/onboarding/events": {
+      "post": {
+        "summary": "Submit Event",
+        "operationId": "submit_event_v1_onboarding_events_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingEventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingResponse"
                 }
               }
             }
@@ -640,6 +735,17 @@
         }
       }
     },
+    "/internal/agent/onboarding/greeting-played": {
+      "post": {
+        "summary": "Onboarding Greeting Played",
+        "operationId": "onboarding_greeting_played_internal_agent_onboarding_greeting_played_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
     "/internal/agent/turn/start": {
       "post": {
         "summary": "Turn Start",
@@ -721,6 +827,42 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/WeatherInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/agent/voice/ack": {
+      "post": {
+        "summary": "Voice Ack",
+        "operationId": "voice_ack_internal_agent_voice_ack_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceAck"
               }
             }
           },
@@ -1973,6 +2115,257 @@
         ],
         "title": "NavigationActionResult"
       },
+      "OnboardingCapabilitiesResponse": {
+        "properties": {
+          "speaking_pace": {
+            "type": "boolean",
+            "title": "Speaking Pace"
+          },
+          "weather": {
+            "type": "boolean",
+            "title": "Weather",
+            "default": true
+          },
+          "memory": {
+            "type": "boolean",
+            "title": "Memory",
+            "default": true
+          },
+          "wordle": {
+            "type": "boolean",
+            "title": "Wordle",
+            "default": true
+          },
+          "chat": {
+            "type": "boolean",
+            "title": "Chat",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "speaking_pace"
+        ],
+        "title": "OnboardingCapabilitiesResponse"
+      },
+      "OnboardingEventRequest": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Event Id"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "start",
+              "greeting_played",
+              "submit_name",
+              "choose_voice",
+              "acknowledge_voice",
+              "choose_pace",
+              "acknowledge_capabilities",
+              "skip",
+              "suspend",
+              "resume"
+            ],
+            "title": "Type"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "voice_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,100}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voice Id"
+          },
+          "pace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Pace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "type"
+        ],
+        "title": "OnboardingEventRequest"
+      },
+      "OnboardingResponse": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "title": "Schema Version"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/OnboardingStage"
+          },
+          "preferred_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Name"
+          },
+          "selected_voice_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Voice Id"
+          },
+          "selected_pace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Pace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intro_played_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intro Played At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "suspended_from": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OnboardingStage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Event Id"
+          },
+          "greeting": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Greeting"
+          },
+          "voice_application": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "next_call"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voice Application"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/OnboardingCapabilitiesResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schema_version",
+          "revision",
+          "stage",
+          "capabilities"
+        ],
+        "title": "OnboardingResponse"
+      },
+      "OnboardingStage": {
+        "type": "string",
+        "enum": [
+          "not_started",
+          "greeting",
+          "preferred_name",
+          "voice_choice",
+          "awaiting_voice_ack",
+          "speaking_pace",
+          "capability_intro",
+          "completed",
+          "skipped",
+          "suspended"
+        ],
+        "title": "OnboardingStage"
+      },
       "OpenMemoryExplorer": {
         "additionalProperties": false,
         "properties": {
@@ -1985,6 +2378,15 @@
         },
         "title": "OpenMemoryExplorer",
         "type": "object"
+      },
+      "Pace": {
+        "type": "string",
+        "enum": [
+          "slower",
+          "normal",
+          "faster"
+        ],
+        "title": "Pace"
       },
       "PipelineConfig": {
         "properties": {
@@ -2210,6 +2612,16 @@
           "changed": {
             "type": "boolean",
             "title": "Changed"
+          },
+          "voice_control": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VoiceControlState"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -2382,6 +2794,55 @@
         ],
         "title": "ValidationError"
       },
+      "VoiceAck": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "voice_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Voice Id"
+          },
+          "settings_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Settings Revision"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 60
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "voice_id",
+          "settings_revision",
+          "status"
+        ],
+        "title": "VoiceAck"
+      },
       "VoiceCatalog": {
         "properties": {
           "voices": {
@@ -2408,6 +2869,102 @@
           "voices"
         ],
         "title": "VoiceCatalog"
+      },
+      "VoiceControlState": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "active_voice_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Voice Id"
+          },
+          "active_settings_revision": {
+            "type": "integer",
+            "title": "Active Settings Revision"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "voice_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voice Id"
+          },
+          "settings_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings Revision"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "pending",
+              "dispatched",
+              "applied",
+              "failed",
+              "superseded"
+            ],
+            "title": "Status"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "conversation_id",
+          "active_voice_id",
+          "active_settings_revision",
+          "request_id",
+          "voice_id",
+          "settings_revision",
+          "status",
+          "error_code"
+        ],
+        "title": "VoiceControlState"
       },
       "VoiceOption": {
         "properties": {

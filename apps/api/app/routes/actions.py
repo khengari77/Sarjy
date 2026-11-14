@@ -4,12 +4,14 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from sqlalchemy import select
 
 from app.domain.commands import parse_exact_command
 from app.domain.contracts import Action, UserSettings, parse_action
-from app.infrastructure.database import UserSetting
+from app.infrastructure.database import UserSetting, VoiceControl, VoiceSession
 from app.services.actions import dispatch_action, settings_value
 from app.services.context_operations import ContextOperationError
+from app.services.voice_control import VoiceControlError, deliver_control, latest_control, voice_state
 from app.services.voices import VoiceCatalogError
 
 
@@ -42,10 +44,23 @@ class ActionSubmission(BaseModel):
         return self
 
 
+class VoiceControlState(BaseModel):
+    session_id: str
+    conversation_id: str
+    active_voice_id: str | None
+    active_settings_revision: int
+    request_id: str | None
+    voice_id: str | None
+    settings_revision: int | None
+    status: Literal["idle", "pending", "dispatched", "applied", "failed", "superseded"]
+    error_code: str | None
+
+
 class SettingsActionResult(BaseModel):
     kind: Literal["AdjustSpeakingSpeed", "SetSpeakingSpeed", "SelectApprovedVoice", "SetCaptionsVisible"]
     settings: UserSettings
     changed: bool
+    voice_control: VoiceControlState | None = None
 
 
 class NavigationActionResult(BaseModel):
@@ -65,7 +80,7 @@ class UnhandledAction(BaseModel):
 ActionResponse = Annotated[HandledAction | UnhandledAction, Field(discriminator="handled")]
 
 
-def register_action_routes(app, database, identity, owned, catalog):
+def register_action_routes(app, database, identity, owned, catalog, *, config, delivery):
     app.state.action_handlers = {}
 
     @app.get("/v1/settings", response_model=UserSettings)
@@ -94,4 +109,34 @@ def register_action_routes(app, database, identity, owned, catalog):
             )
         except (VoiceCatalogError, ContextOperationError) as exc:
             raise HTTPException(exc.status, detail={"code": exc.code}) from exc
+        state = result.get("voice_control") if isinstance(result, dict) else None
+        if isinstance(state, dict):
+            result = {
+                **result,
+                "voice_control": await _deliver_authorized_control(
+                    db, delivery=delivery, secret=config.agent_service_secret, state=state
+                ),
+            }
         return {"handled": True, "result": result}
+
+    @app.get("/v1/voice/sessions/{session_id}/voice", response_model=VoiceControlState)
+    async def voice_control_state(session_id: str, user=Depends(identity), db=Depends(database)):
+        voice = await db.get(VoiceSession, session_id)
+        if voice is None or voice.owner_id != user.id:
+            raise HTTPException(404, detail={"code": "VOICE_SESSION_NOT_FOUND"})
+        return voice_state(voice, await latest_control(db, voice.id))
+
+
+async def _deliver_authorized_control(db, *, delivery, secret: str, state: dict) -> dict:
+    control = await db.scalar(
+        select(VoiceControl).where(
+            VoiceControl.session_id == state["session_id"],
+            VoiceControl.request_id == state["request_id"],
+        )
+    )
+    if control is None:
+        return state
+    try:
+        return await deliver_control(db, control_id=control.id, delivery=delivery, secret=secret)
+    except VoiceControlError as exc:
+        return {**state, "status": "failed", "error_code": exc.code}

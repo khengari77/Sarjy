@@ -19,6 +19,7 @@ from app.domain.contracts import (
     UserSettings,
     resolve_response_policy,
 )
+from app.domain.onboarding import greeting_for
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
@@ -26,6 +27,7 @@ from app.domain.weather_permissions import decide_weather_request
 from app.infrastructure.database import Conversation, Memory, Turn, UserSetting, VoiceSession
 from app.services.budget import reserve as reserve_development_budget
 from app.services.context_assembly import location_evidence, read_context_inputs
+from app.services.onboarding import OnboardingService, capabilities_for
 from app.services.tool_operations import (
     ToolOperationError,
     claim_tool_operation,
@@ -33,6 +35,7 @@ from app.services.tool_operations import (
     fail_tool_operation,
     unknown_tool_operation,
 )
+from app.services.voice_control import VoiceControlError, apply_ack, session_active_voice
 from app.services.weather import WeatherError, get_current_weather
 
 
@@ -59,6 +62,14 @@ class WeatherInput(BaseModel):
     country: str | None = Field(default=None, max_length=120)
 
 
+class VoiceAck(BaseModel):
+    request_id: str = Field(min_length=1, max_length=100)
+    voice_id: str = Field(min_length=1, max_length=100)
+    settings_revision: int = Field(ge=1)
+    status: Literal["applied", "failed"]
+    error_code: str | None = Field(default=None, max_length=60)
+
+
 def _session_guard(config: Settings):
     async def worker_session(request: Request, db: AsyncSession, allow_ended: bool = False):
         secret = request.headers.get("x-agent-secret", "")
@@ -82,9 +93,10 @@ def _session_guard(config: Settings):
 def register_worker_routes(app, *, config: Settings, database):
     guard = _session_guard(config)
     _register_budget_routes(app, config=config, database=database)
-    _register_session_routes(app, database=database, guard=guard)
+    _register_session_routes(app, config=config, database=database, guard=guard)
     _register_turn_routes(app, database=database, guard=guard)
     _register_tool_routes(app, database=database, guard=guard)
+    _register_voice_control_routes(app, database=database, guard=guard)
 
 
 def _register_budget_routes(app, *, config: Settings, database):
@@ -111,7 +123,7 @@ def _register_budget_routes(app, *, config: Settings, database):
             raise HTTPException(429, detail={"code": str(exc)}) from exc
 
 
-def _register_session_routes(app, *, database, guard):
+def _register_session_routes(app, *, config: Settings, database, guard):
     @app.post("/internal/agent/bootstrap")
     async def bootstrap(request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db)
@@ -128,7 +140,22 @@ def _register_session_routes(app, *, database, guard):
         if not changed.rowcount:
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
         pipeline = normalize_pipeline(voice.pipeline)
-        return {"pipeline": pipeline, "instructions": pipeline_instructions(pipeline), "expires_at": voice.expires_at}
+        progress = await OnboardingService(db, capabilities_for(config)).load(voice.owner_id)
+        await db.commit()
+        return {
+            "pipeline": pipeline,
+            "instructions": pipeline_instructions(pipeline),
+            "expires_at": voice.expires_at,
+            "active_voice_id": session_active_voice(voice),
+            "settings_revision": voice.active_settings_revision or 0,
+            "onboarding_greeting": greeting_for(progress),
+        }
+
+    @app.post("/internal/agent/onboarding/greeting-played", status_code=204)
+    async def onboarding_greeting_played(request: Request, db: AsyncSession = Depends(database)):
+        voice = await guard(request, db)
+        await OnboardingService(db, capabilities_for(config)).mark_greeting_played(voice.owner_id)
+        await db.commit()
 
 
 def _compile_turn_context(
@@ -360,3 +387,23 @@ def _register_tool_routes(app, *, database, guard):
             await db.commit()
             raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"}) from exc
         return result
+
+
+def _register_voice_control_routes(app, *, database, guard):
+    @app.post("/internal/agent/voice/ack")
+    async def voice_ack(body: VoiceAck, request: Request, db: AsyncSession = Depends(database)):
+        # The worker is authenticated by the shared secret plus the exact
+        # session/room bindings; a browser participant cannot reach this.
+        voice = await guard(request, db)
+        try:
+            return await apply_ack(
+                db,
+                voice=voice,
+                request_id=body.request_id,
+                voice_id=body.voice_id,
+                settings_revision=body.settings_revision,
+                status=body.status,
+                error_code=body.error_code,
+            )
+        except VoiceControlError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code}) from exc

@@ -60,6 +60,33 @@ class VoiceSession(Base):
     expires_at: Mapped[str] = mapped_column(String(40))
     pipeline: Mapped[dict] = mapped_column(JSON)
     room_cleanup_completed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Confirmed worker voice; distinct from the user's selected future voice.
+    active_voice_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    active_settings_revision: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+
+
+class VoiceControl(Base):
+    """One server-authorized live voice change for an exact voice session.
+
+    ``settings_revision`` and ``request_id`` fence duplicate, stale and
+    concurrent changes. ``status`` moves pending -> dispatched -> applied or
+    failed; a newer change supersedes anything still in flight.
+    """
+
+    __tablename__ = "voice_controls"
+    __table_args__ = (UniqueConstraint("session_id", "request_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(100))
+    session_id: Mapped[str] = mapped_column(ForeignKey("voice_sessions.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
+    voice_id: Mapped[str] = mapped_column(String(100))
+    settings_revision: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    expires_at: Mapped[str] = mapped_column(String(40), default=now)
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
 
 
 class SessionGate(Base):
@@ -188,6 +215,24 @@ class TurnMetric(Base):
     usage: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class OnboardingRecord(Base):
+    __tablename__ = "onboarding_progress"
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), primary_key=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    stage: Mapped[str] = mapped_column(String(30), default="not_started")
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    preferred_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    selected_voice_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    selected_pace: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    intro_played_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    started_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    completed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    suspended_from: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    last_event_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    applied_events: Mapped[list] = mapped_column(JSON, default=list)
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
 class UserSetting(Base):
     __tablename__ = "user_settings"
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), primary_key=True)
@@ -197,6 +242,52 @@ class UserSetting(Base):
     response_preference: Mapped[str] = mapped_column(String(20), default="automatic")
     revision: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
+class WordlePuzzle(Base):
+    """One stored answer per calendar date.
+
+    A row is inserted as a short-lived claim (``answer`` is null) before the
+    outbound fetch.  The primary key on ``puzzle_date`` plus the claim columns
+    guarantee that concurrent requests make at most one source call.
+    """
+
+    __tablename__ = "wordle_puzzles"
+    puzzle_date: Mapped[str] = mapped_column(String(10), primary_key=True)
+    answer: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    source: Mapped[str] = mapped_column(String(200))
+    fetched_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    claim_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    claim_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_attempt_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class WordleGame(Base):
+    __tablename__ = "wordle_games"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "puzzle_date", name="uq_wordle_games_owner_date"),
+        Index("ix_wordle_games_owner_status", "owner_id", "status"),
+        Index("ix_wordle_games_puzzle_date", "puzzle_date"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"))
+    puzzle_date: Mapped[str] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(20), default="in_progress")
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
+class WordleGuess(Base):
+    __tablename__ = "wordle_guesses"
+    __table_args__ = (UniqueConstraint("game_id", "attempt", name="uq_wordle_guesses_game_attempt"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    game_id: Mapped[str] = mapped_column(ForeignKey("wordle_games.id"), index=True)
+    attempt: Mapped[int] = mapped_column(Integer)
+    word: Mapped[str] = mapped_column(String(5))
+    marks: Mapped[list] = mapped_column(JSON)
+    request_id: Mapped[str] = mapped_column(String(100), unique=True)
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
 
 
 class SettingRevision(Base):

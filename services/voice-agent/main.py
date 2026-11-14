@@ -12,6 +12,7 @@ import httpx
 from app.domain.budget import DEEPSEEK_MAX_REQUEST_BYTES
 from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolItem, ToolSpec
 from app.domain.tool_operations import operation_key
+from app.domain.voice_control import CONTROL_TOPIC
 from config import provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
 from fallback import fallback_decision, next_attempt
@@ -34,6 +35,7 @@ from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from provider_factory import build_providers
 from snapshot_request import snapshot_request
+from voice_switch import VoiceSwitch
 
 server = AgentServer()
 
@@ -107,13 +109,20 @@ async def _playout_result(handle) -> tuple[str, str]:
 
 class SarjyAgent(Agent):
     def __init__(
-        self, backend: httpx.AsyncClient, pipeline: Mapping[str, Any], instructions: str, notify=None, fallback_llm=None
+        self,
+        backend: httpx.AsyncClient,
+        pipeline: Mapping[str, Any],
+        instructions: str,
+        notify=None,
+        fallback_llm=None,
+        voice_switch: VoiceSwitch | None = None,
     ):
         super().__init__(instructions=instructions)
         self.backend = backend
         self.pipeline = pipeline
         self.notify = notify
         self.fallback_llm = fallback_llm
+        self.voice_switch = voice_switch
         self.prepared: dict[str, dict] = {}
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
@@ -146,6 +155,11 @@ class SarjyAgent(Agent):
             response.raise_for_status()
 
     async def tts_node(self, text, model_settings):
+        # Apply an approved change before any text of this utterance is
+        # synthesized. Audio already generated for earlier speech is untouched.
+        if self.voice_switch is not None:
+            await self.voice_switch.apply_pending()
+
         async def budgeted_text():
             buffer = ""
             async for part in text:
@@ -309,6 +323,42 @@ class SarjyAgent(Agent):
         return result.json()
 
 
+def _register_voice_control(room, switch: VoiceSwitch) -> None:
+    @room.on("data_received")
+    def on_data_received(packet: rtc.DataPacket):
+        # Only HMAC-signed server controls for this exact session/room are
+        # queued; participant-forged data is ignored before it reaches TTS.
+        if packet.topic == CONTROL_TOPIC:
+            switch.receive(packet.data)
+
+
+async def speak_onboarding_greeting(backend, session, greeting: str) -> None:
+    """Speak the fixed intro once, inside the ElevenLabs ledger.
+
+    ``session.say`` bypasses the budget-observing ``tts_node``, so reserve the
+    exact character count first.  A failed reservation or TTS attempt leaves
+    ``intro_played_at`` unset and the next connection may retry.
+    """
+
+    reservation = await backend.post(
+        "/internal/development/reserve", json={"provider": "elevenlabs", "characters": len(greeting)}
+    )
+    if reservation.status_code >= 400:
+        return
+    try:
+        handle = session.say(greeting, allow_interruptions=True, add_to_chat_ctx=False)
+        await handle.wait_for_playout()
+    except Exception:
+        return
+    await backend.post("/internal/agent/onboarding/greeting-played")
+
+
+async def maybe_speak_greeting(backend, session, bootstrap: dict) -> None:
+    greeting = bootstrap.get("onboarding_greeting")
+    if greeting:
+        await speak_onboarding_greeting(backend, session, greeting)
+
+
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
     values = read_worker_environment()
@@ -332,8 +382,23 @@ async def entrypoint(ctx: JobContext):
 
         providers = build_providers(config, provider_credentials(values, config["llm"]["provider"]))
         fallback_llm = providers.pop("fallback_llm", None)
+        tts = providers.get("tts")
+        voice_switch = VoiceSwitch(
+            tts=tts,
+            backend=backend,
+            session_id=session_id,
+            room_name=ctx.job.room.name,
+            secret=values["AGENT_SERVICE_SECRET"],
+            active_voice_id=bootstrap.get("active_voice_id") or (config.get("tts") or {}).get("voice_id"),
+            settings_revision=bootstrap.get("settings_revision") or 0,
+        )
         agent = SarjyAgent(
-            backend, config, instructions=bootstrap["instructions"], notify=notify, fallback_llm=fallback_llm
+            backend,
+            config,
+            instructions=bootstrap["instructions"],
+            notify=notify,
+            fallback_llm=fallback_llm,
+            voice_switch=voice_switch,
         )
         session = AgentSession(
             **providers,
@@ -350,6 +415,7 @@ async def entrypoint(ctx: JobContext):
             await session.interrupt()
             return "ok"
 
+        _register_voice_control(ctx.room, voice_switch)
         gone = asyncio.Event()
 
         @ctx.room.on("disconnected")
@@ -379,6 +445,7 @@ async def entrypoint(ctx: JobContext):
         await session.start(
             agent, room=ctx.room, record=False, room_options=room_io.RoomOptions(close_on_disconnect=False)
         )
+        await maybe_speak_greeting(backend, session, bootstrap)
         expiry = datetime.fromisoformat(bootstrap["expires_at"])
         remaining = max(0, (expiry - datetime.now(UTC)).total_seconds())
         try:

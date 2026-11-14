@@ -106,6 +106,38 @@ const FRIENDLY: Record<string, { en: string; ar: string }> = {
     en: 'The usage guard is unavailable, so voice is paused to protect the budget.',
     ar: 'خدمة حد الاستخدام غير متاحة، لذا أُوقف الصوت حمايةً للميزانية.',
   },
+  VOICE_CONTROL_UNAVAILABLE: {
+    en: 'The voice change could not reach this call. The previous voice is still active; try again.',
+    ar: 'تعذّر إيصال تغيير الصوت إلى هذه المكالمة. الصوت السابق ما زال نشطًا؛ أعد المحاولة.',
+  },
+  VOICE_SWITCH_FAILED: {
+    en: 'The voice change failed. The previous voice is still active; try again.',
+    ar: 'فشل تغيير الصوت. الصوت السابق ما زال نشطًا؛ أعد المحاولة.',
+  },
+  VOICE_SWITCH_UNSUPPORTED: {
+    en: 'This voice runtime cannot switch voices mid-call. The change applies to the next call.',
+    ar: 'لا يدعم هذا التشغيل تبديل الصوت أثناء المكالمة. يسري التغيير على المكالمة التالية.',
+  },
+  VOICE_SWITCH_SUPERSEDED: {
+    en: 'A newer voice choice replaced this one. The latest selection is shown.',
+    ar: 'استبدل اختيار أحدث هذا الاختيار. يظهر أحدث تحديد.',
+  },
+  VOICE_SWITCH_EXPIRED: {
+    en: 'The voice change expired before it was applied. The previous voice is still active; try again.',
+    ar: 'انتهت صلاحية تغيير الصوت قبل تطبيقه. الصوت السابق ما زال نشطًا؛ أعد المحاولة.',
+  },
+  VOICE_SESSION_ENDED: {
+    en: 'The call ended before the voice change was applied. Your choice applies to the next call.',
+    ar: 'انتهت المكالمة قبل تطبيق تغيير الصوت. يسري اختيارك على المكالمة التالية.',
+  },
+  SETTINGS_REVISION_CONFLICT: {
+    en: 'Voice settings changed elsewhere. Review the current voice and try again.',
+    ar: 'تغيّرت إعدادات الصوت في مكان آخر. راجع الصوت الحالي وأعد المحاولة.',
+  },
+  VOICE_UNAVAILABLE: {
+    en: 'That voice is not available in the approved catalog. Choose another voice.',
+    ar: 'هذا الصوت غير متاح في القائمة المعتمدة. اختر صوتًا آخر.',
+  },
 };
 
 /** Plain-language copy; never leaks keys, provider names or billing details. */
