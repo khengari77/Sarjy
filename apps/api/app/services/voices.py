@@ -13,6 +13,12 @@ class VoiceOption(BaseModel):
     id: str
     name: str
     languages: tuple[str, ...] = ()
+    # Optional descriptive traits read from the provider's ``labels`` when they
+    # are plain strings. Unknown stays None; no trait is ever inferred.
+    gender: str | None = None
+    accent: str | None = None
+    age: str | None = None
+    description: str | None = None
 
 
 class VoiceCatalog(BaseModel):
@@ -91,6 +97,14 @@ def spoken_voice_language(source: str | None, requested: str, option: VoiceOptio
     return requested
 
 
+def _trait(labels: dict, key: str) -> str | None:
+    value = labels.get(key)
+    if not isinstance(value, str):
+        return None
+    cleaned = " ".join(value.split())[:100].casefold()
+    return cleaned or None
+
+
 def public_catalog(payload: dict) -> VoiceCatalog:
     """Pure projection: never pass through samples, settings, or account metadata."""
     if not isinstance(payload, dict) or not isinstance(payload.get("voices"), list):
@@ -114,7 +128,14 @@ def public_catalog(payload: dict) -> VoiceCatalog:
         label = (voice.get("labels") or {}).get("language")
         if label:
             languages.add(label)
-        voices.append(VoiceOption(id=voice["voice_id"], name=voice["name"], languages=tuple(sorted(languages))))
+        voices.append(
+            VoiceOption(
+                id=voice["voice_id"],
+                name=voice["name"],
+                languages=tuple(sorted(languages)),
+                **{trait: _trait(labels, trait) for trait in ("gender", "accent", "age", "description")},
+            )
+        )
     if not isinstance(payload.get("has_more", False), bool) or (
         payload.get("next_page_token") is not None and not isinstance(payload["next_page_token"], str)
     ):
@@ -174,3 +195,18 @@ class ElevenLabsVoices:
         catalog = await self.list(search=name)
         matches = [voice for voice in catalog.voices if " ".join(voice.name.casefold().split()) == wanted]
         return matches[0] if len(matches) == 1 else None
+
+    async def find_by_trait(self, trait: str, value: str, approved: frozenset[str]) -> VoiceOption | None:
+        """First approved voice whose provider trait equals ``value``; never an unapproved or invented id.
+
+        Approved ids are checked in sorted order so the choice is deterministic.
+        A voice the provider cannot confirm is skipped, not guessed.
+        """
+        for voice_id in sorted(approved):
+            try:
+                voice = await self.require(voice_id)
+            except VoiceCatalogError:
+                continue
+            if getattr(voice, trait, None) == value:
+                return voice
+        return None

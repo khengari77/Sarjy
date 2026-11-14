@@ -28,13 +28,13 @@ export function createThemeSession(onResolved?: (theme: ResolvedTheme) => void) 
   });
 
   /**
-   * Apply an explicit preference (the header's sun/moon buttons) and persist
-   * it. `system` stays reachable by activating the already-selected mode
-   * again; see AppShell's `choose`.
+   * Apply one explicit preference (the header's sun/moon buttons or a voice
+   * command) and persist it. `system` stays reachable by activating the
+   * already-selected mode again; see AppShell's `choose`.
    */
   function set(next: ThemePreference) {
     preference = next;
-    storeTheme(browserStorage(), preference);
+    storeTheme(browserStorage(), next);
     applyTheme(document.documentElement, preference, systemDark);
   }
 
@@ -69,3 +69,8 @@ export function createThemeSession(onResolved?: (theme: ResolvedTheme) => void) 
     start,
   };
 }
+
+export type ThemeSession = ReturnType<typeof createThemeSession>;
+
+/** The one imperative surface a voice theme command is allowed to use. */
+export type ThemeControl = Pick<ThemeSession, 'set'>;
