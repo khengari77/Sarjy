@@ -167,6 +167,7 @@ async def _postgres_migration():
             "memory_write_requests",
             "reviewer_invitations",
             "reviewer_attempt_windows",
+            "reviewer_source_attempt_windows",
             "reviewer_creation_windows",
         ):
             rls = await connection.fetchval("SELECT relrowsecurity FROM pg_class WHERE relname=$1", table)
@@ -193,6 +194,7 @@ async def _postgres_migration():
     assert {row["tablename"] for row in reviewer_tables} == {
         "reviewer_invitations",
         "reviewer_attempt_windows",
+        "reviewer_source_attempt_windows",
         "reviewer_creation_windows",
     }
     assert embedding == "vector(1536)"
