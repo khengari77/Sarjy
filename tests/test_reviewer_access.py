@@ -582,6 +582,7 @@ def test_invitation_call_cap_denies_new_voice_sessions(tmp_path):
         livekit_api_key="key" * 8,
         livekit_api_secret="secret" * 8,
         agent_service_secret="agent-secret" * 4,
+        default_voice_id="test-voice",
     )
 
     class FakeCatalog:
