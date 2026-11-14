@@ -7,6 +7,8 @@
  * for every preference in this slice.
  */
 
+import { THEME_PREFERENCES, type ThemePreference } from '../ui/theme';
+
 export type CommandKind = 'executed' | 'unchanged' | 'needs_confirmation' | 'unsupported' | 'failed' | 'unknown';
 
 export interface SettingsSnapshot {
@@ -23,6 +25,8 @@ export interface CommandResult {
   action: string | null;
   settings: SettingsSnapshot | null;
   navigation: 'history' | 'memory_explorer' | null;
+  /** Browser-local theme hint; never a server setting. */
+  theme: ThemePreference | null;
   changed: boolean;
   spoken: string;
   detail: string | null;
@@ -108,19 +112,30 @@ export function normalizeCommandResult(value: unknown): CommandResult | null {
     return null;
   }
   if (value.settings !== null && value.settings !== undefined && !isSettings(value.settings)) return null;
+  const theme = value.theme;
+  if (theme !== null && theme !== undefined && !THEME_PREFERENCES.includes(theme as ThemePreference)) return null;
   return {
     request_id: value.request_id,
     kind: value.kind as CommandKind,
     action: value.action ?? null,
     settings: isSettings(value.settings) ? value.settings : null,
     navigation: (navigation as CommandResult['navigation']) ?? null,
+    theme: THEME_PREFERENCES.includes(theme as ThemePreference) ? (theme as ThemePreference) : null,
     changed: value.changed,
     spoken: value.spoken,
     detail: typeof value.detail === 'string' ? value.detail : null,
   };
 }
 
-export function createCommandStore(state: CommandState) {
+export interface CommandStoreOptions {
+  /**
+   * Applies a browser-local theme once. The shell's theme session owns storage
+   * and OS resolution; this store only decides *when* it applies.
+   */
+  applyTheme?: (preference: ThemePreference) => void;
+}
+
+export function createCommandStore(state: CommandState, options: CommandStoreOptions = {}) {
   function apply(result: CommandResult): boolean {
     if (state.applied.includes(result.request_id)) return false;
     // A stale settings snapshot must never rewind the authoritative state. The
@@ -128,6 +143,11 @@ export function createCommandStore(state: CommandState) {
     if (result.settings && result.settings.revision < state.settings.revision) return false;
     state.applied.push(result.request_id);
     if (result.settings) state.settings = result.settings;
+    // Theme is presentation-only and only an executed/unchanged hint may touch
+    // the shell. A failed, unsupported or unknown result changes nothing.
+    if (result.theme && (result.kind === 'executed' || result.kind === 'unchanged')) {
+      options.applyTheme?.(result.theme);
+    }
     if (result.navigation === 'history') state.panels.history = true;
     if (result.navigation === 'memory_explorer') {
       state.panels.memory_explorer = true;
@@ -152,6 +172,7 @@ export function createCommandStore(state: CommandState) {
       action,
       settings: null,
       navigation: null,
+      theme: null,
       changed: false,
       spoken: "I couldn't apply that. Nothing was changed.",
       detail,

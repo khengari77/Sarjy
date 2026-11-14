@@ -38,6 +38,7 @@ from app.domain.contracts import (
     SelectApprovedVoice,
     SetCaptionsVisible,
     SetSpeakingSpeed,
+    SetTheme,
     ShowConversationHistory,
     resolve_response_policy,
 )
@@ -157,6 +158,7 @@ ACTION_INTENTS: Final[dict[Intent, frozenset[type]]] = {
         {
             OpenMemoryExplorer,
             SetCaptionsVisible,
+            SetTheme,
         }
     ),
     Intent.MEMORY_SEARCH: frozenset({SearchMemory}),

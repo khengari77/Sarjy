@@ -22,6 +22,7 @@ from app.domain.contracts import (
     SelectApprovedVoice,
     SetCaptionsVisible,
     SetSpeakingSpeed,
+    SetTheme,
     ShowConversationHistory,
     ToolSpec,
     UserSettings,
@@ -162,6 +163,7 @@ def test_every_shared_action_round_trips_through_the_discriminator():
         {"kind": "ShowConversationHistory"},
         {"kind": "OpenMemoryExplorer"},
         {"kind": "SetCaptionsVisible", "visible": False},
+        {"kind": "SetTheme", "theme": "dark"},
         {"kind": "SearchMemory", "query": "trip", "limit": 5},
         {"kind": "ProposeContextExclusion", "query": "trip", "keep": ["budget"]},
         {"kind": "RestoreContextOperation", "operation_id": "operation-1"},
@@ -317,6 +319,8 @@ def test_settings_transforms_do_not_mutate_inputs():
     assert apply_settings_action(settings, SelectApprovedVoice(voice_id="voice-1")).approved_voice_id == "voice-1"
     assert apply_settings_action(settings, OpenMemoryExplorer()) is settings
     assert apply_settings_action(settings, ShowConversationHistory()) is settings
+    # Theme is browser-local: it is never a server setting or a revision bump.
+    assert apply_settings_action(settings, SetTheme(theme="dark")) is settings
     assert apply_settings_action(settings, SearchMemory(query="trip")) is settings
     assert apply_settings_action(settings, AdjustSpeakingSpeed(delta=-0.1)).revision == 1
     assert (
