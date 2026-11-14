@@ -247,18 +247,47 @@ async def _ensure_proposal(db: AsyncSession, *, owner_id: str, conversation_id: 
 
 
 async def _claim_proposal(db: AsyncSession, *, owner_id: str, confirmation_id: str, decision: str) -> bool:
-    """Atomically claim a proposed row; False means it was already decided."""
-    result = await db.execute(
+    """Atomically claim a proposal; terminal rows are never claimable.
+
+    A row already claimed by the same decision may be retried. A different
+    decision may take over only after the claim goes stale.
+    """
+    row = await db.scalar(
+        select(MemoryWriteRequest).where(
+            MemoryWriteRequest.owner_id == owner_id,
+            MemoryWriteRequest.request_key == confirmation_id,
+        )
+    )
+    if row is None:
+        return False
+    if row.state not in {"proposed", "claimed"}:
+        return False
+    result = dict(row.result or {})
+    if row.state == "claimed" and result.get("claimed_decision") != decision:
+        claimed_at = result.get("claimed_at")
+        if not isinstance(claimed_at, str) or not _claim_stale(claimed_at):
+            return False
+    stale = row.updated_at
+    merged = {**result, "claimed_decision": decision, "claimed_at": now()}
+    claimed = await db.execute(
         update(MemoryWriteRequest)
         .where(
             MemoryWriteRequest.owner_id == owner_id,
             MemoryWriteRequest.request_key == confirmation_id,
-            MemoryWriteRequest.state.in_(("proposed", "claimed", "saved", "discarded")),
+            MemoryWriteRequest.state == row.state,
+            MemoryWriteRequest.updated_at == stale,
         )
-        .values(state="claimed", updated_at=now())
+        .values(state="claimed", updated_at=now(), result=merged)
     )
     await db.commit()
-    return result.rowcount == 1
+    return claimed.rowcount == 1
+
+
+def _claim_stale(claimed_at: str) -> bool:
+    try:
+        return (datetime.now(UTC) - datetime.fromisoformat(claimed_at)).total_seconds() > 30
+    except ValueError:
+        return True
 
 
 async def _finish_proposal(
@@ -269,7 +298,7 @@ async def _finish_proposal(
         .where(
             MemoryWriteRequest.owner_id == owner_id,
             MemoryWriteRequest.request_key == confirmation_id,
-            MemoryWriteRequest.state.in_(("proposed", "claimed", "saved", "discarded")),
+            MemoryWriteRequest.state == "claimed",
         )
         .values(
             state=state,
@@ -312,10 +341,6 @@ async def _resolved_proposal_response(
     """Replay a matching terminal decision, otherwise refuse a resolved proposal."""
     _, state = await load_proposal(db, owner_id=owner_id, confirmation_id=confirmation_id)
     if state not in {"saved", "discarded"}:
-        return None
-    if await _decision(db, confirmation_id, revision, owner_id) is None:
-        # A deliberately removed decision receipt may be rebuilt by the normal
-        # recovery path; the proposal state alone is not a receipt.
         return None
     row = await db.scalar(
         select(MemoryWriteRequest).where(
