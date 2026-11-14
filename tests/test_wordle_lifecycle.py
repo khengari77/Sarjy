@@ -9,14 +9,19 @@ from app.main import _shutdown, _stop_refresh_task
 from pydantic import ValidationError
 
 
-def test_invalid_wordle_timezone_fails_configuration():
-    with pytest.raises(ValidationError):
+def test_invalid_wordle_timezone_fails_configuration_when_enabled():
+    with pytest.raises(ValidationError, match="WORDLE_TIMEZONE_INVALID"):
         Settings(_env_file=None, wordle_enabled=True, wordle_timezone="Not/AZone")
 
 
-def test_disabled_wordle_never_blocks_boot_on_the_zone():
-    assert Settings(_env_file=None, wordle_enabled=False, wordle_timezone="Not/AZone").wordle_timezone == "Not/AZone"
-    assert Settings(_env_file=None, wordle_enabled=False, wordle_timezone="").wordle_timezone == ""
+def test_disabled_wordle_boots_with_an_invalid_zone():
+    settings = Settings(_env_file=None, wordle_enabled=False, wordle_timezone="Not/AZone")
+    assert settings.wordle_timezone == "Not/AZone"
+
+
+def test_disabled_wordle_boots_with_an_empty_zone():
+    settings = Settings(_env_file=None, wordle_enabled=False, wordle_timezone="")
+    assert settings.wordle_timezone == ""
 
 
 def test_shutdown_disposes_even_when_the_refresh_task_already_failed():
