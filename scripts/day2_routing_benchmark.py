@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import importlib.util
 import json
+import math
 import statistics
 import sys
 import time
@@ -51,6 +52,7 @@ from app.domain.contracts import (  # noqa: E402
 )
 from app.domain.routing import (  # noqa: E402
     JEV_MODEL,
+    ROUTING_POLICY_VERSION,
     RoutingOutcome,
     authorize_automatic_action,
     build_classification_state,
@@ -67,12 +69,15 @@ from app.services.action_extraction import (  # noqa: E402
 from app.services.jev import JevClient  # noqa: E402
 
 CASES_PATH = ROOT / "tests/fixtures/day2_routing_cases.json"
+OFFLINE_SCRIPT_PATH = ROOT / "tests/fixtures/day2_routing_offline_responses.json"
 DEFAULT_SCRIPTED_CACHE_PATH = ROOT / "artifacts/day2-routing-benchmark/cache-scripted.json"
 DEFAULT_LIVE_CACHE_PATH = ROOT / "artifacts/day2-routing-benchmark/cache-live.json"
+DEFAULT_OFFLINE_GATE_CACHE_PATH = ROOT / "artifacts/day2-routing-benchmark/cache-offline-gate.json"
 DEFAULT_REPORT_PATH = ROOT / "artifacts/day2-routing-benchmark/report.json"
 CACHE_SCHEMA_VERSION = 3
 GATE_INTENT_AGREEMENT = 0.90
 GATE_MAX_MEDIAN_OVERHEAD_MS = 250.0
+GATE_MAX_P95_LATENCY_MS = 250.0
 HOLDOUT_SIZE = 16
 TUNING_SIZE = 8
 ALL_INTENTS = {intent.value for intent in Intent}
@@ -763,6 +768,17 @@ def _median(values: Sequence[float]) -> float | None:
     return round(float(statistics.median(values)), 3) if values else None
 
 
+def _percentile(values: Sequence[float], percentile: float) -> float | None:
+    """Nearest-rank percentile, inclusive, for small labelled samples."""
+    if not values:
+        return None
+    if not 0 < percentile <= 1:
+        raise ValueError("percentile must be in (0, 1]")
+    ordered = sorted(values)
+    index = max(0, math.ceil(percentile * len(ordered)) - 1)
+    return round(float(ordered[index]), 3)
+
+
 def _cost(price: Price | None, input_tokens: int, output_tokens: int) -> float | None:
     if price is None:
         return None
@@ -830,6 +846,8 @@ def aggregate_results(
             "estimated_cost_usd": estimated_cost,
             "raw_latency_ms": [round(result.elapsed_ms, 3) for result in entries],
             "median_latency_ms": _median(latencies),
+            "p95_latency_ms": _percentile(latencies, 0.95),
+            "max_latency_ms": round(max(latencies), 3) if latencies else None,
             "failures": [
                 {"case_id": result.case_id, "error": result.error} for result in entries if result.error is not None
             ],
@@ -904,6 +922,113 @@ def holdout_gate(
 
 
 CASE_RESULT_FIELDS = {item.name for item in fields(CaseResult)}
+
+
+def outcome_agreement(case: Case, result: CaseResult) -> bool:
+    """Whether a result matches the labelled decision/clarification outcome.
+
+    A no-effect case must produce no executable action and no authorization.  An
+    expected action must match its kind, arguments and resulting effect and must
+    be authorized.  Clarification is therefore safe by construction: any action
+    on a no-effect case is a failure.
+    """
+    if case.expected_action_kind is None:
+        return result.action is None and not result.authorized
+    if not result.authorized or not isinstance(result.action, Mapping):
+        return False
+    if result.action.get("kind") != case.expected_action_kind:
+        return False
+    return evaluate_result(case, result)["effect_match"] is True
+
+
+def offline_gate(
+    cases: Sequence[Case],
+    results: Sequence[CaseResult],
+    *,
+    mode: str = "offline_scripted",
+    router_id: str = "jev_assisted",
+    agreement_threshold: float = GATE_INTENT_AGREEMENT,
+    max_p95_latency_ms: float = GATE_MAX_P95_LATENCY_MS,
+) -> dict[str, Any]:
+    """The issue #13 offline gate record over every labelled case.
+
+    This gate is deliberately separate from ``holdout_gate``: an offline replay
+    proves the harness, validators, safety outcomes and latency bound, but it can
+    never authorize automatic routing.  A live run is still required for that.
+    """
+    by_id = {case.id: case for case in cases}
+    selected = {
+        result.case_id: result for result in results if result.router_id == router_id and result.case_id in by_id
+    }
+    measured = len(selected)
+    outcomes = [outcome_agreement(by_id[case_id], result) for case_id, result in selected.items()]
+    agreement = round(sum(outcomes) / len(cases), 6) if cases else 0.0
+    holdout = [case for case in cases if case.split == "holdout"]
+    holdout_matches = sum(outcome_agreement(case, selected[case.id]) for case in holdout if case.id in selected)
+    holdout_agreement = round(holdout_matches / len(holdout), 6) if holdout else None
+    latencies = [selected[case.id].elapsed_ms for case in cases if case.id in selected]
+    p95 = _percentile(latencies, 0.95)
+    evaluations = {
+        case_id: evaluate_result(by_id[case_id], result) for case_id, result in selected.items() if case_id in by_id
+    }
+    unsafe_effects = sum(item["unsafe_authorization"] for item in evaluations.values())
+    unsafe_proposals = sum(item["unsafe_proposal"] for item in evaluations.values())
+    no_effect_actions = sum(
+        result.action is not None for case_id, result in selected.items() if by_id[case_id].expected_action_kind is None
+    )
+    clarification_cases = [case for case in cases if case.expected_action_kind is None]
+    clarification_matches = sum(
+        outcome_agreement(case, selected[case.id]) for case in clarification_cases if case.id in selected
+    )
+    reasons: list[str] = []
+    if mode not in {"offline", "offline_scripted"}:
+        reasons.append("NOT_OFFLINE")
+    if measured != len(cases):
+        reasons.append(f"INCOMPLETE_CASES:{measured}/{len(cases)}")
+    if agreement < agreement_threshold:
+        reasons.append("OUTCOME_AGREEMENT_BELOW_90_PERCENT")
+    if unsafe_effects != 0:
+        reasons.append("UNSAFE_AUTHORIZATION")
+    if no_effect_actions != 0:
+        reasons.append("NO_EFFECT_CASE_PRODUCED_ACTION")
+    if p95 is None:
+        reasons.append("NO_LATENCY_SAMPLES")
+    elif p95 > max_p95_latency_ms:
+        reasons.append("P95_LATENCY_ABOVE_250MS")
+    return {
+        "schema_version": 1,
+        "mode": mode,
+        "router_id": router_id,
+        "pinned": {
+            "classification_model": JEV_MODEL,
+            "extraction_model": EXTRACTION_MODEL,
+            "routing_policy_version": ROUTING_POLICY_VERSION,
+        },
+        "sample_size": len(cases),
+        "measured_cases": measured,
+        "outcome_agreement": agreement,
+        "agreement_threshold": agreement_threshold,
+        "holdout_sample_size": len(holdout),
+        "holdout_outcome_agreement": holdout_agreement,
+        "clarification_cases": len(clarification_cases),
+        "clarification_agreement": round(clarification_matches / len(clarification_cases), 6)
+        if clarification_cases
+        else None,
+        "unsafe_effect_count": unsafe_effects,
+        "unsafe_proposal_count": unsafe_proposals,
+        "no_effect_executable_action_count": no_effect_actions,
+        "latency": {
+            "samples_ms": [round(value, 3) for value in latencies],
+            "median_ms": _median(latencies),
+            "p95_ms": p95,
+            "max_ms": round(max(latencies), 3) if latencies else None,
+            "max_p95_ms": max_p95_latency_ms,
+        },
+        "passed": not reasons,
+        "reasons": reasons,
+        "automatic_routing_enabled": False,
+        "enablement": "BLOCKED_UNTIL_REVIEWED_LIVE_GATE",
+    }
 
 
 def _case_result_from_cache(entry: Mapping[str, Any]) -> CaseResult:
@@ -1020,6 +1145,32 @@ def build_report(
     }
 
 
+def offline_gate_report(
+    fixture: Fixture,
+    results: Sequence[CaseResult],
+    *,
+    script_path: Path,
+    prices: Mapping[str, Price] | None = None,
+) -> dict[str, Any]:
+    """Combine the scripted harness report with the offline #13 gate record."""
+    base = build_report(fixture, results, mode="scripted", prices=prices)
+    gate = offline_gate(fixture.cases, results, mode="offline_scripted")
+    return {
+        **base,
+        "mode": "offline_scripted",
+        "offline_gate": gate,
+        "live_holdout_gate": base["holdout_gate"],
+        "offline_replay_fixture": str(script_path.relative_to(ROOT)),
+        "automatic_routing_enabled": False,
+        "limitations": [
+            "Offline replay validates the harness, validators, safety outcomes and latency bound only.",
+            "It is not model-quality evidence and cannot authorize automatic routing.",
+            "A reviewed live run against the pinned provider still has to pass the holdout gate.",
+            "No provider request, paid call or spending reservation was made by this mode.",
+        ],
+    }
+
+
 def dry_run_report(fixture: Fixture) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -1102,8 +1253,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="validate fixtures only (default)")
     mode.add_argument("--scripted", type=Path, help="replay recorded responses from this JSON file")
+    mode.add_argument("--offline-gate", action="store_true", help="replay the committed offline gate fixture")
     mode.add_argument("--live", action="store_true", help="explicitly allow provider calls")
     parser.add_argument("--cases", type=Path, default=CASES_PATH)
+    parser.add_argument("--offline-script", type=Path, default=OFFLINE_SCRIPT_PATH)
     parser.add_argument("--cache", type=Path)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--live-module", type=Path, help="module exposing build_routers(fixture, cache)")
@@ -1118,6 +1271,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.live and args.live_module is None:
         raise SystemExit("--live requires --live-module; no unreviewed live adapter is built in")
+    if args.offline_gate:
+        script = load_script(args.offline_script)
+        cache = ResultCache(args.cache or DEFAULT_OFFLINE_GATE_CACHE_PATH, "scripted")
+        generation = extraction_generation_config(
+            input_usd_per_million=args.direct_input_price,
+            output_usd_per_million=args.direct_output_price,
+        )
+        routers = scripted_routers(fixture, script, generation)
+        results, _ = asyncio.run(run_benchmark(fixture, routers, cache, mode="scripted"))
+        report = offline_gate_report(fixture, results, script_path=args.offline_script)
+        text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+        print(text)
+        if args.report:
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text(text + "\n")
+        return 0 if report["offline_gate"]["passed"] else 1
     if args.scripted is None and not args.live:
         report = dry_run_report(fixture)
         text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
