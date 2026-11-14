@@ -1,9 +1,18 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
-import { accessFailures, issueSession, protectedMode, redeem, sessionIsValid } from '../lib/auth/guard.server';
+import {
+  accessFailures,
+  issueSession,
+  protectedMode,
+  redeem,
+  reviewerMode,
+  reviewerSessionPresent,
+  sessionIsValid,
+} from '../lib/auth/guard.server';
 import { tokenKey } from '../lib/auth/access-state';
 import { failureKey } from '../lib/auth/rate-limit';
 import { safeNextPath } from '../lib/auth/redirect';
+import { isReviewerPublicPath } from '../lib/auth/reviewer';
 
 /**
  * The gate lives in the root layout so both the entry page and every app page
@@ -13,6 +22,14 @@ import { safeNextPath } from '../lib/auth/redirect';
  */
 export const load: LayoutServerLoad = async ({ request, url, cookies, getClientAddress, setHeaders }) => {
   if (!protectedMode) return { entry: false, error: false, blocked: false, next: '/', protectedMode };
+
+  // Reviewer mode must render its own landing page and must not hide the app
+  // shell from a browser that already holds a reviewer cookie. The API still
+  // authorises every data request; the web edge only declines to show the
+  // shared-token door.
+  if (reviewerMode && (isReviewerPublicPath(url.pathname) || reviewerSessionPresent(cookies))) {
+    return { entry: false, error: false, blocked: false, next: '/', protectedMode };
+  }
 
   const next = safeNextPath(url.searchParams.get('next'));
   const token = url.searchParams.get('token');

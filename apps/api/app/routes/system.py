@@ -6,7 +6,9 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -14,17 +16,18 @@ from app.dependencies import COOKIE
 from app.domain.pipeline import KEYS, PRESET, PipelineConfig, validate_pipeline
 from app.infrastructure.database import Conversation, Identity, ToolCall, Turn
 from app.services.pipeline_settings import configured_keys, default_llm
+from app.services.reviewer_access import ReviewerAccessDenied, ReviewerSessionRequired, authorize
 from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogError
 from app.services.weather import WeatherError, get_current_weather
 
 
-def register_system_routes(app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, owned):
-    _register_identity_routes(app, config=config, database=database)
+def register_system_routes(app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, owned, clock):
+    _register_identity_routes(app, config=config, database=database, clock=clock)
     _register_conversation_routes(app, database=database, identity=identity, owned=owned)
     _register_catalog_routes(app, config=config, catalog=catalog, identity=identity)
 
 
-def _register_identity_routes(app, *, config: Settings, database):
+def _register_identity_routes(app, *, config: Settings, database, clock):
     @app.get("/healthz")
     def health():
         return {"status": "ok"}
@@ -32,6 +35,18 @@ def _register_identity_routes(app, *, config: Settings, database):
     @app.post("/v1/demo-session")
     async def demo(request: Request, response: Response, db: AsyncSession = Depends(database)):
         token = request.cookies.get(COOKIE, "")
+        if config.reviewer_access_enabled:
+            # Compatibility initialization may echo an existing reviewer
+            # identity but never creates or renews one.
+            try:
+                user = await authorize(db, token, clock())
+            except ReviewerSessionRequired:
+                raise HTTPException(401, detail={"code": "REVIEWER_SESSION_REQUIRED"}) from None
+            except ReviewerAccessDenied:
+                raise HTTPException(403, detail={"code": "REVIEWER_ACCESS_DENIED"}) from None
+            except SQLAlchemyError:
+                raise HTTPException(503, detail={"code": "REVIEWER_UNAVAILABLE"}) from None
+            return JSONResponse({"id": user.id}, headers={"Cache-Control": "no-store"})
         existing = await db.scalar(
             select(Identity).where(Identity.token_hash == hashlib.sha256(token.encode()).hexdigest())
         )

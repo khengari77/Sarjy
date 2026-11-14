@@ -22,7 +22,7 @@ test('a fact saved while the panel was hidden appears when the tab is reopened',
   await expect(panel).toContainText('No saved facts yet.');
 
   // Hide the tab, then let a save land server-side (a voice turn finalising).
-  await page.locator('#shell-right').getByRole('tab', { name: 'Voice' }).click();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).click();
   calls.setFacts([FACTS[0]]);
 
   // Reopening the tab refreshes the stale list without a conversation switch.
