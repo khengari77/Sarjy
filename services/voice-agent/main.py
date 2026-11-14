@@ -306,7 +306,12 @@ class SarjyAgent(Agent):
         request = context.get("model_request") if isinstance(context, Mapping) else None
         settings = request.get("settings") if isinstance(request, Mapping) else None
         speed = settings.get("speaking_speed") if isinstance(settings, Mapping) else None
-        tts = getattr(self.session, "tts", None)
+        try:
+            session = self.session
+        except RuntimeError:
+            # Unit callers may compile outside a running session; nothing to configure.
+            return
+        tts = getattr(session, "tts", None)
         if tts is not None:
             apply_speaking_speed(tts, speed)
 
