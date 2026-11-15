@@ -17,19 +17,19 @@ from app.domain.memory_capture import clean_tool_query, parse_tool_fact
 from app.infrastructure.database import Memory
 from app.services.context_operations import MemorySearcher, keyword_search
 from app.services.memory_capture import proposal_for_capture, record_proposal
-from app.services.voice_exclusions import discard_pending, propose_exclusion
+from app.services.voice_exclusions import discard_pending, hide_target
 
 RECALL_LIMIT = 5
 RECALL_SNIPPET_CHARS = 200
-EXCLUSION_PROPOSED = "MEMORY_EXCLUSION_PROPOSED"
+MEMORY_HIDDEN = "MEMORY_HIDDEN"
 
 NOT_SAVED_NOTE = (
     "Nothing has been saved yet. The application will now ask the user to confirm; "
     "do not say or imply it is saved, and do not add your own question."
 )
-NOT_EXCLUDED_NOTE = (
-    "Nothing has been excluded or changed. The application will speak the exact question to the user; "
-    "do not say or imply anything was forgotten, and do not add your own question."
+FORGET_NOTE = (
+    "The application handles this and will speak the exact line to the user (a hidden memory can be brought "
+    "back with undo). Do not add your own confirmation or question."
 )
 
 
@@ -77,7 +77,6 @@ async def memory_forget_tool(
     conversation_id: str,
     request_id: str,
     query: str,
-    secret: str,
     search: MemorySearcher = keyword_search,
 ) -> dict:
     cleaned = clean_tool_query(query)
@@ -87,22 +86,20 @@ async def memory_forget_tool(
             "error": "MEMORY_QUERY_INVALID",
             "message": "Nothing was changed. Ask the user what they want forgotten.",
         }
-    result = await propose_exclusion(
+    result = await hide_target(
         db,
         owner_id=owner_id,
         conversation_id=conversation_id,
         target=cleaned,
         request_id=request_id,
-        secret=secret,
         search=search,
     )
-    armed = result.kind is CommandKind.NEEDS_CONFIRMATION and result.detail == EXCLUSION_PROPOSED
+    hidden = result.kind is CommandKind.EXECUTED and result.detail == MEMORY_HIDDEN
     return {
-        "status": "proposed" if armed else "not_proposed",
+        "status": "hidden" if hidden else "not_hidden",
         "detail": result.detail,
         "spoken": result.spoken,
-        "armed": armed,
-        "message": NOT_EXCLUDED_NOTE,
+        "message": FORGET_NOTE,
     }
 
 

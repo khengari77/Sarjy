@@ -533,6 +533,7 @@ class MemoryService:
         limit: int = 50,
         offset: int = 0,
         conversation_id: str | None = None,
+        status: str | None = None,
     ) -> MemoryListPage:
         """Owner-scoped stored-fact page; never scans another owner's rows.
 
@@ -549,12 +550,16 @@ class MemoryService:
         async with self.sessions() as db:
             if conversation_id is not None:
                 await owned_conversation(db, owner_id, conversation_id)
-            total = await db.scalar(select(func.count()).select_from(Memory).where(Memory.owner_id == owner_id))
+            # Deleted tombstones never surface; ``status`` narrows to e.g. hidden memories.
+            visible = (Memory.owner_id == owner_id, Memory.status != "deleted")
+            if status is not None:
+                visible = (*visible, Memory.status == status)
+            total = await db.scalar(select(func.count()).select_from(Memory).where(*visible))
             rows = list(
                 (
                     await db.scalars(
                         select(Memory)
-                        .where(Memory.owner_id == owner_id)
+                        .where(*visible)
                         .order_by(Memory.updated_at.desc(), Memory.id.desc())
                         .offset(offset)
                         .limit(limit + 1)

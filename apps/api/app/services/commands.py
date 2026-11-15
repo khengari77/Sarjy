@@ -20,6 +20,7 @@ from app.domain.commands import (
     failed_result,
     memory_request_is_global,
     memory_restore_requested,
+    memory_undo_requested,
     parse_exact_command,
     parse_exclusion_confirmation,
     parse_memory_exclusion_target,
@@ -51,9 +52,10 @@ from app.services.jev_ui import UiClassifier
 from app.services.voice_exclusions import (
     discard_pending,
     global_retraction_refusal,
-    propose_exclusion,
+    hide_target,
     propose_restore,
     resolve_confirmation,
+    undo_last_hide,
 )
 from app.services.voices import VoiceCatalogError
 
@@ -270,17 +272,21 @@ async def _handle_memory_mutation(
             ),
             request_id=request_id,
         )
+    if memory_undo_requested(text):
+        return await _run_memory_command(
+            undo_last_hide(db, owner_id=owner_id, conversation_id=conversation_id, request_id=request_id),
+            request_id=request_id,
+        )
     target = parse_memory_exclusion_target(text)
     if target is None:
         return None
     return await _run_memory_command(
-        propose_exclusion(
+        hide_target(
             db,
             owner_id=owner_id,
             conversation_id=conversation_id,
             target=target,
             request_id=request_id,
-            secret=secret,
             search=search,
         ),
         request_id=request_id,

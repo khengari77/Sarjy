@@ -698,7 +698,6 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
                 conversation_id=conversation_id,
                 request_id=body.request_id,
                 query=body.query,
-                secret=secret,
             )
 
         return await _run_memory_tool(guard, db, request, body, "memory_forget", {"query": body.query}, effect)

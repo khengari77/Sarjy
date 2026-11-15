@@ -791,7 +791,7 @@ class SarjyAgent(Agent):
             isinstance(spoken, str)
             and spoken
             and "error" not in body
-            and body.get("status") in {"proposed", "not_proposed"}
+            and body.get("status") in {"hidden", "not_hidden"}
         ):
             # A forget request retires any remember proposal; only one may be armed.
             self._disarm_memory_proposal()

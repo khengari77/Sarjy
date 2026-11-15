@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
 
+from fastapi import HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +31,7 @@ from app.services.context_operations import (
     keyword_search,
     undo_operation,
 )
+from app.services.memory_visibility import HIDE_OPERATION, UNHIDE_OPERATION, hide_memory, unhide_memory
 
 EXCLUDE_PROPOSAL = "exclude_proposal"
 RESTORE_PROPOSAL = "restore_proposal"
@@ -330,6 +332,144 @@ async def propose_exclusion(
     return response
 
 
+async def _record_operation(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    command_type: str,
+    request_id: str,
+    payload: dict,
+    outcome: str,
+) -> None:
+    conversation = await owned_conversation(db, owner_id, conversation_id)
+    db.add(
+        ContextOperation(
+            id=str(uuid4()),
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            command_type=command_type,
+            payload=payload,
+            revision_before=conversation.revision,
+            revision_after=None,
+            idempotency_key=_request_key(owner_id, conversation_id, command_type, request_id),
+            outcome=outcome,
+            created_at=now(),
+        )
+    )
+
+
+async def hide_target(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    target: str,
+    request_id: str,
+    search: MemorySearcher = keyword_search,
+) -> CommandResult:
+    """One-step, reversible, memory-level hide when exactly one memory matches.
+
+    Zero matches and several matches change nothing (never hide "all"). A hide
+    needs no confirmation; the spoken line tells the user how to undo it.
+    """
+    replay = await _replay_proposal(
+        db, owner_id=owner_id, conversation_id=conversation_id, command_type=HIDE_OPERATION, request_id=request_id
+    )
+    if replay is not None:
+        return replay
+    # A legacy pending proposal never survives a new memory request.
+    await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
+    candidates = tuple(
+        await search(db, owner_id=owner_id, conversation_id=conversation_id, query=target, limit=MATCH_LIMIT)
+    )
+    if not candidates:
+        return _unchanged(
+            request_id,
+            "MEMORY_TARGET_NOT_FOUND",
+            f"I couldn't find anything matching {_snippet(target, 100)}; nothing was changed.",
+        )
+    if len(candidates) > 1:
+        return _needs_confirmation(request_id, "MEMORY_TARGET_AMBIGUOUS", _ambiguity_spoken(candidates))
+    candidate = candidates[0]
+    try:
+        await hide_memory(db, owner_id, candidate.id)
+    except HTTPException as exc:
+        await db.rollback()
+        code = exc.detail.get("code") if isinstance(exc.detail, dict) else "MEMORY_NOT_AVAILABLE"
+        return _unchanged(request_id, str(code), "I couldn't hide that. Nothing was changed.")
+    response = _applied(
+        request_id,
+        "MEMORY_HIDDEN",
+        f"Hidden '{_snippet(candidate.content, 80)}'. Say undo to bring it back.",
+        candidate.id,
+    )
+    await _record_operation(
+        db,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        command_type=HIDE_OPERATION,
+        request_id=request_id,
+        payload={"memory_id": candidate.id, "response": response.model_dump(mode="json")},
+        outcome="applied",
+    )
+    await db.commit()
+    return response
+
+
+UNDO_SCAN_LIMIT = 10
+
+
+async def undo_last_hide(db: AsyncSession, *, owner_id: str, conversation_id: str, request_id: str) -> CommandResult:
+    """Unhide the owner's most recent hide (any conversation); one step, no consent."""
+    replay = await _replay_proposal(
+        db, owner_id=owner_id, conversation_id=conversation_id, command_type=UNHIDE_OPERATION, request_id=request_id
+    )
+    if replay is not None:
+        return replay
+    await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
+    operations = (
+        await db.scalars(
+            select(ContextOperation)
+            .where(
+                ContextOperation.owner_id == owner_id,
+                ContextOperation.command_type == HIDE_OPERATION,
+                ContextOperation.outcome == "applied",
+            )
+            .order_by(ContextOperation.created_at.desc(), ContextOperation.id.desc())
+            .limit(UNDO_SCAN_LIMIT)
+        )
+    ).all()
+    for operation in operations:
+        memory_id = (operation.payload or {}).get("memory_id")
+        if not isinstance(memory_id, str):
+            continue
+        try:
+            result = await unhide_memory(db, owner_id, memory_id)
+        except HTTPException:
+            await db.rollback()
+            continue
+        content = await db.scalar(select(Memory.content).where(Memory.id == memory_id, Memory.owner_id == owner_id))
+        operation.outcome = "undone"
+        response = (
+            _applied(request_id, "MEMORY_UNHIDDEN", f"Brought back '{_snippet(content or '', 80)}'.", memory_id)
+            if result.changed
+            else _unchanged(request_id, "MEMORY_ALREADY_VISIBLE", "That memory is already visible.")
+        )
+        await _record_operation(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            command_type=UNHIDE_OPERATION,
+            request_id=request_id,
+            payload={"memory_id": memory_id, "response": response.model_dump(mode="json")},
+            outcome="applied",
+        )
+        await db.commit()
+        return response
+    return _unchanged(request_id, "NO_HIDDEN_MEMORY", "There is nothing to undo.")
+
+
 async def _latest_active_exclusion(
     db: AsyncSession, *, owner_id: str, conversation_id: str
 ) -> tuple[ContextOperation, tuple[str, ...]] | None:
@@ -618,7 +758,9 @@ def global_retraction_refusal(request_id: str) -> CommandResult:
 
 __all__ = [
     "global_retraction_refusal",
+    "hide_target",
     "propose_exclusion",
     "propose_restore",
     "resolve_confirmation",
+    "undo_last_hide",
 ]
