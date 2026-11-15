@@ -37,7 +37,7 @@ export interface PanelState {
   memory_explorer: boolean;
 }
 
-export type RightTab = 'memories' | 'controls' | 'context' | 'transcript';
+export type RightTab = 'memories' | 'controls' | 'transcript';
 
 export interface CommandState {
   settings: SettingsSnapshot;
