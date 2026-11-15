@@ -40,5 +40,7 @@ export interface WordleGamePort {
   close(): void;
   ensureLoaded(): Promise<void>;
   load(): Promise<void>;
+  /** Re-read the server game in place (no loading flash) and reveal any new row. */
+  refresh(): Promise<void>;
   guessWord(word: string, requestId: string): Promise<GuessOutcome>;
 }

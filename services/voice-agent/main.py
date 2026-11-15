@@ -38,6 +38,7 @@ from livekit.plugins import silero
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
 from wordle_commands import is_wordle_command, parse_say_payload
+from wordle_tools import WordleTools, publish_wordle
 
 server = AgentServer()
 
@@ -206,7 +207,7 @@ async def _playout_result(handle) -> tuple[str, str]:
     return text, status
 
 
-class SarjyAgent(Agent):
+class SarjyAgent(WordleTools, Agent):
     def __init__(
         self,
         backend: httpx.AsyncClient,
@@ -216,8 +217,10 @@ class SarjyAgent(Agent):
         fallback_llm=None,
         publish=None,
         is_command=None,
+        publish_wordle=None,
     ):
         super().__init__(instructions=instructions)
+        self.publish_wordle = publish_wordle
         self.backend = backend
         self.pipeline = pipeline
         self.notify = notify
@@ -923,6 +926,7 @@ async def entrypoint(ctx: JobContext):
             notify=notify,
             fallback_llm=fallback_llm,
             publish=partial(publish_command, ctx.room),
+            publish_wordle=partial(publish_wordle, ctx.room),
             is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending, wordle_active=reveal.active),
         )
         session = AgentSession(

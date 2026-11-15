@@ -220,6 +220,23 @@ export function createWordleGame(options: WordleGameOptions = {}): WordleGame {
     return inflight;
   }
 
+  /** In-place sync after a model tool changed the server game: keeps the board mounted and animates new rows. */
+  async function refresh(): Promise<void> {
+    if (!state.loaded) return load();
+    if (state.busy) return;
+    const token = loadToken;
+    try {
+      const today = await client.today();
+      if (token !== loadToken) return;
+      const before = state.guesses.length;
+      applyToday(state, today);
+      if (state.guesses.length > before) state.revealedRow = state.guesses.length - 1;
+      if (state.view === 'won' || state.view === 'lost') void loadStats(token);
+    } catch {
+      // Keep the board the player already sees; the next event retries.
+    }
+  }
+
   /** Load once; a stage mount and a voice "play" share the same request. */
   function ensureLoaded(): Promise<void> {
     if (state.loaded && !inflight) return Promise.resolve();
@@ -252,6 +269,7 @@ export function createWordleGame(options: WordleGameOptions = {}): WordleGame {
       state.open = false;
     },
     load,
+    refresh,
     ensureLoaded,
     guessWord: actions.guessWord,
     pressKey,

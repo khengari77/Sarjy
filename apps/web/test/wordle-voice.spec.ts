@@ -251,7 +251,12 @@ test('sends the exact command reply through the voice runtime say RPC', async ({
   await voice.finalize({ text: 'reveal the answer', segmentId: 's3', epoch: 1 });
   await voice.finalize({ text: 'no', segmentId: 's4', epoch: 1 });
   await expect
-    .poll(() => page.evaluate(() => (window as unknown as { __sarjyControl: unknown[] }).__sarjyControl))
+    .poll(async () => {
+      const events = await page.evaluate(
+        () => (window as unknown as { __sarjyControl: { type: string }[] }).__sarjyControl,
+      );
+      return events.filter((event) => event.type === 'wordle.reveal_pending');
+    })
     .toEqual([
       { type: 'wordle.reveal_pending', value: true },
       { type: 'wordle.reveal_pending', value: false },

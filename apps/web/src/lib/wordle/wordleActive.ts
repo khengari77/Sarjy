@@ -1,4 +1,5 @@
 import type { VoiceEvent } from '../audio/voice-runtime';
+import type { WordleGamePort } from './wordleGamePort';
 
 /**
  * Keeps the worker's `wordle.active` flag in step with the open game. The room
@@ -15,4 +16,22 @@ export function createActiveSync(send: (event: Record<string, unknown>) => Promi
       if (event.type === 'status' && event.text !== 'disconnected' && event.text !== 'reconnecting') publish();
     },
   };
+}
+
+/**
+ * The model's Wordle tools changed the server game: show the popup (opening it
+ * if needed) and re-read the authoritative board in place, exactly as if the
+ * player had typed the guess.
+ */
+export function applyWordleToolEvent(
+  game: Pick<WordleGamePort, 'open' | 'close' | 'refresh' | 'state'>,
+  event: VoiceEvent,
+): void {
+  if (event.type !== 'wordle') return;
+  if (event.action === 'close') {
+    game.close();
+    return;
+  }
+  if (event.action === 'open' && !game.state.open) game.open();
+  void game.refresh();
 }

@@ -14,6 +14,7 @@ export type VoiceEventBody =
   | { type: 'audio-blocked'; code: string }
   | { type: 'command'; command: CommandResult }
   | { type: 'resync' }
+  | { type: 'wordle'; action: 'open' | 'refresh' | 'close' }
   | { type: 'transcript'; text: string; final: boolean; segmentId: string; speaker: 'user' | 'assistant' };
 
 export type VoiceEvent = VoiceEventBody & { epoch: number };
@@ -67,8 +68,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   }
 
   private emit(event: VoiceEventBody) {
-    const tagged = { ...event, epoch: this.sessionEpoch } as VoiceEvent;
-    for (const handler of this.handlers) handler(tagged);
+    for (const handler of this.handlers) handler({ ...event, epoch: this.sessionEpoch } as VoiceEvent);
   }
 
   async connect(config: SessionConfig) {
@@ -243,12 +243,12 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     await sendChatText(this.room, text);
   }
 
-  async say(text: string) {
-    await speakExact(this.room, text);
+  say(text: string) {
+    return speakExact(this.room, text);
   }
 
-  async sendControl(event: Record<string, unknown>) {
-    await publishControlFlag(this.room, event);
+  sendControl(event: Record<string, unknown>) {
+    return publishControlFlag(this.room, event);
   }
 
   async interrupt() {

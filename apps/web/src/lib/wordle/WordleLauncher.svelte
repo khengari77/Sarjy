@@ -3,7 +3,7 @@
   import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
   import { createWordleGame, type WordleGame } from './wordleGame.svelte';
   import { createWordleVoice, speakWordleReply, type WordleVoice } from './wordleVoice';
-  import { createActiveSync } from './wordleActive';
+  import { applyWordleToolEvent, createActiveSync } from './wordleActive';
   import WordleEntry from './WordleEntry.svelte';
   import WordleStage from './WordleStage.svelte';
 
@@ -56,6 +56,7 @@
     // assistant and partial segments, which must never dispatch game actions.
     void voice.handleEvent(event);
     activeSync.handleEvent(event);
+    applyWordleToolEvent(game, event);
   }
 
   // The worker gates guess-style intents on an open game, so ordinary speech
@@ -89,6 +90,7 @@
             segmentId: input.segmentId ?? `dev-${Date.now()}`,
             epoch: input.epoch ?? 1,
           }),
+        tool: (action: 'open' | 'refresh' | 'close') => handleVoiceEvent({ type: 'wordle', action, epoch: 1 }),
         spoken: () => game.state.voiceReply,
         state: () => ({ view: game.state.view, open: game.state.open, guesses: game.state.guesses.length }),
       };

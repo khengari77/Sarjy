@@ -52,6 +52,9 @@ export function fakeGame(overrides: Partial<WordleGameState> = {}, guess?: FakeW
       load: async () => {
         calls.load += 1;
       },
+      refresh: async () => {
+        calls.load += 1;
+      },
       guessWord: async (word: string, requestId: string) => {
         calls.guesses.push({ word, id: requestId });
         const outcome = fake.guessResult(word, requestId);
