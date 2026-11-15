@@ -403,7 +403,7 @@ def test_worker_command_uses_the_stored_final_turn_once(tmp_path):
         )
         assert client.post(
             "/internal/agent/command", headers=headers, json={"turn_id": ordinary.json()["turn_id"]}
-        ).json() == {"command": None}
+        ).json() == {"command": None, "memory_op": None}
         assert client.post("/internal/agent/command", headers=headers, json={"turn_id": "missing"}).status_code == 404
 
 

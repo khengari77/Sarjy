@@ -1,0 +1,62 @@
+[
+ {
+  "text": "Remember my name. My name is Abdur Rahman.",
+  "expected": "remember"
+ },
+ {
+  "text": "Save this fact. My name is Abdurrahman.",
+  "expected": "remember"
+ },
+ {
+  "text": "Could you keep in mind that I'm vegetarian?",
+  "expected": "remember"
+ },
+ {
+  "text": "Forget my name",
+  "expected": "forget"
+ },
+ {
+  "text": "Scrap what I said about tea",
+  "expected": "forget"
+ },
+ {
+  "text": "What do you know about my job?",
+  "expected": "recall"
+ },
+ {
+  "text": "Do you remember my name?",
+  "expected": "recall"
+ },
+ {
+  "text": "Remember to buy milk",
+  "expected": "none"
+ },
+ {
+  "text": "Remind me to buy milk",
+  "expected": "none"
+ },
+ {
+  "text": "Remember when we talked about Rome",
+  "expected": "none"
+ },
+ {
+  "text": "I've moved to Benghazi",
+  "expected": "none"
+ },
+ {
+  "text": "What's the weather today in Tripoli?",
+  "expected": "none"
+ },
+ {
+  "text": "Forget about the weather, tell me a joke",
+  "expected": "none"
+ },
+ {
+  "text": "Remember me",
+  "expected": "none"
+ },
+ {
+  "text": "Don't forget to call mom tomorrow",
+  "expected": "none"
+ }
+]

@@ -296,6 +296,27 @@ def parse_capture(text: str) -> MemoryCapture | None:
     return _capture_for(content, explicit=explicit)
 
 
+_STRICT_EXPLICIT = re.compile(
+    r"^\s*(?:please\s+)?(?:remember|(?:don't|do not)\s+forget)\s+that[\s,:;]+(?P<content>.+?)\s*$", re.IGNORECASE
+)
+
+
+def parse_strict_capture(text: str) -> MemoryCapture | None:
+    """Free fast path used when the model classifier is available.
+
+    Only the unambiguous "remember that <clause>" shape is interpreted here;
+    "remember to ...", "remember when ...", "remember me" and every other
+    phrasing is left to the model's typed tool.  The clause gets the same
+    deterministic validation as a model-supplied fact.
+    """
+    if text.strip().endswith("?") or len(text) > MAX_CAPTURE_CHARS:
+        return None
+    match = _STRICT_EXPLICIT.match(text)
+    if match is None:
+        return None
+    return parse_tool_fact(match.group("content"))
+
+
 MAX_TOOL_FACT_CHARS = 500
 MAX_TOOL_QUERY_CHARS = 200
 
