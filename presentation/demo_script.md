@@ -14,7 +14,7 @@ Verified from the code: exact phrases and what they do (`apps/api/app/domain/com
    - Speech synthesis ledger: Deepgram 50,000 characters/day by default; ElevenLabs only 2,500 characters/day. The limerick segment alone speaks the limerick 4 times. Confirm which `TTS_PROVIDER` is live; under ElevenLabs shorten the limerick segment.
    - Classifier (Jev): 2,000 requests/day, plenty.
    - A call lasts at most 10 minutes; the worker leaves 60 seconds after the browser disconnects. Agent cold start can take 10 to 20 seconds: start the call and wait for "Connected" before speaking.
-5. **Feature switches.** Wordle needs `WORDLE_ENABLED=true` on the API (default is off) and a reachable puzzle source. The Wordle voice and model tools live on branch `agent/issue-110-wordle-voice` and may not be in the deployed release: **check live** that "Play Wordle" opens the popup before recording.
+5. **Feature switches.** Wordle needs `WORDLE_ENABLED=true` on the API (default is off) and a reachable puzzle source. The Wordle voice and model tools live on PR #129 (previously branch `agent/issue-110-wordle-voice`) and may not be in the deployed release: **check live** that "Play Wordle" opens the popup before recording.
 6. **Voice and speed.** The speed control only works for voices that support it (Deepgram English/Spanish voices, ElevenLabs range). Under Deepgram the speed range is 0.8 to 1.2 in 0.1 steps. Note the starting speed in the Controls tab; the script assumes 1.0.
 7. **Rehearse once**, off camera, the three riskiest steps: Wordle, the forget and re-ask, and the voice change.
 8. **Screen layout.** Keep the right panel open on the Memories tab for the memory steps, and switch to Controls for speed and captions. Tabs are called Memories, Controls, Transcript.
@@ -54,7 +54,7 @@ Say: **"What is the weather in Tripoli?"** (Name the country if the city is ambi
 3. Say: **"How many guesses do I have left?"**
 4. Say: **"Close Wordle"** (or "Back to chat").
    - Expect: popup closes, the call continues.
-- If the model path is not deployed, the exact-phrase path ("Play Wordle", "Guess crane", "Quit Wordle") is the alternative. Either one is fine on camera; say which you are showing.
+- Wordle is model-driven (PR #129): the model calls the Wordle tools, the popup opens by itself and the board fills in live as you speak each guess in one go. Exact wording of the guess phrase may differ after #129: **check live**.
 
 ### 4. Save the name and the age (explicit consent)
 

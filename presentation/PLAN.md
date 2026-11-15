@@ -52,10 +52,24 @@ Memory (`services/memory_tools.py`, `memory_capture.py`, `voice_exclusions.py`, 
 
 Tools
 - `get_current_weather` (Open-Meteo, server-side, `/internal/agent/tool/weather`), `propose_memory`, `propose_forget`, `recall` (main.py ~725-806).
-- Wordle: server-owned game (`docs/wordle.md`, `routes/wordle.py`). Model-driven tools `play_wordle`, `submit_wordle_guess`, `wordle_status`, `close_wordle` and the live popup (data topic `sarjy.wordle`; client refetches the board, so the answer never travels in the message) exist ONLY on branch `origin/agent/issue-110-wordle-voice` (commits 26e5e45, 38e747f ...), not on main/this branch as of this work. Slides describe them as the #110 design; flag in report.
+- Wordle: server-owned game (`docs/wordle.md`, `routes/wordle.py`). Model-driven tools `play_wordle`, `submit_wordle_guess`, `wordle_status`, `close_wordle` and the live popup (data topic `sarjy.wordle`; client refetches the board, so the answer never travels in the message) exist on PR #129 (earlier branch `origin/agent/issue-110-wordle-voice`), being changed there (commits 26e5e45, 38e747f ...), not on main/this branch as of this work. Slides describe them as the #110 design; flag in report.
 
 ## Part D (future work, not built)
 Persona control and multi-agent calls: no code in the repo (grep). Slides label them "future".
 
 ## Visual style
 Background #0F1419; text #E2E8F0; muted #8A98A8; accents teal #4FD1C5 (Sarjy/user path), amber #F6AD55 (consent/attention), violet #9F7AEA (models/classifier), red #FC8181 (delete/failed). Noto Sans, >= 30 px equivalent text, one idea per screen, ease-in-out animation.
+
+## Re-rendering and retiming
+
+```sh
+cd presentation
+python3 -m venv .venv && .venv/bin/pip install manim==0.22.1 ruff==0.17.5   # once; needs cairo/pango (present)
+./render.sh -ql                  # fast 480p15 preview of everything
+./render.sh -qh                  # final 1080p60 (JOBS=3 parallel scenes by default)
+./render.sh -qh s07_memory       # one scene, then re-concatenate whatever exists
+```
+
+Outputs land in `renders/<res>/` (git-ignored). Retime by editing `timing.json` (seconds per scene) and re-rendering; beats are placed at fractions of each scene's duration, so they scale. A scene prints a WARNING if its fixed animations are longer than its slot (minimum durations are roughly 14 s for s02 and 25 s for s03/s04 etc.; the log in `media/<scene>.log` shows it). `python make_script.py` rewrites `narration_script.md` and prints words per scene against the slot.
+
+Merging the user's narration later: `ffmpeg -i renders/1080p60/sarjy_presentation.mp4 -i narration.wav -c:v copy -c:a aac out.mp4`, after retiming each scene to the recorded section lengths.
