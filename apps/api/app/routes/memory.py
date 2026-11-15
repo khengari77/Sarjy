@@ -1,9 +1,12 @@
 """Authenticated memory HTTP adapter; dependency providers are supplied by the app."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.memory import MemoryResult, MemoryService
+from app.services.memory_visibility import delete_memory, hide_memory, unhide_memory
 
 
 class MemoryWrite(BaseModel):
@@ -59,6 +62,13 @@ class MemoryList(BaseModel):
     next_offset: int | None
 
 
+class MemoryVisibility(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    status: Literal["active", "hidden", "deleted"]
+    changed: bool
+
+
 def memory_router(database, identity, embedder):
     router = APIRouter()
 
@@ -67,11 +77,12 @@ def memory_router(database, identity, embedder):
         conversation_id: str | None = Query(default=None, min_length=1, max_length=100),
         limit: int = Query(default=50, ge=1, le=100),
         offset: int = Query(default=0, ge=0, le=1_000_000),
+        status: Literal["active", "hidden", "superseded"] | None = Query(default=None),
         user=Depends(identity),
         db=Depends(database),
     ):
         return await MemoryService(db, embedder).list_memories(
-            user.id, limit=limit, offset=offset, conversation_id=conversation_id
+            user.id, limit=limit, offset=offset, conversation_id=conversation_id, status=status
         )
 
     @router.post("/v1/conversations/{conversation_id}/memories", response_model=MemoryResult, status_code=201)
@@ -111,5 +122,22 @@ def memory_router(database, identity, embedder):
             raise HTTPException(
                 429 if str(exc) == "DAILY_BUDGET_EXHAUSTED" else 422, detail={"code": str(exc)}
             ) from exc
+
+    async def _visibility(operation, memory_id, user, db) -> MemoryVisibility:
+        result = await operation(db, user.id, memory_id)
+        await db.commit()
+        return MemoryVisibility(id=result.id, status=result.status, changed=result.changed)
+
+    @router.post("/v1/memories/{memory_id}/hide", response_model=MemoryVisibility)
+    async def hide(memory_id: str, user=Depends(identity), db=Depends(database)):
+        return await _visibility(hide_memory, memory_id, user, db)
+
+    @router.post("/v1/memories/{memory_id}/unhide", response_model=MemoryVisibility)
+    async def unhide(memory_id: str, user=Depends(identity), db=Depends(database)):
+        return await _visibility(unhide_memory, memory_id, user, db)
+
+    @router.delete("/v1/memories/{memory_id}", response_model=MemoryVisibility)
+    async def delete(memory_id: str, user=Depends(identity), db=Depends(database)):
+        return await _visibility(delete_memory, memory_id, user, db)
 
     return router
