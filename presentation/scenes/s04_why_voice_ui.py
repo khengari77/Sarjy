@@ -24,11 +24,11 @@ class S04WhyVoiceUI(TimedScene):
         self.play(FadeOut(VGroup(l1, l2, why)), run_time=0.8)
 
         # 2. History.
-        years = txt("2000 - 2010", size=40, color=MUTED).shift(UP * 1.4)
-        ms = box("Microsoft adds speech recognition to Windows and Word", VIOLET, w=11.2, h=1.2, size=30).shift(
-            UP * 0.2
-        )
-        fail = txt("It failed: recognition was immature", size=38, color=RED).shift(DOWN * 1.2)
+        years = txt("The 2000s", size=40, color=MUTED).shift(UP * 1.4)
+        ms = box(
+            "Microsoft builds speech recognition into Windows (Vista, 2006)", VIOLET, w=11.2, h=1.2, size=30
+        ).shift(UP * 0.2)
+        fail = txt("It never took off: recognition was immature", size=38, color=RED).shift(DOWN * 1.2)
         self.play(FadeIn(years), run_time=0.7)
         self.play(FadeIn(ms, shift=UP * 0.2), run_time=1.0)
         self.sync(0.50)

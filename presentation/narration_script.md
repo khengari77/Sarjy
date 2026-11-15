@@ -34,13 +34,13 @@ In a real product it would feel natural: the model itself would decide what to r
 
 ## 04. Why voice UI commands (Part A)
 
-_126 words, about 55 s. Scene length 60 s._
+_134 words, about 58 s. Scene length 60 s._
 
 The second differentiator is voice commands for the interface.
 
 Speech-to-text has become easy and cheap, and models under a hundred million parameters run smoothly on phones and laptops. So why has the user interface not caught up?
 
-Between 2000 and 2010, Microsoft tried adding speech recognition to Windows and Word, and it failed, because recognition was immature. Today that is no longer true.
+In the 2000s, Microsoft built speech recognition into Windows, with Windows Vista in 2006, and it never became how people use their computers, because recognition was still immature. Today that is no longer true.
 
 And commanding is the most natural way to interact: speak to your phone to open or close an app.
 

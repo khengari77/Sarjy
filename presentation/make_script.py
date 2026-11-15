@@ -50,7 +50,7 @@ SCENES = [
         [
             "The second differentiator is voice commands for the interface.",
             "Speech-to-text has become easy and cheap, and models under a hundred million parameters run smoothly on phones and laptops. So why has the user interface not caught up?",
-            "Between 2000 and 2010, Microsoft tried adding speech recognition to Windows and Word, and it failed, because recognition was immature. Today that is no longer true.",
+            "In the 2000s, Microsoft built speech recognition into Windows, with Windows Vista in 2006, and it never became how people use their computers, because recognition was still immature. Today that is no longer true.",
             "And commanding is the most natural way to interact: speak to your phone to open or close an app.",
             "Sarjy is a mature proof of concept, not a finished product, built in four days. By voice you can switch between light and dark mode, change the speaking speed, switch between a man's and a woman's voice, show or hide captions, and play Wordle.",
         ],
