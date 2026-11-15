@@ -24,6 +24,7 @@ export const FRAGMENT = `#version 300 es
   uniform float uSaturation;
   uniform float uCoreMix;
   uniform float uBaseMix;
+  uniform float uCoreHue;
   uniform vec3 uColors[6];
   uniform vec3 uPhase;
   uniform vec3 uAccent;
@@ -131,7 +132,7 @@ export const FRAGMENT = `#version 300 es
     col = mix(vec3(luma), col, uSaturation) * uBodyShade;
 
     // Bright, diffuse, whitish centre.
-    vec3 coreTint = mix(uColors[0], vec3(1.0), 0.78);
+    vec3 coreTint = mix(mix(uColors[0], uColors[5], uCoreHue), vec3(1.0), 0.78);
     col = mix(col, coreTint, core * core * uCoreMix);
 
     // Soft depth cue and diffuse top-left light.
@@ -150,15 +151,15 @@ export const FRAGMENT = `#version 300 es
     // A few thin wisp arcs: fixed crescents that drift slowly, never a
     // contour map of the billow field.
     float wisp = 0.0;
+    vec2 wobble = vec2(sin(t * 0.09), cos(t * 0.07)) * 0.03;
     for (int i = 0; i < 4; i++) {
       float fi = float(i);
-      vec2 centre = vec2(-0.30 + 0.26 * fi, 0.08 + 0.14 * sin(fi * 2.1)) + vec2(sin(t * 0.09 + fi), cos(t * 0.07 + fi * 1.7)) * 0.03;
-      float arcR = 0.26 + 0.07 * fi;
-      vec2 d = p - centre;
-      float ang = atan(d.y, d.x);
-      float heading = 1.2 + fi * 0.5 + sin(t * 0.06 + fi) * 0.2;
-      float span = 1.0 - smoothstep(0.35, 0.8, abs(atan(sin(ang - heading), cos(ang - heading))));
-      wisp = max(wisp, (1.0 - smoothstep(0.0, 0.011, abs(length(d) - arcR))) * span);
+      vec2 d = p - (vec2(-0.30 + 0.26 * fi, 0.08 + 0.14 * sin(fi * 2.1)) + wobble);
+      float heading = 1.2 + fi * 0.5;
+      // Angular span from a dot product (no atan): 1 inside ~0.55 rad of the heading.
+      float facing = dot(normalize(d), vec2(cos(heading), sin(heading)));
+      float span = smoothstep(0.70, 0.94, facing);
+      wisp = max(wisp, (1.0 - smoothstep(0.0, 0.011, abs(length(d) - (0.26 + 0.07 * fi)))) * span);
     }
     wisp *= body * (1.0 - core * 0.3);
     col = mix(col, mix(uColors[5], vec3(1.0), 0.6), wisp * 0.55);
@@ -173,8 +174,7 @@ export const FRAGMENT = `#version 300 es
       vec3(0.12, -0.92, 0.010), vec3(0.20, -0.90, 0.008)
     );
     for (int i = 0; i < 10; i++) {
-      vec2 centre = spots[i].xy + vec2(sin(t * 0.08 + float(i)), cos(t * 0.06 + float(i) * 1.3)) * 0.006;
-      dots = max(dots, 1.0 - smoothstep(spots[i].z * 0.5, spots[i].z, length(p - centre)));
+      dots = max(dots, 1.0 - smoothstep(spots[i].z * 0.5, spots[i].z, length(p - spots[i].xy - wobble * 0.2)));
     }
     col = mix(col, vec3(1.0), dots * 0.75);
 

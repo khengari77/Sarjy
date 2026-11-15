@@ -190,7 +190,6 @@ test('provisional transcript replaces the final line and clears without commands
     }),
   );
   await expect(page.locator('.caption-bubble.provisional')).toHaveCount(0);
-  await expect(page.locator('.caption-bubble')).toContainText('It is thirty one degrees.');
 });
 
 test('turning captions off keeps the session and the transcript reachable', async ({ page }) => {

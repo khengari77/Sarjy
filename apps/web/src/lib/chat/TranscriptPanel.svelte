@@ -33,7 +33,7 @@
     {@const note = status(turn)}
     <article class="turn" class:assistant={turn.role === 'assistant'} dir="auto">
       <small>
-        {speaker(turn.role)}{#if note}<span class="note" data-status={turn.status}> · {note}</span>{/if}
+        {speaker(turn.role)}{#if note}<span class="note" data-status={turn.status}>{` · ${note}`}</span>{/if}
       </small>
       <p>{turn.text}</p>
     </article>
