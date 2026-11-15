@@ -66,6 +66,11 @@
   gap: 10px;
 }
 
+/* The title truncates; the buttons never shrink below their tap size. */
+.header-actions {
+  flex: none;
+}
+
 .context-label {
   font-size: 13px;
   font-weight: 600;
@@ -300,6 +305,10 @@
 @media (max-width: 767px) {
   .topbar {
     padding-inline: 16px;
+  }
+
+  .header-actions {
+    gap: 8px;
   }
 
   .sidebar-left {
