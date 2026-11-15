@@ -24,6 +24,6 @@
 </p>
 
 <p class="memory-footnote">
-  Hiding a memory is reversible and applies everywhere: the row stays in the list, marked Hidden, until you restore it. Deleting is permanent
-  and only possible here, never by voice.
+  Hiding a memory is reversible and applies everywhere: the row stays in the list, marked Hidden, until you restore it.
+  Deleting is permanent and only possible here, never by voice.
 </p>

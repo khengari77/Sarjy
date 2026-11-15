@@ -42,7 +42,13 @@
   }
 </script>
 
-<section class="memory-panel" bind:this={panelEl} tabindex="-1" aria-label="Memory and context explorer" data-testid="memory-panel">
+<section
+  class="memory-panel"
+  bind:this={panelEl}
+  tabindex="-1"
+  aria-label="Memory and context explorer"
+  data-testid="memory-panel"
+>
   <MemoryIntro {conversationId} />
 
   <MemorySearch

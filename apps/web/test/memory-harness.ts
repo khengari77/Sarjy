@@ -79,7 +79,8 @@ export async function mockApi(page: Page, initialFacts: Fact[] = FACTS): Promise
       return route.fulfill({ status: 503, json: { detail: { code: 'API_UNAVAILABLE' } } });
     }
     const status = action === 'hide' ? 'hidden' : action === 'unhide' ? 'active' : 'deleted';
-    facts = status === 'deleted' ? facts.filter((f) => f.id !== id) : facts.map((f) => (f.id === id ? { ...f, status } : f));
+    facts =
+      status === 'deleted' ? facts.filter((f) => f.id !== id) : facts.map((f) => (f.id === id ? { ...f, status } : f));
     return route.fulfill({ json: { id, status, changed: true } });
   };
 

@@ -32,7 +32,10 @@ function setup(server: { items: ReturnType<typeof fact>[]; failWrites: boolean }
       return new Response(JSON.stringify({ items: server.items, total: server.items.length, next_offset: null }));
     }),
   );
-  return { explorer: createMemoryExplorer({ conversationId: () => 'c1', active: () => true, revision: () => '' }), writes };
+  return {
+    explorer: createMemoryExplorer({ conversationId: () => 'c1', active: () => true, revision: () => '' }),
+    writes,
+  };
 }
 
 it('refresh picks up a voice hide and a voice undo in place', async () => {

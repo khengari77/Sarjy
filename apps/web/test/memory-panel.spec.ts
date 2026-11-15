@@ -49,7 +49,9 @@ test('hide toggles the row in place without a prompt and restore flips it back',
   const calls = await mockApi(page);
   const panel = await open(page);
   const tea = row(panel, 'Prefers tea over coffee');
-  const positionBefore = await panel.locator('li.memory-row').evaluateAll((rows) => rows.map((r) => r.getAttribute('data-memory-id')));
+  const positionBefore = await panel
+    .locator('li.memory-row')
+    .evaluateAll((rows) => rows.map((r) => r.getAttribute('data-memory-id')));
 
   await tea.getByRole('button', { name: 'Hide memory' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -61,9 +63,9 @@ test('hide toggles the row in place without a prompt and restore flips it back',
   await expect(tea.getByRole('button', { name: 'Hide memory' })).toHaveCount(0);
   expect(calls.visibility).toEqual([{ id: 'mem-tea', method: 'POST', action: 'hide' }]);
   // The row did not move.
-  expect(await panel.locator('li.memory-row').evaluateAll((rows) => rows.map((r) => r.getAttribute('data-memory-id')))).toEqual(
-    positionBefore,
-  );
+  expect(
+    await panel.locator('li.memory-row').evaluateAll((rows) => rows.map((r) => r.getAttribute('data-memory-id'))),
+  ).toEqual(positionBefore);
 
   await restore.click();
   await expect(tea).toHaveAttribute('data-hidden', 'false');

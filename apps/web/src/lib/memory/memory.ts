@@ -176,11 +176,7 @@ export function mutationFailure(error: unknown): MutationFailure {
   };
 }
 
-export async function loadMemories(
-  conversationId: string | null,
-  offset = 0,
-  limit = 50,
-): Promise<MemoryList> {
+export async function loadMemories(conversationId: string | null, offset = 0, limit = 50): Promise<MemoryList> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (conversationId) params.set('conversation_id', conversationId);
   return request<MemoryList>(`memories?${params.toString()}`);

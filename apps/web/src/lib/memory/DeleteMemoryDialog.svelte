@@ -17,7 +17,7 @@
   let dialog = $state<HTMLElement | null>(null);
   let cancelButton = $state<HTMLButtonElement | null>(null);
   const preview = $derived(content.length > 140 ? `${content.slice(0, 140)}…` : content);
-  const dir = $derived((trigger?.closest("[dir]")?.getAttribute("dir") ?? undefined) as "ltr" | "rtl" | undefined);
+  const dir = $derived((trigger?.closest('[dir]')?.getAttribute('dir') ?? undefined) as 'ltr' | 'rtl' | undefined);
 
   // Lives on <body>: the drawer is transformed off-canvas, which would break
   // `position: fixed`, and its Escape handling must not also close the drawer.
