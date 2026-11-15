@@ -48,15 +48,31 @@ def _spoken_board(view) -> str:
     )
 
 
-def spoken_for(view, *, prefix: str = "") -> str:
-    """The exact line the voice speaks: derived only from the stored game, never from model prose."""
+def _spoken_guess(guess) -> str:
+    return (
+        f"{guess.word}: "
+        + ", ".join(f"{letter} {mark}" for letter, mark in zip(guess.word, guess.marks, strict=True))
+        + "."
+    )
+
+
+def spoken_for(view, *, prefix: str = "", scope: str = "latest") -> str:
+    """The exact line the voice speaks: derived only from the stored game, never from model prose.
+
+    ``scope`` picks how much of the board is read out: ``latest`` (only the newest guess, the default for a
+    guess), ``board`` (every guess, for an explicit status request) or ``count`` (only the guesses left).
+    """
     if view.status == "won":
         return f"{prefix}You got it in {len(view.guesses)} guesses. Well done."
     if view.status != "in_progress":
         return f"{prefix}Out of guesses. The answer was {view.answer}."
-    left = view.attempts_remaining
-    board = _spoken_board(view)
-    return f"{prefix}{board} {left} guesses left.".strip() if board else f"{prefix}{left} guesses left."
+    left = f"{view.attempts_remaining} guesses left."
+    if scope == "board":
+        board = _spoken_board(view)
+        return f"{prefix}{board} {left}".strip() if board else f"{prefix}{left}"
+    if scope == "latest" and view.guesses:
+        return f"{prefix}{_spoken_guess(view.guesses[-1])} {left}"
+    return f"{prefix}{left}"
 
 
 def describe_game(view) -> str:
@@ -113,7 +129,7 @@ async def wordle_tool(
                     **_error("WORDLE_GAME_OVER"),
                     "ui": "open",
                     "message": describe_game(view),
-                    "spoken": spoken_for(view),
+                    "spoken": spoken_for(view, scope="count"),
                 }
             tried = (word or "").strip().upper()
             if any(guess.word == tried for guess in view.guesses):
@@ -121,7 +137,7 @@ async def wordle_tool(
                 return {
                     "status": "repeat",
                     "ui": "refresh",
-                    "spoken": spoken_for(view, prefix=f"You already tried {tried}. No attempt used. "),
+                    "spoken": spoken_for(view, prefix=f"You already tried {tried}. No attempt used. ", scope="count"),
                     "message": f"The user already tried {tried}; no attempt was used. " + describe_game(view),
                 }
             outcome = await submit_guess(
@@ -144,6 +160,10 @@ async def wordle_tool(
     return {
         "status": view.status,
         "ui": "open" if action != "status" else "refresh",
-        "spoken": spoken_for(view, prefix="Today's Wordle is ready. " if action == "play" else ""),
+        "spoken": spoken_for(
+            view,
+            prefix="Today's Wordle is ready. " if action == "play" else "",
+            scope={"play": "count", "status": "board"}.get(action, "latest"),
+        ),
         "message": prefix + describe_game(view),
     }

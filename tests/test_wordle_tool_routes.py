@@ -63,6 +63,22 @@ def test_play_guess_status_reuse_the_owner_game_and_hide_the_answer(tmp_path):
         assert over["status"] == "error" and over["code"] == "WORDLE_GAME_OVER"
 
 
+def test_spoken_reply_reads_only_the_latest_guess_unless_the_board_is_asked_for(tmp_path):
+    file, app = build(tmp_path)
+    with TestClient(app) as client:
+        headers, turn = begin(client, file)
+        call(client, headers, GUESS, turn, "a", word="slate")
+        second = call(client, headers, GUESS, turn, "b", word="plant").json()
+        assert second["spoken"].startswith("PLANT:") and "SLATE" not in second["spoken"]
+        assert second["spoken"].endswith("4 guesses left.")
+        repeat = call(client, headers, GUESS, turn, "c", word="slate").json()
+        assert repeat["spoken"] == "You already tried SLATE. No attempt used. 4 guesses left."
+        resumed = call(client, headers, PLAY, turn, "d").json()
+        assert resumed["spoken"] == "Today's Wordle is ready. 4 guesses left."
+        status = call(client, headers, STATUS, turn, "e").json()
+        assert "SLATE" in status["spoken"] and "PLANT" in status["spoken"]
+
+
 def test_guess_is_idempotent_and_invalid_words_are_reported(tmp_path):
     file, app = build(tmp_path)
     with TestClient(app) as client:
