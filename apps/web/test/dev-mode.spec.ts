@@ -62,6 +62,9 @@ test('toggling Developer mode never creates a voice session and survives reload'
   expect(await page.evaluate(() => localStorage.getItem('sarjy-ui-mode'))).toBe('simple');
 
   await toggle.click();
+  // Persisting is asynchronous: reloading before the write lands can still read
+  // the previous mode, which made this spec flaky in CI (~1 in 3 runs).
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('sarjy-ui-mode'))).toBe('developer');
   await page.reload();
   await ready(page);
   await openContextTab(page);
