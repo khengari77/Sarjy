@@ -72,7 +72,7 @@ export function setup(
   overrides: Partial<WordleGameState> = {},
   guess?: FakeWordle['guessResult'],
 ): { fake: FakeWordle; voice: WordleVoice } {
-  const fake = fakeGame(overrides, guess);
+  const fake = fakeGame({ open: true, ...overrides }, guess);
   const pendingFlags: boolean[] = [];
   const voice = createWordleVoice({
     game: fake.port,

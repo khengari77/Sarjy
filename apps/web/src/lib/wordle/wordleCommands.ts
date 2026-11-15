@@ -87,22 +87,25 @@ function parseGuess(normalized: string): WordleCommand | null {
 /**
  * Map one finalized utterance to a command, an explicit clarification, or
  * `null` when the text is ordinary conversation (the adapter must not steal
- * unrelated speech).
+ * unrelated speech). Guess-style intents (guess phrases, spelled letters, bare
+ * play/start/open/game) match everyday speech, so they only count while a
+ * Wordle game is open (`options.active`); explicit wordle phrases always work.
  */
-export function parseWordleCommand(text: string): WordleCommand | null {
+export function parseWordleCommand(text: string, options: { active?: boolean } = {}): WordleCommand | null {
+  const active = options.active === true;
   const normalized = normalizeUtterance(text);
   if (!normalized) return null;
 
   if (CONFIRM.test(normalized)) return { kind: 'confirm' };
   if (CANCEL.test(normalized)) return { kind: 'cancel' };
 
-  const guess = parseGuess(normalized);
+  const guess = active ? parseGuess(normalized) : null;
   if (guess) return guess;
 
   // A fully spelled sequence ("C R A N E") is an unambiguous guess even
   // without the word "guess"; a bare word is left to conversation.
   const spellable = normalized.replace(/\s+(?:please|for me)$/, '').trim();
-  if (SPELLED.test(spellable)) {
+  if (active && SPELLED.test(spellable)) {
     return { kind: 'guess', word: spellable.replace(/[^a-z]/g, '').toUpperCase() };
   }
 
@@ -112,14 +115,14 @@ export function parseWordleCommand(text: string): WordleCommand | null {
   if (QUIT.test(normalized)) return { kind: 'quit' };
   if (REVEAL.test(normalized)) return { kind: 'reveal' };
 
-  if (AMBIGUOUS_PLAY.test(normalized)) {
-    return { kind: 'ambiguous', spoken: "Did you want to play today's Wordle?" };
-  }
   if (AMBIGUOUS_ACTION.test(normalized)) {
     return {
       kind: 'ambiguous',
       spoken: 'I can play Wordle, take a guess, read your guesses, or quit. What would you like?',
     };
+  }
+  if (AMBIGUOUS_PLAY.test(normalized) && (active || normalized === 'wordle')) {
+    return { kind: 'ambiguous', spoken: "Did you want to play today's Wordle?" };
   }
   return null;
 }

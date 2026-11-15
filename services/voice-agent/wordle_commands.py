@@ -61,8 +61,14 @@ def _guess_intent(normalized: str) -> str | None:
     return "guess"
 
 
-def command_kind(text: str, *, reveal_pending: bool = False) -> str | None:
-    """Return the recognized command kind, or ``None`` for ordinary speech."""
+def command_kind(text: str, *, reveal_pending: bool = False, wordle_active: bool = False) -> str | None:
+    """Return the recognized command kind, or ``None`` for ordinary speech.
+
+    Guess-style intents (guess phrases, spelled letters, bare play/start/open/game)
+    match everyday speech such as "make the voice a lady", so they are commands
+    only while the client reports an open Wordle game. Explicit wordle phrases
+    work either way.
+    """
     normalized = normalize_utterance(text)
     if not normalized:
         return None
@@ -73,25 +79,27 @@ def command_kind(text: str, *, reveal_pending: bool = False) -> str | None:
         if _EXACT["cancel"].match(normalized):
             return "cancel"
 
-    guess = _guess_intent(normalized)
-    if guess:
-        return guess
-
-    spellable = re.sub(r"\s+(?:please|for me)$", "", normalized).strip()
-    if _SPELLED.match(spellable):
-        return "guess"
+    if wordle_active:
+        guess = _guess_intent(normalized)
+        if guess:
+            return guess
+        spellable = re.sub(r"\s+(?:please|for me)$", "", normalized).strip()
+        if _SPELLED.match(spellable):
+            return "guess"
 
     for kind in ("play", "remaining", "guesses", "quit", "reveal"):
         if _EXACT[kind].match(normalized):
             return kind
 
-    if _AMBIGUOUS_PLAY.match(normalized) or _AMBIGUOUS_ACTION.match(normalized):
+    if _AMBIGUOUS_ACTION.match(normalized):
+        return "ambiguous"
+    if _AMBIGUOUS_PLAY.match(normalized) and (wordle_active or normalized == "wordle"):
         return "ambiguous"
     return None
 
 
-def is_wordle_command(text: str, *, reveal_pending: bool = False) -> bool:
-    return command_kind(text, reveal_pending=reveal_pending) is not None
+def is_wordle_command(text: str, *, reveal_pending: bool = False, wordle_active: bool = False) -> bool:
+    return command_kind(text, reveal_pending=reveal_pending, wordle_active=wordle_active) is not None
 
 
 def parse_say_payload(payload: str) -> str:

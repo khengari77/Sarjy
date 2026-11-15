@@ -827,6 +827,7 @@ class RevealState:
     """Whether the client is waiting for a spoken spoiler confirmation."""
 
     pending: bool = False
+    active: bool = False
 
 
 def resolve_say_request(data, participants) -> tuple[str | None, str | None]:
@@ -867,7 +868,7 @@ def register_voice_controls(ctx, session, reveal: RevealState) -> None:
 
 
 def apply_control(packet, reveal: RevealState) -> None:
-    """Accept only human control messages, and only the supported flag."""
+    """Accept only human control messages, and only the supported flags."""
     if packet.topic != "sarjy.control" or packet.participant is None:
         return
     if packet.participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
@@ -876,9 +877,14 @@ def apply_control(packet, reveal: RevealState) -> None:
         value = json.loads(packet.data)
     except (TypeError, ValueError):
         return
-    if not isinstance(value, dict) or value.get("type") != "wordle.reveal_pending":
+    if not isinstance(value, dict):
         return
-    reveal.pending = value.get("value") is True
+    if value.get("type") == "wordle.reveal_pending":
+        reveal.pending = value.get("value") is True
+    elif value.get("type") == "wordle.active":
+        reveal.active = value.get("value") is True
+        if not reveal.active:
+            reveal.pending = False
 
 
 @server.rtc_session(agent_name="sarjy")
@@ -917,7 +923,7 @@ async def entrypoint(ctx: JobContext):
             notify=notify,
             fallback_llm=fallback_llm,
             publish=partial(publish_command, ctx.room),
-            is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending),
+            is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending, wordle_active=reveal.active),
         )
         session = AgentSession(
             **providers,

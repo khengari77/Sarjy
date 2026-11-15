@@ -20,13 +20,17 @@ def fixtures() -> list[dict]:
 
 def test_worker_classifier_matches_the_shared_fixture_corpus():
     for case in fixtures():
-        assert is_wordle_command(case["text"]) is case["worker"], case["text"]
+        active = case.get("active", False)
+        assert is_wordle_command(case["text"], wordle_active=active) is case["worker"], case["text"]
         if "workerPending" in case:
-            assert is_wordle_command(case["text"], reveal_pending=True) is case["workerPending"], case["text"]
+            pending = is_wordle_command(case["text"], reveal_pending=True, wordle_active=active)
+            assert pending is case["workerPending"], case["text"]
 
 
 def test_worker_classifier_returns_the_client_command_kind():
-    assert command_kind("Guess CRANE") == "guess"
+    assert command_kind("Guess CRANE", wordle_active=True) == "guess"
+    assert command_kind("Guess CRANE") is None
+    assert command_kind("play wordle") == "play"
     assert command_kind("how many guesses left") == "remaining"
     assert command_kind("quit wordle") == "quit"
     assert command_kind("play wordle") == "play"
@@ -82,6 +86,27 @@ def test_say_rpc_reports_a_session_that_is_not_ready():
 
     response = asyncio.run(perform_say(Closing(), say_data(), {"human": HUMAN}))
     assert json.loads(response) == {"ok": False, "code": "SARJY_SAY_UNAVAILABLE"}
+
+
+def test_wordle_active_flag_is_human_only_and_gates_guess_intents():
+    state = RevealState()
+    packet = lambda participant, value: SimpleNamespace(  # noqa: E731
+        topic="sarjy.control",
+        participant=participant,
+        data=json.dumps({"type": "wordle.active", "value": value}).encode(),
+    )
+    apply_control(packet(AGENT, True), state)
+    assert state.active is False
+    apply_control(packet(HUMAN, True), state)
+    assert state.active is True
+    assert is_wordle_command("guess crane", wordle_active=state.active)
+    apply_control(packet(HUMAN, False), state)
+    assert state.active is False
+
+
+def test_ordinary_speech_is_not_suppressed_when_no_game_is_open():
+    for text in ("Make your voice a lady", "Make the voice a woman", "Spell my name", "Guess I'll have tea"):
+        assert is_wordle_command(text) is False, text
 
 
 def test_control_messages_only_flip_the_human_reveal_flag():
@@ -142,7 +167,7 @@ def test_recognized_command_never_reaches_conversational_generation(monkeypatch)
 
     async def run():
         async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
-            agent = agent_for(client, is_command=is_wordle_command)
+            agent = agent_for(client, is_command=lambda text: is_wordle_command(text, wordle_active=True))
             command = llm.ChatMessage(id="m1", role="user", content=["Guess CRANE"])
             await agent.on_user_turn_completed(None, command)
             assert posted == []
@@ -157,6 +182,24 @@ def test_recognized_command_never_reaches_conversational_generation(monkeypatch)
             await agent.on_user_turn_completed(None, normal)
             assert posted == ["/internal/agent/turn/start"]
             assert normal.id not in agent.suppressed
+
+    asyncio.run(run())
+
+
+def test_voice_request_is_not_suppressed_when_no_game_is_open():
+    posted: list[str] = []
+
+    def backend(request):
+        posted.append(request.url.path)
+        return httpx.Response(200, json={"turn_id": "turn-1", "context": {}})
+
+    async def run():
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = agent_for(client, is_command=is_wordle_command)
+            message = llm.ChatMessage(id="v1", role="user", content=["Make your voice a lady"])
+            await agent.on_user_turn_completed(None, message)
+            assert posted == ["/internal/agent/turn/start"]
+            assert agent.suppressed == set()
 
     asyncio.run(run())
 

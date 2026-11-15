@@ -119,6 +119,15 @@ describe('Wordle voice adapter: commands', () => {
   });
 });
 
+describe('Wordle voice adapter: no open game', () => {
+  it('leaves guess-style speech to the conversation until a game is open', async () => {
+    const { fake, voice } = setup({ open: false });
+    const result = await voice.handleEvent(transcript('Make your voice a lady', 's1'));
+    expect(result).toMatchObject({ handled: false, ignored: 'unrecognized' });
+    expect(fake.calls).toMatchObject({ open: 0, guesses: [] });
+  });
+});
+
 describe('Wordle voice adapter: failure paths', () => {
   it('reuses the request id after a recoverable failure', async () => {
     let attempt = 0;

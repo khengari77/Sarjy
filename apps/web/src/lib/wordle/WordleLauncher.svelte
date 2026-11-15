@@ -56,6 +56,14 @@
     void voice.handleEvent(event);
   }
 
+  // The worker gates guess-style intents on an open game, so ordinary speech
+  // such as "make your voice a lady" is never swallowed as a Wordle command.
+  $effect(() => {
+    const active = runtime;
+    if (!active) return;
+    void active.sendControl({ type: 'wordle.active', value: game.state.open }).catch(() => {});
+  });
+
   $effect(() => {
     const active = runtime;
     if (!active) return;

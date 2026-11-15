@@ -201,7 +201,7 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
     if (key && seen.has(key)) return { handled: false, ignored: 'duplicate' };
     if (key) remember(key);
 
-    const command = parseWordleCommand(input.text);
+    const command = parseWordleCommand(input.text, { active: deps.game.state.open });
     if (!command) {
       if (pendingReveal) setPendingReveal(false);
       return { handled: false, ignored: 'unrecognized' };

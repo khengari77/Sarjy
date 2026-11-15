@@ -39,11 +39,12 @@ describe('parseWordleCommand', () => {
     ['wordle guess slice please', 'SLICE'],
     ['enter a guess: plant', 'PLANT'],
   ])('normalizes a spoken guess: %s', (text, word) => {
-    expect(parseWordleCommand(text)).toEqual({ kind: 'guess', word });
+    expect(parseWordleCommand(text, { active: true })).toEqual({ kind: 'guess', word });
+    expect(parseWordleCommand(text)).toBeNull();
   });
 
   it('asks for a word when the guess is empty', () => {
-    expect(parseWordleCommand('guess')).toEqual({
+    expect(parseWordleCommand('guess', { active: true })).toEqual({
       kind: 'ambiguous',
       spoken: 'Which five-letter word should I guess?',
     });
@@ -52,7 +53,7 @@ describe('parseWordleCommand', () => {
   it.each(['guess CRAN', 'guess CRANES', 'guess CR4NE', 'guess crane please extra'])(
     'rejects a malformed guess: %s',
     (text) => {
-      const command = parseWordleCommand(text);
+      const command = parseWordleCommand(text, { active: true });
       expect(command?.kind).toBe('guess_invalid');
       if (command?.kind === 'guess_invalid') expect(command.spoken).toContain('five-letter word');
     },
@@ -60,7 +61,8 @@ describe('parseWordleCommand', () => {
 
   it('clarifies a bare wordle or play instead of mutating', () => {
     expect(parseWordleCommand('wordle')?.kind).toBe('ambiguous');
-    expect(parseWordleCommand('play')?.kind).toBe('ambiguous');
+    expect(parseWordleCommand('play', { active: true })?.kind).toBe('ambiguous');
+    expect(parseWordleCommand('play')).toBeNull();
     expect(parseWordleCommand('play the wordle with my friends')?.kind).toBe('ambiguous');
   });
 
@@ -73,6 +75,14 @@ describe('parseWordleCommand', () => {
       'guess again',
       'try again',
       'show me the answer',
+      'Make the voice a woman',
+      'Make your voice a lady',
+      'make the text darker',
+      'Make me laugh',
+      'Spell my name',
+      'Enter the memory explorer',
+      'Submit my feedback',
+      "Guess I'll have tea",
       '',
     ]) {
       expect(parseWordleCommand(text)).toBeNull();
@@ -104,9 +114,9 @@ describe('alreadyGuessed', () => {
 });
 
 describe('shared allowlist parity fixtures', () => {
-  const fixtures = fixturesFile.cases as { text: string; client: string | null; worker: boolean }[];
+  const fixtures = fixturesFile.cases as { text: string; client: string | null; worker: boolean; active?: boolean }[];
 
-  it.each(fixtures)('parses the shared fixture: $text', ({ text, client }) => {
-    expect(parseWordleCommand(text)?.kind ?? null).toBe(client);
+  it.each(fixtures)('parses the shared fixture: $text', ({ text, client, active }) => {
+    expect(parseWordleCommand(text, { active: active === true })?.kind ?? null).toBe(client);
   });
 });
