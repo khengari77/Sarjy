@@ -6,6 +6,8 @@ import time
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
+import app.services.commands as commands_module
+import pytest
 from app.config import Settings
 from app.domain.commands import (
     memory_request_is_global,
@@ -15,9 +17,29 @@ from app.domain.commands import (
 )
 from app.domain.context_operations import verify_proposal
 from app.main import create_app
+from app.services.voice_exclusions import propose_exclusion
 from fastapi.testclient import TestClient
 
 SECRET = "test-proposal-secret"
+
+
+@pytest.fixture
+def legacy_forget(monkeypatch):
+    """Forget now hides in one step; these tests cover the retained propose/confirm
+    machinery (restore, consent one-shot, expiry, cross-owner) by routing forget to it."""
+
+    def propose(db, *, owner_id, conversation_id, target, request_id, search):
+        return propose_exclusion(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            target=target,
+            request_id=request_id,
+            secret=SECRET,
+            search=search,
+        )
+
+    monkeypatch.setattr(commands_module, "hide_target", propose)
 
 
 def configured(tmp_path, name="voice-memory"):
@@ -109,6 +131,7 @@ def test_parsing_claims_only_the_newly_supported_phrasings():
     assert parse_exclusion_confirmation("yes but keep the budget") is None
 
 
+@pytest.mark.usefixtures("legacy_forget")
 def test_forget_my_name_proposes_signed_expiring_proposal_then_applies_once_and_undoes(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
@@ -205,6 +228,7 @@ def test_zero_matches_is_honest_and_many_matches_ask_one_clarification(tmp_path)
         assert counts(file) == (0, 0, 0, 0)
 
 
+@pytest.mark.usefixtures("legacy_forget")
 def test_no_discards_the_proposal_and_leaves_context_untouched(tmp_path):
     file, settings = configured(tmp_path, "decline")
     with TestClient(create_app(settings)) as client:
@@ -226,6 +250,7 @@ def test_no_discards_the_proposal_and_leaves_context_untouched(tmp_path):
         assert counts(file) == (0, 0, 0, 1)
 
 
+@pytest.mark.usefixtures("legacy_forget")
 def test_expired_proposal_is_refused_without_applying(tmp_path, monkeypatch):
     import app.services.voice_exclusions as voice_exclusions
 
@@ -275,6 +300,7 @@ def test_global_and_other_destructive_phrasings_still_refuse_honestly(tmp_path):
         assert counts(file) == (0, 0, 0, 0)
 
 
+@pytest.mark.usefixtures("legacy_forget")
 def test_a_new_memory_request_disarms_the_previous_proposal(tmp_path):
     file, settings = configured(tmp_path, "disarm")
     with TestClient(create_app(settings)) as client:
@@ -302,6 +328,7 @@ def test_a_new_memory_request_disarms_the_previous_proposal(tmp_path):
         assert counts(file) == (0, 0, 0, 2)
 
 
+@pytest.mark.usefixtures("legacy_forget")
 def test_restore_targets_only_the_latest_conversation_scoped_exclusion(tmp_path):
     file, settings = configured(tmp_path, "latest")
     with TestClient(create_app(settings)) as client:
@@ -327,6 +354,7 @@ def test_restore_targets_only_the_latest_conversation_scoped_exclusion(tmp_path)
         assert client.get(f"/v1/conversations/{chat}/context").json()["excluded_ids"] == ["name"]
 
 
+@pytest.mark.usefixtures("legacy_forget")
 def test_another_owner_cannot_use_the_proposal_token(tmp_path):
     file, settings = configured(tmp_path, "cross-owner")
     with TestClient(create_app(settings)) as client:
@@ -348,6 +376,7 @@ def test_another_owner_cannot_use_the_proposal_token(tmp_path):
         assert other_chat
 
 
+@pytest.mark.usefixtures("legacy_forget")
 def test_an_unrelated_turn_disarms_the_pending_proposal_so_a_later_yes_changes_nothing(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
