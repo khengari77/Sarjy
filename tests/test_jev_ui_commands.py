@@ -461,7 +461,8 @@ class FakeClassifier:
 
 def speak(tmp_path, fake, text, name="jev"):
     app = create_app(
-        Settings(database_url=f"sqlite+aiosqlite:///{tmp_path}/{name}.db", _env_file=None), ui_classifier=fake
+        Settings(database_url=f"sqlite+aiosqlite:///{tmp_path}/{name}.db", tts_provider="elevenlabs", _env_file=None),
+        ui_classifier=fake,
     )
     with TestClient(app) as client:
         client.post("/v1/demo-session")
@@ -553,7 +554,14 @@ def test_confirmations_and_long_text_skip_jev(tmp_path, text):
 
 def test_flag_and_credential_gating(tmp_path):
     def state(**settings):
-        app = create_app(Settings(database_url=f"sqlite+aiosqlite:///{tmp_path}/g.db", _env_file=None, **settings))
+        app = create_app(
+            Settings(
+                database_url=f"sqlite+aiosqlite:///{tmp_path}/g.db",
+                tts_provider="elevenlabs",
+                _env_file=None,
+                **settings,
+            )
+        )
         return app.state.ui_classifier
 
     assert state() is None

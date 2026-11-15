@@ -78,6 +78,7 @@ def configured(tmp_path):
         deepgram_api_key="stt-test",
         openai_api_key="llm-test",
         eleven_api_key="tts-test",
+        tts_provider="elevenlabs",
         approved_voice_ids="arabic-voice,other-voice,gone-voice",
         _env_file=None,
     )
