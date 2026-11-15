@@ -641,6 +641,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations/{conversation_id}/context/blocks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Context Blocks */
+        get: operations["get_context_blocks_v1_conversations__conversation_id__context_blocks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/wordle/today": {
         parameters: {
             query?: never;
@@ -792,6 +809,7 @@ export interface components {
         /** CommandResponse */
         CommandResponse: {
             command?: components["schemas"]["CommandResult"] | null;
+            memory_op?: components["schemas"]["MemoryOpAnswer"] | null;
         };
         /**
          * CommandResult
@@ -828,6 +846,60 @@ export interface components {
             content: string;
             /** Reason */
             reason: string;
+        };
+        /** ContextBlock */
+        ContextBlock: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Role */
+            role: string;
+            /** Text */
+            text: string;
+            /** Truncated */
+            truncated: boolean;
+            /** Estimated Tokens */
+            estimated_tokens: number;
+            /** State */
+            state: string;
+            /** Reason */
+            reason: string | null;
+        };
+        /** ContextBlockCounts */
+        ContextBlockCounts: {
+            /** Included */
+            included: number;
+            /** Excluded */
+            excluded: number;
+            /** Blocked */
+            blocked: number;
+            /** Outside Window */
+            outside_window: number;
+            /** Not Sent */
+            not_sent: number;
+            /** Total */
+            total: number;
+        };
+        /** ContextBlocks */
+        ContextBlocks: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Revision */
+            revision: number;
+            /** Token Estimate Method */
+            token_estimate_method: string;
+            /** Included Tokens Estimate */
+            included_tokens_estimate: number;
+            counts: components["schemas"]["ContextBlockCounts"];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Has More */
+            has_more: boolean;
+            /** Blocks */
+            blocks: components["schemas"]["ContextBlock"][];
         };
         /** ContextConfirmInput */
         ContextConfirmInput: {
@@ -1082,6 +1154,13 @@ export interface components {
             candidate_eligible?: boolean | null;
             /** Included In Conversation */
             included_in_conversation?: boolean | null;
+        };
+        /** MemoryOpAnswer */
+        MemoryOpAnswer: {
+            /** Choice */
+            choice: string;
+            /** Probability */
+            probability: number;
         };
         /** MemoryProposeInput */
         MemoryProposeInput: {
@@ -2831,6 +2910,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContextProposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_context_blocks_v1_conversations__conversation_id__context_blocks_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextBlocks"];
                 };
             };
             /** @description Validation Error */

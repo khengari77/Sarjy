@@ -353,7 +353,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
             revision=conversation.revision,
             instructions=instructions,
             history=inputs.history,
-            memories=inputs.memories.included,
+            memories=(*inputs.memories.included, *inputs.retractions),
             tool_results=inputs.tool_results,
             current_turn=ContextCandidate(id=turn.id, role="user", text=turn.text, origin="history"),
             excluded_ids=inputs.excluded_ids,
