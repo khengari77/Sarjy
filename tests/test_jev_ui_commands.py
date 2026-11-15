@@ -152,6 +152,21 @@ RECORDED = [
         None,
     ),
     (
+        "Can you change to dark mode? (recorded live, route and detail weak)",
+        recorded(("conversation", 0.57), ("theme", 0.91), ("theme", ("dark", 0.88))),
+        UiActionDecision(action=SetTheme(theme="dark")),
+    ),
+    (
+        "Can you bring back dark mode? (recorded live, below threshold)",
+        recorded(("ui_command", 0.59), ("theme", 0.81), ("theme", ("dark", 0.56))),
+        None,
+    ),
+    (
+        "Can you bring back dark mode? (recorded after rewording)",
+        recorded(("ui_command", 0.88), ("theme", 0.95), ("theme", ("dark", 0.90))),
+        UiActionDecision(action=SetTheme(theme="dark")),
+    ),
+    (
         "You're talking too fast",
         recorded(("ui_command", 0.51), ("speed", 0.99), ("speed", ("slower", 0.91))),
         UiActionDecision(action=AdjustSpeakingSpeed(delta=-0.1)),
@@ -333,6 +348,41 @@ def test_client_timeout_returns_none():
         return await client.classify(request_id="r", instruction="x")
 
     assert asyncio.run(scenario()) is None
+
+
+def test_ui_deadline_is_its_own_constant_above_the_routing_deadline():
+    from app.services.jev import DEFAULT_DEADLINE_SECONDS
+    from app.services.jev_ui import UI_DEADLINE_SECONDS
+
+    assert UI_DEADLINE_SECONDS == 1.2
+    assert DEFAULT_DEADLINE_SECONDS == 0.75
+
+    async def scenario():
+        async def slowish(_request):
+            await asyncio.sleep(0.9)
+            return httpx.Response(200, json=payload())
+
+        client = JevUiClient("k", allow, transport=httpx.MockTransport(slowish))
+        return await client.classify(request_id="r", instruction="x")
+
+    assert asyncio.run(scenario()) is not None
+
+
+def test_question_wording_covers_polite_requests_and_excludes_non_commands():
+    scope = build_ui_request("x")["questions"]["route"]["instructions"]
+    for phrase in (
+        "can you",
+        "could you",
+        "would you",
+        "bring back",
+        "go back to",
+        "I love dark mode",
+        "what are captions",
+        "my brother talks too fast",
+        "my essay",
+        "don't switch",
+    ):
+        assert phrase in scope
 
 
 def test_client_transport_error_returns_none():

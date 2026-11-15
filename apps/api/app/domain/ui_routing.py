@@ -32,8 +32,12 @@ SPEED_STEP: Final = 0.1
 MULTIPLE_COMMANDS_SPOKEN: Final = "I can only make one change at a time. Which one should I do first?"
 
 _SCOPE = (
-    "Judge only the current instruction itself. Negations ('don't switch to dark mode'), statements of "
-    "preference ('I love dark mode'), quotations and questions about a feature are never commands."
+    "Judge only the current instruction itself. A polite request or an ability question that asks the "
+    "assistant to do it ('can you', 'could you', 'would you', 'please', 'bring back', 'go back to') IS a direct "
+    "request. Not requests: negations ('don't switch to dark mode'), statements of preference ('I love dark "
+    "mode'), quotations, questions about a feature ('is dark mode better for your eyes?', 'what are captions?'), "
+    "someone else's behaviour ('my brother talks too fast') and edits to the user's own text ('make the text "
+    "darker in my essay')."
 )
 
 QUESTION_OPTIONS: Final[dict[str, tuple[str, ...]]] = {
@@ -50,68 +54,72 @@ UI_QUESTIONS: Final[dict[str, dict[str, Any]]] = {
     "route": {
         "type": "choice",
         "instructions": (
-            "Is the current instruction a direct request to change an application setting right now? " + _SCOPE
+            "Is the current instruction a request, including a polite one such as 'can you ...?', for the assistant to "
+            "change one of its own application settings right now? " + _SCOPE
         ),
         "criteria": {
             "conversation": (
-                "Anything that is not a direct, present request to change a setting: questions, chat, "
-                "statements, opinions, negated or quoted requests, questions about how a feature works."
+                "Anything that does not ask the assistant to change a setting now: chat, statements, opinions, "
+                "negated or quoted requests, questions about how a feature works, other people's behaviour."
             ),
             "ui_command": (
-                "One direct request to change exactly one setting: the theme, caption visibility, speaking speed "
-                "or the assistant's voice."
+                "One request, direct or polite ('can you make it dark?', 'could you bring back dark mode?'), to change "
+                "exactly one setting: the theme, caption visibility, speaking speed or the assistant's voice."
             ),
             "multiple_commands": "Direct requests to change two or more settings in the same instruction.",
         },
     },
     "family": {
         "type": "choice",
-        "instructions": "Which setting does the current instruction directly ask to change? " + _SCOPE,
+        "instructions": "Which setting does the current instruction ask the assistant to change, even politely? "
+        + _SCOPE,
         "criteria": {
-            "theme": "A direct request to change the appearance: light mode, dark mode or the system theme.",
-            "captions": "A direct request to show or hide captions or subtitles.",
-            "speed": "A direct request to make the assistant speak faster or slower.",
-            "voice": "A direct request to change which voice the assistant speaks with.",
-            "none": "No direct request to change any of these settings.",
+            "theme": "A request to change the appearance: light or dark mode, brighter or darker, bringing back a theme.",
+            "captions": "A request to show, hide or turn on or off captions, subtitles or what the assistant says as text.",
+            "speed": "A request to make the assistant speak faster or slower, including a complaint that it is too fast or slow.",
+            "voice": "A request to change which voice the assistant speaks with.",
+            "none": "Does not ask to change any of these settings.",
         },
     },
     "theme": {
         "type": "choice",
-        "instructions": "Which theme does the current instruction directly ask for? " + _SCOPE,
+        "instructions": "Which theme does the current instruction ask the assistant to switch to, even politely or as 'bring back' or 'go back to'? "
+        + _SCOPE,
         "criteria": {
-            "light": "A direct request to switch to light mode or a light theme.",
-            "dark": "A direct request to switch to dark mode or a dark theme.",
-            "system": "A direct request to follow the system or device theme.",
-            "none": "No direct request to change the theme.",
+            "light": "Asks for light mode, a light, bright theme, or to bring back or go back to it.",
+            "dark": "Asks for dark mode, a dark theme, or to bring back or go back to it.",
+            "system": "Asks to follow the system or device theme.",
+            "none": "Does not ask to change the theme.",
         },
     },
     "captions": {
         "type": "choice",
-        "instructions": "Does the current instruction directly ask to show or hide captions? " + _SCOPE,
+        "instructions": "Does the current instruction ask, even politely, to show or hide captions? " + _SCOPE,
         "criteria": {
-            "show": "A direct request to turn captions or subtitles on or show them.",
-            "hide": "A direct request to turn captions or subtitles off or hide them.",
-            "none": "No direct request to change captions.",
+            "show": "Asks to turn captions or subtitles on, show them, or to see what the assistant says.",
+            "hide": "Asks to turn captions or subtitles off or hide them.",
+            "none": "Does not ask to change captions.",
         },
     },
     "speed": {
         "type": "choice",
-        "instructions": "Does the current instruction directly ask the assistant to speak faster or slower? " + _SCOPE,
+        "instructions": "Does the current instruction ask, even politely, for the assistant to speak faster or slower? "
+        + _SCOPE,
         "criteria": {
-            "faster": "A direct request to speak faster, speed up or talk quicker.",
-            "slower": "A direct request to speak slower, slow down or talk more slowly.",
-            "none": "No direct request to change speaking speed.",
+            "faster": "Asks to speak faster, speed up or talk quicker, or says it speaks too slowly.",
+            "slower": "Asks to speak slower, slow down or talk more slowly, or says it speaks too fast.",
+            "none": "Does not ask to change the assistant's speaking speed.",
         },
     },
     "voice": {
         "type": "choice",
-        "instructions": "Which voice does the current instruction directly ask for? " + _SCOPE,
+        "instructions": "Which voice does the current instruction ask the assistant to use, even politely? " + _SCOPE,
         "criteria": {
-            "male": "A direct request for a male voice.",
-            "female": "A direct request for a female voice.",
-            "named": "A direct request for a voice identified by a personal name.",
-            "other": "A direct request for a voice defined in any other way, such as accent, age or tone.",
-            "none": "No direct request to change the voice.",
+            "male": "Asks for a male or man's voice.",
+            "female": "Asks for a female or woman's voice.",
+            "named": "Asks for a voice identified by a personal name.",
+            "other": "Asks for a voice defined in any other way, such as accent, age or tone.",
+            "none": "Does not ask to change the voice.",
         },
     },
     "memory_op": {

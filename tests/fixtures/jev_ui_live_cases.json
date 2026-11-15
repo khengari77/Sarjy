@@ -1,0 +1,146 @@
+[
+ {
+  "text": "Change to light mode.",
+  "expected": "theme:light"
+ },
+ {
+  "text": "Can you make it dark?",
+  "expected": "theme:dark"
+ },
+ {
+  "text": "It's too bright in here, can you fix that?",
+  "expected": "theme:dark"
+ },
+ {
+  "text": "Speak a bit slower please",
+  "expected": "speed:-"
+ },
+ {
+  "text": "You're talking too fast",
+  "expected": "speed:-"
+ },
+ {
+  "text": "Please talk faster",
+  "expected": "speed:+"
+ },
+ {
+  "text": "Hide the subtitles",
+  "expected": "captions:off"
+ },
+ {
+  "text": "Show me what you're saying",
+  "expected": "captions:on"
+ },
+ {
+  "text": "Change to a man's voice",
+  "expected": "voice:male"
+ },
+ {
+  "text": "I want a woman to read this to me",
+  "expected": "voice:female"
+ },
+ {
+  "text": "Could you turn the captions off?",
+  "expected": "captions:off"
+ },
+ {
+  "text": "Go back to the bright theme",
+  "expected": "theme:light"
+ },
+ {
+  "text": "Can you change to dark mode?",
+  "expected": "theme:dark"
+ },
+ {
+  "text": "Can you change to light mode?",
+  "expected": "theme:light"
+ },
+ {
+  "text": "Can you bring back dark mode?",
+  "expected": "theme:dark"
+ },
+ {
+  "text": "No. That's too bright. Can you bring back dark mode?",
+  "expected": "theme:dark"
+ },
+ {
+  "text": "Would you slow down a bit?",
+  "expected": "speed:-"
+ },
+ {
+  "text": "Could you show the captions?",
+  "expected": "captions:on"
+ },
+ {
+  "text": "I love dark mode",
+  "expected": "NONE"
+ },
+ {
+  "text": "What's the weather today in Tripoli?",
+  "expected": "NONE"
+ },
+ {
+  "text": "Remember my name is Sam",
+  "expected": "NONE"
+ },
+ {
+  "text": "Don't switch to dark mode",
+  "expected": "NONE"
+ },
+ {
+  "text": "Make the text darker in my essay",
+  "expected": "NONE"
+ },
+ {
+  "text": "Tell me a joke",
+  "expected": "NONE"
+ },
+ {
+  "text": "What voice are you using?",
+  "expected": "NONE"
+ },
+ {
+  "text": "Tell me about fast food",
+  "expected": "NONE"
+ },
+ {
+  "text": "How does light travel?",
+  "expected": "NONE"
+ },
+ {
+  "text": "Is dark mode better for your eyes?",
+  "expected": "NONE"
+ },
+ {
+  "text": "Can you explain what captions are?",
+  "expected": "NONE"
+ },
+ {
+  "text": "What are captions?",
+  "expected": "NONE"
+ },
+ {
+  "text": "My brother talks too fast",
+  "expected": "NONE"
+ },
+ {
+  "text": "Forget my name",
+  "expected": "NONE"
+ },
+ {
+  "text": "Do you remember my name?",
+  "expected": "NONE"
+ },
+ {
+  "text": "Dark mode and hide captions",
+  "expected": "MULTI"
+ },
+ {
+  "text": "Speak faster and turn on captions",
+  "expected": "MULTI"
+ },
+ {
+  "text": "Thanks, that was helpful",
+  "expected": "NONE"
+ }
+]

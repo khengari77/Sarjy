@@ -11,8 +11,10 @@ One `POST /v1/systemone` carries seven choice questions (`route`, `family`, `the
 - `multiple_commands` answers "I can only make one change at a time".
 - Everything else (chat, negation, low confidence, mismatch) falls through to the main model.
 
-Failures never block a turn: a missing key, open circuit (3 failures, 5 minute bypass), budget denial, 750 ms timeout, HTTP error or malformed body all return no classification.
+Failures never block a turn: a missing key, open circuit (3 failures, 5 minute bypass), budget denial, 1200 ms timeout (`UI_DEADLINE_SECONDS`, separate from the 750 ms routing deadline because seven questions are slower), HTTP error or malformed body all return no classification.
 
 Configuration (names only; see `.env.example`): `JEV_API_KEY` (empty disables), `JEV_COMMANDS_ENABLED`, `JEV_DAILY_REQUESTS` (default 2000). Each request reserves 1 unit of the durable `jev` ledger (`requests`, Tripoli day) in the API process before sending.
 
 `memory_op` (remember | forget | recall | restore | none) is parsed and exposed on the result but not acted on yet; a follow-up will use it to force the main model's memory tools.
+
+Wording: the shared scope text and the per-option criteria count polite requests and ability questions ("can you / could you / would you ...", "bring back / go back to X") as commands, while statements, opinions, questions about a feature, negations, other people's behaviour and edits to the user's own text are not. Live check: `scripts/jev_ui_eval.py` over `tests/fixtures/jev_ui_live_cases.json` (manual, reads `JEV_API_KEY` from the environment, never run in CI).
