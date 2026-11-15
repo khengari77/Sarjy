@@ -43,7 +43,10 @@
   // server and the first client frame agree before the boot script resolves.
   let theme = $state<ResolvedTheme>('dark');
   let voice = $state(initialVoiceState());
-  let runtime: VoiceRuntime | undefined, connection: VoiceConnection | undefined;
+  // `runtime` is handed to child components (the Wordle launcher subscribes to it), so it must be
+  // reactive: it is assigned after the first render, and a plain `let` would leave them with undefined.
+  let runtime = $state.raw<VoiceRuntime | undefined>(undefined);
+  let connection: VoiceConnection | undefined;
   let conversations: ConversationStore | undefined, catalogStore: ReturnType<typeof createCatalogStore> | undefined;
   const selection = createSelectionController({
     voice,
