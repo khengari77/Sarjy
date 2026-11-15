@@ -20,7 +20,9 @@ from app.dependencies import COOKIE, build_dependencies
 from app.domain.context_operations import MemoryCandidate, classify
 from app.domain.secrets import secret_matches
 from app.infrastructure.database import Base, SessionGate
+from app.services.budget import reserve_jev_request
 from app.services.context_actions import build_context_action_handlers
+from app.services.jev_ui import JevUiClient
 from app.services.memory import MemoryService, OpenAIEmbedder
 from app.services.reviewer_access import (
     ReviewerAccessDenied,
@@ -119,6 +121,17 @@ def _web_service_gate(config: Settings):
     return protect
 
 
+def _jev_ui_classifier(config: Settings, sessions) -> JevUiClient | None:
+    """In-process classifier, or ``None`` when the flag is off or no key is set."""
+    if not config.jev_commands_enabled or not config.jev_api_key.strip():
+        return None
+
+    async def reserve(_request) -> bool:
+        return await reserve_jev_request(sessions, limit=config.jev_daily_requests)
+
+    return JevUiClient(config.jev_api_key, reserve)
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -126,6 +139,7 @@ def create_app(
     embedding_adapter=None,
     clock=None,
     wordle_source=None,
+    ui_classifier=None,
 ):
     config = settings or Settings()
     now = clock or (lambda: datetime.now(UTC))
@@ -183,6 +197,7 @@ def create_app(
     app.middleware("http")(_web_service_gate(config))
 
     app.state.settings = config
+    app.state.ui_classifier = ui_classifier or _jev_ui_classifier(config, sessions)
     database, identity, cleanup_user, owned = build_dependencies(sessions, settings=config, clock=now)
 
     from app.routes.actions import register_action_routes

@@ -511,6 +511,7 @@ def _register_command_routes(app, *, database, guard, catalog, approved_voice_id
             approved_voice_ids=approved_voice_ids,
             handlers=app.state.action_handlers,
             secret=secret,
+            ui_classifier=getattr(app.state, "ui_classifier", None),
         )
         return {"command": result.model_dump(mode="json") if result is not None else None}
 

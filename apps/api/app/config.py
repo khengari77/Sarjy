@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     elevenlabs_daily_characters: int = Field(default=2500, ge=1)
     deepseek_request_micro_usd: int = 7_000
     eleven_api_key: str = ""
+    # Jev UI-command classifier (#168). An empty key or a false flag disables the feature.
+    jev_api_key: str = ""
+    jev_commands_enabled: bool = True
+    jev_daily_requests: int = Field(default=2000, ge=1)
     approved_voice_ids: str = ""
     default_voice_id: str = Field(default="", pattern=r"^$|^[A-Za-z0-9_-]{1,100}$")
     default_voice_language: Literal["ar", "en"] = "en"
