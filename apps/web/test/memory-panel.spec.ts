@@ -137,27 +137,21 @@ test('buttons disable while in flight and a double-click sends one request', asy
 });
 
 test('a memory hidden or restored by voice updates in place without a reload', async ({ page }) => {
+  // A server-side change (voice "forget my tea" / "undo") lands while the
+  // Memories tab is not visible; reactivation refreshes row state in place.
+  // The finalised-turn revision uses the same refresh() (explorer.svelte.test.ts).
   const calls = await mockApi(page);
   const panel = await open(page);
-  await expect(row(panel, 'Prefers tea over coffee')).toBeVisible();
+  await expect(row(panel, 'Prefers tea over coffee')).toHaveAttribute('data-hidden', 'false');
 
-  // "Forget my tea" lands server-side, then the turn finalises (turn count changes).
+  await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).click();
   calls.setFacts(FACTS.map((fact) => (fact.id === 'mem-tea' ? { ...fact, status: 'hidden' } : fact)));
-  calls.setTurns([
-    { id: 't1', role: 'user', text: 'forget my tea', status: 'complete' },
-    { id: 't2', role: 'assistant', text: 'Done.', status: 'complete' },
-  ]);
-  await page.locator('#shell-left').getByRole('button', { name: 'Trip to Paris', exact: true }).click();
-
+  await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
   await expect(row(panel, 'Prefers tea over coffee')).toHaveAttribute('data-hidden', 'true');
+  await expect(row(panel, 'Prefers tea over coffee').getByRole('button', { name: 'Restore memory' })).toBeVisible();
 
-  // "Undo" restores it the same way.
+  await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).click();
   calls.setFacts(FACTS);
-  calls.setTurns([
-    { id: 't1', role: 'user', text: 'forget my tea', status: 'complete' },
-    { id: 't2', role: 'assistant', text: 'Done.', status: 'complete' },
-    { id: 't3', role: 'user', text: 'undo', status: 'complete' },
-  ]);
-  await page.locator('#shell-left').getByRole('button', { name: 'Trip to Paris', exact: true }).click();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
   await expect(row(panel, 'Prefers tea over coffee')).toHaveAttribute('data-hidden', 'false');
 });
