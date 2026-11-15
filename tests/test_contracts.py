@@ -22,6 +22,7 @@ from app.domain.contracts import (
     SelectApprovedVoice,
     SetCaptionsVisible,
     SetSpeakingSpeed,
+    SetTheme,
     ShowConversationHistory,
     ToolSpec,
     UserSettings,
@@ -162,6 +163,7 @@ def test_every_shared_action_round_trips_through_the_discriminator():
         {"kind": "ShowConversationHistory"},
         {"kind": "OpenMemoryExplorer"},
         {"kind": "SetCaptionsVisible", "visible": False},
+        {"kind": "SetTheme", "theme": "dark"},
         {"kind": "SearchMemory", "query": "trip", "limit": 5},
         {"kind": "ProposeContextExclusion", "query": "trip", "keep": ["budget"]},
         {"kind": "RestoreContextOperation", "operation_id": "operation-1"},
@@ -317,6 +319,8 @@ def test_settings_transforms_do_not_mutate_inputs():
     assert apply_settings_action(settings, SelectApprovedVoice(voice_id="voice-1")).approved_voice_id == "voice-1"
     assert apply_settings_action(settings, OpenMemoryExplorer()) is settings
     assert apply_settings_action(settings, ShowConversationHistory()) is settings
+    # Theme is browser-local: it is never a server setting or a revision bump.
+    assert apply_settings_action(settings, SetTheme(theme="dark")) is settings
     assert apply_settings_action(settings, SearchMemory(query="trip")) is settings
     assert apply_settings_action(settings, AdjustSpeakingSpeed(delta=-0.1)).revision == 1
     assert (
@@ -394,3 +398,14 @@ def test_checked_in_budget_reservation_matches_runtime_schema():
 
     spec = json.loads((ROOT / "packages/contracts/openapi.json").read_text())
     assert spec["components"]["schemas"]["BudgetReservation"] == BudgetReservation.model_json_schema()
+
+
+def test_context_proposal_contract_surfaces_budget_ambiguity():
+    spec = json.loads((ROOT / "packages/contracts/openapi.json").read_text())
+    properties = spec["components"]["schemas"]["ContextProposal"]["properties"]
+    assert properties["requires_clarification"]["type"] == "boolean"
+    assert properties["ambiguous"]["items"]["$ref"].endswith("/ContextAmbiguity")
+    assert {"id", "content", "reason"} <= set(spec["components"]["schemas"]["ContextAmbiguity"]["properties"])
+    input_properties = spec["components"]["schemas"]["ContextProposalInput"]["properties"]
+    assert "exclude" in input_properties
+    assert "keep" in input_properties

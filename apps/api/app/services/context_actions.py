@@ -24,6 +24,7 @@ def build_context_action_handlers(*, secret: str, search: MemorySearcher = keywo
             conversation_id=conversation_id,
             query=action.query,
             keep=tuple(getattr(action, "keep", ())),
+            exclude=tuple(getattr(action, "exclude", ())),
             limit=getattr(action, "limit", 20),
             secret=secret,
             search=search,

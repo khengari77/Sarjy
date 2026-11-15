@@ -1,0 +1,107 @@
+/*
+ * Token entry door. Deliberately near-blank: a single field and a button over
+ * the Living Cloud background. All colours come from tokens.css so light and
+ * dark both work from the inline theme boot script.
+ */
+.entry-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+  padding: var(--space-xl);
+  background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--orb-listening) 18%, transparent), transparent 58%),
+    radial-gradient(circle at 50% 100%, color-mix(in srgb, var(--orb-memory) 12%, transparent), transparent 62%),
+    var(--bg-app);
+}
+
+.entry-orb {
+  position: absolute;
+  width: min(60vw, 420px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 38% 32%,
+    var(--orb-listening),
+    color-mix(in srgb, var(--accent) 65%, transparent) 58%,
+    transparent 72%
+  );
+  filter: blur(36px);
+  opacity: 0.34;
+  pointer-events: none;
+}
+
+.entry-panel {
+  position: relative;
+  width: min(100%, 22rem);
+  padding: var(--space-2xl);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-panel);
+  background: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
+  box-shadow: 0 24px 80px rgb(2 5 10 / 28%);
+  backdrop-filter: blur(18px);
+}
+
+.entry-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.entry-form label {
+  font-size: var(--font-size-caption);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.entry-form input {
+  font: inherit;
+  min-height: var(--control-height);
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.entry-form input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.entry-form button {
+  font: inherit;
+  min-height: var(--control-height);
+  margin-top: var(--space-sm);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--accent);
+  color: #fff;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: filter var(--transition-quick);
+}
+
+.entry-form button:hover {
+  filter: brightness(1.08);
+}
+
+.entry-form button:active {
+  filter: brightness(0.94);
+}
+
+.entry-error {
+  min-height: 1.25em;
+  margin: 0;
+  font-size: var(--font-size-body);
+  color: var(--status-error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entry-form button {
+    transition: none;
+  }
+}

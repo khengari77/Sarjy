@@ -79,7 +79,7 @@ def test_request_bounds_accept_every_published_tier_and_reject_the_rest():
         assert openai_request_within_bounds(b"{}", [], cap)
     assert not openai_request_within_bounds(b"{}", [], 1025)
     assert not openai_request_within_bounds(b"x" * 64001, [], 128)
-    assert not openai_request_within_bounds(b"{}", [object(), object()], 128)
+    assert not openai_request_within_bounds(b"{}", [object()] * 5, 128)
 
 
 def test_agent_uses_the_backend_instructions_without_rewriting_them():

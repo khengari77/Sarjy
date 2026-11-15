@@ -1,7 +1,7 @@
-"""Delayed fake upstream used to reproduce proxy deadline behaviour.
+"""Fake upstream for proxy deadline and security tests.
 
-Serves the two paths the deadline check needs and delays every API response by
-FAKE_API_DELAY seconds so a slow dispatch can be reproduced without LiveKit.
+Serves ``/healthz``, a header/path echo at ``/v1/echo`` and delayed responses
+for the deadline scenarios. ``FAKE_API_DELAY`` controls the delay in seconds.
 """
 
 import json
@@ -26,13 +26,27 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/healthz":
             self.reply(200, {"status": "ok"})
             return
+        if self.path.split("?")[0] == "/v1/echo":
+            self.reply(200, self.echo())
+            return
         time.sleep(DELAY_SECONDS)
         self.reply(200, [])
+
+    def echo(self) -> dict[str, object]:
+        forwarded = [
+            name
+            for name in ("x-agent-secret", "authorization", "x-web-service-secret", "cookie", "idempotency-key")
+            if self.headers.get(name)
+        ]
+        return {"path": self.path, "forwarded": forwarded}
 
     def do_POST(self) -> None:
         length = int(self.headers.get("content-length") or 0)
         if length:
             self.rfile.read(length)
+        if self.path.split("?")[0] == "/v1/echo":
+            self.reply(200, self.echo())
+            return
         time.sleep(DELAY_SECONDS)
         status = 201 if self.path == "/v1/voice/sessions" else 200
         self.reply(

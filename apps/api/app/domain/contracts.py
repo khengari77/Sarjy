@@ -351,7 +351,8 @@ class SetSpeakingSpeed(Contract):
 
 class SelectApprovedVoice(Contract):
     kind: Literal["SelectApprovedVoice"] = "SelectApprovedVoice"
-    voice_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,100}$")
+    # ``None`` is the explicit clear: fall back to the configured server default.
+    voice_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,100}$")
 
 
 class ShowConversationHistory(Contract):
@@ -367,6 +368,21 @@ class SetCaptionsVisible(Contract):
     visible: bool
 
 
+ThemeName = Literal["light", "dark", "system"]
+
+
+class SetTheme(Contract):
+    """A browser-local theme choice.
+
+    Deliberately absent from :class:`UserSettings`: a theme belongs to one
+    browser's presentation, so the server records no preference and the result
+    only carries the hint the client applies.
+    """
+
+    kind: Literal["SetTheme"] = "SetTheme"
+    theme: Literal["light", "dark", "system"]
+
+
 class SearchMemory(Contract):
     kind: Literal["SearchMemory"] = "SearchMemory"
     query: str = Field(min_length=1, max_length=200)
@@ -377,6 +393,7 @@ class ProposeContextExclusion(Contract):
     kind: Literal["ProposeContextExclusion"] = "ProposeContextExclusion"
     query: str = Field(min_length=1, max_length=200)
     keep: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
 
 
 class RestoreContextOperation(Contract):
@@ -391,6 +408,7 @@ ActionType = (
     | ShowConversationHistory
     | OpenMemoryExplorer
     | SetCaptionsVisible
+    | SetTheme
     | SearchMemory
     | ProposeContextExclusion
     | RestoreContextOperation
@@ -481,8 +499,10 @@ __all__ = [
     "SelectApprovedVoice",
     "SetCaptionsVisible",
     "SetSpeakingSpeed",
+    "SetTheme",
     "ShowConversationHistory",
     "TIER_CAPS",
+    "ThemeName",
     "ToolSpec",
     "UserSettings",
     "apply_settings_action",

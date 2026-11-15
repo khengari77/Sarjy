@@ -181,3 +181,24 @@ def test_normalized_configuration_is_idempotent_and_does_not_mutate(tier, prefer
     assert source == before
     assert normalize_pipeline(resolved) == resolved
     assert resolved["max_output_tokens"] == TIER_CAPS[tier - 1]
+
+
+def test_instructions_deny_unperformed_capabilities():
+    """The model must not claim a UI/DB action the application did not perform."""
+    policy = ResponsePolicy.for_tier(2)
+    english = compose_system_message("en", policy)
+    arabic = compose_system_message("ar", policy)
+    assert "Never claim to have changed a setting" in english
+    assert "لا تدّعِ تغيير إعداد" in arabic
+
+
+def test_instructions_tell_the_model_the_app_performs_settings_commands():
+    # A refusal like "I can't change the theme" was spoken to users although the application can;
+    # the model must redirect to a short phrase instead of calling the action impossible.
+    for language, phrase in (("en", "dark mode"), ("ar", "الوضع الداكن")):
+        text = BASE_INSTRUCTIONS[language]
+        assert phrase in text
+        assert "did not catch" in text if language == "en" else "لم تفهمه" in text
+    english = BASE_INSTRUCTIONS["en"]
+    assert "do not say it is impossible" in english and "do not claim it is done" in english
+    assert "Never claim to have changed a setting" in english, "the truthfulness rule must remain"

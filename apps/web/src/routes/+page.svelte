@@ -1,258 +1,284 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import {
-    request,
-    type Conversation,
-    type Turn,
-    type SessionConfig,
-    type VoiceOption,
-    type VoiceCatalog,
-  } from '../lib/api';
-  import { LiveKitVoiceRuntime } from '../lib/audio/voice-runtime';
+  import type { VoiceRuntime } from '../lib/audio/voice-runtime';
+  import { activateOrb } from '../lib/orb/orbActions';
+  import type { ResolvedTheme } from '../lib/ui/theme';
+  import type { ThemeControl } from '../lib/ui/themeSession.svelte';
+  import AppShell from '../lib/ui/AppShell.svelte';
+  import { revealTranscript } from '../lib/ui/revealTranscript';
+  import ConversationList from '../lib/chat/ConversationList.svelte';
+  import VoiceStage from '../lib/chat/VoiceStage.svelte';
+  import type { PendingIntent } from '../lib/chat/intent';
   import CallControls from '../lib/chat/CallControls.svelte';
   import Composer from '../lib/chat/Composer.svelte';
-  import ConversationList from '../lib/chat/ConversationList.svelte';
-  import Transcript from '../lib/chat/Transcript.svelte';
-  import VoiceSettings from '../lib/chat/VoiceSettings.svelte';
-  import {
-    bootstrapConversations,
-    createConversation,
-    endVoiceSession,
-    fetchConversation,
-    mergeVoices,
-    startVoiceSession,
-    type ToolCall,
-  } from '../lib/chat/session';
+  import { selectedVoiceOption } from '../lib/chat/voice-state';
+  import AppRightDrawer from '../lib/ui/AppRightDrawer.svelte';
+  import { createAnnouncement } from '../lib/chat/announcement.svelte';
   import { wordsFor } from '../lib/chat/words';
+  import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
+  import { errorCode } from '../lib/voice/errors';
+  import { storeLanguage } from '../lib/preferences';
+  import { createCatalogStore, initialCatalogState } from '../lib/voice/catalog';
+  import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
+  import { deriveStage } from '../lib/voice/stageView';
+  import { bootStudio } from '../lib/voice/studio';
+  import { createSelectionController } from '../lib/voice/selection';
+  import { createCommandSession } from '../lib/commands/commandSession.svelte';
+  import CommandStatus from '../lib/commands/CommandStatus.svelte';
   import '../lib/chat/chat.css';
 
+  // English-first release: Arabic copy and provider plumbing stay in place but
+  // the reviewer-facing interface is fixed to English.
+  const LANGUAGE_SWITCH_ENABLED = false;
   let arabic = $state(false);
-  let voiceId = $state('');
-  let voices = $state<VoiceOption[]>([]);
-  let voiceSearch = $state('');
-  let loadedVoiceSearch = '';
-  let nextVoicePage = $state<string | null>(null);
-  let voiceLoading = $state(false);
-  let voiceError = $state('');
-  let activeVoiceName = $state('');
-  let conversations = $state<Conversation[]>([]);
-  let toolCalls = $state<ToolCall[]>([]);
-  let current = $state<string | null>(null);
-  let turns = $state<Turn[]>([]);
+  let catalog = $state(initialCatalogState());
+  let conversation = $state(initialConversationState());
   let draft = $state('');
-  let status = $state('idle');
-  let error = $state('');
+  let pendingIntent = $state<PendingIntent>(null);
+  let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none');
   let busy = $state(false);
-  let muted = $state(true);
-  let audioBlocked = $state(false);
-  let live = $state<SessionConfig | null>(null);
-  let runtime: LiveKitVoiceRuntime;
+  // The shell owns storage and OS-preference resolution and reports the answer
+  // through onthemechange. `dark` matches the tokens.css SSR fallback, so the
+  // server and the first client frame agree before the boot script resolves.
+  let theme = $state<ResolvedTheme>('dark');
+  let voice = $state(initialVoiceState());
+  let runtime: VoiceRuntime | undefined, connection: VoiceConnection | undefined;
+  let conversations: ConversationStore | undefined, catalogStore: ReturnType<typeof createCatalogStore> | undefined;
+  const selection = createSelectionController({
+    voice,
+    getPending: () => pendingIntent,
+    setPending: (intent) => (pendingIntent = intent),
+    run: (work) => run(work),
+    cancelConnect: () => connection!.cancelConnect(),
+    endVoice: () => connection!.end(),
+    getConversations: () => conversations!,
+  });
   const words = $derived(wordsFor(arabic));
+  const selectedVoice = $derived(selectedVoiceOption(catalog.voices, catalog.voiceId));
+  const sessionVoice = $derived(voice.live?.voice ?? null);
+  // Any finalised turn can save a memory server-side; the panel uses this to
+  // invalidate a list it loaded before the save.
+  const memoryRevision = $derived(`${conversation.current ?? ''}:${conversation.turns.length}`);
+  // Panel state is a top-level reactive object so the shell bindings and the
+  // command store share one source of truth.
+  const panels = $state({ history: false, memory_explorer: false });
+  // The control that opened the drawer on its Transcript tab; focus returns there.
+  let drawerOpener = $state<HTMLElement | null>(null);
+  const openTranscript = (opener: HTMLElement) =>
+    revealTranscript(opener, panels, commands.state, (control) => (drawerOpener = control));
+  // The shell owns the theme session and hands back its setter; a voice theme
+  // command applies through it once and persists in this browser only.
+  let shellTheme: ThemeControl | null = null;
+  const commands = createCommandSession(catalog, panels, { setTheme: (preference) => shellTheme?.set(preference) });
 
-  async function loadVoices(more = false) {
-    if (voiceLoading) return;
-    voiceLoading = true;
-    voiceError = '';
-    try {
-      const search = more ? loadedVoiceSearch : voiceSearch;
-      const query = new URLSearchParams({ search });
-      if (more && nextVoicePage) query.set('next_page_token', nextVoicePage);
-      const result = await request<VoiceCatalog>('voices?' + query);
-      voices = more ? mergeVoices(voices, result.voices) : result.voices;
-      nextVoicePage = result.next_page_token ?? null;
-      loadedVoiceSearch = search;
-    } catch (e) {
-      voiceError = e instanceof Error ? e.message : 'VOICE_CATALOG_UNAVAILABLE';
-    } finally {
-      voiceLoading = false;
-    }
-  }
+  // One projection owns the phase, copy and orb presentation; the orb button
+  // dispatches whatever action that presentation advertises.
+  const stage = $derived(deriveStage(voice, arabic, devOverlay, theme));
+  const canInterrupt = $derived(stage.canInterrupt);
+  const voiceErrorText = $derived(stage.errorText);
+  const presentation = $derived(stage.presentation);
 
-  function rememberVoice() {
-    localStorage.setItem('sarjy-voice-id', voiceId);
-  }
-
-  async function refresh() {
-    const id = current;
-    if (id) {
-      const history = await fetchConversation(id);
-      if (current === id) {
-        turns = history.turns;
-        toolCalls = history.toolCalls;
-      }
-    }
-  }
-
-  async function run(work: () => Promise<void>) {
+  async function run(work: () => Promise<void>, onError?: (error: unknown) => void) {
     busy = true;
-    error = '';
     try {
       await work();
-    } catch (e) {
-      error = e instanceof Error ? e.message : 'UNAVAILABLE';
+    } catch (error) {
+      if (onError) onError(error);
+      else conversation.listError = errorCode(error);
     } finally {
       busy = false;
     }
   }
 
-  async function end() {
-    const session = live;
-    live = null;
-    muted = true;
-    await runtime?.disconnect();
-    await endVoiceSession(session);
-    status = 'idle';
-    await refresh();
-  }
+  const onVoiceError = (error: unknown) => (voice.voiceErrorCode = errorCode(error));
 
-  async function select(id: string) {
-    if (live) await end();
-    current = id;
-    await refresh();
-  }
-
-  async function create() {
-    await run(async () => {
-      const chat = await createConversation();
-      conversations = [chat, ...conversations];
-      await select(chat.id);
+  function handleOrb() {
+    activateOrb(presentation, {
+      start: startConnect,
+      cancel: () => void run(() => connection!.cancelConnect(), onVoiceError),
+      mute: () => void toggleMute(),
+      interrupt: () => void interrupt(),
+      retry: () => (voice.live ? reconnect() : startConnect()),
+      reconnect,
+      end: () => void run(() => connection!.end(), onVoiceError),
     });
   }
 
-  async function connect(microphone: boolean) {
-    if (!current) throw new Error('CONVERSATION_REQUIRED');
-    if (!live) {
-      const requestedVoiceId = voiceId;
-      const requestedVoiceName = voices.find((voice) => voice.id === requestedVoiceId)?.name || requestedVoiceId;
-      const config = await startVoiceSession(current, arabic ? 'ar' : 'en', requestedVoiceId);
-      try {
-        await runtime.connect(config);
-        live = config;
-        activeVoiceName = requestedVoiceName;
-      } catch (e) {
-        await runtime.disconnect();
-        await request('voice/sessions/' + config.id + '/end', {});
-        throw e;
-      }
-    }
-    if (microphone) {
-      await runtime.startMicrophone();
-      muted = false;
-    }
+  /** The composer mic mirrors the orb: start the call, or mute/unmute a live one. */
+  function handleMic() {
+    if (voice.live) void toggleMute();
+    else if (!voice.connecting) startConnect();
+  }
+
+  const reconnect = () => void run(() => connection!.reconnect(), onVoiceError);
+  const startConnect = () => void connection!.connect(true).catch(onVoiceError);
+  const toggleMute = () => run(() => connection!.toggleMute(), onVoiceError);
+
+  async function interrupt() {
+    if (!voice.live || !canInterrupt) return;
+    await run(() => connection!.interrupt(), onVoiceError);
   }
 
   async function send() {
     if (!draft.trim()) return;
     await run(async () => {
-      await connect(false);
-      await runtime.sendText(draft.trim());
+      if (!voice.live) await connection!.connect(false);
+      if (!voice.live) return;
+      await connection!.sendText(draft.trim());
       draft = '';
-    });
+    }, onVoiceError);
+  }
+
+  async function enableAudio() {
+    await run(async () => {
+      await runtime?.resumeAudio?.();
+      voice.audioBlocked = false;
+    }, onVoiceError);
   }
 
   function toggleLanguage() {
     arabic = !arabic;
-    localStorage.setItem('sarjy-language', arabic ? 'ar' : 'en');
+    storeLanguage(arabic);
   }
 
-  async function toggleMute() {
-    if (muted) await runtime.startMicrophone();
-    else await runtime.stopMicrophone();
-    muted = !muted;
-  }
+  const announcement = createAnnouncement(() => (arabic ? presentation.statusLabel.ar : presentation.statusLabel.en));
 
   onMount(() => {
-    arabic = localStorage.getItem('sarjy-language') === 'ar';
-    voiceId = localStorage.getItem('sarjy-voice-id') || '';
-    runtime = new LiveKitVoiceRuntime();
-    const unsubscribe = runtime.subscribe((event) => {
-      if (event.type === 'status') {
-        status = event.text;
-        if (event.text === 'disconnected' && live) void run(end);
-      }
-      if (event.type === 'error') error = event.text;
-      if (event.type === 'audio-blocked') audioBlocked = true;
-      if (event.type === 'transcript') void refresh().catch(() => {});
+    const boot = bootStudio({
+      voice,
+      catalog,
+      conversation,
+      restoreLanguage: LANGUAGE_SWITCH_ENABLED,
+      setArabic: (value) => (arabic = value),
+      hydrateSettings: (settings) => commands.hydrate(settings),
+      applyCommand: commands.apply,
+      setDevOverlay: (value) => (devOverlay = value),
+      getLanguage: () => (arabic ? 'ar' : 'en'),
+      run: (work, onError) => run(work, onError),
+      onVoiceError,
     });
-    void run(async () => {
-      conversations = await bootstrapConversations();
-      await select(conversations[0].id);
-    });
-    const poll = setInterval(() => {
-      if (live && Date.parse(live.expires_at) <= Date.now()) void run(end);
-      else if (live) void refresh().catch(() => {});
-    }, 2500);
-    return () => {
-      clearInterval(poll);
-      unsubscribe();
-      void runtime.disconnect();
-      if (live) void endVoiceSession(live).catch(() => {});
-    };
+    runtime = boot.runtime;
+    connection = boot.connection;
+    conversations = boot.conversations;
+    catalogStore = boot.catalogStore;
+    return boot.cleanup;
   });
 </script>
 
 <svelte:head>
   <title>Sarjy — Voice Context Studio</title>
-  <meta name="description" content="A bilingual voice assistant with transparent context." />
+  <meta name="description" content="An English-first voice assistant with transparent context." />
 </svelte:head>
 
-<div class="shell" dir={arabic ? 'rtl' : 'ltr'}>
-  <ConversationList
-    {conversations}
-    {current}
-    {busy}
-    labelNew={words.new}
-    oncreate={() => void create()}
-    onselect={(id) => void run(() => select(id))}
-  />
-  <main>
-    <header>
-      <span>● {status}</span>
-      <button onclick={toggleLanguage}>{arabic ? 'English' : 'العربية'}</button>
-    </header>
-    {#if error}<p role="alert">{error}</p>{/if}
-    {#if audioBlocked}
-      <button
-        onclick={() =>
-          run(async () => {
-            await runtime.resumeAudio();
-            audioBlocked = false;
-          })}>Enable audio / تشغيل الصوت</button
-      >
-    {/if}
-    <Transcript {turns} {toolCalls} title={words.title} intro={words.intro} />
-    <VoiceSettings
+<AppShell
+  bind:leftOpen={panels.history}
+  bind:rightOpen={panels.memory_explorer}
+  bind:rightOpener={drawerOpener}
+  dir={arabic ? 'rtl' : 'ltr'}
+  stageDialogOpen={pendingIntent !== null}
+  languageLabel={arabic ? 'English' : 'العربية'}
+  onLanguage={LANGUAGE_SWITCH_ENABLED ? toggleLanguage : undefined}
+  leftLabel={arabic ? 'المحادثات' : 'Conversations'}
+  rightLabel={arabic ? 'الذاكرة والإعدادات' : 'Memory and settings'}
+  onthemechange={(value) => (theme = value)}
+  onthemeready={(control) => (shellTheme = control)}
+>
+  {#snippet left()}
+    <ConversationList
+      conversations={conversation.conversations}
+      current={conversation.current}
       {arabic}
-      {voices}
-      bind:voiceId
-      bind:voiceSearch
-      {nextVoicePage}
-      {voiceLoading}
-      {voiceError}
-      {live}
-      {activeVoiceName}
-      onsearch={() => void loadVoices()}
-      onloadmore={() => void loadVoices(true)}
-      onremember={rememberVoice}
-    />
-    <CallControls
-      {live}
       {busy}
-      {muted}
-      canConnect={Boolean(current)}
+      loading={conversation.loading}
+      error={conversation.listError}
+      onselect={selection.requestSelect}
+      oncreate={selection.create}
+      onretry={() => run(() => conversations!.reload())}
+    />
+  {/snippet}
+
+  {#snippet stage()}
+    <VoiceStage
+      {presentation}
+      micLevel={voice.micLevel}
+      outputLevel={voice.outputLevel}
+      {arabic}
+      live={voice.live !== null}
+      connecting={voice.connecting}
+      connectionLost={voice.connectionLost}
+      voiceErrorCode={voice.voiceErrorCode}
+      {voiceErrorText}
+      audioBlocked={voice.audioBlocked}
+      {pendingIntent}
+      turns={conversation.turns}
+      provisional={voice.provisional}
+      captionsVisible={commands.state.settings.captions_visible}
+      {busy}
       {words}
-      onend={() => void run(end)}
-      ontoggle={() => void run(toggleMute)}
-      oninterrupt={() => void run(() => runtime.interrupt())}
-      onconnect={() => void run(() => connect(true))}
+      onretrymic={startConnect}
+      onreconnect={() => run(() => connection!.reconnect(), onVoiceError)}
+      onend={() => run(() => connection!.end(), onVoiceError)}
+      onenableaudio={enableAudio}
+      onorb={handleOrb}
+      ontranscript={openTranscript}
+      oncancelintent={() => (pendingIntent = null)}
+      onconfirmintent={() => selection.confirmSwitch()}
+    />
+  {/snippet}
+
+  <!-- Reachable while an overlay drawer is modal: #37 requires Mute and End to
+       stay available, and the composer is useful beside them. -->
+  {#snippet controls()}
+    <CallControls
+      live={voice.live}
+      connecting={voice.connecting}
+      {busy}
+      muted={voice.muted}
+      connectionLost={voice.connectionLost}
+      {canInterrupt}
+      cleanupRequired={voice.pendingCleanup !== null}
+      {words}
+      onretrycleanup={() => run(() => connection!.retryCleanup(), onVoiceError)}
+      onend={() => run(() => connection!.end(), onVoiceError)}
+      oncancel={() => run(() => connection!.cancelConnect(), onVoiceError)}
+      ontoggle={toggleMute}
+      oninterrupt={interrupt}
     />
     <Composer
       bind:draft
       placeholder={words.placeholder}
       sendLabel={words.send}
-      disabled={busy || !current}
-      onsend={() => void send()}
+      disabled={busy}
+      onsend={send}
+      micLabel={voice.live ? (voice.muted ? words.micOff : words.micOn) : words.talk}
+      micPressed={voice.live ? !voice.muted : null}
+      onmic={handleMic}
     />
-    <small><a href="https://open-meteo.com/">Weather data: Open-Meteo</a></small>
-  </main>
-</div>
+  {/snippet}
+
+  {#snippet right()}
+    <AppRightDrawer
+      {arabic}
+      conversationId={conversation.current}
+      {memoryRevision}
+      bind:activeTab={commands.state.panelTab}
+      turns={conversation.turns}
+      provisional={voice.provisional}
+      tools={conversation.toolCalls}
+      {catalog}
+      {selectedVoice}
+      {sessionVoice}
+      live={voice.live !== null}
+      speakingSpeed={commands.state.settings.speaking_speed}
+      captionsVisible={commands.state.settings.captions_visible}
+      onsearch={() => void catalogStore!.load()}
+      onloadmore={() => void catalogStore!.load(true)}
+      onremember={() => void catalogStore!.remember()}
+      onspeed={(speed) => commands.setSpeakingSpeed(speed)}
+      ontoggleCaptions={() => void commands.setCaptions(!commands.state.settings.captions_visible)}
+    />
+  {/snippet}
+</AppShell>
+
+<p class="sr-only" aria-live="polite" aria-atomic="true">{announcement.message}</p>
+<CommandStatus session={commands} />

@@ -1,7 +1,12 @@
 import { test, expect } from '@playwright/test';
 test.beforeEach(async ({ page }, info) => {
+  await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
   await page.addInitScript(() => {
-    if (!localStorage.getItem('sarjy-language')) localStorage.setItem('sarjy-language', 'ar');
+    const stream = { getTracks: () => [] } as unknown as MediaStream;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => stream },
+    });
   });
   if (info.project.name !== 'recorded-ui') return;
   await page.addInitScript(
@@ -18,30 +23,24 @@ test.beforeEach(async ({ page }, info) => {
     { title: info.title },
   );
 });
-test('demo session, bilingual controls, history and explicit missing-service errors', async ({ page }) => {
+test('demo session, English-first controls, history and explicit missing-service errors', async ({ page }) => {
   await page.goto('/');
-  const bodyStyle = await page.evaluate(() => {
-    const style = getComputedStyle(document.body);
-    return { margin: style.margin, background: style.backgroundColor, font: style.fontFamily };
-  });
-  expect(bodyStyle.margin).toBe('0px');
-  expect(bodyStyle.background).toBe('rgb(248, 247, 243)');
-  expect(bodyStyle.font.toLowerCase()).toContain('system-ui');
-  await expect(page.getByRole('button', { name: 'بدء مكالمة' })).toBeEnabled();
-  await expect(page.locator('.shell')).toHaveAttribute('dir', 'rtl');
-  await page.getByRole('button', { name: 'English', exact: true }).click();
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
+  await expect(page.locator('.orb-button')).toBeEnabled();
   await expect(page.locator('.shell')).toHaveAttribute('dir', 'ltr');
+  await expect(page.getByRole('button', { name: 'العربية' })).toHaveCount(0);
   const before = await page.request.get('/api/v1/conversations');
   expect(before.ok()).toBeTruthy();
   const chats = await before.json();
-  await page.getByRole('button', { name: 'New conversation +', exact: true }).click();
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await expect
     .poll(async () => (await (await page.request.get('/api/v1/conversations')).json()).length)
     .toBe(chats.length + 1);
   await page.reload();
   await expect(page.locator('.shell')).toHaveAttribute('dir', 'ltr');
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
-  await expect(page.getByRole('alert')).toHaveText('PIPELINE_NOT_CONFIGURED');
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
+  await page.locator('.orb-button').click();
+  await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
 });
 test('proxy rejects cross-origin mutation', async ({ request }) => {
   const result = await request.post('/api/v1/demo-session', { headers: { origin: 'https://untrusted.example' } });
@@ -62,21 +61,50 @@ test('voice picker search, pagination, saved preference and call payload', async
       },
     });
   });
+  let savedVoice: string | null = null;
+  let revision = 0;
+  const settings = () => ({
+    speaking_speed: 1,
+    captions_visible: true,
+    approved_voice_id: savedVoice,
+    response_preference: 'automatic',
+    revision,
+  });
+  await page.route('**/api/v1/settings', (route) => route.fulfill({ json: settings() }));
+  await page.route('**/api/v1/settings/actions', async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.action.kind).toBe('SelectApprovedVoice');
+    expect(body.conversation_id).toBeUndefined();
+    expect(body.request_id).toBe(`voice:${revision}:lady-voice`);
+    savedVoice = body.action.voice_id;
+    revision += 1;
+    await route.fulfill({
+      json: { kind: 'SelectApprovedVoice', settings: settings(), changed: true },
+    });
+  });
   let sentVoice: string | undefined;
+  let sentLanguage: string | undefined;
   await page.route('**/api/v1/voice/sessions', async (route) => {
-    sentVoice = route.request().postDataJSON().voice_id;
+    const body = route.request().postDataJSON();
+    sentVoice = body.voice_id;
+    sentLanguage = body.language;
     await route.fulfill({ status: 503, json: { detail: { code: 'PIPELINE_NOT_CONFIGURED' } } });
   });
   await page.goto('/');
-  await expect(page.getByRole('button', { name: 'بدء مكالمة' })).toBeEnabled();
-  await page.getByRole('button', { name: 'English', exact: true }).click();
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
+  await expect(page.locator('.orb-button')).toBeEnabled();
+  await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
   await page.getByRole('textbox', { name: 'Search voices' }).fill('British');
   await page.getByRole('button', { name: 'Load voices / Search', exact: true }).click();
   await page.getByRole('button', { name: 'Load more', exact: true }).click();
   await page.getByLabel('Choose voice').selectOption('lady-voice');
   await page.reload();
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
+  await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
   await expect(page.getByLabel('Choose voice')).toHaveValue('lady-voice');
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
-  await expect(page.getByRole('alert')).toHaveText('PIPELINE_NOT_CONFIGURED');
-  expect(sentVoice).toBe('lady-voice');
+  await page.locator('.orb-button').click();
+  await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
+  // The saved voice is resolved server-side; the client must not resend it.
+  expect(sentVoice).toBeUndefined();
+  expect(sentLanguage).toBe('en');
 });

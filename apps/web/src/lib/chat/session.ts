@@ -1,4 +1,13 @@
-import { request, type Conversation, type SessionConfig, type StartVoice, type Turn, type VoiceOption } from '../api';
+import {
+  request,
+  type Conversation,
+  type SessionConfig,
+  type SettingsActionResult,
+  type StartVoice,
+  type Turn,
+  type UserSettings,
+  type VoiceOption,
+} from '../api';
 
 export type ToolCall = { id: string; name: string; result: unknown };
 
@@ -18,18 +27,60 @@ export async function fetchConversation(id: string): Promise<{ turns: Turn[]; to
   return { turns, toolCalls };
 }
 
-export async function startVoiceSession(
-  conversationId: string,
-  language: 'ar' | 'en',
-  voiceId: string,
-): Promise<SessionConfig> {
+export async function fetchSettings(): Promise<UserSettings> {
+  return request<UserSettings>('settings');
+}
+
+export async function startVoiceSession(conversationId: string, language: 'ar' | 'en'): Promise<SessionConfig> {
+  // Never send a voice id here: the server owns resolution (saved -> default) and
+  // the saved voice's language. An explicit per-call override needs a distinct
+  // user intent and must not be inferred from whatever the picker happens to show.
   const body = {
     conversation_id: conversationId,
     language,
-    voice_id: voiceId || null,
     response_preference: 'automatic',
   } satisfies StartVoice;
   return request<SessionConfig>('voice/sessions', body);
+}
+
+/**
+ * Persist the voice preference owner-side. No conversation is created: a fresh
+ * browser must be able to save a preference before its first call.
+ */
+export async function saveVoiceSelection(voiceId: string, expectedRevision: number): Promise<UserSettings> {
+  // Stable id for this exact intent: if the response is lost, retrying the same
+  // selection at the same revision replays the committed outcome instead of 409.
+  // An empty id is the explicit clear that restores the server default.
+  const requestId = `voice:${expectedRevision}:${voiceId || 'default'}`;
+  const result = await request<SettingsActionResult>('settings/actions', {
+    request_id: requestId,
+    expected_revision: expectedRevision,
+    action: { kind: 'SelectApprovedVoice', voice_id: voiceId || null },
+  });
+  return result.settings;
+}
+
+/** Persist the captions preference owner-side; the server snapshot is authoritative. */
+export async function saveCaptionSelection(visible: boolean, expectedRevision: number): Promise<SettingsActionResult> {
+  const requestId = `captions:${expectedRevision}:${visible ? 'on' : 'off'}`;
+  return request<SettingsActionResult>('settings/actions', {
+    request_id: requestId,
+    expected_revision: expectedRevision,
+    action: { kind: 'SetCaptionsVisible', visible },
+  });
+}
+
+/**
+ * Persist the speaking-speed preference owner-side. The worker reads it from
+ * the frozen turn snapshot, so a change applies to the next turn (#136).
+ */
+export async function saveSpeakingSpeed(speed: number, expectedRevision: number): Promise<SettingsActionResult> {
+  const requestId = `speed:${expectedRevision}:${speed.toFixed(1)}`;
+  return request<SettingsActionResult>('settings/actions', {
+    request_id: requestId,
+    expected_revision: expectedRevision,
+    action: { kind: 'SetSpeakingSpeed', speed },
+  });
 }
 
 export async function endVoiceSession(session: SessionConfig | null): Promise<void> {
