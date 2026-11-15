@@ -260,6 +260,9 @@ class UserSetting(Base):
     response_preference: Mapped[str] = mapped_column(String(20), default="automatic")
     revision: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
+    # Set once the full spoken introduction finished playing uninterrupted. Not a user
+    # setting: it never bumps ``revision`` and is not part of UserSettings.
+    intro_seen_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 class WordlePuzzle(Base):

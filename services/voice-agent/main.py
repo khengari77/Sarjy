@@ -968,6 +968,36 @@ def apply_control(packet, reveal: RevealState) -> None:
             reveal.pending = False
 
 
+INTRO_WAIT_SECONDS = 15
+
+
+async def play_greeting(session, backend, intro: Mapping[str, Any] | None, wait_for_user) -> str:
+    """Speak the deterministic greeting once the user is in the room; no model turn is started.
+
+    Rule: the full introduction is marked seen on the API only when it played to the end. If
+    the user interrupts it, or speech fails (budget, TTS), it is not marked and plays again
+    next call. The one-line greeting is never marked. Spoken text goes through the agent's
+    tts_node, so characters are reserved in the shared speech budget like any other reply, and
+    LiveKit transcription shows it in captions. Returns what happened, for tests and logs.
+    """
+    if not intro or not isinstance(intro.get("text"), str) or not intro["text"]:
+        return "skipped"
+    try:
+        await asyncio.wait_for(wait_for_user(), timeout=INTRO_WAIT_SECONDS)
+        handle = session.say(intro["text"], allow_interruptions=True, add_to_chat_ctx=False)
+        await handle.wait_for_playout()
+    except (TimeoutError, RuntimeError, ValueError, httpx.HTTPError):
+        return "not_played"
+    if handle.interrupted or handle.exception():
+        return "interrupted"
+    if intro.get("kind") == "full":
+        try:
+            (await backend.post("/internal/agent/intro-played")).raise_for_status()
+        except httpx.HTTPError:
+            return "mark_failed"
+    return "played"
+
+
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
     values = read_worker_environment()
@@ -1054,6 +1084,11 @@ async def entrypoint(ctx: JobContext):
         await session.start(
             agent, room=ctx.room, record=False, room_options=room_io.RoomOptions(close_on_disconnect=False)
         )
+        greeting = asyncio.create_task(
+            play_greeting(session, backend, bootstrap.get("intro"), lambda: ctx.wait_for_participant())
+        )
+        agent.pending.add(greeting)
+        greeting.add_done_callback(agent.pending.discard)
         expiry = datetime.fromisoformat(bootstrap["expires_at"])
         remaining = max(0, (expiry - datetime.now(UTC)).total_seconds())
         try:
@@ -1067,6 +1102,7 @@ async def entrypoint(ctx: JobContext):
                 await asyncio.gather(monitor, return_exceptions=True)
         finally:
             await session.aclose()
+            greeting.cancel()
             if agent.pending:
                 await asyncio.gather(*agent.pending, return_exceptions=True)
             if fallback_llm is not None and hasattr(fallback_llm, "aclose"):
