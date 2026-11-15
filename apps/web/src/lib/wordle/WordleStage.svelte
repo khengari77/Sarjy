@@ -11,6 +11,7 @@
   } from './wordleState';
   import WordleBoard from './WordleBoard.svelte';
   import WordleHeader from './WordleHeader.svelte';
+  import WordleResetConfirm from './WordleResetConfirm.svelte';
   import WordleKeyboard from './WordleKeyboard.svelte';
   import WordlePanel from './WordlePanel.svelte';
   import WordleStats from './WordleStats.svelte';
@@ -22,6 +23,7 @@
   let now = $state(new Date());
   let stageEl = $state<HTMLDivElement>();
   let previouslyFocused: HTMLElement | null = null;
+  let confirmingReset = $state(false);
 
   const gameState = $derived(game.state);
   const accepting = $derived(gameState.view === 'playing');
@@ -39,6 +41,11 @@
     const timer = setInterval(() => (now = new Date()), 1000);
     return () => clearInterval(timer);
   });
+
+  async function confirmReset() {
+    await game.reset();
+    confirmingReset = false;
+  }
 
   function close() {
     game.close();
@@ -90,7 +97,22 @@
     tabindex="-1"
     bind:this={stageEl}
   >
-    <WordleHeader {dateLabel} puzzleDate={gameState.puzzleDate} {countdown} {timezone} onclose={close} />
+    <WordleHeader
+      {dateLabel}
+      puzzleDate={gameState.puzzleDate}
+      {countdown}
+      {timezone}
+      onclose={close}
+      onreset={() => (confirmingReset = true)}
+    />
+
+    {#if confirmingReset}
+      <WordleResetConfirm
+        busy={gameState.busy}
+        onconfirm={() => void confirmReset()}
+        oncancel={() => (confirmingReset = false)}
+      />
+    {/if}
 
     {#if gameState.view === 'loading' || gameState.view === 'unavailable' || gameState.view === 'error'}
       <WordlePanel view={gameState.view} notice={gameState.notice} onretry={() => void game.load()} />

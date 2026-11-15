@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
   import { createWordleGame, type WordleGame } from './wordleGame.svelte';
-  import { createWordleVoice, speakWordleReply, type WordleVoice } from './wordleVoice';
+  import { createWordleVoice, speakWordleReply, type PendingKind, type WordleVoice } from './wordleVoice';
   import { applyWordleToolEvent, createActiveSync } from './wordleActive';
   import WordleEntry from './WordleEntry.svelte';
   import WordleStage from './WordleStage.svelte';
@@ -44,19 +44,19 @@
     });
   }
 
-  function revealPending(pending: boolean) {
+  function pendingAction(kind: PendingKind | null) {
     if (!runtime) return;
-    void runtime.sendControl({ type: 'wordle.reveal_pending', value: pending }).catch(() => {});
+    void runtime.sendControl({ type: 'wordle.pending', value: kind }).catch(() => {});
   }
 
-  const voice: WordleVoice = createWordleVoice({ game, speak, scope: () => scope, onRevealPending: revealPending });
+  const voice: WordleVoice = createWordleVoice({ game, speak, scope: () => scope, onPending: pendingAction });
 
   function handleVoiceEvent(event: VoiceEvent) {
     // The adapter itself re-checks final/speaker; the runtime also emits
     // assistant and partial segments, which must never dispatch game actions.
     void voice.handleEvent(event);
     activeSync.handleEvent(event);
-    applyWordleToolEvent(game, event);
+    applyWordleToolEvent(game, event, voice);
   }
 
   // The worker gates guess-style intents on an open game, so ordinary speech

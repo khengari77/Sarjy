@@ -196,6 +196,9 @@ export function createWordleClient(send: RequestFn = request) {
     async guess(word: string, requestId: string): Promise<WordleGuessResult> {
       return normalizeGuessResult(await send('wordle/guesses', { guess: word, request_id: requestId }));
     },
+    async reset(): Promise<WordleToday> {
+      return normalizeToday(await send('wordle/reset', {}));
+    },
     async stats(): Promise<WordleStats> {
       return normalizeStats(await send('wordle/stats'));
     },

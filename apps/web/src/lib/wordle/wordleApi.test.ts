@@ -178,3 +178,21 @@ describe('createWordleClient', () => {
     expect(send).toHaveBeenNthCalledWith(3, 'wordle/stats');
   });
 });
+
+describe('wordle client reset', () => {
+  it('posts to the reset route and parses the fresh game', async () => {
+    const calls: string[] = [];
+    const client = createWordleClient(async (path) => {
+      calls.push(path);
+      return {
+        date: '2026-11-13',
+        available: true,
+        game: { status: 'in_progress', attempts_remaining: 6, guesses: [] },
+      };
+    });
+    const today = await client.reset();
+    expect(calls).toEqual(['wordle/reset']);
+    expect(today.game?.guesses).toEqual([]);
+    expect(today.game?.attemptsRemaining).toBe(6);
+  });
+});

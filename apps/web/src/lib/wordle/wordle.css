@@ -82,6 +82,58 @@
   cursor: pointer;
 }
 
+.wordle-head-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.wordle-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wordle-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-hover);
+}
+
+.wordle-confirm h3,
+.wordle-confirm p {
+  margin: 0;
+}
+
+.wordle-confirm h3 {
+  font-size: 16px;
+}
+
+.wordle-confirm p {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.wordle-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wordle-danger {
+  font-weight: 600;
+  border-color: var(--status-error);
+  background: color-mix(in srgb, var(--status-error) 22%, transparent);
+}
+
+.wordle-confirm button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .wordle-close:hover {
   background: var(--surface-hover);
 }

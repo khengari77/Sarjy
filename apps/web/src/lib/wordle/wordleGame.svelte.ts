@@ -1,13 +1,9 @@
 import { errorCode } from '../voice/errors';
-import {
-  createWordleClient,
-  type GameStatus,
-  type WordleClient,
-  type WordleGuessResult,
-  type WordleToday,
-} from './wordleApi';
+import { createWordleClient, type WordleClient } from './wordleApi';
 import type { GuessOutcome, WordleGamePort, WordleGameState } from './wordleGamePort';
-import { describeGuess, friendlyError, requestId as newRequestId, statusText } from './wordleState';
+import { applyResult, applyToday, remainingFor, statusLineFor } from './wordleGameApply';
+import { refreshGame, resetGame } from './wordleGameReset';
+import { friendlyError, requestId as newRequestId } from './wordleState';
 
 export interface WordleGameOptions {
   client?: WordleClient;
@@ -40,52 +36,6 @@ function initialState(): WordleGameState {
     loaded: false,
     voiceReply: '',
   };
-}
-
-function remainingFor(state: WordleGameState): number {
-  return state.attemptsRemaining ?? Math.max(0, 6 - state.guesses.length);
-}
-
-export function statusLineFor(state: WordleGameState): string {
-  const status: GameStatus = state.view === 'won' || state.view === 'lost' ? state.view : 'in_progress';
-  return statusText(status, state.guesses.length, state.answer, remainingFor(state));
-}
-
-function applyToday(state: WordleGameState, today: WordleToday): void {
-  state.puzzleDate = today.date;
-  state.puzzleTimezone = today.timezone;
-  state.answer = today.answer;
-  state.guesses = today.game?.guesses ?? [];
-  state.attemptsRemaining = today.game?.attemptsRemaining;
-  state.revealedRow = -1;
-  state.draft = '';
-  if (!today.available) {
-    state.view = 'unavailable';
-    state.notice = friendlyError(today.code ?? 'WORDLE_UNAVAILABLE');
-    state.loaded = true;
-    return;
-  }
-  const status: GameStatus = today.game?.status ?? 'in_progress';
-  state.view = status === 'in_progress' ? 'playing' : status;
-  state.loaded = true;
-  const loaded = status === 'in_progress' ? 'Puzzle loaded.' : '';
-  state.announcement = [loaded, statusLineFor(state)].filter(Boolean).join(' ');
-}
-
-function applyResult(state: WordleGameState, word: string, result: WordleGuessResult): void {
-  const next = result.game?.guesses ?? [...state.guesses, { word, marks: result.marks }];
-  const status = result.game?.status ?? result.status;
-  state.guesses = next;
-  state.attemptsRemaining = result.game?.attemptsRemaining;
-  state.view = status === 'in_progress' ? 'playing' : status;
-  // The server only sends an answer for a terminal game; normalizeGuessResult
-  // already drops one supplied earlier.
-  state.answer = result.answer ?? state.answer;
-  state.revealedRow = next.length - 1;
-  state.draft = '';
-  const last = next[state.revealedRow];
-  const spoken = last && last.word === word ? describeGuess(last) : `Posted ${word}.`;
-  state.announcement = [spoken, statusLineFor(state)].filter(Boolean).join(' ');
 }
 
 interface GuessActions {
@@ -220,24 +170,20 @@ export function createWordleGame(options: WordleGameOptions = {}): WordleGame {
     return inflight;
   }
 
-  /** In-place sync after a model tool changed the server game: keeps the board mounted and animates new rows. */
-  async function refresh(): Promise<void> {
-    // A load already in flight may have read the board before the tool's change; wait, then read again.
-    if (inflight) await inflight;
-    if (!state.loaded) return load();
-    if (state.busy) return;
-    const token = loadToken;
-    try {
-      const today = await client.today();
-      if (token !== loadToken) return;
-      const before = state.guesses.length;
-      applyToday(state, today);
-      if (state.guesses.length > before) state.revealedRow = state.guesses.length - 1;
-      if (state.view === 'won' || state.view === 'lost') void loadStats(token);
-    } catch {
-      // Keep the board the player already sees; the next event retries.
-    }
-  }
+  const reset = () =>
+    resetGame(state, client, {
+      bump: () => ++loadToken,
+      clearPending: () => actions.clearPending(),
+      loadStats,
+    });
+
+  const refresh = () =>
+    refreshGame(state, client, {
+      inflight: () => inflight,
+      load,
+      token: () => loadToken,
+      loadStats,
+    });
 
   /** Load once; a stage mount and a voice "play" share the same request. */
   function ensureLoaded(): Promise<void> {
@@ -271,6 +217,7 @@ export function createWordleGame(options: WordleGameOptions = {}): WordleGame {
       state.open = false;
     },
     load,
+    reset,
     refresh,
     ensureLoaded,
     guessWord: actions.guessWord,

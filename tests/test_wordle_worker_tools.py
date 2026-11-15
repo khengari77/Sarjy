@@ -232,3 +232,36 @@ def test_prose_guard_only_applies_while_a_game_is_open():
     assert _guard(True, "You got it in three tries, the tiles are green.") == "Real board."
     # Game closed (even though Wordle was used earlier in the call): ordinary replies pass through untouched.
     assert _guard(False, "Grass is green, and it took me three tries.") == "Grass is green, and it took me three tries."
+
+
+def test_reset_tool_asks_for_confirmation_through_the_client_and_never_resets():
+    seen: list[str] = []
+    published: list[str] = []
+
+    def handler(request):
+        if request.url.path == "/internal/agent/turn/start":
+            return httpx.Response(200, json={"turn_id": "turn-1", "context": {}})
+        seen.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={
+                "status": "confirm_required",
+                "ui": "confirm_reset",
+                "spoken": "Reset today's game? Say yes to confirm.",
+                "message": "Nothing was reset.",
+            },
+        )
+
+    async def run():
+        client, agent = build(handler, published)
+        async with client:
+            await agent.on_user_turn_completed(
+                None, llm.ChatMessage(id="m1", role="user", content=["Can we start Wordle over?"])
+            )
+            assert "reset_wordle" in {tool.info.name for tool in agent.tools}
+            reply = await agent.reset_wordle._func(agent, ctx())
+            assert reply == "Nothing was reset."
+            assert agent.wordle_spoken["turn-1"] == ["Reset today's game? Say yes to confirm."]
+
+    asyncio.run(run())
+    assert seen == ["/internal/agent/tool/wordle-reset"] and published == ["confirm_reset"]

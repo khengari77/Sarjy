@@ -31,6 +31,7 @@ export async function mockWordle(page: Page, options: Options = {}) {
     answer: options.answer,
     posts: [] as { guess: string; request_id: string }[],
     todayCalls: 0,
+    resets: 0,
     statsCalls: 0,
   };
 
@@ -69,6 +70,13 @@ export async function mockWordle(page: Page, options: Options = {}) {
     state.status = result.status ?? state.status;
     state.answer = result.answer ?? state.answer;
     await route.fulfill({ json: { ...game(), marks: result.marks } });
+  });
+
+  await page.route('**/api/v1/wordle/reset', async (route) => {
+    state.resets += 1;
+    state.guesses = [];
+    state.status = 'in_progress';
+    await route.fulfill({ json: { date: DATE, available: true, game: game() } });
   });
 
   await page.route('**/api/v1/wordle/stats', async (route) => {

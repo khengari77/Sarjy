@@ -30,8 +30,14 @@ export function createActiveSync(send: (event: Record<string, unknown>) => Promi
 export function applyWordleToolEvent(
   game: Pick<WordleGamePort, 'open' | 'close' | 'refresh' | 'state'>,
   event: VoiceEvent,
+  voice?: { expectReset(): void },
 ): void {
   if (event.type !== 'wordle') return;
+  if (event.action === 'confirm_reset') {
+    // The worker speaks the question; the client only arms the yes/no answer.
+    voice?.expectReset();
+    return;
+  }
   if (event.action === 'close') {
     game.close();
     return;
