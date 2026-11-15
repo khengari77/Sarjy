@@ -57,7 +57,7 @@ test('controls keeps voice, speed and captions together without memory search', 
   await expect(memories).not.toContainText('Choose voice');
 
   await drawer.getByRole('tab', { name: 'Context' }).click();
-  await expect(page.locator('#drawer-panel-context')).toContainText('general context inspector arrives in #46');
+  await expect(page.locator('#drawer-panel-context').locator('#dev-panel-title')).toBeVisible();
 });
 
 test('speed uses the real settings endpoint and applies to the next turn', async ({ page }) => {

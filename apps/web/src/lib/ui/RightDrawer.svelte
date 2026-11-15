@@ -26,6 +26,8 @@
     memoryPanel?: Snippet<[boolean]>;
     /** Full conversation transcript. */
     transcriptPanel?: Snippet;
+    /** Read-only Developer-mode inspector (#46); a placeholder until supplied. */
+    contextPanel?: Snippet;
     /** Selected tab, bindable so command navigation can choose it. */
     activeTab?: TabId;
   }
@@ -35,6 +37,7 @@
     voicePanel,
     memoryPanel,
     transcriptPanel,
+    contextPanel,
     activeTab = $bindable<TabId>('controls'),
   }: Props = $props();
 
@@ -128,13 +131,12 @@
         {:else}
           <p class="placeholder">No messages yet.</p>
         {/if}
+      {:else if contextPanel}
+        {@render contextPanel()}
       {:else}
         <section class="placeholder-block">
           <h2>Context</h2>
-          <p>
-            The general context inspector arrives in #46. Saved facts and whether each one is included in or excluded
-            from the next compiled context are shown in the Memories tab.
-          </p>
+          <p>The context inspector is not available here.</p>
         </section>
       {/if}
     </div>

@@ -4,6 +4,7 @@
   import type { ProvisionalTranscript } from '../voice/connection';
   import VoiceSettings from '../chat/VoiceSettings.svelte';
   import MemoryPanel from '../memory/MemoryPanel.svelte';
+  import DevModePanel from '../dev/DevModePanel.svelte';
   import type { CatalogState } from '../voice/catalog';
   import RightDrawer from './RightDrawer.svelte';
 
@@ -54,6 +55,9 @@
 <RightDrawer {arabic} bind:activeTab>
   {#snippet memoryPanel(active)}
     <MemoryPanel {conversationId} {active} revision={memoryRevision} />
+  {/snippet}
+  {#snippet contextPanel()}
+    <DevModePanel {conversationId} {arabic} />
   {/snippet}
   {#snippet transcriptPanel()}
     <TranscriptPanel {turns} {provisional} {tools} {arabic} />
