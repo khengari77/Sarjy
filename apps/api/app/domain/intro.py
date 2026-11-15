@@ -9,10 +9,9 @@ from typing import Final, Literal, TypedDict
 
 INTRO: Final[dict[str, str]] = {
     "en": (
-        "Hi, I'm Sarjy, your voice assistant. I can check the weather, play today's Wordle, and "
-        "remember things for you, but only when you say yes, and I'll forget anything you ask. "
-        "You can change how I look and sound just by asking, like dark mode or speak slower. "
-        "What would you like to do?"
+        "Hey, I'm Sarjy, your voice buddy. Ask me about the weather, play a quick round of Wordle, "
+        "or tell me stuff to remember. I only keep it if you say so, and you can tell me to forget "
+        "it any time. Want it dark, or me talking slower? Just say it. So, what's up?"
     ),
     "ar": (
         "مرحبًا، أنا سارجي، مساعدك الصوتي. اسألني عن الطقس، أو العب وردل اليوم، أو أخبرني بأشياء "
