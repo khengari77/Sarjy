@@ -18,7 +18,7 @@ test('switching conversations while connecting cancels the attempt instead of bi
   await ready(page);
   await expect(page.getByRole('button', { name: 'Chat A', exact: true })).toHaveAttribute('aria-current', 'page');
 
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'Cancel connecting', exact: true })).toBeVisible();
   expect(posts).toHaveLength(1);
   expect(posts[0].body.conversation_id).toBe('c1');
@@ -26,7 +26,7 @@ test('switching conversations while connecting cancels the attempt instead of bi
 
   await page.getByRole('button', { name: 'Chat B', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Chat B', exact: true })).toHaveAttribute('aria-current', 'page');
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  await expect(page.locator('.orb-button')).toBeVisible();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel connecting', exact: true })).toHaveCount(0);
 
@@ -44,12 +44,12 @@ test('a cancelled attempt cannot disconnect its replacement', async ({ page }) =
 
   await page.goto('/');
   await ready(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'Cancel connecting', exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__race?.hasPending('sess-1'))).toBe(true);
   await page.getByRole('button', { name: 'Cancel connecting', exact: true }).click();
 
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect.poll(() => posts.length).toBe(2);
   await expect.poll(() => page.evaluate(() => window.__race?.hasPending('sess-2'))).toBe(true);
   await page.evaluate(() => window.__race?.resolveConnect('sess-2'));
@@ -76,7 +76,7 @@ test('cancelling while microphone permission is pending creates no session', asy
 
   await page.goto('/');
   await ready(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'Cancel connecting', exact: true })).toBeVisible();
   expect(posts).toHaveLength(0);
 
@@ -86,7 +86,7 @@ test('cancelling while microphone permission is pending creates no session', asy
 
   expect(posts).toHaveLength(0);
   expect(ends).toHaveLength(0);
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  await expect(page.locator('.orb-button')).toBeVisible();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toHaveCount(0);
   expect((await page.evaluate(() => window.__race?.stats()))?.cancels).toBe(1);
 });
@@ -99,11 +99,11 @@ test('microphone startup failure clears the ended session and allows retry', asy
 
   await page.goto('/');
   await ready(page);
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
 
   await expect(page.locator('[data-code="MICROPHONE_PERMISSION_DENIED"]')).toBeVisible();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  await expect(page.locator('.orb-button')).toBeVisible();
   await expect.poll(() => ends.some((url) => url.endsWith('/sess-1/end'))).toBe(true);
   await expect(page.locator('.orb-button')).toHaveAttribute('data-output-level', '0.00');
 

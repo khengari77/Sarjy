@@ -9,15 +9,32 @@ export async function startSessionAttempt(
   context: {
     microphone: boolean;
     conversationId: string;
+    attempt: number;
     isCurrent(): boolean;
-    releaseSession(session: SessionConfig | null): Promise<void>;
+    releaseSession(session: SessionConfig | null): Promise<boolean>;
     clearOwnedLive(sessionId: string): void;
+    onSessionCreated?(session: SessionConfig, attempt: number): void;
   },
 ) {
   const voice = deps.getVoice();
-  const config = await startVoiceSession(context.conversationId, deps.getLanguage(), voice.id);
+  const config = await startVoiceSession(context.conversationId, deps.getLanguage());
+  if (config.saved_voice_unavailable) deps.onVoiceFallback?.(config.saved_voice_unavailable);
+  // Register the server session before awaiting the transport so cancel/end
+  // can release it even while runtime.connect() is still pending.
+  context.onSessionCreated?.(config, context.attempt);
+  // Every startup exit collects the release result; a failed release is logged
+  // with the session and the path that abandoned it instead of vanishing.
+  const release = async (path: string) => {
+    if (await context.releaseSession(config)) return true;
+    console.warn('[Sarjy] Voice session release failed', { sessionId: config.id, path });
+    // The server may still hold admission; keep it retryable from the UI
+    // instead of dropping it when state.live is empty.
+    state.pendingCleanup ??= config;
+    return false;
+  };
+
   if (!context.isCurrent()) {
-    await context.releaseSession(config);
+    await release('superseded-before-connect');
     return;
   }
 
@@ -27,7 +44,7 @@ export async function startSessionAttempt(
     const runtime = deps.getRuntime();
     await runtime.connect(config);
     if (!context.isCurrent()) {
-      await context.releaseSession(config);
+      await release('superseded-during-connect');
       return;
     }
     state.live = config;
@@ -36,7 +53,7 @@ export async function startSessionAttempt(
     if (context.microphone) await runtime.startMicrophone();
     if (!context.isCurrent()) {
       context.clearOwnedLive(config.id);
-      await context.releaseSession(config);
+      await release('superseded-during-microphone');
       return;
     }
     deps.meters.setupMeters();
@@ -55,6 +72,6 @@ export async function startSessionAttempt(
         .disconnect()
         .catch(() => {});
     }
-    await context.releaseSession(config);
+    await release('startup-failed');
   }
 }

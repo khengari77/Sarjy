@@ -47,9 +47,10 @@ export async function mockConversations(page: Page) {
   await page.route('**/api/v1/conversations/*/tool-calls', (route) => route.fulfill({ json: [] }));
 }
 
-export async function mockSessions(page: Page) {
+export async function mockSessions(page: Page, options: { failEnds?: number } = {}) {
   const posts: { id: string; body: Record<string, unknown> }[] = [];
   const ends: string[] = [];
+  let endFailures = options.failEnds ?? 0;
   await page.route('**/api/v1/voice/sessions', async (route) => {
     const id = `sess-${posts.length + 1}`;
     posts.push({ id, body: route.request().postDataJSON() as Record<string, unknown> });
@@ -59,6 +60,11 @@ export async function mockSessions(page: Page) {
   });
   await page.route('**/api/v1/voice/sessions/*/end', async (route) => {
     ends.push(route.request().url());
+    if (endFailures > 0) {
+      endFailures -= 1;
+      await route.fulfill({ status: 503, json: { detail: 'unavailable' } });
+      return;
+    }
     await route.fulfill({ json: {} });
   });
   return { posts, ends };

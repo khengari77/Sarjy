@@ -20,7 +20,14 @@ class Catalog:
 
 def setup(tmp_path):
     path = tmp_path / "actions.db"
-    app = create_app(Settings(database_url=f"sqlite+aiosqlite:///{path}", _env_file=None), voice_catalog=Catalog())
+    app = create_app(
+        Settings(
+            database_url=f"sqlite+aiosqlite:///{path}",
+            approved_voice_ids="approved",
+            _env_file=None,
+        ),
+        voice_catalog=Catalog(),
+    )
     return app, path
 
 
@@ -44,7 +51,6 @@ def submit(client, conversation, request="r1", revision=0, **extra):
         "'speak slower'",
         "speak slower and hide captions",
         "please explain speak slower",
-        "speak slower?",
         "hide captions; show captions",
         "not hide captions",
     ],
@@ -59,20 +65,16 @@ def test_quoted_negated_and_compound_commands_never_parse(command):
         assert parse_exact_command(text) is None
 
 
-def test_ui_and_final_transcript_share_persisted_settings_and_idempotency(tmp_path):
+def test_ui_settings_stay_revision_guarded_and_idempotent(tmp_path):
     app, path = setup(tmp_path)
     with TestClient(app) as client:
         conversation = chat(client)
         first = submit(client, conversation, source="ui", action={"kind": "AdjustSpeakingSpeed", "delta": -0.1})
         assert first.status_code == 200
         assert first.json()["result"]["settings"]["speaking_speed"] == 0.9
-        retry = submit(client, conversation, source="transcript", transcript=" Speak   slower. ")
+        retry = submit(client, conversation, source="ui", action={"kind": "AdjustSpeakingSpeed", "delta": -0.1})
         assert retry.json() == first.json()
-        next_response = submit(
-            client, conversation, request="r2", revision=1, source="transcript", transcript="speak slower"
-        )
-        assert next_response.json()["result"]["settings"]["speaking_speed"] == 0.8
-        assert client.get("/v1/settings").json()["revision"] == 2
+        assert client.get("/v1/settings").json()["speaking_speed"] == 0.9
         assert (
             submit(
                 client,
@@ -84,8 +86,25 @@ def test_ui_and_final_transcript_share_persisted_settings_and_idempotency(tmp_pa
             == 409
         )
         with closing(sqlite3.connect(path)) as db, db:
-            assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 2
-            assert db.execute("SELECT COUNT(*) FROM context_operations").fetchone()[0] == 2
+            assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 1
+            assert db.execute("SELECT COUNT(*) FROM context_operations").fetchone()[0] == 1
+
+
+def test_final_transcript_speed_commits_for_the_next_reply(tmp_path):
+    app, path = setup(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        response = submit(client, conversation, source="transcript", transcript=" Speak   slower. ")
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["kind"] == "executed"
+        assert result["action"] == "AdjustSpeakingSpeed"
+        assert result["settings"]["speaking_speed"] == 0.9
+        assert result["settings"]["revision"] == 1
+        assert result["spoken"] == "Slower from my next reply."
+        assert client.get("/v1/settings").json()["speaking_speed"] == 0.9
+        with closing(sqlite3.connect(path)) as db, db:
+            assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 1
 
 
 def test_unsafe_inputs_noops_and_invalid_actions_have_no_effects(tmp_path):

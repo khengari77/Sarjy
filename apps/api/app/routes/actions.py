@@ -5,10 +5,11 @@ from typing import Annotated, Literal
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from app.domain.commands import parse_exact_command
-from app.domain.contracts import Action, UserSettings, parse_action
+from app.domain.commands import CommandResult, command_result
+from app.domain.contracts import Action, SelectApprovedVoice, SetTheme, UserSettings, parse_action
 from app.infrastructure.database import UserSetting
-from app.services.actions import dispatch_action, settings_value
+from app.services.actions import dispatch_action, dispatch_setting, settings_value
+from app.services.commands import handle_finalized_utterance
 from app.services.context_operations import ContextOperationError
 from app.services.voices import VoiceCatalogError
 
@@ -42,6 +43,23 @@ class ActionSubmission(BaseModel):
         return self
 
 
+class SettingsSubmission(BaseModel):
+    """Owner-scoped settings change; no conversation is needed or created."""
+
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=1, max_length=200)
+    expected_revision: int = Field(ge=0)
+    action: Action
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def validate_action(cls, value):
+        try:
+            return parse_action(value)
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise HTTPException(422, detail={"code": "INVALID_ACTION"}) from exc
+
+
 class SettingsActionResult(BaseModel):
     kind: Literal["AdjustSpeakingSpeed", "SetSpeakingSpeed", "SelectApprovedVoice", "SetCaptionsVisible"]
     settings: UserSettings
@@ -55,7 +73,7 @@ class NavigationActionResult(BaseModel):
 
 class HandledAction(BaseModel):
     handled: Literal[True]
-    result: SettingsActionResult | NavigationActionResult | dict[str, JsonValue]
+    result: SettingsActionResult | NavigationActionResult | CommandResult | dict[str, JsonValue]
 
 
 class UnhandledAction(BaseModel):
@@ -65,23 +83,72 @@ class UnhandledAction(BaseModel):
 ActionResponse = Annotated[HandledAction | UnhandledAction, Field(discriminator="handled")]
 
 
-def register_action_routes(app, database, identity, owned, catalog):
+def register_action_routes(app, database, identity, owned, catalog, approved_voice_ids=None):
     app.state.action_handlers = {}
 
     @app.get("/v1/settings", response_model=UserSettings)
     async def get_settings(user=Depends(identity), db=Depends(database)):
         return settings_value(await db.get(UserSetting, user.id)).model_dump(mode="json")
 
+    @app.post("/v1/settings/actions", response_model=SettingsActionResult)
+    async def update_settings(body: SettingsSubmission, user=Depends(identity), db=Depends(database)):
+        try:
+            return await dispatch_setting(
+                db,
+                owner_id=user.id,
+                request_id=body.request_id,
+                expected_revision=body.expected_revision,
+                action=body.action,
+                catalog=catalog,
+                approved_voice_ids=approved_voice_ids,
+            )
+        except VoiceCatalogError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code}) from exc
+
     @app.post("/v1/actions", response_model=ActionResponse)
     async def submit(body: ActionSubmission, user=Depends(identity), db=Depends(database)):
         await owned(body.conversation_id, user, db)
         if body.source == "transcript":
-            action = parse_exact_command(body.transcript)
-            if action is None:
+            # Finalized transcripts go through the same authoritative seam as
+            # the worker.  The adapter has one revision on the wire, so it is
+            # used for the setting compare-and-set and the context revision.
+            command = await handle_finalized_utterance(
+                db,
+                owner_id=user.id,
+                conversation_id=body.conversation_id,
+                request_id=body.request_id,
+                expected_revision=body.expected_revision,
+                settings_revision=body.expected_revision,
+                text=body.transcript,
+                catalog=catalog,
+                approved_voice_ids=approved_voice_ids,
+                handlers=app.state.action_handlers,
+                secret=app.state.settings.context_proposal_secret or app.state.settings.agent_service_secret,
+                ui_classifier=getattr(app.state, "ui_classifier", None),
+            )
+            if command is None:
                 return {"handled": False}
-        else:
-            action = body.action
+            return {"handled": True, "result": command}
+        action = body.action
+        if isinstance(action, SetTheme):
+            # Browser-local presentation: no conversation dispatch and no write.
+            return {
+                "handled": True,
+                "result": command_result(request_id=body.request_id, action=action, theme=action.theme),
+            }
         try:
+            if isinstance(action, SelectApprovedVoice):
+                # Preferences have exactly one writer, even when submitted from a conversation.
+                result = await dispatch_setting(
+                    db,
+                    owner_id=user.id,
+                    request_id=body.request_id,
+                    expected_revision=body.expected_revision,
+                    action=action,
+                    catalog=catalog,
+                    approved_voice_ids=approved_voice_ids,
+                )
+                return {"handled": True, "result": result}
             result = await dispatch_action(
                 db,
                 owner_id=user.id,
@@ -91,6 +158,7 @@ def register_action_routes(app, database, identity, owned, catalog):
                 action=action,
                 catalog=catalog,
                 handlers=app.state.action_handlers,
+                approved_voice_ids=approved_voice_ids,
             )
         except (VoiceCatalogError, ContextOperationError) as exc:
             raise HTTPException(exc.status, detail={"code": exc.code}) from exc

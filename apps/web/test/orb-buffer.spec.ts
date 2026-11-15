@@ -46,7 +46,9 @@ test('WebGL frames do not reset the backing buffer when dimensions are unchanged
   await page.waitForTimeout(600);
   expect(await writes(page)).toBe(settled);
 
-  await page.setViewportSize({ width: 1100, height: 800 });
+  // The orb is token-sized (290px) and only shrinks when the stage is too short,
+  // so a real resize needs a shorter window.
+  await page.setViewportSize({ width: 1280, height: 560 });
   await expect.poll(() => writes(page)).toBeGreaterThan(settled);
 });
 
@@ -68,6 +70,8 @@ test('Canvas2D frames do not reset the backing buffer when dimensions are unchan
   await page.waitForTimeout(600);
   expect(await writes(page)).toBe(settled);
 
-  await page.setViewportSize({ width: 1100, height: 800 });
+  // The orb is token-sized (290px) and only shrinks when the stage is too short,
+  // so a real resize needs a shorter window.
+  await page.setViewportSize({ width: 1280, height: 560 });
   await expect.poll(() => writes(page)).toBeGreaterThan(settled);
 });

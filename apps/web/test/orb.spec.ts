@@ -53,7 +53,9 @@ test('orb uses the enhanced renderer on capable browsers', async ({ page }) => {
   await page.goto('/');
   const orb = page.getByRole('button', { name: 'Start voice conversation' });
   await expect(orb).toBeVisible();
-  await expect(orb).not.toHaveAttribute('data-renderer', 'static');
+  // Canvas2D is also "not static", so the claim in the title needs the
+  // enhanced tier itself.
+  await expect(orb).toHaveAttribute('data-renderer', 'enhanced');
 });
 
 test('particle field rotates over time while idle', async ({ page }) => {
@@ -70,15 +72,46 @@ test('particle field rotates over time while idle', async ({ page }) => {
 });
 
 test('reduced-motion orb is visually stable across frames', async ({ page }) => {
+  // The demo-session boot request is slow on a cold SSR compile; keep the wait
+  // (and the test's budget) explicitly above the 30 s default, together.
+  test.setTimeout(90_000);
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  // The static markup is server-rendered, so `data-renderer="static"` is true
+  // before hydration. Wait for hydration's bootstrap request to finish before
+  // sampling: while it runs the button is disabled and dimmed to 70%.
+  const boot = page.waitForResponse(
+    (response) => response.url().includes('/api/v1/demo-session') && response.request().method() === 'POST',
+    { timeout: 60000 },
+  );
   await page.goto('/');
+  await boot;
   const orb = page.getByRole('button', { name: 'Start voice conversation' });
   await expect(orb).toHaveAttribute('data-renderer', 'static');
-  await page.waitForTimeout(400);
+  await expect(orb).toBeEnabled();
+  await expect(orb.locator('canvas')).toHaveCount(0);
 
-  const first = await orb.screenshot();
+  // The static tier must not animate: no CSS animation and no transition may
+  // still be running once the shell has settled.
+  const inert = await orb.evaluate((element) => {
+    const nodes = [element, ...element.querySelectorAll('*')];
+    return nodes.every((node) => {
+      const style = getComputedStyle(node);
+      const durations = style.transitionDuration.split(',').map((value) => Number.parseFloat(value));
+      return style.animationName === 'none' && durations.every((duration) => duration === 0);
+    });
+  });
+  expect(inert, 'static tier must not run CSS animations or transitions').toBe(true);
+
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const first = await orb.screenshot({ animations: 'disabled' });
   await page.waitForTimeout(900);
-  const second = await orb.screenshot();
+  await expect(orb).toHaveAttribute('data-renderer', 'static');
+  await expect(orb.locator('canvas')).toHaveCount(0);
+  const second = await orb.screenshot({ animations: 'disabled' });
 
   expect(first.equals(second)).toBe(true);
 });
@@ -105,7 +138,7 @@ test('two activations in the same tick create only one session', async ({ page }
     button?.click();
   });
 
-  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
   expect(sessionPosts).toBe(1);
 });
 
@@ -118,7 +151,7 @@ test('reduced-motion orb shows a state glyph and label, not just colour', async 
   await expect(orb.locator('.orb-state-text')).toHaveText('Ready');
 });
 
-test('a lost WebGL context falls back without breaking the session', async ({ page }) => {
+test('a lost WebGL context falls back to Canvas2D without breaking the session', async ({ page }) => {
   await page.addInitScript(() => {
     const stream = { getTracks: () => [] } as unknown as MediaStream;
     Object.defineProperty(navigator, 'mediaDevices', {
@@ -175,19 +208,31 @@ test('a lost WebGL context falls back without breaking the session', async ({ pa
   await page.route('**/api/v1/conversations/*/tool-calls', (route) => route.fulfill({ json: [] }));
 
   await page.goto('/');
-  await expect(page.getByText('No conversations yet.')).toBeVisible();
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await expect(page.getByText('No conversations yet')).toBeVisible();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
   const orb = page.locator('.orb-button');
+  // This scenario only exists on the WebGL tier. When the probe or the first
+  // context creation fell back to Canvas2D there is no context to lose, so
+  // skip rather than assert a weaker "not static" claim.
   await expect(orb).not.toHaveAttribute('data-renderer', 'static');
+  const tier = await orb.getAttribute('data-renderer');
+  test.skip(tier !== 'enhanced', `WebGL2 is unavailable; the orb is on the ${tier} tier`);
 
-  await page.evaluate(() => {
-    const canvas = document.querySelector('canvas');
+  const lost = await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('.orb-button canvas');
     const gl = canvas?.getContext('webgl2');
-    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    if (!gl) return false;
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return true;
   });
+  test.skip(!lost, 'the orb canvas has no WebGL2 context to lose');
 
-  await expect(orb).toHaveAttribute('data-renderer', 'static');
+  // A canvas that has owned a WebGL2 context cannot hand out 2d, so the only
+  // correct fallback is the fresh element the tier remount builds: the orb
+  // must keep drawing, and the call must stay alive.
+  await expect(orb).toHaveAttribute('data-renderer', 'light');
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
-  await expect(orb.locator('.orb-static-state')).toBeVisible();
+  await expect(orb.locator('canvas.orb-canvas')).toHaveCount(1);
+  await expect(orb.locator('.orb-static-state')).toHaveCount(0);
 });

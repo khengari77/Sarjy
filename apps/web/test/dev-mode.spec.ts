@@ -27,11 +27,18 @@ async function mockDiagnostics(page: Page, contextStatus = 200) {
   await page.route('**/api/v1/conversations/*/context/operations', (route) => route.fulfill({ json: OPERATIONS }));
 }
 
+// The Developer-mode panel lives in the right drawer's Context tab, which is closed after every load.
+async function openContextTab(page: Page) {
+  await page.getByRole('button', { name: /Show memory and settings/ }).click();
+  await page.getByRole('tab', { name: 'Context' }).click();
+}
+
 async function openApp(page: Page) {
   await mockConversations(page);
   const sessions = await mockSessions(page);
   await page.goto('/');
   await ready(page);
+  await openContextTab(page);
   return sessions;
 }
 
@@ -57,6 +64,7 @@ test('toggling Developer mode never creates a voice session and survives reload'
   await toggle.click();
   await page.reload();
   await ready(page);
+  await openContextTab(page);
   await expect(page.getByRole('switch', { name: 'Developer mode' })).toHaveAttribute('aria-checked', 'true');
   expect(posts).toHaveLength(0);
 });

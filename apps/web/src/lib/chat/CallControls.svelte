@@ -9,12 +9,13 @@
     muted,
     connectionLost,
     canInterrupt,
+    cleanupRequired,
     words,
     onend,
+    onretrycleanup,
     oncancel,
     ontoggle,
     oninterrupt,
-    onconnect,
   }: {
     live: SessionConfig | null;
     connecting: boolean;
@@ -22,12 +23,13 @@
     muted: boolean;
     connectionLost: boolean;
     canInterrupt: boolean;
+    cleanupRequired: boolean;
     words: Words;
     onend: () => void;
+    onretrycleanup: () => void;
     oncancel: () => void;
     ontoggle: () => void;
     oninterrupt: () => void;
-    onconnect: () => void;
   } = $props();
 </script>
 
@@ -41,6 +43,8 @@
     </button>
     <button class="ghost-button" disabled={busy || !canInterrupt} onclick={oninterrupt}> Stop </button>
   {:else}
-    <button class="primary-button" disabled={busy} onclick={onconnect}>{words.call}</button>
+    {#if cleanupRequired}
+      <button class="ghost-button" disabled={busy} onclick={onretrycleanup}>{words.retryCleanup}</button>
+    {/if}
   {/if}
 </div>

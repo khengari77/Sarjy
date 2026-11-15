@@ -26,20 +26,20 @@ test.beforeEach(async ({ page }, info) => {
 test('demo session, English-first controls, history and explicit missing-service errors', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeEnabled();
+  await expect(page.locator('.orb-button')).toBeEnabled();
   await expect(page.locator('.shell')).toHaveAttribute('dir', 'ltr');
   await expect(page.getByRole('button', { name: 'العربية' })).toHaveCount(0);
   const before = await page.request.get('/api/v1/conversations');
   expect(before.ok()).toBeTruthy();
   const chats = await before.json();
-  await page.getByRole('button', { name: 'New conversation +', exact: true }).click();
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await expect
     .poll(async () => (await (await page.request.get('/api/v1/conversations')).json()).length)
     .toBe(chats.length + 1);
   await page.reload();
   await expect(page.locator('.shell')).toHaveAttribute('dir', 'ltr');
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
 });
 test('proxy rejects cross-origin mutation', async ({ request }) => {
@@ -61,6 +61,27 @@ test('voice picker search, pagination, saved preference and call payload', async
       },
     });
   });
+  let savedVoice: string | null = null;
+  let revision = 0;
+  const settings = () => ({
+    speaking_speed: 1,
+    captions_visible: true,
+    approved_voice_id: savedVoice,
+    response_preference: 'automatic',
+    revision,
+  });
+  await page.route('**/api/v1/settings', (route) => route.fulfill({ json: settings() }));
+  await page.route('**/api/v1/settings/actions', async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.action.kind).toBe('SelectApprovedVoice');
+    expect(body.conversation_id).toBeUndefined();
+    expect(body.request_id).toBe(`voice:${revision}:lady-voice`);
+    savedVoice = body.action.voice_id;
+    revision += 1;
+    await route.fulfill({
+      json: { kind: 'SelectApprovedVoice', settings: settings(), changed: true },
+    });
+  });
   let sentVoice: string | undefined;
   let sentLanguage: string | undefined;
   await page.route('**/api/v1/voice/sessions', async (route) => {
@@ -71,15 +92,19 @@ test('voice picker search, pagination, saved preference and call payload', async
   });
   await page.goto('/');
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeEnabled();
+  await expect(page.locator('.orb-button')).toBeEnabled();
+  await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
   await page.getByRole('textbox', { name: 'Search voices' }).fill('British');
   await page.getByRole('button', { name: 'Load voices / Search', exact: true }).click();
   await page.getByRole('button', { name: 'Load more', exact: true }).click();
   await page.getByLabel('Choose voice').selectOption('lady-voice');
   await page.reload();
+  await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
+  await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
   await expect(page.getByLabel('Choose voice')).toHaveValue('lady-voice');
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.locator('[data-code="PIPELINE_NOT_CONFIGURED"]')).toContainText('Voice is not configured');
-  expect(sentVoice).toBe('lady-voice');
+  // The saved voice is resolved server-side; the client must not resend it.
+  expect(sentVoice).toBeUndefined();
   expect(sentLanguage).toBe('en');
 });
