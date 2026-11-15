@@ -605,11 +605,11 @@ class SarjyAgent(WordleTools, Agent):
             yield chunk
 
     async def _guard_wordle_prose(self, stream):
-        """While a Wordle game is (or was) open, prose may not state marks, attempts or outcomes.
+        """While a Wordle game is open, prose may not state marks, attempts or outcomes.
 
         The reply is buffered; if it holds such a claim and no tool ran, the server's real status is spoken.
         """
-        if not (self.wordle_active() or self.wordle_touched):
+        if not self.wordle_active():
             async for chunk in stream:
                 yield chunk
             return

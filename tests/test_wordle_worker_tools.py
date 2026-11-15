@@ -209,3 +209,26 @@ def test_submit_tool_is_offered_only_for_guess_shaped_text():
     assert "submit_wordle_guess" not in {t.info.name for t in agent._wordle_tools(agent.tools)}
     agent.current_text = "maybe the word is crane"
     assert "submit_wordle_guess" in {t.info.name for t in agent._wordle_tools(agent.tools)}
+
+
+def _guard(active: bool, reply: str, touched: bool = True):
+    """Run the prose guard over a model reply with no tool call."""
+    from livekit.agents import llm as _llm
+
+    async def stream():
+        yield _llm.ChatChunk(id="c", delta=_llm.ChoiceDelta(content=reply))
+
+    async def run():
+        _, agent = build(lambda request: httpx.Response(200, json={"spoken": "Real board."}), [], active=active)
+        agent.wordle_touched = touched
+        agent.current_turn = "turn-1"
+        return "".join([c.delta.content or "" async for c in agent._guard_wordle_prose(stream())])
+
+    return asyncio.run(run())
+
+
+def test_prose_guard_only_applies_while_a_game_is_open():
+    # Open game: a claimed state is replaced by the server's real status.
+    assert _guard(True, "You got it in three tries, the tiles are green.") == "Real board."
+    # Game closed (even though Wordle was used earlier in the call): ordinary replies pass through untouched.
+    assert _guard(False, "Grass is green, and it took me three tries.") == "Grass is green, and it took me three tries."
