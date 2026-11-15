@@ -38,7 +38,7 @@ test('controls keeps voice, speed and captions together without memory search', 
 
   const drawer = page.locator('#shell-right');
   const tabs = drawer.getByRole('tab');
-  await expect(tabs).toHaveText(['Memories', 'Controls', 'Context', 'Transcript']);
+  await expect(tabs).toHaveText(['Memories', 'Controls', 'Transcript']);
   await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
 
   const controls = page.locator('#drawer-panel-controls');
@@ -55,9 +55,6 @@ test('controls keeps voice, speed and captions together without memory search', 
   await expect(memories).toContainText('Memory & context');
   await expect(memories.getByRole('search')).toBeVisible();
   await expect(memories).not.toContainText('Choose voice');
-
-  await drawer.getByRole('tab', { name: 'Context' }).click();
-  await expect(page.locator('#drawer-panel-context').locator('#dev-panel-title')).toBeVisible();
 });
 
 test('speed uses the real settings endpoint and applies to the next turn', async ({ page }) => {
@@ -108,13 +105,13 @@ test('arrow, Home and End still move between the renamed tabs', async ({ page })
   await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
 
   await page.keyboard.press('End');
-  await expect(tabs.nth(3)).toBeFocused();
-  await expect(tabs.nth(3)).toHaveAttribute('aria-selected', 'true');
+  await expect(tabs.nth(2)).toBeFocused();
+  await expect(tabs.nth(2)).toHaveAttribute('aria-selected', 'true');
 
   await page.keyboard.press('Home');
   await expect(tabs.nth(0)).toBeFocused();
   await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true');
 
   await page.keyboard.press('ArrowLeft');
-  await expect(tabs.nth(3)).toBeFocused();
+  await expect(tabs.nth(2)).toBeFocused();
 });
