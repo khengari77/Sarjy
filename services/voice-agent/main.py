@@ -14,6 +14,7 @@ from app.domain.budget import DEEPSEEK_MAX_REQUEST_BYTES
 from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolItem, ToolSpec
 from app.domain.memory_capture import is_referential
 from app.domain.tool_operations import operation_key
+from app.domain.ui_routing import CONFIDENCE_THRESHOLD, FORCED_MEMORY_TOOLS
 from config import provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
 from fallback import fallback_decision, next_attempt
@@ -222,6 +223,9 @@ class SarjyAgent(Agent):
         self.publish = publish
         self.prepared: dict[str, dict] = {}
         self.commands: dict[str, dict | None] = {}
+        # Jev's memory_op answer per user message, shared from the single command call; forced at most once.
+        self.memory_ops: dict[str, dict] = {}
+        self.memory_forced: set[str] = set()
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
@@ -455,7 +459,11 @@ class SarjyAgent(Agent):
                         "/internal/agent/command", json={"turn_id": self.prepared[message.id]["turn_id"]}
                     )
                     response.raise_for_status()
-                    result = response.json().get("command")
+                    body = response.json()
+                    result = body.get("command")
+                    memory_op = body.get("memory_op")
+                    if isinstance(memory_op, dict):
+                        self.memory_ops[message.id] = memory_op
                     break
                 except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
                     retryable = isinstance(exc, httpx.TransportError) or (
@@ -552,10 +560,36 @@ class SarjyAgent(Agent):
                 "not_saved": "The pending memory was not saved; do not claim it was saved.",
             }[outcome]
             request = _with_memory_note(request, note)
-        async for chunk in self._stream_with_fallback(
-            request, tools, model_settings.tool_choice if model_settings else None
-        ):
+        tool_choice = model_settings.tool_choice if model_settings else None
+        forced = self._forced_memory_choice(user.id, {schema["name"] for schema in schemas})
+        if forced is not None:
+            tool_choice = forced
+        async for chunk in self._stream_with_fallback(request, tools, tool_choice):
             yield chunk
+
+    def _forced_memory_choice(self, message_id: str, available: set[str]) -> dict | None:
+        """Force the memory tool Jev named for the FIRST inference of a turn only.
+
+        The continuation inference after the tool result is never forced, so a
+        forced call cannot loop. Anything missing or below threshold is not forced.
+        """
+        if message_id in self.memory_forced or self.current_turn == self.decision_turn:
+            return None
+        answer = self.memory_ops.get(message_id)
+        if not isinstance(answer, dict):
+            return None
+        tool = FORCED_MEMORY_TOOLS.get(str(answer.get("choice")))
+        probability = answer.get("probability")
+        if (
+            tool is None
+            or tool not in available
+            or isinstance(probability, bool)
+            or not isinstance(probability, (int, float))
+            or probability < CONFIDENCE_THRESHOLD
+        ):
+            return None
+        self.memory_forced.add(message_id)
+        return {"type": "function", "function": {"name": tool}}
 
     def _schedule_prompt_confirmation(self, key: tuple[Any, Any], handle) -> None:
         async def mark_after_playout():
