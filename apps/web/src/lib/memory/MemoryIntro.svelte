@@ -24,5 +24,6 @@
 </p>
 
 <p class="memory-footnote">
-  Excluding is reversible. It does not delete the stored fact and does not claim to erase conversation history.
+  Hiding a memory is reversible and applies everywhere: the row stays in the list, marked Hidden, until you restore it. Deleting is permanent
+  and only possible here, never by voice.
 </p>

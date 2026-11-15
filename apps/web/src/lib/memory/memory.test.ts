@@ -3,7 +3,10 @@ import {
   friendlyListError,
   friendlyMemoryError,
   labelsFor,
+  changeVisibility,
   loadMemories,
+  matchesOutsideLoaded,
+  visibilityFailureText,
   mutationFailure,
   newIdempotencyKey,
   previewExclusion,
@@ -166,4 +169,31 @@ it('keeps read failures read-shaped so they never contradict a confirmed change'
     expect(message).not.toContain('Nothing was changed');
   }
   expect(friendlyListError('WEB_AUTH_REQUIRED')).toContain('session expired');
+});
+
+it('maps hide, restore and delete to the owner-scoped visibility routes', async () => {
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: 'm 1', status: 'hidden', changed: true })));
+  vi.stubGlobal('fetch', fetchMock);
+  await changeVisibility('m 1', 'hide');
+  await changeVisibility('m 1', 'unhide');
+  await changeVisibility('m 1', 'delete');
+  const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+  expect(calls.map(([url, init]) => [init.method, url])).toEqual([
+    ['POST', '/api/v1/memories/m%201/hide'],
+    ['POST', '/api/v1/memories/m%201/unhide'],
+    ['DELETE', '/api/v1/memories/m%201'],
+  ]);
+});
+
+it('words a failed visibility change without alarm and without claiming a change', () => {
+  expect(visibilityFailureText('hide', new Error('HTTP_503'))).toBe(
+    "Couldn't hide this memory. Nothing changed; try again.",
+  );
+  expect(visibilityFailureText('unhide', new Error('HTTP_503'))).toContain('restore');
+  expect(visibilityFailureText('delete', new Error('WEB_AUTH_REQUIRED'))).toContain('session expired');
+});
+
+it('counts search matches that are not in the loaded list', () => {
+  const results = [{ id: 'a' }, { id: 'b' }] as never[];
+  expect(matchesOutsideLoaded(results, [item({ id: 'a' })])).toBe(1);
 });

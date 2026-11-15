@@ -296,3 +296,154 @@
     flex-direction: column;
   }
 }
+
+/* Per-memory icon actions: round 44px targets, icons only. */
+.memory-row-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.memory-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memory-icon-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.memory-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.memory-icon-button:hover:enabled {
+  background: var(--surface-hover);
+}
+
+.memory-icon-button[data-kind='delete']:hover:enabled {
+  color: var(--status-error);
+  border-color: color-mix(in srgb, var(--status-error) 55%, var(--border-subtle));
+}
+
+.memory-icon-button:focus-visible,
+.memory-dialog button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.memory-icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.memory-row-error {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid var(--status-error);
+}
+
+.memory-row[data-hidden='true'] {
+  opacity: 0.7;
+  border-style: dashed;
+}
+
+.memory-row[data-hidden='true'] .memory-content {
+  text-decoration: line-through;
+}
+
+.memory-row[data-hidden='true'] .memory-icon-button {
+  opacity: 1;
+}
+
+.chip-hidden {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+.memory-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 0.55);
+  color: var(--text-primary);
+}
+
+.memory-dialog {
+  width: min(420px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 20px;
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.memory-dialog h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.memory-dialog p {
+  margin: 0;
+}
+
+.memory-dialog-quote {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.memory-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.memory-dialog .ghost-button,
+.memory-dialog .danger-button {
+  font: inherit;
+  min-height: 44px;
+  padding: 7px 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.memory-dialog .danger-button {
+  font-weight: 600;
+  border-color: var(--status-error);
+  background: color-mix(in srgb, var(--status-error) 22%, transparent);
+}
+
+.memory-dialog button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test';
-import { mockApi, openMemoryTab, waitForShell } from './memory-harness';
+import { expect, test, type Page } from '@playwright/test';
+import { FACTS, mockApi, openMemoryTab, waitForShell } from './memory-harness';
 
 test.beforeEach(async ({ page }) => {
   test.setTimeout(90_000);
@@ -7,105 +7,157 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
 });
 
-// Pin the OS scheme so "system" resolves predictably when cycling themes here.
 test.use({ colorScheme: 'light' });
 
-test('the memory explorer mounts in the drawer, scopes the list to the conversation and shows inclusion', async ({
-  page,
-}) => {
-  const calls = await mockApi(page);
-  await page.addInitScript(() => localStorage.setItem('sarjy-theme', 'dark'));
-  await page.setViewportSize({ width: 1280, height: 720 });
+async function open(page: Page, width = 1280, height = 720) {
+  await page.setViewportSize({ width, height });
   await page.goto('/');
   await waitForShell(page);
-
-  // Selecting a conversation is what gives the panel its conversation scope.
   await page.locator('#shell-left').getByRole('button', { name: 'Trip to Paris', exact: true }).click();
-  const panel = await openMemoryTab(page);
+  return openMemoryTab(page);
+}
 
-  await expect(panel).toBeVisible();
-  await expect(panel).toContainText('Prefers tea over coffee');
-  await expect(panel).toContainText('Lives in Riyadh');
-  await expect(panel).toContainText('4 shown of 4 stored facts');
+const row = (panel: ReturnType<Page['locator']>, text: string) => panel.locator('li.memory-row', { hasText: text });
 
-  // The inclusion projection is the acceptance point: one fact is in the next
-  // compiled context, one is already excluded from it.
-  // The panel must call this candidacy, not inclusion: the compiler can still
-  // trim the prompt to its character budget.
-  await expect(panel.locator('[data-included="true"]')).toContainText('Candidate for the next compiled context');
-  const excludedRow = panel.locator('li.memory-row[data-excluded="true"]', { hasText: 'Lives in Riyadh' });
-  await expect(excludedRow).toContainText('Excluded from this conversation');
-  await expect(panel.locator('[data-included="true"]')).toContainText('Candidate');
-  await expect(excludedRow).toContainText('Excluded');
-  await expect(panel).not.toContainText('Included in the next compiled context');
+test('lists every non-deleted memory, hidden ones marked, each with named icon buttons', async ({ page }) => {
+  const calls = await mockApi(page);
+  const panel = await open(page);
 
-  // A superseded row must not offer a control the API refuses (it requires
-  // status == "active"), otherwise excluding it 404s while the row is on screen.
-  const staleRow = panel.locator('li.memory-row', { hasText: 'Lives in Riyadh (corrected)' });
-  await expect(staleRow.getByRole('button', { name: 'Exclude…' })).toBeDisabled();
-  await expect(panel.locator('[data-included="true"]').getByRole('button', { name: 'Exclude…' })).toBeEnabled();
+  await expect(row(panel, 'Prefers tea over coffee')).toBeVisible();
+  const paris = row(panel, 'Hotel in Paris');
+  await expect(paris).toHaveAttribute('data-hidden', 'true');
+  await expect(paris).toContainText('Hidden');
+  await expect(panel).not.toContainText('Exclude…');
+  // The list never filters hidden rows out of view and never asks for deleted ones.
+  expect(calls.memories.every((url) => !new URL(url).searchParams.has('status'))).toBe(true);
 
-  // A fact excluded through correction lineage is still excluded by the
-  // compiler. Offering "Exclude…" here is what let a confirm+undo claim the
-  // descendant was eligible while the next request kept omitting it.
-  const lineageRow = panel.locator('li.memory-row', { hasText: 'Hotel in Paris, 2 nights' });
-  const lineageExclude = lineageRow.getByRole('button', { name: 'Exclude…' });
-  await expect(lineageExclude).toBeDisabled();
-  await expect(lineageExclude).toHaveAttribute('title', /Already excluded from this conversation/);
-  await expect(lineageRow).toContainText('Excluded from this conversation');
-
-  // Owner scoping is enforced by the API; the UI must at least ask for the
-  // selected conversation rather than an unscoped dump.
-  const scoped = calls.memories.filter((url) => new URL(url).searchParams.get('conversation_id') === 'c1');
-  expect(scoped.length).toBeGreaterThan(0);
-
-  // Reachable and legible in both themes without remounting the shell.
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect(panel).toBeVisible();
-  // Choose the light theme explicitly.
-  await page.getByRole('button', { name: 'Theme: Light', exact: true }).click();
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  await expect(panel).toBeVisible();
-  await expect(panel).toContainText('Prefers tea over coffee');
+  const tea = row(panel, 'Prefers tea over coffee');
+  for (const name of ['Hide memory', 'Delete memory']) {
+    const button = tea.getByRole('button', { name, exact: true });
+    await expect(button).toHaveAttribute('title', name);
+    const box = (await button.boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    await expect(button).toHaveText('');
+  }
+  await expect(paris.getByRole('button', { name: 'Restore memory' })).toHaveAttribute('title', 'Restore memory');
+  // Delete stays available on a hidden row.
+  await expect(paris.getByRole('button', { name: 'Delete memory' })).toBeEnabled();
 });
 
-test('excluding previews without writing, then confirms and undoes through the server', async ({ page }) => {
+test('hide toggles the row in place without a prompt and restore flips it back', async ({ page }) => {
   const calls = await mockApi(page);
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await page.goto('/');
-  await waitForShell(page);
+  const panel = await open(page);
+  const tea = row(panel, 'Prefers tea over coffee');
+  const positionBefore = await panel.locator('li.memory-row').evaluateAll((rows) => rows.map((r) => r.getAttribute('data-memory-id')));
 
+  await tea.getByRole('button', { name: 'Hide memory' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(tea).toHaveAttribute('data-hidden', 'true');
+  await expect(tea).toContainText('Hidden');
+  // Same button, flipped.
+  const restore = tea.getByRole('button', { name: 'Restore memory' });
+  await expect(restore).toHaveAttribute('title', 'Restore memory');
+  await expect(tea.getByRole('button', { name: 'Hide memory' })).toHaveCount(0);
+  expect(calls.visibility).toEqual([{ id: 'mem-tea', method: 'POST', action: 'hide' }]);
+  // The row did not move.
+  expect(await panel.locator('li.memory-row').evaluateAll((rows) => rows.map((r) => r.getAttribute('data-memory-id')))).toEqual(
+    positionBefore,
+  );
+
+  await restore.click();
+  await expect(tea).toHaveAttribute('data-hidden', 'false');
+  await expect(tea.getByRole('button', { name: 'Hide memory' })).toBeVisible();
+  expect(calls.visibility.at(-1)).toEqual({ id: 'mem-tea', method: 'POST', action: 'unhide' });
+});
+
+test('delete asks first: Escape cancels and returns focus, Delete removes the row', async ({ page }) => {
+  const calls = await mockApi(page);
+  const panel = await open(page);
+  const trigger = row(panel, 'Lives in Riyadh').getByRole('button', { name: 'Delete memory' });
+
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: 'Delete this memory?' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('cannot be undone');
+  await expect(dialog).toContainText('never by voice');
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+
+  // Focus is trapped: Tab cycles within the dialog.
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: 'Delete', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  expect(calls.visibility).toHaveLength(0);
+  await expect(row(panel, 'Lives in Riyadh')).toBeVisible();
+  // The drawer itself stayed open.
+  await expect(panel).toBeVisible();
+
+  await trigger.click();
+  await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(row(panel, 'Lives in Riyadh')).toHaveCount(0);
+  await expect(dialog).toHaveCount(0);
+  expect(calls.visibility).toEqual([{ id: 'mem-riyadh', method: 'DELETE', action: 'delete' }]);
+});
+
+test('a failed call leaves the row unchanged with a short inline message', async ({ page }) => {
+  const calls = await mockApi(page);
+  const panel = await open(page);
+  calls.failVisibility(1);
+
+  const tea = row(panel, 'Prefers tea over coffee');
+  await tea.getByRole('button', { name: 'Hide memory' }).click();
+  await expect(tea.getByTestId('memory-row-error')).toContainText("Couldn't hide this memory");
+  await expect(tea).toHaveAttribute('data-hidden', 'false');
+  await expect(tea.getByRole('button', { name: 'Hide memory' })).toBeEnabled();
+
+  // A retry succeeds and clears the message.
+  await tea.getByRole('button', { name: 'Hide memory' }).click();
+  await expect(tea).toHaveAttribute('data-hidden', 'true');
+});
+
+test('buttons disable while in flight and a double-click sends one request', async ({ page }) => {
+  const calls = await mockApi(page);
+  const panel = await open(page);
+  const hold = calls.holdVisibility();
+
+  const tea = row(panel, 'Prefers tea over coffee');
+  const hide = tea.getByRole('button', { name: 'Hide memory' });
+  await hide.dblclick();
+  await expect(hide).toBeDisabled();
+  await expect(tea.getByRole('button', { name: 'Delete memory' })).toBeDisabled();
+  expect(calls.visibility).toHaveLength(1);
+  hold.release();
+  await expect(tea).toHaveAttribute('data-hidden', 'true');
+  expect(calls.visibility).toHaveLength(1);
+});
+
+test('a memory hidden or restored by voice updates in place without a reload', async ({ page }) => {
+  const calls = await mockApi(page);
+  const panel = await open(page);
+  await expect(row(panel, 'Prefers tea over coffee')).toBeVisible();
+
+  // "Forget my tea" lands server-side, then the turn finalises (turn count changes).
+  calls.setFacts(FACTS.map((fact) => (fact.id === 'mem-tea' ? { ...fact, status: 'hidden' } : fact)));
+  calls.setTurns([
+    { id: 't1', role: 'user', text: 'forget my tea', status: 'complete' },
+    { id: 't2', role: 'assistant', text: 'Done.', status: 'complete' },
+  ]);
   await page.locator('#shell-left').getByRole('button', { name: 'Trip to Paris', exact: true }).click();
-  const panel = await openMemoryTab(page);
-  await expect(panel).toContainText('Prefers tea over coffee');
 
-  const includedRow = panel.locator('[data-included="true"]');
-  await includedRow.getByRole('button', { name: 'Exclude…' }).click();
+  await expect(row(panel, 'Prefers tea over coffee')).toHaveAttribute('data-hidden', 'true');
 
-  // Preview only: the review exists, says nothing changed, and no confirm was sent.
-  const review = panel.getByTestId('exclusion-review');
-  await expect(review).toBeVisible();
-  await expect(review).toContainText('Preview only — nothing has changed yet');
-  await expect(review).toContainText('Will be excluded from this conversation');
-  await expect(review).toContainText('Revision 3 → 4');
-  expect(calls.previews).toBe(1);
-  expect(calls.confirms).toHaveLength(0);
-  // The stored row is unchanged while the preview is open.
-  await expect(includedRow).toContainText('Candidate for the next compiled context');
-  await expect(panel.getByTestId('exclusion-confirmed')).toHaveCount(0);
-
-  await review.getByRole('button', { name: 'Confirm exclusion' }).click();
-
-  await expect(panel.getByTestId('exclusion-confirmed')).toContainText('Exclusion confirmed');
-  await expect(panel.getByTestId('exclusion-confirmed')).toContainText('Applied change');
-  expect(calls.confirms).toHaveLength(1);
-  expect(calls.confirms[0].proposal).toBe('signed-preview-token');
-  expect(calls.confirms[0].expected_revision).toBe(3);
-  await expect(panel.getByTestId('exclusion-review')).toHaveCount(0);
-
-  await panel.getByRole('button', { name: 'Undo exclusion' }).click();
-  await expect(panel.getByTestId('exclusion-undone')).toContainText('Exclusion undone');
-  expect(calls.undos).toHaveLength(1);
-  expect(calls.undos[0].operation_id).toBe('op-1');
-  expect(calls.undos[0].expected_revision).toBe(4);
+  // "Undo" restores it the same way.
+  calls.setFacts(FACTS);
+  calls.setTurns([
+    { id: 't1', role: 'user', text: 'forget my tea', status: 'complete' },
+    { id: 't2', role: 'assistant', text: 'Done.', status: 'complete' },
+    { id: 't3', role: 'user', text: 'undo', status: 'complete' },
+  ]);
+  await page.locator('#shell-left').getByRole('button', { name: 'Trip to Paris', exact: true }).click();
+  await expect(row(panel, 'Prefers tea over coffee')).toHaveAttribute('data-hidden', 'false');
 });

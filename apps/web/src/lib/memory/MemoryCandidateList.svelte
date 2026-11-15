@@ -1,6 +1,6 @@
 <script lang="ts">
+  import MemoryRowView from './MemoryRow.svelte';
   import type { MemoryRow } from './memory';
-  import { formatTimestamp, provenance, shortId, statusLabel } from './memory';
 
   interface Props {
     rows: MemoryRow[];
@@ -9,12 +9,15 @@
     total: number;
     hasMore: boolean;
     loadingMore: boolean;
-    canExclude: boolean;
+    busy: Record<string, boolean>;
+    rowErrors: Record<string, string>;
     searchRan: boolean;
     outsideSearchMatches: number;
     onretry: () => void;
     onloadmore: () => void;
-    onexclude: (row: MemoryRow) => void;
+    onhide: (row: MemoryRow) => void;
+    onrestore: (row: MemoryRow) => void;
+    ondelete: (row: MemoryRow, trigger: HTMLElement) => void;
   }
 
   let {
@@ -24,16 +27,19 @@
     total,
     hasMore,
     loadingMore,
-    canExclude,
+    busy,
+    rowErrors,
     searchRan,
     outsideSearchMatches,
     onretry,
     onloadmore,
-    onexclude,
+    onhide,
+    onrestore,
+    ondelete,
   }: Props = $props();
 </script>
 
-<section class="memory-list" aria-label="Saved facts">
+<section class="memory-list" aria-label="Saved facts" data-testid="memory-list-active">
   {#if loading}
     <p class="memory-muted">Loading saved facts…</p>
   {:else if error}
@@ -61,44 +67,14 @@
     {/if}
     <ul class="memory-rows">
       {#each rows as row (row.item.id)}
-        <li
-          class="memory-row"
-          data-excluded={row.labels.excluded}
-          data-included={row.labels.candidate}
-          data-eligible={row.labels.eligible}
-        >
-          <p class="memory-content">{row.item.content}</p>
-          <p class="memory-summary">{row.labels.summary}</p>
-          <ul class="memory-chips" aria-label="States for this fact">
-            <li class="chip chip-stored">Stored</li>
-            {#if row.labels.retrieved}<li class="chip chip-retrieved">Matched search</li>{/if}
-            {#if row.labels.candidate}<li class="chip chip-included">Candidate</li>{/if}
-            {#if row.labels.excluded}<li class="chip chip-excluded">Excluded</li>{/if}
-          </ul>
-          <p class="memory-provenance">
-            {formatTimestamp(row.item.updated_at)} · revision {row.item.version} ·
-            {statusLabel(row.item.status)}
-          </p>
-          <p class="memory-provenance">{provenance(row.item)}</p>
-          <p class="memory-provenance memory-kind">{row.item.kind === 'budget' ? 'Money-related fact' : 'Fact'}</p>
-          <div class="memory-row-actions">
-            <button
-              class="ghost-button"
-              disabled={!canExclude || row.item.status !== 'active' || row.labels.excluded}
-              title={row.labels.excluded
-                ? 'Already excluded from this conversation — undo the exclusion instead'
-                : row.item.status !== 'active'
-                  ? 'Only the current version can be excluded'
-                  : canExclude
-                    ? 'Review before excluding'
-                    : 'Select a conversation first'}
-              onclick={() => onexclude(row)}
-            >
-              Exclude…
-            </button>
-            <span class="memory-id" aria-label="Record id"><code>{shortId(row.item.id)}</code></span>
-          </div>
-        </li>
+        <MemoryRowView
+          {row}
+          busy={busy[row.item.id] === true}
+          error={rowErrors[row.item.id] ?? ''}
+          onhide={() => onhide(row)}
+          onrestore={() => onrestore(row)}
+          ondelete={(trigger) => ondelete(row, trigger)}
+        />
       {/each}
     </ul>
     {#if hasMore}

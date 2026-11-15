@@ -1,115 +1,86 @@
-import type { Page } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 
-// UI-level cover for the transparent memory explorer mounted in the #120 shell
-// drawer (#43/#122). The API contract is unit- and route-tested elsewhere; this
-// spec checks what a reviewer can actually do in the browser:
-//   1. the panel is reachable from the drawer in both themes,
-//   2. the stored list is conversation-scoped and shows the inclusion projection,
-//   3. "Exclude…" only previews, and nothing changes until Confirm,
-//   4. Confirm applies the server-returned diff and Undo restores.
+// UI-level cover for the memory explorer mounted in the shell drawer. Per-memory
+// Hide (reversible, no prompt), Restore and Delete (confirmation dialog) call
+// the owner-scoped visibility routes; the API itself is route-tested elsewhere.
 
-export const FACTS = [
-  {
-    id: 'mem-included',
-    content: 'Prefers tea over coffee',
+function fact(id: string, content: string, status = 'active', extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    content,
     kind: 'memory',
-    version: 2,
-    status: 'active',
+    version: 1,
+    status,
     source_conversation_id: 'c1',
     source_turn_id: 'turn-1',
     supersedes_id: null,
     created_at: '2026-11-01T10:00:00Z',
     updated_at: '2026-11-02T10:00:00Z',
     excluded_in_conversation: false,
-    candidate_eligible: true,
-    included_in_conversation: true,
-  },
-  {
-    id: 'mem-old-version',
-    content: 'Lives in Riyadh (corrected)',
-    kind: 'memory',
-    version: 1,
-    status: 'superseded',
-    source_conversation_id: 'c1',
-    source_turn_id: 'turn-0',
-    supersedes_id: null,
-    created_at: '2026-10-30T09:00:00Z',
-    updated_at: '2026-10-30T09:00:00Z',
-    excluded_in_conversation: false,
-    candidate_eligible: false,
-    included_in_conversation: false,
-  },
-  {
-    id: 'mem-lineage-descendant',
-    content: 'Hotel in Paris, 2 nights',
-    kind: 'memory',
-    version: 2,
-    status: 'active',
-    source_conversation_id: 'c1',
-    source_turn_id: 'turn-3',
-    supersedes_id: 'mem-excluded',
-    created_at: '2026-11-03T09:00:00Z',
-    updated_at: '2026-11-03T09:00:00Z',
-    excluded_in_conversation: true,
-    candidate_eligible: false,
-    included_in_conversation: false,
-  },
-  {
-    id: 'mem-excluded',
-    content: 'Lives in Riyadh',
-    kind: 'memory',
-    version: 1,
-    status: 'active',
-    source_conversation_id: 'c1',
-    source_turn_id: 'turn-2',
-    supersedes_id: null,
-    created_at: '2026-11-01T09:00:00Z',
-    updated_at: '2026-11-01T09:00:00Z',
-    excluded_in_conversation: true,
-    candidate_eligible: false,
-    included_in_conversation: false,
-  },
+    candidate_eligible: status === 'active',
+    included_in_conversation: status === 'active',
+    ...extra,
+  };
+}
+
+export type Fact = ReturnType<typeof fact>;
+
+export const FACTS: Fact[] = [
+  fact('mem-tea', 'Prefers tea over coffee'),
+  fact('mem-riyadh', 'Lives in Riyadh'),
+  fact('mem-paris', 'Hotel in Paris, 2 nights', 'hidden'),
 ];
 
-export const DIFF = {
-  added: [],
-  removed: ['mem-included'],
-  kept: ['mem-excluded'],
-  revision_before: 3,
-  revision_after: 4,
-};
+export type VisibilityCall = { id: string; method: string; action: 'hide' | 'unhide' | 'delete' };
 
 export interface Calls {
   memories: string[];
-  previews: number;
-  confirms: Array<Record<string, unknown>>;
-  undos: Array<Record<string, unknown>>;
-  /** Simulate a save that lands while the panel is mounted but hidden. */
-  setFacts(next: typeof FACTS): void;
-  /** Make the next list refreshes fail (a mutation result still stands). */
-  failList(remaining: number): void;
-  /** Control what Undo reports as restored. */
-  setUndoRestored(ids: string[]): void;
+  visibility: VisibilityCall[];
+  /** Simulate a server-side change (a voice turn hiding or restoring a fact). */
+  setFacts(next: Fact[]): void;
+  /** Fail the next visibility call(s) with a 503. */
+  failVisibility(remaining: number): void;
+  /** Hold visibility responses until release() is called. */
+  holdVisibility(): { release(): void };
+  /** Replace the turns returned for the open conversation (changes the memory revision). */
+  setTurns(turns: unknown[]): void;
 }
 
-export async function mockApi(page: Page, initialFacts = FACTS): Promise<Calls> {
-  const facts = [...initialFacts];
-  let listFailures = 0;
-  let undoRestored = ['mem-included'];
+export async function mockApi(page: Page, initialFacts: Fact[] = FACTS): Promise<Calls> {
+  let facts = [...initialFacts];
+  let visibilityFailures = 0;
+  let gate: Promise<void> | null = null;
+  let turns: unknown[] = [];
   const calls: Calls = {
     memories: [],
-    previews: 0,
-    confirms: [],
-    undos: [],
+    visibility: [],
     setFacts: (next) => {
-      facts.splice(0, facts.length, ...next);
+      facts = [...next];
     },
-    failList: (remaining) => {
-      listFailures = remaining;
+    failVisibility: (remaining) => {
+      visibilityFailures = remaining;
     },
-    setUndoRestored: (ids) => {
-      undoRestored = ids;
+    holdVisibility: () => {
+      let release = () => {};
+      gate = new Promise<void>((resolve) => (release = resolve));
+      return { release: () => release() };
     },
+    setTurns: (next) => {
+      turns = next;
+    },
+  };
+
+  const visibility = async (route: Route, action: VisibilityCall['action']) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/')[4]);
+    calls.visibility.push({ id, method: route.request().method(), action });
+    if (gate) await gate;
+    if (visibilityFailures > 0) {
+      visibilityFailures -= 1;
+      return route.fulfill({ status: 503, json: { detail: { code: 'API_UNAVAILABLE' } } });
+    }
+    const status = action === 'hide' ? 'hidden' : action === 'unhide' ? 'active' : 'deleted';
+    facts = status === 'deleted' ? facts.filter((f) => f.id !== id) : facts.map((f) => (f.id === id ? { ...f, status } : f));
+    return route.fulfill({ json: { id, status, changed: true } });
   };
 
   await page.route('**/api/v1/demo-session', (route) => route.fulfill({ json: { id: 'owner' } }));
@@ -119,75 +90,19 @@ export async function mockApi(page: Page, initialFacts = FACTS): Promise<Calls> 
     }
     return route.fulfill({ json: { id: 'c-new', title: 'New conversation', revision: 0 } });
   });
-  await page.route('**/api/v1/conversations/*/turns', (route) => route.fulfill({ json: [] }));
+  await page.route('**/api/v1/conversations/*/turns', (route) => route.fulfill({ json: turns }));
   await page.route('**/api/v1/conversations/*/tool-calls', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/v1/voices?*', (route) => route.fulfill({ json: { voices: [], next_page_token: null } }));
 
   await page.route('**/api/v1/memories?*', (route) => {
     calls.memories.push(route.request().url());
-    if (listFailures > 0) {
-      listFailures -= 1;
-      return route.fulfill({ status: 503, json: { detail: { code: 'API_UNAVAILABLE' } } });
-    }
-    return route.fulfill({ json: { items: facts, total: facts.length, next_offset: null } });
+    const status = new URL(route.request().url()).searchParams.get('status');
+    const items = facts.filter((f) => (status ? f.status === status : f.status !== 'deleted'));
+    return route.fulfill({ json: { items, total: items.length, next_offset: null } });
   });
-
-  await page.route('**/api/v1/conversations/c1/context/exclusions', (route) => {
-    calls.previews += 1;
-    return route.fulfill({
-      json: {
-        conversation_id: 'c1',
-        query: '',
-        revision: 3,
-        proposal: 'signed-preview-token',
-        matches: [
-          {
-            id: 'mem-included',
-            content: 'Prefers tea over coffee',
-            source_turn_id: 'turn-1',
-            score: 1,
-            kind: 'memory',
-          },
-        ],
-        preserved: [],
-        ambiguous: [],
-        requires_clarification: false,
-        diff: DIFF,
-      },
-    });
-  });
-
-  await page.route('**/api/v1/conversations/c1/context/confirm', (route) => {
-    calls.confirms.push(route.request().postDataJSON() as Record<string, unknown>);
-    return route.fulfill({
-      json: {
-        operation_id: 'op-1',
-        status: 'applied',
-        idempotent: false,
-        excluded_ids: ['mem-included'],
-        kept_ids: ['mem-excluded'],
-        revision_before: 3,
-        revision_after: 4,
-        diff: DIFF,
-      },
-    });
-  });
-
-  await page.route('**/api/v1/conversations/c1/context/undo', (route) => {
-    calls.undos.push(route.request().postDataJSON() as Record<string, unknown>);
-    return route.fulfill({
-      json: {
-        operation_id: 'op-2',
-        restored_operation_id: 'op-1',
-        status: 'applied',
-        idempotent: false,
-        restored_ids: undoRestored,
-        revision_before: 4,
-        revision_after: 5,
-        diff: { added: undoRestored, removed: [], kept: ['mem-excluded'], revision_before: 4, revision_after: 5 },
-      },
-    });
-  });
+  await page.route(/\/api\/v1\/memories\/[^/]+\/hide$/, (route) => visibility(route, 'hide'));
+  await page.route(/\/api\/v1\/memories\/[^/]+\/unhide$/, (route) => visibility(route, 'unhide'));
+  await page.route(/\/api\/v1\/memories\/[^/?]+$/, (route) => visibility(route, 'delete'));
 
   return calls;
 }
