@@ -495,7 +495,10 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
             generate_conversation_title,
             sessions,
             conversation_id,
-            api_key=config.deepseek_api_key,
+            api_key=config.openai_api_key
+            if config.default_llm_provider == "openai_direct"
+            else config.deepseek_api_key,
+            provider=config.default_llm_provider,
             reserve_budget=config.deepseek_budget_enabled,
             budget_units=config.deepseek_request_micro_usd,
             budget_limit=config.deepseek_daily_micro_usd,

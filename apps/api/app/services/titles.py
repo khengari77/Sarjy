@@ -21,11 +21,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.budget import DEEPSEEK_DAILY_MICRO_USD, DEEPSEEK_REQUEST_MICRO_USD
 from app.infrastructure.database import Conversation, Turn
-from app.services.budget import reserve
+from app.services.budget import guarded_openai_request, reserve
 
 SENTINEL_TITLE: Final = "New conversation"
-TITLE_MODEL: Final = "deepseek-flash"
-TITLE_URL: Final = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_PROVIDER: Final = "deepseek_direct"
+OPENAI_PROVIDER: Final = "openai_direct"
+# The cheap default model the app already uses for its LLM (see pipeline_settings.default_llm).
+DEEPSEEK_TITLE_MODEL: Final = "deepseek-flash"
+OPENAI_TITLE_MODEL: Final = "gpt-6-luna"
+DEEPSEEK_TITLE_URL: Final = "https://api.deepseek.com/v1/chat/completions"
+OPENAI_TITLE_URL: Final = "https://api.openai.com/v1/chat/completions"
 MAX_SOURCE_CHARS: Final = 600
 MAX_TITLE_CHARS: Final = 60
 TITLE_TIMEOUT_SECONDS: Final = 4.0
@@ -97,24 +102,37 @@ async def fetch_title(
     assistant_text: str,
     *,
     api_key: str,
+    provider: str = DEEPSEEK_PROVIDER,
     transport: httpx.AsyncBaseTransport | None = None,
     timeout: float = TITLE_TIMEOUT_SECONDS,
 ) -> str | None:
-    """Ask the provider once; any failure is an ordinary ``None``."""
+    """Ask the configured provider once; any failure is an ordinary ``None``."""
     if not api_key.strip():
         return None
-    payload = {
-        "model": TITLE_MODEL,
-        "messages": build_title_messages(user_text, assistant_text),
-        "temperature": 0,
-        "max_tokens": 24,
-        "stream": False,
-    }
+    messages = build_title_messages(user_text, assistant_text)
+    if provider == OPENAI_PROVIDER:
+        url = OPENAI_TITLE_URL
+        payload: dict[str, object] = {
+            "model": OPENAI_TITLE_MODEL,
+            "messages": messages,
+            "reasoning_effort": "none",
+            "max_completion_tokens": 24,
+            "stream": False,
+        }
+    else:
+        url = DEEPSEEK_TITLE_URL
+        payload = {
+            "model": DEEPSEEK_TITLE_MODEL,
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": 24,
+            "stream": False,
+        }
     try:
         async with asyncio.timeout(timeout):
             async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
                 response = await client.post(
-                    TITLE_URL,
+                    url,
                     headers={"authorization": f"Bearer {api_key}"},
                     json=payload,
                 )
@@ -153,6 +171,7 @@ async def generate_conversation_title(
     conversation_id: str,
     *,
     api_key: str,
+    provider: str = DEEPSEEK_PROVIDER,
     transport: httpx.AsyncBaseTransport | None = None,
     reserve_budget: bool = True,
     budget_units: int = DEEPSEEK_REQUEST_MICRO_USD,
@@ -161,22 +180,36 @@ async def generate_conversation_title(
 ) -> str | None:
     """Generate and store one title, never raising at the background boundary."""
     try:
+        if not api_key.strip():
+            return None
         sources = await _title_sources(sessions, conversation_id)
         if sources is None:
             return None
-        if reserve_budget:
+
+        async def request() -> str | None:
+            return await fetch_title(
+                sources[0],
+                sources[1],
+                api_key=api_key,
+                provider=provider,
+                transport=transport,
+                timeout=timeout,
+            )
+
+        if provider == OPENAI_PROVIDER:
+            # Shared durable $1/day OpenAI reservation; a denial sends nothing.
             try:
-                async with sessions() as db:
-                    await reserve(db, "deepseek", units=budget_units, limit=budget_limit)
+                title = await guarded_openai_request(sessions, request)
             except ValueError:
                 return None
-        title = await fetch_title(
-            sources[0],
-            sources[1],
-            api_key=api_key,
-            transport=transport,
-            timeout=timeout,
-        )
+        else:
+            if reserve_budget:
+                try:
+                    async with sessions() as db:
+                        await reserve(db, "deepseek", units=budget_units, limit=budget_limit)
+                except ValueError:
+                    return None
+            title = await request()
         if title is None:
             return None
         # No connection is held across the provider call; the sentinel predicate

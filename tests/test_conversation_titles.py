@@ -332,3 +332,169 @@ def test_finalize_schedules_title_generation_after_commit(tmp_path, monkeypatch)
     assert len(calls) == 1
     assert calls[0][0] == chat
     assert calls[0][1]["api_key"] == "test-key"
+
+
+def _hosts_transport(content: str, hosts: list[str], calls: list[dict] | None = None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        if calls is not None:
+            calls.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    return httpx.MockTransport(handler)
+
+
+def _reserved(file, provider: str) -> int:
+    with closing(sqlite3.connect(file)) as db:
+        row = db.execute(
+            "SELECT SUM(reserved_units) FROM development_budgets WHERE provider = ?", (provider,)
+        ).fetchone()
+    return row[0] or 0
+
+
+def test_openai_provider_uses_guarded_openai_and_never_deepseek(tmp_path):
+    file, engine, sessions = _seed(tmp_path)
+    hosts: list[str] = []
+    calls: list[dict] = []
+
+    try:
+        result = asyncio.run(
+            titles.generate_conversation_title(
+                sessions,
+                "chat",
+                api_key="openai-key",
+                provider="openai_direct",
+                transport=_hosts_transport("Paris Trip Planning", hosts, calls),
+            )
+        )
+    finally:
+        asyncio.run(engine.dispose())
+
+    assert result == "Paris Trip Planning"
+    assert hosts == ["api.openai.com"]
+    assert calls[0]["model"] == "gpt-6-luna"
+    assert calls[0]["reasoning_effort"] == "none"
+    assert calls[0]["max_completion_tokens"] == 24
+    assert _reserved(file, "openai") > 0
+    assert _reserved(file, "deepseek") == 0
+
+
+def test_deepseek_provider_uses_deepseek_path(tmp_path):
+    file, engine, sessions = _seed(tmp_path)
+    hosts: list[str] = []
+
+    try:
+        result = asyncio.run(
+            titles.generate_conversation_title(
+                sessions,
+                "chat",
+                api_key="deepseek-key",
+                provider="deepseek_direct",
+                transport=_hosts_transport("Paris Trip Planning", hosts),
+            )
+        )
+    finally:
+        asyncio.run(engine.dispose())
+
+    assert result == "Paris Trip Planning"
+    assert hosts == ["api.deepseek.com"]
+    assert _reserved(file, "deepseek") > 0
+    assert _reserved(file, "openai") == 0
+
+
+def test_denied_openai_reservation_makes_no_request(tmp_path, monkeypatch):
+    file, engine, sessions = _seed(tmp_path)
+    hosts: list[str] = []
+
+    async def denied(db, provider, *args, **kwargs):
+        raise ValueError("DAILY_BUDGET_EXHAUSTED")
+
+    monkeypatch.setattr("app.services.budget.reserve_in_transaction", denied)
+
+    try:
+        result = asyncio.run(
+            titles.generate_conversation_title(
+                sessions,
+                "chat",
+                api_key="openai-key",
+                provider="openai_direct",
+                transport=_hosts_transport("Never", hosts),
+            )
+        )
+    finally:
+        asyncio.run(engine.dispose())
+
+    assert result is None
+    assert hosts == []
+    assert _stored_title(file) == titles.SENTINEL_TITLE
+
+
+@pytest.mark.parametrize("provider", ["openai_direct", "deepseek_direct"])
+def test_missing_key_means_no_title_and_no_request(tmp_path, provider):
+    file, engine, sessions = _seed(tmp_path)
+    hosts: list[str] = []
+
+    try:
+        result = asyncio.run(
+            titles.generate_conversation_title(
+                sessions,
+                "chat",
+                api_key="  ",
+                provider=provider,
+                transport=_hosts_transport("Never", hosts),
+            )
+        )
+    finally:
+        asyncio.run(engine.dispose())
+
+    assert result is None
+    assert hosts == []
+    assert _stored_title(file) == titles.SENTINEL_TITLE
+
+
+def test_finalize_passes_the_active_provider_and_its_key(tmp_path, monkeypatch):
+    file = tmp_path / "provider.db"
+    settings = Settings(
+        database_url=f"sqlite+aiosqlite:///{file}",
+        agent_service_secret="test-service-secret",
+        default_llm_provider="openai_direct",
+        openai_api_key="openai-key",
+        deepseek_api_key="deepseek-key",
+        _env_file=None,
+    )
+    calls: list[dict] = []
+
+    async def fake_generate(sessions, conversation_id, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr("app.routes.worker.generate_conversation_title", fake_generate)
+
+    with TestClient(create_app(settings)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute(
+                "INSERT INTO voice_sessions (id,conversation_id,owner_id,room_name,status,expires_at,pipeline) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (
+                    "session",
+                    chat,
+                    owner,
+                    "room",
+                    "active",
+                    (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+                    json.dumps({}),
+                ),
+            )
+        headers = {"x-agent-secret": "test-service-secret", "x-session-id": "session", "x-room-name": "room"}
+        started = client.post(
+            "/internal/agent/turn/start", headers=headers, json={"request_id": "one", "text": "Hello"}
+        ).json()
+        client.post(
+            "/internal/agent/turn/finalize",
+            headers=headers,
+            json={"turn_id": started["turn_id"], "text": "Hi", "status": "completed"},
+        )
+
+    assert calls[0]["provider"] == "openai_direct"
+    assert calls[0]["api_key"] == "openai-key"
