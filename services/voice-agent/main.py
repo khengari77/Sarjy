@@ -833,7 +833,10 @@ async def entrypoint(ctx: JobContext):
             )
 
         providers = build_providers(
-            config, provider_credentials(values, config["llm"]["provider"], config["tts"]["provider"])
+            config,
+            provider_credentials(
+                values, config["llm"]["provider"], (config.get("tts") or {}).get("provider", "elevenlabs_direct")
+            ),
         )
         fallback_llm = providers.pop("fallback_llm", None)
         agent = SarjyAgent(
