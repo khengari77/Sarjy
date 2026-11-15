@@ -2145,3 +2145,17 @@ def test_decision_turn_does_not_adopt_a_proposal_offered_by_the_server():
 
     asyncio.run(run())
     assert confirms == [{"token": "signed", "decision": "save"}]
+
+
+def test_trailing_save_imperative_is_not_part_of_the_fact():
+    capture = parse_capture("My name is Adurman. Save this fact.")
+    assert capture is not None
+    assert capture.text == "My name is Adurman"
+    assert capture.value == "adurman"
+
+
+def test_trailing_remember_imperative_is_stripped_from_an_ordinary_fact():
+    capture = parse_capture("I live in Tripoli. Please remember it.")
+    assert capture is not None
+    assert capture.text == "I live in Tripoli"
+    assert capture.value == "tripoli"
