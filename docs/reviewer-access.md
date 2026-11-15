@@ -85,8 +85,7 @@ Turn on `REVIEWER_ACCESS_ENABLED=true` for both processes first.
   the others. Per-link limits that do exist: calls per invitation (`--max-calls`, default 24), identities per
   invitation, and the global call caps; the shared daily OpenAI spend ceiling also applies. Raise the guard
   through the setting if the day runs out.
-- **Hosted state: not verified.** Whether the hosted deployment has this code and migration 0014 applied
-  was not checked when this page was written; confirm before sending links.
+- **Hosted state: verified 2026-11-15.** Release `9148a60` is deployed (API, web and worker), migration `0014_reviewer_access` is applied on hosted Supabase after a real-data rehearsal on a disposable PostgreSQL 17 + pgvector copy, and `REVIEWER_ACCESS_ENABLED=true` is set on both the API and the web app. `/review` answers without the shared token, an invitation exchange returned `200` with a reviewer identity valid to seven days, and owner-scoped reads (`/api/v1/settings`, `/api/v1/conversations`) succeeded with the reviewer cookie. Voice now uses Deepgram by default (`TTS_PROVIDER` unset), so the ElevenLabs credit exhaustion no longer blocks replies.
 - **Recovery:** revoke the affected invitation, or set `REVIEWER_ACCESS_ENABLED=false` to fall back to the
   shared-token door. Rotating the shared token or setting `REVIEW_ACCESS_EXPIRES_AT` in the past
   ends shared-token access.
