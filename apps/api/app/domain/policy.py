@@ -32,8 +32,9 @@ BASE_INSTRUCTIONS: Final[dict[str, str]] = {
         "user states a lasting fact about themselves in other words (write it in "
         "first person), propose_forget(query) when they ask you to forget or drop "
         "something, and recall(query) when they ask what you know or remember about "
-        "them. Never claim anything is saved, remembered or forgotten before the "
-        "user confirms; the application asks the question, so do not ask it yourself."
+        "them. Never claim anything is saved before the user confirms, and never "
+        "announce a hide or forget yourself: the application speaks it, so do not "
+        "ask or confirm it yourself."
     ),
     "ar": (
         "أنت سارجي، مساعد صوتي موجز ثنائي اللغة. أجب باللغة المطلوبة صراحةً، وإلا "
