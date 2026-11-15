@@ -32,6 +32,7 @@ export interface MemoryRow {
 const STATUS_LABELS: Record<string, string> = {
   active: 'Current version',
   superseded: 'Earlier version (corrected)',
+  hidden: 'Hidden',
   inactive: 'Inactive',
   excluded: 'Excluded',
 };
@@ -227,4 +228,32 @@ export function newIdempotencyKey(kind: string): string {
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return `${kind}-${suffix}`.slice(0, 100);
+}
+
+export type MemoryVisibility = components['schemas']['MemoryVisibility'];
+export type VisibilityAction = 'hide' | 'unhide' | 'delete';
+
+/** Hide and restore apply to the memory everywhere; delete is permanent. All three are idempotent. */
+export function changeVisibility(memoryId: string, action: VisibilityAction): Promise<MemoryVisibility> {
+  const path = `memories/${encodeURIComponent(memoryId)}`;
+  if (action === 'delete') return request<MemoryVisibility>(path, undefined, 'DELETE');
+  return request<MemoryVisibility>(`${path}/${action}`, {});
+}
+
+const ACTION_COPY: Record<VisibilityAction, string> = {
+  hide: 'hide',
+  unhide: 'restore',
+  delete: 'delete',
+};
+
+/** Short, non-alarming per-row copy. The row is left exactly as it was. */
+export function visibilityFailureText(action: VisibilityAction, error: unknown): string {
+  if (errorCode(error) === 'WEB_AUTH_REQUIRED') return 'Your session expired. Sign in again, then retry.';
+  return `Couldn't ${ACTION_COPY[action]} this memory. Nothing changed; try again.`;
+}
+
+/** Search matches that sit in neither loaded list (hidden rows are shown separately). */
+export function matchesOutsideLoaded(results: readonly MemorySearchResult[], ...loaded: readonly MemoryListItem[][]) {
+  const known = new Set(loaded.flat().map((item) => item.id));
+  return results.filter((result) => !known.has(result.id)).length;
 }

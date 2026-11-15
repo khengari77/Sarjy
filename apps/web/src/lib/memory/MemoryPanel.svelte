@@ -1,10 +1,10 @@
 <script lang="ts">
-  import ExclusionOutcome from './ExclusionOutcome.svelte';
-  import ExclusionReview from './ExclusionReview.svelte';
+  import DeleteMemoryDialog from './DeleteMemoryDialog.svelte';
   import MemoryCandidateList from './MemoryCandidateList.svelte';
   import MemoryIntro from './MemoryIntro.svelte';
   import MemorySearch from './MemorySearch.svelte';
   import { createMemoryExplorer } from './explorer.svelte';
+  import type { MemoryRow } from './memory';
   import './memory.css';
 
   interface Props {
@@ -22,9 +22,33 @@
     active: () => active,
     revision: () => revision,
   });
+
+  let panelEl = $state<HTMLElement | null>(null);
+  let pendingDelete = $state<{ row: MemoryRow; trigger: HTMLElement } | null>(null);
+  let deleting = $state(false);
+
+  function askDelete(row: MemoryRow, trigger: HTMLElement) {
+    pendingDelete = { row, trigger };
+  }
+
+  async function confirmDelete() {
+    const target = pendingDelete;
+    if (!target || deleting) return;
+    deleting = true;
+    await explorer.remove(target.row.item.id);
+    deleting = false;
+    // On failure the row stays and carries its own inline message.
+    pendingDelete = null;
+  }
 </script>
 
-<section class="memory-panel" aria-label="Memory and context explorer" data-testid="memory-panel">
+<section
+  class="memory-panel"
+  bind:this={panelEl}
+  tabindex="-1"
+  aria-label="Memory and context explorer"
+  data-testid="memory-panel"
+>
   <MemoryIntro {conversationId} />
 
   <MemorySearch
@@ -46,43 +70,25 @@
     total={explorer.total}
     hasMore={explorer.nextOffset !== null}
     loadingMore={explorer.loadingMore}
-    canExclude={Boolean(conversationId)}
+    busy={explorer.busy}
+    rowErrors={explorer.rowErrors}
     searchRan={explorer.searchRan}
     outsideSearchMatches={explorer.outsideSearchMatches}
     onretry={() => void explorer.reload()}
     onloadmore={() => void explorer.loadMore()}
-    onexclude={(row) => void explorer.beginExclusion(row)}
+    onhide={(row) => void explorer.hide(row.item.id)}
+    onrestore={(row) => void explorer.restore(row.item.id)}
+    ondelete={askDelete}
   />
 
-  {#if explorer.previewLoading}
-    <p class="memory-muted" role="status">Preparing a preview. Nothing has changed.</p>
-  {/if}
-
-  {#if explorer.previewError}
-    <div class="memory-error-block" role="alert">
-      <p>{explorer.previewError}</p>
-      <button class="ghost-button" onclick={() => explorer.cancelExclusion()}>Dismiss</button>
-    </div>
-  {/if}
-
-  {#if explorer.preview && explorer.selected}
-    <ExclusionReview
-      preview={explorer.preview}
-      title={`Exclude “${explorer.selected.item.content.slice(0, 80)}${
-        explorer.selected.item.content.length > 80 ? '…' : ''
-      }”?`}
-      busy={explorer.applying}
-      error={explorer.applyError}
-      onconfirm={() => void explorer.confirm()}
-      oncancel={() => explorer.cancelExclusion()}
+  {#if pendingDelete}
+    <DeleteMemoryDialog
+      content={pendingDelete.row.item.content}
+      busy={deleting}
+      trigger={pendingDelete.trigger}
+      fallback={panelEl}
+      ondelete={() => void confirmDelete()}
+      oncancel={() => (pendingDelete = null)}
     />
   {/if}
-
-  <ExclusionOutcome
-    confirmation={explorer.confirmation}
-    undoResult={explorer.undoResult}
-    undoBusy={explorer.undoBusy}
-    undoError={explorer.undoError}
-    onundo={() => void explorer.undo()}
-  />
 </section>
