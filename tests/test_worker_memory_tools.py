@@ -23,7 +23,7 @@ PROPOSAL = {
     "confirmation_revision": 1,
     "question": "Should I remember this: I live in Benghazi?",
 }
-FORGET_SPOKEN = "Exclude 'I prefer green tea' from this conversation? Say yes to exclude, or no."
+FORGET_SPOKEN = "Hidden 'I prefer green tea'. Say undo to bring it back."
 
 
 class CountingProvider:
@@ -128,10 +128,9 @@ REMEMBER_BODY = {
 }
 FORGET_BODY = {
     "memory-forget": {
-        "status": "proposed",
-        "armed": True,
+        "status": "hidden",
         "spoken": FORGET_SPOKEN,
-        "message": "Nothing has been excluded.",
+        "message": "The application handles this.",
     }
 }
 
@@ -191,7 +190,7 @@ def test_consent_is_not_armed_when_the_question_never_finished_playing(monkeypat
 def test_forget_paraphrase_speaks_the_exact_question_without_model_prose(monkeypatch, utterance):
     async def steps(h, agent):
         result, chunks = await h.say(agent, utterance, "propose_forget", query="tea")
-        assert "Nothing has been excluded" in result
+        assert "application handles this" in result
         assert chunks == [FORGET_SPOKEN]
         assert agent.memory_proposal is None
         assert h.provider.calls == 0
@@ -206,9 +205,7 @@ def test_forget_paraphrase_speaks_the_exact_question_without_model_prose(monkeyp
 
 def test_forget_with_no_match_speaks_the_refusal_and_arms_nothing(monkeypatch):
     spoken = "I couldn't find anything matching skydiving; nothing was changed."
-    body = {
-        "memory-forget": {"status": "not_proposed", "armed": False, "spoken": spoken, "message": "Nothing changed."}
-    }
+    body = {"memory-forget": {"status": "not_hidden", "spoken": spoken, "message": "Nothing changed."}}
 
     async def steps(h, agent):
         _, chunks = await h.say(agent, "Forget skydiving", "propose_forget", query="skydiving")

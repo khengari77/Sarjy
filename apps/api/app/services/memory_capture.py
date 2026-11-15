@@ -14,7 +14,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from app.domain.context_operations import sign_proposal, verify_proposal
-from app.domain.memory_capture import MemoryCapture, is_referential, parse_capture, resolve_subject
+from app.domain.memory_capture import (
+    MemoryCapture,
+    is_referential,
+    parse_capture,
+    parse_strict_capture,
+    resolve_subject,
+)
 from app.infrastructure.database import Memory, MemoryWriteRequest, now
 from app.infrastructure.upsert import insert_ignore
 from app.services.leases import lease_expired, lease_expiry
@@ -82,9 +88,15 @@ def _request_key(owner_id: str, source_turn_id: str, content: str) -> str:
     return f"memcap:{digest[:80]}"
 
 
-def propose_memory(text: str, *, owner_id: str, conversation_id: str, source_turn_id: str, secret: str) -> dict | None:
-    """Return a signed, read-only proposal or None when the text is not a fact."""
-    capture = parse_capture(text)
+def propose_memory(
+    text: str, *, owner_id: str, conversation_id: str, source_turn_id: str, secret: str, strict: bool = False
+) -> dict | None:
+    """Return a signed, read-only proposal or None when the text is not a fact.
+
+    ``strict`` (used when the model classifier is available) interprets only the
+    exact "remember that <clause>" shape; the model handles everything else.
+    """
+    capture = parse_strict_capture(text) if strict else parse_capture(text)
     if capture is None:
         return None
     return proposal_for_capture(

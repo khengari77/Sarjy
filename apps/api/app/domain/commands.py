@@ -136,6 +136,9 @@ _MEMORY_RESTORE = re.compile(
     r"|bring back (?:the |my )?memories\b.*"
     r"|undo (?:that |the )?(?:memory )?exclusion\b.*)$"
 )
+_MEMORY_UNDO = re.compile(
+    r"^(?:please )?(?:undo(?: that| it| the hide)?|bring (?:it|that) back|unhide (?:it|that)|un-?hide)$"
+)
 _REFERENTIAL_TARGETS = frozenset({"it", "that", "this", "them", "those", "these", "everything", "anything", "all"})
 _YES = frozenset(
     {
@@ -210,7 +213,8 @@ _UNSUPPORTED_COMMANDS: tuple[tuple[re.Pattern[str], str, str], ...] = (
             r"|(?:delete|remove) (?:the )?memory of .+)$"
         ),
         "MEMORY_MUTATION_UNSUPPORTED",
-        "I can't change or delete memories by voice yet. Nothing was changed.",
+        "I can't delete memories by voice. To delete one permanently, use the trash icon in the Memories "
+        "panel, or say forget followed by what to hide. Nothing was changed.",
     ),
     (
         re.compile(r"^clear (?:the )?(?:context|memory)$"),
@@ -372,6 +376,11 @@ def memory_request_is_global(text: str) -> bool:
 def memory_restore_requested(text: str) -> bool:
     normalized = normalize_utterance(text)
     return bool(_MEMORY_RESTORE.match(normalized))
+
+
+def memory_undo_requested(text: str) -> bool:
+    """Bare "undo" / "bring it back": unhide the most recent hide."""
+    return bool(_MEMORY_UNDO.match(normalize_utterance(text)))
 
 
 def parse_exclusion_confirmation(text: str) -> bool | None:

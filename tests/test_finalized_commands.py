@@ -231,12 +231,12 @@ UNSUPPORTED_ROWS = [
     (
         "Forget the Paris trip but keep the budget.",
         "MEMORY_MUTATION_UNSUPPORTED",
-        "I can't change or delete memories by voice yet. Nothing was changed.",
+        "I can't delete memories by voice. To delete one permanently, use the trash icon in the Memories panel, or say forget followed by what to hide. Nothing was changed.",
     ),
     (
         "Delete the memory of the Paris trip.",
         "MEMORY_MUTATION_UNSUPPORTED",
-        "I can't change or delete memories by voice yet. Nothing was changed.",
+        "I can't delete memories by voice. To delete one permanently, use the trash icon in the Memories panel, or say forget followed by what to hide. Nothing was changed.",
     ),
     (
         "Give shorter answers from now on.",
@@ -403,7 +403,7 @@ def test_worker_command_uses_the_stored_final_turn_once(tmp_path):
         )
         assert client.post(
             "/internal/agent/command", headers=headers, json={"turn_id": ordinary.json()["turn_id"]}
-        ).json() == {"command": None}
+        ).json() == {"command": None, "memory_op": None}
         assert client.post("/internal/agent/command", headers=headers, json={"turn_id": "missing"}).status_code == 404
 
 
