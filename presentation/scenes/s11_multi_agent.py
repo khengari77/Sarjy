@@ -38,9 +38,8 @@ class S11MultiAgent(TimedScene):
         add = txt("The others add their thoughts", size=28, color=MUTED).to_edge(DOWN, buff=0.45)
         self.play(Create(side1), Create(side2), FadeIn(add), run_time=1.2)
         self.sync(0.82)
-        res = (
-            txt("A three- or four-way conversation", size=34, color=TEXT).next_to(head, DOWN, buff=1.0).shift(RIGHT * 0)
+        res = txt("A three- or four-way\nconversation", size=34, color=TEXT, line_spacing=0.9).move_to(
+            LEFT * 4.2 + UP * 1.3
         )
-        self.play(FadeOut(fut), run_time=0.3)
         self.play(FadeIn(res), run_time=0.8)
         self.finish()
