@@ -772,7 +772,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "openai" | "elevenlabs" | "deepseek";
+            provider: "openai" | "elevenlabs" | "deepgram_tts" | "deepseek";
             /**
              * Characters
              * @default 0

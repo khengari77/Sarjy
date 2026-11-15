@@ -4,6 +4,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from app.domain.budget import (
+    DEEPGRAM_DAILY_CHARACTERS,
     DEEPSEEK_DAILY_MICRO_USD,
     DEEPSEEK_REQUEST_MICRO_USD,
     ELEVENLABS_DAILY_CHARACTERS,
@@ -20,9 +21,11 @@ DAILY_LIMITS = {
     "openai": OPENAI_DAILY_MICRO_USD,
     "deepseek": DEEPSEEK_DAILY_MICRO_USD,
     "elevenlabs": ELEVENLABS_DAILY_CHARACTERS,
+    "deepgram_tts": DEEPGRAM_DAILY_CHARACTERS,
     "jev": JEV_DAILY_REQUESTS,
 }
-UNIT_LABELS = {"elevenlabs": "characters", "jev": "requests"}
+CHARACTER_PROVIDERS = frozenset({"elevenlabs", "deepgram_tts"})
+UNIT_LABELS = {"elevenlabs": "characters", "deepgram_tts": "characters", "jev": "requests"}
 
 
 async def reserve_in_transaction(
@@ -37,7 +40,7 @@ async def reserve_in_transaction(
     if provider not in DAILY_LIMITS:
         raise ValueError("Unsupported development budget")
     if units is None:
-        units = characters if provider == "elevenlabs" else REQUEST_UNITS[provider]
+        units = characters if provider in CHARACTER_PROVIDERS else REQUEST_UNITS[provider]
     if limit is None:
         limit = DAILY_LIMITS[provider]
     if units <= 0 or units > limit:

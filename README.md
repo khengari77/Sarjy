@@ -20,14 +20,14 @@ pnpm --dir apps/web dev
 
 The frontend proxies `/api/v1/*` to `API_INTERNAL_URL`, defaulting to `http://localhost:8000`. Set this environment variable in the frontend process if using another address. Browser requests use an isolated HttpOnly demo cookie. Conversation history works without speech credentials.
 
-For real speech, configure `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `AGENT_SERVICE_SECRET`, `DEEPGRAM_API_KEY`, `DEEPSEEK_API_KEY`, and `ELEVEN_API_KEY`. Use the same service secret in the API and worker. Set `API_INTERNAL_URL` in the worker to the reachable API address. Then run:
+For real speech, configure `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `AGENT_SERVICE_SECRET`, `DEEPGRAM_API_KEY` (speech-to-text and, by default, text-to-speech), `DEEPSEEK_API_KEY`, and `ELEVEN_API_KEY` (only when `TTS_PROVIDER=elevenlabs`). Use the same service secret in the API and worker. Set `API_INTERNAL_URL` in the worker to the reachable API address. Then run:
 
 ```sh
 uv run -m livekit.agents download-files
 PYTHONPATH=apps/api uv run services/voice-agent/main.py dev
 ```
 
-The temporary default is Nova-3 English → OpenAI GPT-6 Luna → ElevenLabs Flash v2.5. DeepSeek Flash direct remains available for an explicit switch after funding. No fallback is silently selected. Arabic voice quality and live provider entitlement still require manual validation.
+The temporary default is Nova-3 English → OpenAI GPT-6 Luna → Deepgram Aura-2 (`TTS_PROVIDER=deepgram`; set `TTS_PROVIDER=elevenlabs` for ElevenLabs Flash v2.5). Aura-2 has no Arabic: an Arabic voice session fails with `TTS_LANGUAGE_UNSUPPORTED` under Deepgram instead of using an English voice. DeepSeek Flash direct remains available for an explicit switch after funding. No fallback is silently selected. Arabic voice quality and live provider entitlement still require manual validation.
 
 ## Checks
 
@@ -100,7 +100,7 @@ SQLite and disposable PostgreSQL migration/model-parity checks passed locally. A
 
 ## Voice selection
 
-Voice is a user setting, not an environment variable. Use the voice picker to search the configured ElevenLabs account's available voices; the API key remains server-side. The picker excludes custom-rate voices. Language labels are provider metadata, not proof of Arabic playback quality.
+Voice is a user setting, not an environment variable. Under Deepgram the picker lists a static, documentation-verified table of Aura-2 English voices (id = model string such as `aura-2-thalia-en`, default `aura-2-thalia-en`) with no network call. Under ElevenLabs it searches the configured account's voices; the API key remains server-side and custom-rate voices are excluded. Language labels are provider metadata, not proof of Arabic playback quality.
 
 The chosen voice is remembered in this browser and sent explicitly when a call starts. The backend revalidates it and stores it in the session pipeline/snapshots. Changes apply to the next call; an unavailable voice causes an explicit error, never a silent substitution. `ELEVEN_VOICE_ID` is no longer read; an old entry in a local `.env` may be removed.
 
@@ -114,7 +114,7 @@ OpenAI has a separate **$1/day development ceiling**, enforced with durable cons
 
 Response length is one of five tiers with hard provider caps of **64/128/256/512/1024** output tokens. The session resolves a tier from the saved preference and any explicit request (for automatic/classified requests, `brief` caps at tier 2, `balanced` at tier 3, `detailed` at tier 5; a valid explicit current-turn tier overrides these preference limits), and the tier is stored with the session. The model additionally receives a plain-language word target well below its cap (for example "about 40 words or fewer" for tier 2) so ordinary replies do not approach truncation. Instructions never contain token counts, and complexity never changes reasoning: reasoning stays disabled for every tier. Arabic has separately authored targets because it needs roughly 1.5–2x the tokens per word.
 
-ElevenLabs is more conservative: **2500 characters/day by default** (`ELEVENLABS_DAILY_CHARACTERS`), reserved before text is forwarded for synthesis. No unattended audio simulations, repeated synthesis benchmarks, paid top-ups, or quota-triggered provider switching. Prefer text-only development. Partial/failed synthesis reservations also remain charged to this local allowance.
+Text-to-speech is guarded per provider by a durable character ledger: Deepgram **50,000 characters/day by default** (`DEEPGRAM_DAILY_CHARACTERS`, ledger key `deepgram_tts`) and ElevenLabs **2500 characters/day by default** (`ELEVENLABS_DAILY_CHARACTERS`), reserved before text is forwarded for synthesis. No unattended audio simulations, repeated synthesis benchmarks, paid top-ups, or quota-triggered provider switching. Prefer text-only development. Partial/failed synthesis reservations also remain charged to this local allowance.
 
 Both limits reset at midnight **Africa/Tripoli**, persist across restarts, are shared through the backend database, and fail closed if the budget service fails. These guards cover Sarjy's guarded application/development calls, not unrelated clients using the same keys or OpenAI subscriptions. Never delete/reset the budget database to regain allowance. Any additional paid development script must reserve against the same ledger before requesting inference.
 

@@ -39,6 +39,9 @@ PRESET = {
     "llm": ("openai_direct", "gpt-6-luna"),
     "tts": ("elevenlabs_direct", "eleven_flash_v2_5"),
 }
+DEEPGRAM_TTS = ("deepgram_direct", "aura-2")
+TTS_CHOICES = {PRESET["tts"], DEEPGRAM_TTS}
+TTS_KEYS = {"elevenlabs_direct": "ELEVEN_API_KEY", "deepgram_direct": "DEEPGRAM_API_KEY"}
 LLM_CHOICES = {
     ("openai_direct", "gpt-6-luna"): "OPENAI_API_KEY",
     ("deepseek_direct", "deepseek-flash"): "DEEPSEEK_API_KEY",
@@ -53,10 +56,18 @@ def validate_pipeline(config: PipelineConfig, configured: set[str]) -> list[dict
         if choice.language not in {"ar", "en"}:
             errors.append({"role": role, "code": "UNSUPPORTED_LANGUAGE"})
         if role == "tts" and choice.language == "ar" and choice.provider == "deepgram_direct":
-            errors.append({"role": role, "code": "UNSUPPORTED_LANGUAGE"})
-        elif (choice.provider, choice.model) not in (LLM_CHOICES if role == "llm" else {PRESET[role]}):
+            errors.append({"role": role, "code": "TTS_LANGUAGE_UNSUPPORTED"})
+        elif (choice.provider, choice.model) not in (
+            LLM_CHOICES if role == "llm" else TTS_CHOICES if role == "tts" else {PRESET[role]}
+        ):
             errors.append({"role": role, "code": "UNSUPPORTED_MODEL"})
-        key = LLM_CHOICES.get((choice.provider, choice.model)) if role == "llm" else KEYS[role]
+        key = (
+            LLM_CHOICES.get((choice.provider, choice.model))
+            if role == "llm"
+            else TTS_KEYS.get(choice.provider, KEYS[role])
+            if role == "tts"
+            else KEYS[role]
+        )
         if key and key not in configured:
             errors.append({"role": role, "code": "MISSING_CREDENTIAL"})
         if role == "tts" and not choice.voice_id:
