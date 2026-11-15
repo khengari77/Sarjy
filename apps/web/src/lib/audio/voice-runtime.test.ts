@@ -223,3 +223,50 @@ it('resolves the replacement call when the previous teardown rejects', async () 
     warn.mockRestore();
   }
 });
+
+async function connectedRuntime() {
+  vi.useFakeTimers();
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
+  const runtime = new LiveKitVoiceRuntime();
+  const connecting = runtime.connect(config);
+  await vi.advanceTimersByTimeAsync(1);
+  const room = rooms().at(-1)!;
+  const agent = { isAgent: true, identity: 'agent', attributes: { 'lk.agent.state': 'listening' } };
+  room.remoteParticipants.set('agent', agent as never);
+  room.connectResolve!();
+  await vi.advanceTimersByTimeAsync(100);
+  await connecting;
+  return { runtime, room };
+}
+
+describe('exact command speech', () => {
+  it('sends the exact text to the agent sarjy.say RPC', async () => {
+    const { runtime, room } = await connectedRuntime();
+    const performRpc = vi.fn().mockResolvedValue('{"ok":true}');
+    (room.localParticipant as unknown as { performRpc: typeof performRpc }).performRpc = performRpc;
+    await runtime.say('The answer was PLANT.');
+    expect(performRpc).toHaveBeenCalledTimes(1);
+    expect(performRpc).toHaveBeenCalledWith({
+      destinationIdentity: 'agent',
+      method: 'sarjy.say',
+      payload: JSON.stringify({ text: 'The answer was PLANT.' }),
+    });
+  });
+
+  it('refuses to speak without a live room', async () => {
+    await expect(new LiveKitVoiceRuntime().say('Hello')).rejects.toThrow('CALL_REQUIRED');
+  });
+
+  it('publishes control flags on the data channel and ignores no-room calls', async () => {
+    const { runtime, room } = await connectedRuntime();
+    const publishData = vi.fn().mockResolvedValue(undefined);
+    (room.localParticipant as unknown as { publishData: typeof publishData }).publishData = publishData;
+    await runtime.sendControl({ type: 'wordle.reveal_pending', value: true });
+    expect(publishData).toHaveBeenCalledTimes(1);
+    const [data, options] = publishData.mock.calls[0];
+    expect(JSON.parse(new TextDecoder().decode(data))).toEqual({ type: 'wordle.reveal_pending', value: true });
+    expect(options).toEqual({ reliable: true, topic: 'sarjy.control' });
+    await expect(new LiveKitVoiceRuntime().sendControl({ type: 'x', value: false })).resolves.toBeUndefined();
+  });
+});

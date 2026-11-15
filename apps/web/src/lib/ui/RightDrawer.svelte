@@ -2,15 +2,16 @@
   import type { Snippet } from 'svelte';
 
   /**
-   * Four panels, one concern each:
+   * Three panels, one concern each:
    *  - Controls: every interactive setting (voice, speed, captions).
    *  - Memories: the memory/context search and explorer.
-   *  - Context: the compiled-context inspector.
    *  - Transcript: the full conversation, opened from the caption bubble.
    * Appearance was removed: its theme control lives in the header and captions
-   * moved into Controls, so the panel would have been empty.
+   * moved into Controls, so the panel would have been empty. The Context
+   * inspector was removed by owner decision (2026-11-15): the compiled-context
+   * blocks belong to the memory store, not to a fourth tab.
    */
-  export type TabId = 'memories' | 'controls' | 'context' | 'transcript';
+  export type TabId = 'memories' | 'controls' | 'transcript';
 
   interface Tab {
     id: TabId;
@@ -26,8 +27,6 @@
     memoryPanel?: Snippet<[boolean]>;
     /** Full conversation transcript. */
     transcriptPanel?: Snippet;
-    /** Read-only Developer-mode inspector (#46); a placeholder until supplied. */
-    contextPanel?: Snippet;
     /** Selected tab, bindable so command navigation can choose it. */
     activeTab?: TabId;
   }
@@ -37,14 +36,12 @@
     voicePanel,
     memoryPanel,
     transcriptPanel,
-    contextPanel,
     activeTab = $bindable<TabId>('controls'),
   }: Props = $props();
 
   const tabs: Tab[] = [
     { id: 'memories', label: 'Memories' },
     { id: 'controls', label: 'Controls' },
-    { id: 'context', label: 'Context' },
     { id: 'transcript', label: 'Transcript' },
   ];
 
@@ -100,7 +97,7 @@
   </div>
 
   {#each tabs as tab (tab.id)}
-    <!-- Every tab owns a real panel: all four ids exist in the DOM so each
+    <!-- Every tab owns a real panel: all three ids exist in the DOM so each
          tab's aria-controls resolves. Only the selected panel is shown. -->
     <div
       class="panel"
@@ -131,13 +128,6 @@
         {:else}
           <p class="placeholder">No messages yet.</p>
         {/if}
-      {:else if contextPanel}
-        {@render contextPanel()}
-      {:else}
-        <section class="placeholder-block">
-          <h2>Context</h2>
-          <p>The context inspector is not available here.</p>
-        </section>
       {/if}
     </div>
   {/each}

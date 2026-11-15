@@ -25,6 +25,14 @@ export function controlEvent(topic: string | undefined, payload: Uint8Array): Co
     const command = normalizeCommandResult(data);
     return command ? { type: 'command', command } : null;
   }
+  if (topic === 'sarjy.wordle') {
+    // A signal only: the client refetches the authoritative board, so this
+    // message can never carry (or leak) game state.
+    const action = decode(payload)?.action;
+    return action === 'open' || action === 'refresh' || action === 'close' || action === 'confirm_reset'
+      ? { type: 'wordle', action }
+      : null;
+  }
   if (topic !== 'sarjy.error') return null;
   const code = decode(payload)?.code;
   return typeof code === 'string' && BUDGET_ERRORS.has(code) ? { type: 'error', code } : null;

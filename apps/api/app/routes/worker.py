@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -20,11 +20,13 @@ from app.domain.contracts import (
     UserSettings,
     resolve_response_policy,
 )
+from app.domain.intro import intro_for
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
 from app.infrastructure.database import Conversation, Memory, Turn, UserSetting, VoiceSession
+from app.routes.wordle_tools import register_wordle_tool_routes
 from app.services.budget import reserve as reserve_development_budget
 from app.services.commands import command_request_id, handle_finalized_utterance
 from app.services.context_assembly import location_evidence, read_context_inputs
@@ -37,6 +39,7 @@ from app.services.memory_capture import (
     record_proposal,
 )
 from app.services.memory_tools import memory_forget_tool, memory_propose_tool, memory_recall_tool
+from app.services.titles import generate_conversation_title
 from app.services.tool_operations import (
     ToolOperationError,
     claim_tool_operation,
@@ -129,11 +132,13 @@ PENDING_MEMORY_INSTRUCTION = (
 )
 
 
-def register_worker_routes(app, *, config: Settings, database, embedder, catalog, approved_voice_ids=None):
+def register_worker_routes(
+    app, *, config: Settings, database, sessions, embedder, catalog, approved_voice_ids=None, wordle_source=None
+):
     guard = _session_guard(config)
     _register_budget_routes(app, config=config, database=database)
     _register_session_routes(app, database=database, guard=guard)
-    _register_turn_routes(app, config=config, database=database, guard=guard)
+    _register_turn_routes(app, config=config, database=database, guard=guard, sessions=sessions)
     _register_command_routes(
         app,
         database=database,
@@ -145,6 +150,12 @@ def register_worker_routes(app, *, config: Settings, database, embedder, catalog
     _register_tool_routes(app, database=database, guard=guard)
     _register_memory_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
+    if wordle_source is not None:
+
+        async def run_tool(db, request, body, name, arguments, effect):
+            return await _run_memory_tool(guard, db, request, body, name, arguments, effect)
+
+        register_wordle_tool_routes(app, config=config, database=database, run_tool=run_tool, source=wordle_source)
 
 
 def _memory_secret(config: Settings) -> str:
@@ -289,7 +300,31 @@ def _register_session_routes(app, *, database, guard):
         if not changed.rowcount:
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
         pipeline = normalize_pipeline(voice.pipeline)
-        return {"pipeline": pipeline, "instructions": pipeline_instructions(pipeline), "expires_at": voice.expires_at}
+        row = await db.get(UserSetting, voice.owner_id)
+        intro = intro_for(
+            pipeline.get("llm", {}).get("language", "en"),
+            seen=row is not None and row.intro_seen_at is not None,
+            tts_provider=(pipeline.get("tts") or {}).get("provider"),
+        )
+        return {
+            "pipeline": pipeline,
+            "instructions": pipeline_instructions(pipeline),
+            "expires_at": voice.expires_at,
+            "intro": intro,
+        }
+
+    @app.post("/internal/agent/intro-played")
+    async def intro_played(request: Request, db: AsyncSession = Depends(database)):
+        """Worker confirmation that the full introduction played to the end. Idempotent."""
+        voice = await guard(request, db)
+        row = await db.get(UserSetting, voice.owner_id)
+        if row is None:
+            row = UserSetting(owner_id=voice.owner_id)
+            db.add(row)
+        if row.intro_seen_at is None:
+            row.intro_seen_at = datetime.now(UTC).isoformat()
+            await db.commit()
+        return {"ok": True}
 
 
 def _compile_turn_context(
@@ -312,7 +347,7 @@ def _compile_turn_context(
         raise
 
 
-def _register_turn_routes(app, *, config: Settings, database, guard):
+def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
     @app.post("/internal/agent/turn/start")
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db)
@@ -432,8 +467,6 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
         conversation_id = voice.conversation_id
         owner_id = conversation.owner_id
         db.add(turn)
-        if conversation.title == "New conversation":
-            conversation.title = body.text[:80]
         try:
             await db.commit()
         except IntegrityError:
@@ -452,7 +485,12 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
         return {"turn_id": turn.id, "context": turn.snapshot, "memory_proposal": proposal}
 
     @app.post("/internal/agent/turn/finalize")
-    async def finalize(body: AgentOutput, request: Request, db: AsyncSession = Depends(database)):
+    async def finalize(
+        body: AgentOutput,
+        request: Request,
+        background: BackgroundTasks,
+        db: AsyncSession = Depends(database),
+    ):
         voice = await guard(request, db, allow_ended=True)
         user_turn = await db.get(Turn, body.turn_id)
         if not user_turn or user_turn.conversation_id != voice.conversation_id:
@@ -486,6 +524,19 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
             if not existing:
                 raise
             return {"id": existing.id}
+        # The exchange is durable now; title generation cannot affect this reply.
+        background.add_task(
+            generate_conversation_title,
+            sessions,
+            conversation_id,
+            api_key=config.openai_api_key
+            if config.default_llm_provider == "openai_direct"
+            else config.deepseek_api_key,
+            provider=config.default_llm_provider,
+            reserve_budget=config.deepseek_budget_enabled,
+            budget_units=config.deepseek_request_micro_usd,
+            budget_limit=config.deepseek_daily_micro_usd,
+        )
         return {"id": turn.id}
 
 

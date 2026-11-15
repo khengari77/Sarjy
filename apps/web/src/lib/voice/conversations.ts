@@ -14,6 +14,8 @@ export function initialConversationState(): ConversationState {
   return { conversations: [], current: null, turns: [], toolCalls: [], loading: true, listError: '' };
 }
 
+const UNTITLED_TITLE = 'New conversation';
+
 export function createConversationStore(
   state: ConversationState,
   deps: { getLive(): boolean; endVoice(): Promise<void> },
@@ -24,10 +26,18 @@ export function createConversationStore(
     const id = state.current;
     const epoch = ++selectionEpoch;
     if (!id) return;
-    const history = await fetchConversation(id);
+    // Titles are generated after a turn is durable. Keep polling the list only
+    // while this conversation still carries the sentinel, then stop.
+    const selected = state.conversations.find((chat) => chat.id === id);
+    const needsTitle = !selected || selected.title === UNTITLED_TITLE;
+    const [history, list] = await Promise.all([
+      fetchConversation(id),
+      needsTitle ? request<Conversation[]>('conversations') : Promise.resolve(null),
+    ]);
     if (state.current === id && epoch === selectionEpoch) {
       state.turns = history.turns;
       state.toolCalls = history.toolCalls;
+      if (list) state.conversations = list;
     }
   }
 

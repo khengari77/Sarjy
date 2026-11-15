@@ -37,6 +37,15 @@ from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
+from wordle_commands import is_wordle_command, parse_say_payload
+from wordle_tools import (
+    WordleTools,
+    claims_game_state,
+    extract_guess,
+    has_guess_candidate,
+    is_close_request,
+    publish_wordle,
+)
 
 server = AgentServer()
 
@@ -205,7 +214,7 @@ async def _playout_result(handle) -> tuple[str, str]:
     return text, status
 
 
-class SarjyAgent(Agent):
+class SarjyAgent(WordleTools, Agent):
     def __init__(
         self,
         backend: httpx.AsyncClient,
@@ -214,13 +223,23 @@ class SarjyAgent(Agent):
         notify=None,
         fallback_llm=None,
         publish=None,
+        is_command=None,
+        publish_wordle=None,
+        wordle_active=None,
     ):
         super().__init__(instructions=instructions)
+        self.publish_wordle = publish_wordle
+        self.wordle_active = wordle_active or (lambda: False)
+        self.wordle_spoken: dict[str, list[str]] = {}
+        self.wordle_touched = False
+        self.wordle_calls: set[str] = set()
+        self.current_text = ""
         self.backend = backend
         self.pipeline = pipeline
         self.notify = notify
         self.fallback_llm = fallback_llm
         self.publish = publish
+        self.is_command = is_command or (lambda _text: False)
         self.prepared: dict[str, dict] = {}
         self.commands: dict[str, dict | None] = {}
         # Jev's memory_op answer per user message, shared from the single command call; forced at most once.
@@ -253,6 +272,9 @@ class SarjyAgent(Agent):
         # The turn that answered a pending confirmation may not start another proposal.
         self.decision_turn: str | None = None
         self.forced_speech: tuple[str, str] | None = None
+        # Exact Wordle commands are answered by the web client through
+        # sarjy.say; the conversational LLM must stay silent for those turns.
+        self.suppressed: set[str] = set()
 
     @staticmethod
     def _proposal_key(proposal: Mapping[str, Any] | None) -> tuple[Any, Any]:
@@ -269,6 +291,7 @@ class SarjyAgent(Agent):
             self.prepared[message.id] = response.json()
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
+        self.current_text = message.text_content or ""
         await self._publish_resync()
         self._apply_speaking_speed(result["context"])
         decided = False
@@ -441,6 +464,9 @@ class SarjyAgent(Agent):
             yield frame
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
+        if self.is_command(new_message.text_content or ""):
+            self.suppressed.add(new_message.id)
+            return
         await self.compile(new_message)
 
     async def command_for(self, message) -> dict | None:
@@ -507,7 +533,17 @@ class SarjyAgent(Agent):
         user = _user_message(chat_ctx)
         if user is None:
             return
+        if user.id in self.suppressed:
+            self.suppressed.discard(user.id)
+            return
         snapshot = await self.compile(user)
+        direct = await self._wordle_turn_speech(user)
+        if direct is not None:
+            # The application owns Wordle speech; an armed memory question must not follow it.
+            self._disarm_memory_proposal()
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=direct))
+            self._schedule_persistence(user, self.session.current_speech)
+            return
         command = None if self.command_blocked_turn == user.id else await self.command_for(user)
         if command is not None:
             await self._publish_command(command)
@@ -544,6 +580,7 @@ class SarjyAgent(Agent):
         handle = self.session.current_speech
         self._schedule_persistence(user, handle)
         request = snapshot_request(snapshot, self.current_turn)
+        tools = self._wordle_tools(tools)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
         request = _with_continuation(request, _continuation(chat_ctx, user), schemas)
         if self.memory_outcome is not None:
@@ -564,8 +601,64 @@ class SarjyAgent(Agent):
         forced = self._forced_memory_choice(user.id, {schema["name"] for schema in schemas})
         if forced is not None:
             tool_choice = forced
-        async for chunk in self._stream_with_fallback(request, tools, tool_choice):
+        async for chunk in self._guard_wordle_prose(self._stream_with_fallback(request, tools, tool_choice)):
             yield chunk
+
+    async def _guard_wordle_prose(self, stream):
+        """While a Wordle game is open, prose may not state marks, attempts or outcomes.
+
+        The reply is buffered; if it holds such a claim and no tool ran, the server's real status is spoken.
+        """
+        if not self.wordle_active():
+            async for chunk in stream:
+                yield chunk
+            return
+        chunks = [chunk async for chunk in stream]
+        said = "".join(c.delta.content or "" for c in chunks if c.delta)
+        called = any(c.delta and c.delta.tool_calls for c in chunks)
+        if not called and claims_game_state(said):
+            spoken = await self._wordle_direct("wordle-status")
+            if spoken:
+                yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=spoken))
+                return
+        for chunk in chunks:
+            yield chunk
+
+    async def _wordle_turn_speech(self, user) -> str | None:
+        """Deterministic Wordle speech: the reply after a Wordle tool, or a bare guess while a game is open.
+
+        A whole-utterance guess ("crane", "my word is crane", "uh, C R A N E") is recorded straight away
+        (no model call can skip it); every Wordle reply is the server's own line, never model prose.
+        """
+        turn = self.current_turn or ""
+        spoken = self.wordle_spoken.pop(turn, None)
+        if spoken:
+            return " ".join(spoken)
+        if not self.wordle_active():
+            return None
+        text = user.text_content or ""
+        if is_close_request(text):
+            return await self._wordle_direct("wordle-close")
+        word = extract_guess(text)
+        if word is None:
+            return None
+        return await self._wordle_direct("wordle-guess", word=word)
+
+    def _wordle_tools(self, tools):
+        """Offer only the Wordle tools that make sense for this turn.
+
+        play_wordle is withdrawn while a game is open, and submit_wordle_guess is offered only when the
+        utterance holds a five-letter word or spelled letters. A tool already called this turn stays listed
+        so the continuation request remains valid.
+        """
+        if self.current_turn in self.wordle_calls:
+            return tools
+        drop = set()
+        if self.wordle_active():
+            drop.add("play_wordle")
+        if not has_guess_candidate(self.current_text):
+            drop.add("submit_wordle_guess")
+        return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") not in drop]
 
     def _forced_memory_choice(self, message_id: str, available: set[str]) -> dict | None:
         """Force the memory tool Jev named for the FIRST inference of a turn only.
@@ -811,6 +904,103 @@ async def publish_command(room, command: Mapping[str, Any]) -> None:
     await room.local_participant.publish_data(json.dumps(dict(command)).encode(), reliable=True, topic="sarjy.command")
 
 
+class RevealState:
+    """Whether the client is waiting for a spoken spoiler confirmation."""
+
+    pending: bool = False
+    active: bool = False
+
+
+def resolve_say_request(data, participants) -> tuple[str | None, str | None]:
+    """Authenticate a sarjy.say RPC and validate its payload."""
+    caller = participants.get(data.caller_identity)
+    if caller is None or caller.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+        return None, "SARJY_SAY_FORBIDDEN"
+    try:
+        return parse_say_payload(data.payload), None
+    except ValueError:
+        return None, "SARJY_SAY_PAYLOAD_INVALID"
+
+
+async def perform_say(session, data, participants) -> str:
+    """Speak a validated reply without adding it to conversation history."""
+    text, error = resolve_say_request(data, participants)
+    if error is not None or text is None:
+        return json.dumps({"ok": False, "code": error})
+    try:
+        await session.say(text, allow_interruptions=True, add_to_chat_ctx=False)
+    except RuntimeError:
+        return json.dumps({"ok": False, "code": "SARJY_SAY_UNAVAILABLE"})
+    return json.dumps({"ok": True})
+
+
+def register_voice_controls(ctx, session, reveal: RevealState) -> None:
+    """Expose the client-owned speech RPC and the reveal-pending control flag."""
+
+    @ctx.room.local_participant.register_rpc_method("sarjy.say")
+    async def say(data: rtc.RpcInvocationData):
+        # Client-owned, non-LLM speech for exact commands. add_to_chat_ctx is
+        # false so game replies never become conversation history.
+        return await perform_say(session, data, ctx.room.remote_participants)
+
+    @ctx.room.on("data_received")
+    def on_data(packet: rtc.DataPacket):
+        apply_control(packet, reveal)
+
+
+def apply_control(packet, reveal: RevealState) -> None:
+    """Accept only human control messages, and only the supported flags."""
+    if packet.topic != "sarjy.control" or packet.participant is None:
+        return
+    if packet.participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+        return
+    try:
+        value = json.loads(packet.data)
+    except (TypeError, ValueError):
+        return
+    if not isinstance(value, dict):
+        return
+    if value.get("type") == "wordle.reveal_pending":
+        reveal.pending = value.get("value") is True
+    elif value.get("type") == "wordle.pending":
+        # A spoken yes/no is awaited for a pending action ("reveal" or "reset"); null clears it.
+        reveal.pending = value.get("value") in {"reveal", "reset"}
+    elif value.get("type") == "wordle.active":
+        reveal.active = value.get("value") is True
+        if not reveal.active:
+            reveal.pending = False
+
+
+INTRO_WAIT_SECONDS = 15
+
+
+async def play_greeting(session, backend, intro: Mapping[str, Any] | None, wait_for_user) -> str:
+    """Speak the deterministic greeting once the user is in the room; no model turn is started.
+
+    Rule: the full introduction is marked seen on the API only when it played to the end. If
+    the user interrupts it, or speech fails (budget, TTS), it is not marked and plays again
+    next call. The one-line greeting is never marked. Spoken text goes through the agent's
+    tts_node, so characters are reserved in the shared speech budget like any other reply, and
+    LiveKit transcription shows it in captions. Returns what happened, for tests and logs.
+    """
+    if not intro or not isinstance(intro.get("text"), str) or not intro["text"]:
+        return "skipped"
+    try:
+        await asyncio.wait_for(wait_for_user(), timeout=INTRO_WAIT_SECONDS)
+        handle = session.say(intro["text"], allow_interruptions=True, add_to_chat_ctx=False)
+        await handle.wait_for_playout()
+    except (TimeoutError, RuntimeError, ValueError, httpx.HTTPError):
+        return "not_played"
+    if handle.interrupted or handle.exception():
+        return "interrupted"
+    if intro.get("kind") == "full":
+        try:
+            (await backend.post("/internal/agent/intro-played")).raise_for_status()
+        except httpx.HTTPError:
+            return "mark_failed"
+    return "played"
+
+
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
     values = read_worker_environment()
@@ -821,6 +1011,7 @@ async def entrypoint(ctx: JobContext):
         "x-session-id": session_id,
         "x-room-name": ctx.job.room.name,
     }
+    reveal = RevealState()
     async with httpx.AsyncClient(base_url=values["API_INTERNAL_URL"], headers=headers, timeout=15) as backend:
         response = await backend.post("/internal/agent/bootstrap")
         response.raise_for_status()
@@ -846,6 +1037,9 @@ async def entrypoint(ctx: JobContext):
             notify=notify,
             fallback_llm=fallback_llm,
             publish=partial(publish_command, ctx.room),
+            publish_wordle=partial(publish_wordle, ctx.room),
+            wordle_active=lambda: reveal.active,
+            is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending, wordle_active=reveal.active),
         )
         session = AgentSession(
             **providers,
@@ -861,6 +1055,8 @@ async def entrypoint(ctx: JobContext):
         async def interrupt(data: rtc.RpcInvocationData):
             await session.interrupt()
             return "ok"
+
+        register_voice_controls(ctx, session, reveal)
 
         gone = asyncio.Event()
 
@@ -891,6 +1087,11 @@ async def entrypoint(ctx: JobContext):
         await session.start(
             agent, room=ctx.room, record=False, room_options=room_io.RoomOptions(close_on_disconnect=False)
         )
+        greeting = asyncio.create_task(
+            play_greeting(session, backend, bootstrap.get("intro"), lambda: ctx.wait_for_participant())
+        )
+        agent.pending.add(greeting)
+        greeting.add_done_callback(agent.pending.discard)
         expiry = datetime.fromisoformat(bootstrap["expires_at"])
         remaining = max(0, (expiry - datetime.now(UTC)).total_seconds())
         try:
@@ -904,6 +1105,7 @@ async def entrypoint(ctx: JobContext):
                 await asyncio.gather(monitor, return_exceptions=True)
         finally:
             await session.aclose()
+            greeting.cancel()
             if agent.pending:
                 await asyncio.gather(*agent.pending, return_exceptions=True)
             if fallback_llm is not None and hasattr(fallback_llm, "aclose"):

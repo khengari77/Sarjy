@@ -1,30 +1,43 @@
-/* Logout lives with the gate, not inside the app chrome. */
+/* Sign-out is a header control, so the form must not introduce a box of its
+   own inside the shell's action cluster. */
 .signout-form {
-  position: fixed;
-  inset-block-start: max(14px, env(safe-area-inset-top));
-  inset-inline-end: 16px;
-  z-index: 40;
-  margin: 0;
+  display: contents;
 }
 
 .signout-button {
-  font: inherit;
-  font-size: var(--font-size-caption);
-  letter-spacing: 0.06em;
-  min-height: 36px;
-  padding: 6px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  color: var(--text-muted);
-  background: color-mix(in srgb, var(--bg-app) 82%, transparent);
-  backdrop-filter: blur(8px);
-  cursor: pointer;
-  transition:
-    color var(--transition-quick),
-    background var(--transition-quick);
+  position: relative;
+  white-space: nowrap;
 }
 
-.signout-button:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
+.signout-icon {
+  display: none;
+}
+
+/* On phones the label would wrap and squeeze the neighbouring buttons: show a
+   round icon button instead. The text stays in the DOM, so the accessible name
+   is still "Sign out". */
+@media (max-width: 767px) {
+  .signout-button {
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    min-height: 40px;
+    flex: none;
+    padding: 0;
+    border-radius: 50%;
+  }
+
+  .signout-icon {
+    display: block;
+  }
+
+  .signout-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
