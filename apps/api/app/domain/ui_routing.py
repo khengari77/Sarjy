@@ -29,6 +29,12 @@ CONFIDENCE_THRESHOLD: Final = 0.85
 MAX_UI_COMMAND_CHARS: Final = 160
 MAX_UI_COMMAND_WORDS: Final = 25
 SPEED_STEP: Final = 0.1
+# memory_op answers that force the matching typed tool on the first model inference; restore is never forced.
+FORCED_MEMORY_TOOLS: Final[dict[str, str]] = {
+    "remember": "propose_memory",
+    "forget": "propose_forget",
+    "recall": "recall",
+}
 MULTIPLE_COMMANDS_SPOKEN: Final = "I can only make one change at a time. Which one should I do first?"
 
 _SCOPE = (
@@ -129,12 +135,15 @@ UI_QUESTIONS: Final[dict[str, dict[str, Any]]] = {
             "long-term memory about the user? Judge only the instruction itself."
         ),
         "criteria": {
-            "remember": "Asks to remember, save, store or note a fact about the user for later.",
+            "remember": "Asks to remember, save, store, keep in mind or note a fact about the user for later, including a "
+            "polite 'could you ...' request. Needs a concrete fact. Not 'remember to <task>', 'remember when ...', 'remember me' with no fact, or reminders.",
             "forget": (
-                "Asks to forget, delete, remove, scrap, drop, erase or stop using something remembered about the user."
+                "Asks to forget, delete, remove, scrap, drop, erase, disregard or stop using something remembered "
+                "or said earlier about the user ('scrap what I said about tea')."
             ),
             "recall": (
-                "Asks what the assistant remembers or knows about the user, or to look up something previously saved."
+                "Asks what the assistant remembers or knows about the user, or whether it remembers a fact about "
+                "the user, or to look up something previously saved."
             ),
             "restore": "Asks to bring back or undo the removal of something that was forgotten.",
             "none": (
