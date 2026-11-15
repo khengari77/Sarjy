@@ -24,7 +24,7 @@ DISABLED = {
     "status": "disabled",
     "message": "Wordle is switched off in this deployment, so I cannot start or play it right now.",
 }
-REVEAL_HINT = "If the user wants the answer, they should say 'reveal the answer' and confirm; you must not state it."
+REVEAL_HINT = "State only these facts, never marks or outcomes from memory. If the user wants the answer, they should say 'reveal the answer' and confirm; you must not state it."
 ERROR_MESSAGES = {
     "WORDLE_GUESS_INVALID": "That is not a valid five-letter word guess. Ask the user for a five-letter word.",
     "WORDLE_GAME_OVER": "Today's game is already finished, so no more guesses are possible.",
@@ -80,6 +80,14 @@ async def wordle_tool(
         if action == "guess":
             if view.status != "in_progress":
                 return {**_error("WORDLE_GAME_OVER"), "ui": "open", "message": describe_game(view)}
+            tried = (word or "").strip().upper()
+            if any(guess.word == tried for guess in view.guesses):
+                # An exact repeat (voice echo or a manual entry) never spends an attempt.
+                return {
+                    "status": "repeat",
+                    "ui": "refresh",
+                    "message": f"The user already tried {tried}; no attempt was used. " + describe_game(view),
+                }
             outcome = await submit_guess(
                 db,
                 owner_id=owner_id,
@@ -91,7 +99,12 @@ async def wordle_tool(
             view = outcome.game
     except WordleServiceError as exc:
         return _error(exc.code)
-    prefix = "Started or resumed today's Wordle and showed it. " if action == "play" else ""
+    prefix = ""
+    if action == "play":
+        prefix = (
+            "Started or resumed today's Wordle and showed it. From now on every five-letter word the user says is a "
+            "guess for submit_wordle_guess; do not call play_wordle again. "
+        )
     return {
         "status": view.status,
         "ui": "open" if action != "status" else "refresh",

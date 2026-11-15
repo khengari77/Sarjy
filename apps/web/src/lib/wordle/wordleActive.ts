@@ -8,7 +8,11 @@ import type { WordleGamePort } from './wordleGamePort';
  */
 export function createActiveSync(send: (event: Record<string, unknown>) => Promise<void>, isOpen: () => boolean) {
   function publish(): void {
-    void send({ type: 'wordle.active', value: isOpen() }).catch(() => {});
+    try {
+      void send({ type: 'wordle.active', value: isOpen() }).catch(() => {});
+    } catch {
+      // A runtime without control support (or a torn-down one) must never break the page.
+    }
   }
   return {
     publish,

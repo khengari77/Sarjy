@@ -222,6 +222,8 @@ export function createWordleGame(options: WordleGameOptions = {}): WordleGame {
 
   /** In-place sync after a model tool changed the server game: keeps the board mounted and animates new rows. */
   async function refresh(): Promise<void> {
+    // A load already in flight may have read the board before the tool's change; wait, then read again.
+    if (inflight) await inflight;
     if (!state.loaded) return load();
     if (state.busy) return;
     const token = loadToken;

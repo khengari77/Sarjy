@@ -10,12 +10,51 @@ board, so the answer can never leak through it.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
 from app.domain.tool_operations import operation_key
 from livekit.agents import RunContext, function_tool
 
+SPELLED_RUN = re.compile(r"(?:^|\s)(?:[a-z]\s+){4}[a-z](?:\s|$)")
+# Common five-letter words that are ordinary speech, not guesses.
+NOT_GUESSES = frozenset(
+    [
+        "about",
+        "above",
+        "after",
+        "again",
+        "being",
+        "could",
+        "every",
+        "first",
+        "great",
+        "never",
+        "other",
+        "right",
+        "shall",
+        "there",
+        "these",
+        "thing",
+        "think",
+        "those",
+        "three",
+        "today",
+        "until",
+        "where",
+        "which",
+        "while",
+        "whose",
+        "would",
+        "wordle",
+        "guess",
+        "state",
+        "music",
+        "voice",
+        "stop",
+    ]
+)
 WORDLE_FAILED = "The Wordle tool failed. Tell the user you could not do that right now; do not guess the outcome."
 
 
@@ -60,20 +99,29 @@ class WordleTools:
 
     @function_tool()
     async def play_wordle(self, ctx: RunContext):
-        """Start or resume the user's daily Wordle and show the Wordle popup. Use whenever the user wants to play Wordle, in any phrasing (for example "can we play the daily Wordle?")."""
+        """Start or resume the user's daily Wordle and show the popup. Call it ONLY when the user asks to play Wordle and no game is open (for example "can we play the daily Wordle?"). Never call it while a game is open, and never for a guess."""
         return await self._wordle_tool("wordle-play", ctx)
 
     @function_tool()
     async def submit_wordle_guess(self, ctx: RunContext, word: str):
-        """Submit one five-letter guess in the user's open Wordle game; the popup board updates live. Pass the letters the user said as one word, for example CRANE. Report only what the tool result says."""
+        """Submit a guess in the user's Wordle game. While a Wordle game is open, ANY five-letter word or spelled-out word the user says (for example "false", "F A L S E", "my word is crane") is a guess: you MUST call this tool, and pass the five letters as one word. Never state marks, attempts left or win/loss except from this tool's result; if you did not call it, you do not know the result. An exact repeat of an earlier guess costs no attempt."""
         return await self._wordle_tool("wordle-guess", ctx, word=word)
 
     @function_tool()
     async def wordle_status(self, ctx: RunContext):
-        """Read the user's Wordle status: guesses made with their letter feedback and guesses left. Never states the answer."""
+        """Read the user's Wordle status: guesses so far with letter feedback, and guesses left. Use it whenever the user asks about their board or attempts; never answer those from memory."""
         return await self._wordle_tool("wordle-status", ctx)
 
     @function_tool()
     async def close_wordle(self, ctx: RunContext):
         """Close the Wordle popup when the user wants to stop playing or go back to chat. The game stays saved."""
         return await self._wordle_tool("wordle-close", ctx)
+
+
+def contains_wordle_guess(text: str) -> bool:
+    """True when an utterance holds a five-letter word or five spelled letters."""
+    normalized = re.sub(r"[^a-z\s'-]", " ", text.lower())
+    if SPELLED_RUN.search(re.sub(r"[-.]", " ", normalized)):
+        return True
+    words = re.findall(r"[a-z']+", normalized)
+    return any(len(word) == 5 and word not in NOT_GUESSES for word in words)

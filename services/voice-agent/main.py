@@ -38,7 +38,7 @@ from livekit.plugins import silero
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
 from wordle_commands import is_wordle_command, parse_say_payload
-from wordle_tools import WordleTools, publish_wordle
+from wordle_tools import WordleTools, contains_wordle_guess, publish_wordle
 
 server = AgentServer()
 
@@ -218,9 +218,12 @@ class SarjyAgent(WordleTools, Agent):
         publish=None,
         is_command=None,
         publish_wordle=None,
+        wordle_active=None,
     ):
         super().__init__(instructions=instructions)
         self.publish_wordle = publish_wordle
+        self.wordle_active = wordle_active or (lambda: False)
+        self.wordle_forced: set[str] = set()
         self.backend = backend
         self.pipeline = pipeline
         self.notify = notify
@@ -559,6 +562,7 @@ class SarjyAgent(WordleTools, Agent):
         handle = self.session.current_speech
         self._schedule_persistence(user, handle)
         request = snapshot_request(snapshot, self.current_turn)
+        tools = self._wordle_tools(tools)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
         request = _with_continuation(request, _continuation(chat_ctx, user), schemas)
         if self.memory_outcome is not None:
@@ -577,10 +581,30 @@ class SarjyAgent(WordleTools, Agent):
             request = _with_memory_note(request, note)
         tool_choice = model_settings.tool_choice if model_settings else None
         forced = self._forced_memory_choice(user.id, {schema["name"] for schema in schemas})
+        if forced is None:
+            forced = self._forced_wordle_choice(user, {schema["name"] for schema in schemas})
         if forced is not None:
             tool_choice = forced
         async for chunk in self._stream_with_fallback(request, tools, tool_choice):
             yield chunk
+
+    def _wordle_tools(self, tools):
+        """While a game is open, play_wordle is withdrawn: every turn is a guess or a question."""
+        if not self.wordle_active():
+            return tools
+        return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") != "play_wordle"]
+
+    def _forced_wordle_choice(self, user, available: set[str]) -> dict | None:
+        """Force submit_wordle_guess on the FIRST inference of a turn that holds a guess-shaped word.
+
+        The continuation after the tool result is never forced, so it cannot loop.
+        """
+        if user.id in self.wordle_forced or "submit_wordle_guess" not in available or not self.wordle_active():
+            return None
+        if not contains_wordle_guess(user.text_content or ""):
+            return None
+        self.wordle_forced.add(user.id)
+        return {"type": "function", "function": {"name": "submit_wordle_guess"}}
 
     def _forced_memory_choice(self, message_id: str, available: set[str]) -> dict | None:
         """Force the memory tool Jev named for the FIRST inference of a turn only.
@@ -927,6 +951,7 @@ async def entrypoint(ctx: JobContext):
             fallback_llm=fallback_llm,
             publish=partial(publish_command, ctx.room),
             publish_wordle=partial(publish_wordle, ctx.room),
+            wordle_active=lambda: reveal.active,
             is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending, wordle_active=reveal.active),
         )
         session = AgentSession(

@@ -44,6 +44,16 @@ describe('wordle.active sync', () => {
     ]);
   });
 
+  it('survives a runtime that throws synchronously', () => {
+    const sync = createActiveSync(
+      () => {
+        throw new TypeError('no sendControl');
+      },
+      () => true,
+    );
+    expect(() => sync.publish()).not.toThrow();
+  });
+
   it('ignores transcripts', () => {
     const { sent, sync } = harness(true);
     sync.handleEvent({ type: 'transcript', text: 'hi', final: true, segmentId: 's', speaker: 'user', epoch: 1 });

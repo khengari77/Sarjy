@@ -7,10 +7,10 @@ from types import SimpleNamespace
 import httpx
 from livekit.agents import llm
 from main import SarjyAgent
-from wordle_tools import WORDLE_FAILED, publish_wordle
+from wordle_tools import WORDLE_FAILED, contains_wordle_guess, publish_wordle
 
 
-def build(handler, published):
+def build(handler, published, active=False):
     async def publish(action):
         published.append(action)
 
@@ -20,6 +20,7 @@ def build(handler, published):
         {"llm": {"provider": "openai_direct"}, "max_output_tokens": 128},
         instructions="Authoritative instructions.",
         publish_wordle=publish,
+        wordle_active=lambda: active,
     )
     return client, agent
 
@@ -108,3 +109,33 @@ def test_publish_wordle_uses_the_sarjy_wordle_topic():
 
     asyncio.run(publish_wordle(SimpleNamespace(local_participant=Participant()), "open"))
     assert calls == [({"action": "open"}, True, "sarjy.wordle")]
+
+
+def test_guess_shaped_utterances_are_detected():
+    for text in ("No. My word my word is false.", "F a l s e. False.", "Snark.", "my guess is c-r-a-n-e", "crane"):
+        assert contains_wordle_guess(text), text
+    for text in ("What is the weather?", "how many guesses left", "where are we", "Make your voice a lady", ""):
+        assert not contains_wordle_guess(text), text
+
+
+def test_open_game_forces_the_guess_tool_once_and_withdraws_play():
+    _, agent = build(lambda request: httpx.Response(200, json={}), [], active=True)
+    names = {tool.info.name for tool in agent._wordle_tools(agent.tools)}
+    assert "play_wordle" not in names and "submit_wordle_guess" in names
+    message = llm.ChatMessage(id="m1", role="user", content=["No. My word is false."])
+    assert agent._forced_wordle_choice(message, names) == {
+        "type": "function",
+        "function": {"name": "submit_wordle_guess"},
+    }
+    # The continuation inference after the tool result is never forced.
+    assert agent._forced_wordle_choice(message, names) is None
+    chat = llm.ChatMessage(id="m2", role="user", content=["what is the weather"])
+    assert agent._forced_wordle_choice(chat, names) is None
+
+
+def test_closed_game_forces_nothing_and_keeps_play_available():
+    _, agent = build(lambda request: httpx.Response(200, json={}), [], active=False)
+    names = {tool.info.name for tool in agent._wordle_tools(agent.tools)}
+    assert "play_wordle" in names
+    message = llm.ChatMessage(id="m1", role="user", content=["false"])
+    assert agent._forced_wordle_choice(message, names) is None

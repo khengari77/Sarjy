@@ -68,6 +68,10 @@ def test_guess_is_idempotent_and_invalid_words_are_reported(tmp_path):
         replay = call(client, headers, GUESS, turn, "same", word="slate").json()
         assert replay == first
         assert len(client.get("/v1/wordle/today").json()["game"]["guesses"]) == 1
+        repeat = call(client, headers, GUESS, turn, "again", word="SLATE").json()
+        assert repeat["status"] == "repeat" and "already tried SLATE" in repeat["message"]
+        assert "no attempt was used" in repeat["message"]
+        assert len(client.get("/v1/wordle/today").json()["game"]["guesses"]) == 1
         bad = call(client, headers, GUESS, turn, "bad", word="cat").json()
         assert bad["status"] == "error" and bad["code"] == "WORDLE_GUESS_INVALID"
 

@@ -116,10 +116,7 @@
   const startConnect = () => void connection!.connect(true).catch(onVoiceError);
   const toggleMute = () => run(() => connection!.toggleMute(), onVoiceError);
 
-  async function interrupt() {
-    if (!voice.live || !canInterrupt) return;
-    await run(() => connection!.interrupt(), onVoiceError);
-  }
+  const interrupt = () => (voice.live && canInterrupt ? run(() => connection!.interrupt(), onVoiceError) : undefined);
 
   async function send() {
     if (!draft.trim()) return;
