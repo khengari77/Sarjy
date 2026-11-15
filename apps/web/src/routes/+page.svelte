@@ -43,7 +43,9 @@
   // server and the first client frame agree before the boot script resolves.
   let theme = $state<ResolvedTheme>('dark');
   let voice = $state(initialVoiceState());
-  let runtime: VoiceRuntime | undefined, connection: VoiceConnection | undefined;
+  // Reactive: children (the Wordle launcher) receive it as a prop and it is assigned after first render.
+  let runtime = $state.raw<VoiceRuntime | undefined>(undefined);
+  let connection: VoiceConnection | undefined;
   let conversations: ConversationStore | undefined, catalogStore: ReturnType<typeof createCatalogStore> | undefined;
   const selection = createSelectionController({
     voice,
@@ -113,10 +115,7 @@
   const startConnect = () => void connection!.connect(true).catch(onVoiceError);
   const toggleMute = () => run(() => connection!.toggleMute(), onVoiceError);
 
-  async function interrupt() {
-    if (!voice.live || !canInterrupt) return;
-    await run(() => connection!.interrupt(), onVoiceError);
-  }
+  const interrupt = () => (voice.live && canInterrupt ? run(() => connection!.interrupt(), onVoiceError) : undefined);
 
   async function send() {
     if (!draft.trim()) return;
@@ -197,7 +196,7 @@
   {/snippet}
 
   {#snippet stage()}
-    <WordleLauncher compact />
+    <WordleLauncher compact {runtime} />
     <VoiceStage
       {presentation}
       micLevel={voice.micLevel}

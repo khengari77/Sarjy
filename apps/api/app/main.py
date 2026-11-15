@@ -270,6 +270,7 @@ def create_app(
         embedder=embedder,
         catalog=catalog,
         approved_voice_ids=approved,
+        wordle_source=source,
     )
     register_context_routes(app, config=config, database=database, identity=identity, semantic_search=semantic_search)
     register_exclusion_routes(app, config=config, database=database, identity=identity)

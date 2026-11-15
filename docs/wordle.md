@@ -83,3 +83,71 @@ game key, the unique `(game_id, attempt)` guess order and the per-owner unique
 lease plus a separate `retry_after` cooldown. Downgrade drops only the Wordle
 tables. PostgreSQL deployments also get RLS and revoked `anon`/`authenticated`
 grants on the new tables.
+
+## Voice play (#110)
+
+The web client adds a deterministic command adapter that consumes **finalized
+user transcripts only** (`apps/web/src/lib/wordle/wordleVoice.ts`). Partials and
+assistant segments never dispatch. Commands are parsed by
+`wordleCommands.ts`; there is no second board and no second game state — the
+adapter drives the same `createWordleGame` store the stage renders.
+
+| Utterance | Behavior |
+|---|---|
+| "Play Wordle" / "Play today's Wordle" | Opens the stage and resumes today's game once (`GET /v1/wordle/today`). |
+| "Guess CRANE" / "C R A N E" | Normalizes to five A–Z letters and posts once with a replay-safe `request_id`. |
+| "How many guesses left?" | Reads the shared server state. |
+| "What did I guess?" | Reads the stored guesses; never the answer. |
+| "Quit Wordle" / "Back to chat" | Closes the stage; the voice session, mic and transcript are untouched. |
+| "Reveal the answer" | Asks for explicit confirmation. The answer is spoken only if the server has released it at terminal; while the game is live the request is refused. |
+
+Design notes:
+
+- A `request_id` is `scope-date-WORD`, where `scope` is a per-tab random id in
+  `sessionStorage`. Retrying the same word (network failure or a repeated
+  segment) replays the server row; an already-guessed word is rejected locally
+  without a request.
+- Segment ids are deduplicated per epoch, so a replayed finalized event cannot
+  create a second guess or transition.
+- Ambiguous or malformed speech is spoken back as a clarification and mutates
+  nothing. Exact commands never generate a conversational turn, and the adapter
+  has no `sendText` dependency.
+- The answer lives only in the shared store's terminal state. The adapter's
+  `releasedAnswer()` helper returns it only for `won`/`lost`, and the stage and
+  voice reply read from that helper; an answer supplied early by a buggy server
+  is dropped by `normalizeToday`.
+- Replies are delivered twice from one string: the stage's single polite live
+  region for sighted/screen-reader users, and `runtime.say(text)` which invokes
+  the worker's `sarjy.say` RPC. The worker validates the caller is a human room
+  participant, caps the payload at 300 characters, and calls
+  `session.say(text, allow_interruptions=True, add_to_chat_ctx=False)`. The
+  audible reply is therefore the exact command result, produced by TTS only,
+  and never becomes a conversation-history turn.
+- The worker suppresses the conversational reply for recognized commands. It
+  loads the **same** allowlist from `packages/contracts/wordle_commands.json`
+  (the web parser imports that file), and both `wordleCommands.test.ts` and
+  `test_wordle_voice_worker.py` execute
+  `packages/contracts/wordle_command_fixtures.json`. A recognized finalized
+  transcript is neither compiled (`/internal/agent/turn/start`) nor streamed to
+  the LLM. Contextual confirmation ("yes"/"no") is suppressed only while the
+  client has published `{type: "wordle.reveal_pending"}` on the existing
+  `sarjy.control` data channel; ordinary "yes" stays conversational.
+
+The command path is covered by `apps/web/src/lib/wordle/wordleCommands.test.ts`,
+`wordleVoice.test.ts`, `apps/web/src/lib/audio/voice-runtime.test.ts`,
+`tests/test_wordle_voice_worker.py` and the mocked-contract Playwright spec
+`apps/web/test/wordle-voice.spec.ts`. A DEV-only `window.__sarjyWordleVoice`
+seam injects finalized/partial transcript events in browser tests without a
+LiveKit room; it is compiled out of production builds. Those tests also inject
+a fake runtime through `window.__SARJY_VOICE_RUNTIME_FACTORY__` to observe the
+exact `say`/`sendControl` payloads.
+
+### Merge overlap
+
+This change adds `say`/`sendControl` to `apps/web/src/lib/audio/voice-runtime.ts`
+and moves the remote-audio analyser bookkeeping into
+`apps/web/src/lib/audio/remoteAudio.ts`. #115/#116 also touch the runtime's
+teardown and transcription paths: keep their teardown ordering and re-apply
+`analysers.detach`/`analysers.close` to the new helper when resolving conflicts.
+`voice/connection.ts`, `voice/sessionAttempt.ts`, `orb/*` and the shell are not
+changed by this slice.

@@ -38,3 +38,15 @@ describe('room control payloads', () => {
     expect(controlEvent('sarjy.error', encode({ resync: true }))).toBeNull();
   });
 });
+
+describe('sarjy.wordle control events', () => {
+  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+
+  it('accepts only the three signal actions', () => {
+    expect(controlEvent('sarjy.wordle', bytes({ action: 'open' }))).toEqual({ type: 'wordle', action: 'open' });
+    expect(controlEvent('sarjy.wordle', bytes({ action: 'refresh' }))).toEqual({ type: 'wordle', action: 'refresh' });
+    expect(controlEvent('sarjy.wordle', bytes({ action: 'close' }))).toEqual({ type: 'wordle', action: 'close' });
+    expect(controlEvent('sarjy.wordle', bytes({ action: 'reveal' }))).toBeNull();
+    expect(controlEvent('sarjy.wordle', bytes([]))).toBeNull();
+  });
+});

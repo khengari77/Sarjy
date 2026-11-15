@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "description": "Authoritative Wordle voice command allowlist. Consumed by apps/web/src/lib/wordle/wordleCommands.ts and services/voice-agent/wordle_commands.py. Change patterns here only; both parity test suites execute packages/contracts/wordle_command_fixtures.json.",
+  "conversational": [
+    "what",
+    "who",
+    "why",
+    "how",
+    "where",
+    "when",
+    "so",
+    "again",
+    "it",
+    "that",
+    "this"
+  ],
+  "guess_intent_patterns": [
+    "^(?:please\\s+)?(?:my|the)\\s+guess\\s+is\\s+",
+    "^(?:please\\s+)?(?:try\\s+)?(?:make|submit|enter|spell)\\s+(?:a\\s+|my\\s+)?(?:guess\\s*:?\\s*)?",
+    "^(?:please\\s+)?wordle\\s+guess\\s*:?\\s*",
+    "^(?:please\\s+)?(?:try\\s+)?(?:a\\s+|my\\s+)?guess\\s*:?\\s*"
+  ],
+  "spelled_pattern": "^[a-z](?:[\\s.-]+[a-z]){4}$",
+  "exact": {
+    "play": "^(?:please\\s+)?(?:(?:hey|ok|okay)\\s+)?(?:let'?s\\s+)?(?:play|start|open|resume)\\s+(?:the\\s+|today'?s?\\s+|my\\s+)?wordle(?:\\s+(?:game|puzzle))?(?:\\s+please)?$",
+    "remaining": "^(?:how many (?:guesses|tries|attempts)(?:\\s+(?:do i have|have i got|are))?(?:\\s+(?:left|remain|remaining))?|how many (?:guesses|tries|attempts)\\s+(?:left|remain|remaining)|(?:guesses|tries|attempts)\\s+(?:left|remaining)|what(?:'s| is) my (?:wordle )?(?:status|game status)|wordle status)$",
+    "guesses": "^(?:what did i guess|what have i guessed|what(?:'s| is) my guess|what are my guesses|show(?: me)? my guesses|my guesses|what guesses (?:did i make|have i made)|list my guesses)$",
+    "quit": "^(?:quit|exit|close|stop|leave)\\s+(?:the\\s+)?wordle(?:\\s+(?:game|please))?$|^(?:back to chat|return to chat|close (?:the )?game)$",
+    "reveal": "^(?:reveal|spoil)\\s+(?:me\\s+)?(?:the\\s+)?(?:wordle\\s+)?answer(?:\\s+please)?$|^(?:show|tell|give)\\s+me\\s+the\\s+wordle\\s+answer$|^reveal\\s+(?:the\\s+)?wordle(?:\\s+answer)?$|^what(?:'s| is) the wordle answer$",
+    "confirm": "^(?:yes|yeah|yep|yup|sure|confirm|i'?m sure|go ahead|do it)$",
+    "cancel": "^(?:no|nope|cancel|don'?t|do not|never ?mind|stop|keep it secret|no (?:thanks|thank you|never ?mind))$"
+  },
+  "ambiguous_play": "^(?:wordle|play|start|open|game)$",
+  "ambiguous_action": "^(?:play|start|open|resume|quit|exit|close|leave|reveal|stop)\\b.*\\bwordle\\b"
+}

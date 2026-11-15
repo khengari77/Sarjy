@@ -25,6 +25,7 @@ from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
 from app.infrastructure.database import Conversation, Memory, Turn, UserSetting, VoiceSession
+from app.routes.wordle_tools import register_wordle_tool_routes
 from app.services.budget import reserve as reserve_development_budget
 from app.services.commands import command_request_id, handle_finalized_utterance
 from app.services.context_assembly import location_evidence, read_context_inputs
@@ -130,7 +131,9 @@ PENDING_MEMORY_INSTRUCTION = (
 )
 
 
-def register_worker_routes(app, *, config: Settings, database, sessions, embedder, catalog, approved_voice_ids=None):
+def register_worker_routes(
+    app, *, config: Settings, database, sessions, embedder, catalog, approved_voice_ids=None, wordle_source=None
+):
     guard = _session_guard(config)
     _register_budget_routes(app, config=config, database=database)
     _register_session_routes(app, database=database, guard=guard)
@@ -146,6 +149,12 @@ def register_worker_routes(app, *, config: Settings, database, sessions, embedde
     _register_tool_routes(app, database=database, guard=guard)
     _register_memory_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
+    if wordle_source is not None:
+
+        async def run_tool(db, request, body, name, arguments, effect):
+            return await _run_memory_tool(guard, db, request, body, name, arguments, effect)
+
+        register_wordle_tool_routes(app, config=config, database=database, run_tool=run_tool, source=wordle_source)
 
 
 def _memory_secret(config: Settings) -> str:
