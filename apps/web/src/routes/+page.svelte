@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import type { VoiceRuntime } from '../lib/audio/voice-runtime';
   import { activateOrb } from '../lib/orb/orbActions';
   import type { ResolvedTheme } from '../lib/ui/theme';
@@ -61,6 +61,19 @@
   // Panel state is a top-level reactive object so the shell bindings and the
   // command store share one source of truth.
   const panels = $state({ history: false, memory_explorer: false });
+  // Control that opened the right drawer on its Transcript tab; the shell
+  // returns focus there when the drawer closes.
+  let drawerOpener = $state<HTMLElement | null>(null);
+
+  async function openTranscript(opener: HTMLElement) {
+    drawerOpener = opener;
+    commands.state.panelTab = 'transcript';
+    panels.memory_explorer = true;
+    // A docked drawer never steals focus on its own; this is a keyboard
+    // activation, so move into the drawer (on its selected tab).
+    await tick();
+    document.getElementById('drawer-tab-transcript')?.focus({ preventScroll: true });
+  }
   // The shell owns the theme session and hands back its setter; a voice theme
   // command applies through it once and persists in this browser only.
   let shellTheme: ThemeControl | null = null;
@@ -178,6 +191,7 @@
 <AppShell
   bind:leftOpen={panels.history}
   bind:rightOpen={panels.memory_explorer}
+  bind:rightOpener={drawerOpener}
   dir={arabic ? 'rtl' : 'ltr'}
   stageDialogOpen={pendingIntent !== null}
   languageLabel={arabic ? 'English' : 'العربية'}
@@ -216,7 +230,6 @@
       {pendingIntent}
       turns={conversation.turns}
       provisional={voice.provisional}
-      tools={conversation.toolCalls}
       captionsVisible={commands.state.settings.captions_visible}
       {busy}
       {words}
@@ -225,6 +238,7 @@
       onend={() => run(() => connection!.end(), onVoiceError)}
       onenableaudio={enableAudio}
       onorb={handleOrb}
+      ontranscript={openTranscript}
       oncancelintent={() => (pendingIntent = null)}
       onconfirmintent={() => selection.confirmSwitch()}
     />
@@ -266,6 +280,9 @@
       conversationId={conversation.current}
       {memoryRevision}
       bind:activeTab={commands.state.panelTab}
+      turns={conversation.turns}
+      provisional={voice.provisional}
+      tools={conversation.toolCalls}
       {catalog}
       {selectedVoice}
       {sessionVoice}

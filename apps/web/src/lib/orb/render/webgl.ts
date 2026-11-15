@@ -1,4 +1,4 @@
-import { ORB_PALETTES, type ThemeName } from '../palette';
+import { ORB_CLOUD_HUES, type ThemeName } from '../palette';
 import { hexToRgb } from './colors';
 import { FRAGMENT, VERTEX } from './shaders';
 import type { OrbRenderState, Rgb } from './types';
@@ -36,7 +36,7 @@ function compile(gl: WebGL2RenderingContext, type: number, source: string): WebG
 }
 
 function paletteValues(theme: ThemeName): Float32Array {
-  const colours = ORB_PALETTES[theme];
+  const colours = ORB_CLOUD_HUES[theme];
   const values = new Float32Array(18);
   for (let index = 0; index < 6; index += 1) {
     const rgb = hexToRgb(colours[index] ?? colours[0]);
@@ -94,6 +94,7 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     bodyShade: gl.getUniformLocation(program, 'uBodyShade'),
     saturation: gl.getUniformLocation(program, 'uSaturation'),
     coreMix: gl.getUniformLocation(program, 'uCoreMix'),
+    baseMix: gl.getUniformLocation(program, 'uBaseMix'),
     colors: gl.getUniformLocation(program, 'uColors[0]'),
     phase: gl.getUniformLocation(program, 'uPhase'),
     accent: gl.getUniformLocation(program, 'uAccent'),
@@ -107,9 +108,12 @@ export function setupWebgl(options: WebglOptions): (() => void) | null {
     gl.uniform3fv(uniforms.colors, paletteValues(theme));
     // Sky Prism needs more body shade and saturation to stay legible on
     // #EAF6FF; Cosmic Cloud is already high contrast on #080F29.
-    gl.uniform1f(uniforms.bodyShade, theme === 'light' ? 0.97 : 1);
-    gl.uniform1f(uniforms.saturation, theme === 'light' ? 1.3 : 1);
-    gl.uniform1f(uniforms.coreMix, theme === 'light' ? 0.7 : 0.55);
+    gl.uniform1f(uniforms.bodyShade, theme === 'light' ? 0.97 : 0.8);
+    gl.uniform1f(uniforms.saturation, theme === 'light' ? 1.3 : 1.25);
+    gl.uniform1f(uniforms.coreMix, theme === 'light' ? 0.7 : 0.62);
+    // How much of the white-pink core tone is folded into the base: the dark
+    // cloud keeps a deeper body so the hue islands read against it.
+    gl.uniform1f(uniforms.baseMix, theme === 'light' ? 0.35 : 0.05);
   }
   let appliedTheme = options.renderState.theme;
   applyPalette(appliedTheme);

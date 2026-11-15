@@ -1,5 +1,7 @@
 <script lang="ts">
-  import type { VoiceOption } from '../api';
+  import type { Turn, VoiceOption } from '../api';
+  import TranscriptPanel from '../chat/TranscriptPanel.svelte';
+  import type { ProvisionalTranscript } from '../voice/connection';
   import VoiceSettings from '../chat/VoiceSettings.svelte';
   import MemoryPanel from '../memory/MemoryPanel.svelte';
   import type { CatalogState } from '../voice/catalog';
@@ -16,7 +18,10 @@
     live: boolean;
     speakingSpeed: number;
     captionsVisible: boolean;
-    activeTab?: 'memories' | 'controls' | 'context';
+    turns: Turn[];
+    provisional?: ProvisionalTranscript | null;
+    tools: { id: string; name: string; result: unknown }[];
+    activeTab?: 'memories' | 'controls' | 'context' | 'transcript';
     onsearch: () => void;
     onloadmore: () => void;
     onremember: () => void;
@@ -34,6 +39,9 @@
     live,
     speakingSpeed,
     captionsVisible,
+    turns,
+    provisional = null,
+    tools,
     activeTab = $bindable('controls'),
     onsearch,
     onloadmore,
@@ -46,6 +54,9 @@
 <RightDrawer {arabic} bind:activeTab>
   {#snippet memoryPanel(active)}
     <MemoryPanel {conversationId} {active} revision={memoryRevision} />
+  {/snippet}
+  {#snippet transcriptPanel()}
+    <TranscriptPanel {turns} {provisional} {tools} {arabic} />
   {/snippet}
   {#snippet voicePanel()}
     <VoiceSettings

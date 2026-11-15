@@ -3,8 +3,7 @@
   import type { Turn } from '../api';
   import type { OrbPresentation } from '../orb/orbState';
   import VoiceOrb from '../orb/VoiceOrb.svelte';
-  import Transcript from './Transcript.svelte';
-  import TranscriptDrawer from './TranscriptDrawer.svelte';
+  import CaptionBubble from './CaptionBubble.svelte';
   import type { Words } from './words';
   import type { ProvisionalTranscript } from '../voice/connection';
   import type { PendingIntent } from './intent';
@@ -23,7 +22,6 @@
     pendingIntent = null,
     turns,
     provisional = null,
-    tools,
     captionsVisible,
     busy,
     words,
@@ -33,6 +31,7 @@
     onend,
     onenableaudio,
     onorb,
+    ontranscript,
     oncancelintent,
     onconfirmintent,
   }: {
@@ -49,7 +48,6 @@
     pendingIntent?: PendingIntent;
     turns: Turn[];
     provisional?: ProvisionalTranscript | null;
-    tools: { id: string; name: string; result: unknown }[];
     captionsVisible: boolean;
     busy: boolean;
     words: Words;
@@ -59,11 +57,16 @@
     onend: () => void;
     onenableaudio: () => void;
     onorb: () => void;
+    /** Opens the right drawer on its Transcript tab; `opener` receives focus back. */
+    ontranscript: (opener: HTMLElement) => void;
     oncancelintent: () => void;
     onconfirmintent: () => void;
   } = $props();
 
   const idleHero = $derived(!live && !connecting && !turns.length && !provisional);
+  // The transcript stays reachable whenever there is, or could soon be, text.
+  const showBubble = $derived(live || connecting || turns.length > 0 || provisional !== null);
+  const hasNotice = $derived(Boolean(voiceErrorText) || (connectionLost && live) || audioBlocked);
   const statusText = $derived(arabic ? presentation.statusLabel.ar : presentation.statusLabel.en);
 
   // The shell owns the modal layer; this dialog is moved into its region so it
@@ -88,8 +91,6 @@
     if (event.key === 'Escape') oncancelintent();
   }
 
-  let transcriptOpen = $state(false);
-  let transcriptButton: HTMLButtonElement | undefined = $state();
   let switchCancel: HTMLButtonElement | undefined = $state();
 
   $effect(() => {
@@ -98,16 +99,6 @@
     // hands off modal ownership asynchronously, so focus once that settles.
     void tick().then(() => switchCancel?.focus());
   });
-
-  async function openTranscript() {
-    transcriptOpen = true;
-  }
-
-  async function closeTranscript() {
-    transcriptOpen = false;
-    await tick();
-    transcriptButton?.focus();
-  }
 </script>
 
 <svelte:window onkeydown={pendingIntent ? onDialogEscape : undefined} />
@@ -153,12 +144,6 @@
     <h1 class="stage-heading">{words.conversationTitle}</h1>
   {/if}
 
-  {#if audioBlocked}
-    <button class="primary-button" onclick={onenableaudio}>
-      {arabic ? 'تشغيل الصوت' : 'Enable audio'}
-    </button>
-  {/if}
-
   <div class="orb-zone">
     <div class="orb-wrap" style:--orb-glow-color={presentation.primaryColor}>
       <span class="orb-glow" aria-hidden="true"></span>
@@ -172,69 +157,79 @@
         onactivate={onorb}
       />
     </div>
-    {#if live}
-      <p class="status-line live-phase" data-phase={presentation.effectivePhase} role="status">{statusText}</p>
-      <span class="status-pill connected-pill">
-        <span class="status-dot" aria-hidden="true"></span>
-        {words.connected}
-      </span>
-    {:else if connecting}
-      <p class="status-line" data-phase={presentation.effectivePhase} role="status">
-        <span class="status-dot" aria-hidden="true"></span>
-        {statusText}
-      </p>
-    {:else}
+
+    <!-- Everything under the orb lives in one fixed-height block, so a long
+         reply, a notice or a state change can never move the orb or the
+         composer. -->
+    <div class="below" data-hero={idleHero}>
       {#if idleHero}
         <h1 class="hero-title">{returning ? words.welcomeBack : words.title}</h1>
-        <p class="intro">{words.intro}</p>
-      {/if}
-      <p class="status-pill idle-pill status-line" data-phase={presentation.effectivePhase} role="status">
-        <span class="status-dot" aria-hidden="true"></span>
-        {statusText}
-      </p>
-    {/if}
-  </div>
-
-  {#if voiceErrorText}
-    <div class="stage-notice" role="status" data-code={voiceErrorCode}>
-      <span>{voiceErrorText}</span>
-      {#if voiceErrorCode.startsWith('MICROPHONE_')}
-        <button class="ghost-button" disabled={busy} onclick={onretrymic}>
-          {arabic ? 'إعادة محاولة الميكروفون' : 'Retry microphone'}
-        </button>
+        {#if hasNotice}
+          {@render notices()}
+        {:else}
+          <p class="intro">{words.intro}</p>
+        {/if}
+        <p class="status-pill idle-pill status-line" data-phase={presentation.effectivePhase} role="status">
+          <span class="status-dot" aria-hidden="true"></span>
+          {statusText}
+        </p>
+      {:else}
+        {#if live}
+          <p class="status-line live-phase" data-phase={presentation.effectivePhase} role="status">{statusText}</p>
+          <span class="status-pill connected-pill">
+            <span class="status-dot" aria-hidden="true"></span>
+            {words.connected}
+          </span>
+        {:else if connecting}
+          <p class="status-line" data-phase={presentation.effectivePhase} role="status">
+            <span class="status-dot" aria-hidden="true"></span>
+            {statusText}
+          </p>
+        {:else}
+          <p class="status-pill idle-pill status-line" data-phase={presentation.effectivePhase} role="status">
+            <span class="status-dot" aria-hidden="true"></span>
+            {statusText}
+          </p>
+        {/if}
+        <div class="caption-slot">
+          {#if hasNotice}
+            {@render notices()}
+          {:else if showBubble}
+            <CaptionBubble {turns} {provisional} {arabic} {captionsVisible} onopen={ontranscript} />
+          {/if}
+        </div>
       {/if}
     </div>
-  {/if}
-
-  {#if connectionLost && live}
-    <div class="stage-notice" role="status" data-code="CONNECTION_LOST">
-      <span>{arabic ? 'انقطع الاتصال.' : 'Connection lost.'}</span>
-      <button class="ghost-button" disabled={busy} onclick={onreconnect}>
-        {arabic ? 'إعادة الاتصال' : 'Reconnect'}
-      </button>
-      <button class="ghost-button" disabled={busy} onclick={onend}>
-        {arabic ? 'إنهاء' : 'End'}
-      </button>
-    </div>
-  {/if}
-
-  <div class="caption-bubble">
-    <Transcript
-      {turns}
-      {provisional}
-      {tools}
-      {arabic}
-      {captionsVisible}
-      expanded={transcriptOpen}
-      onexpand={openTranscript}
-    />
   </div>
-
-  {#if live || turns.length || provisional}
-    <button class="ghost-button transcript-trigger" bind:this={transcriptButton} type="button" onclick={openTranscript}>
-      {arabic ? 'سجل المحادثة' : 'Transcript'}
-    </button>
-  {/if}
 </section>
 
-<TranscriptDrawer open={transcriptOpen} {turns} {provisional} {tools} {arabic} onclose={closeTranscript} />
+{#snippet notices()}
+  <div class="stage-notices">
+    {#if audioBlocked}
+      <button class="primary-button" onclick={onenableaudio}>
+        {arabic ? 'تشغيل الصوت' : 'Enable audio'}
+      </button>
+    {/if}
+    {#if voiceErrorText}
+      <div class="stage-notice" role="status" data-code={voiceErrorCode}>
+        <span>{voiceErrorText}</span>
+        {#if voiceErrorCode.startsWith('MICROPHONE_')}
+          <button class="ghost-button" disabled={busy} onclick={onretrymic}>
+            {arabic ? 'إعادة محاولة الميكروفون' : 'Retry microphone'}
+          </button>
+        {/if}
+      </div>
+    {/if}
+    {#if connectionLost && live}
+      <div class="stage-notice" role="status" data-code="CONNECTION_LOST">
+        <span>{arabic ? 'انقطع الاتصال.' : 'Connection lost.'}</span>
+        <button class="ghost-button" disabled={busy} onclick={onreconnect}>
+          {arabic ? 'إعادة الاتصال' : 'Reconnect'}
+        </button>
+        <button class="ghost-button" disabled={busy} onclick={onend}>
+          {arabic ? 'إنهاء' : 'End'}
+        </button>
+      </div>
+    {/if}
+  </div>
+{/snippet}

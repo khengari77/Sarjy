@@ -23,6 +23,7 @@ export const FRAGMENT = `#version 300 es
   uniform float uBodyShade;
   uniform float uSaturation;
   uniform float uCoreMix;
+  uniform float uBaseMix;
   uniform vec3 uColors[6];
   uniform vec3 uPhase;
   uniform vec3 uAccent;
@@ -101,23 +102,24 @@ export const FRAGMENT = `#version 300 es
     // Circular silhouette with only low-amplitude radial variation. The edge
     // fades over a wide band so the sphere ends in translucent mist, not a rim.
     float breathe = sin(t * 0.52) * (0.006 + uTurb * 0.006);
-    float radius = 0.84 + (billow - 0.5) * (0.04 + uTurb * 0.03) + breathe + uPulse * 0.02;
+    float radius = 0.93 + (billow - 0.5) * (0.03 + uTurb * 0.02) + breathe + uPulse * 0.02;
     float edge = r - radius;
-    float body = 1.0 - smoothstep(-0.22, 0.14, edge);
+    // The cloud runs almost to the (CSS) ring; only a short fade at the rim.
+    float body = 1.0 - smoothstep(-0.16, 0.05, edge);
     float core = 1.0 - smoothstep(0.0, 0.62, r);
     // Mid-radius band where the coloured islands live.
-    float ring = smoothstep(0.12, 0.42, r) * (1.0 - smoothstep(0.66, 0.92, r));
+    float ring = smoothstep(0.10, 0.40, r) * (1.0 - smoothstep(0.78, 0.97, r));
 
     float density = body * (0.66 + 0.34 * billow);
     density = mix(density, 0.96, core * 0.7);
 
     // A diffuse base of the lightest tone, with several hues drifting through
     // the mid radii as separate soft islands (cyan, lavender, gold, mint, coral).
-    vec3 col = mix(uColors[0], uColors[5], 0.35);
-    float islandA = smoothstep(0.38, 0.72, fbm3(q * 1.3 + vec2(4.0, 1.0) + drift));
-    float islandB = smoothstep(0.40, 0.74, fbm3(q * 1.35 + vec2(-6.0, 9.0) - drift));
-    float islandC = smoothstep(0.42, 0.76, fbm3(q * 1.4 + vec2(13.0, -3.0) + drift * 1.4));
-    float islandD = smoothstep(0.44, 0.78, fbm3(q * 1.45 + vec2(-2.0, -8.0) - drift * 1.2));
+    vec3 col = mix(uColors[0], uColors[5], uBaseMix);
+    float islandA = smoothstep(0.32, 0.62, fbm3(q * 1.3 + vec2(4.0, 1.0) + drift));
+    float islandB = smoothstep(0.34, 0.64, fbm3(q * 1.35 + vec2(-6.0, 9.0) - drift));
+    float islandC = smoothstep(0.36, 0.66, fbm3(q * 1.4 + vec2(13.0, -3.0) + drift * 1.4));
+    float islandD = smoothstep(0.38, 0.68, fbm3(q * 1.45 + vec2(-2.0, -8.0) - drift * 1.2));
     col = mix(col, uColors[4], islandA * ring * 0.80);
     col = mix(col, uColors[2], islandB * ring * 0.78);
     col = mix(col, uColors[1], islandC * ring * 0.74);
@@ -145,31 +147,43 @@ export const FRAGMENT = `#version 300 es
       col = mix(col, uAccent, accentField * 0.55);
     }
 
-    // A few thin wisps: contour lines of the billow field, kept to patches.
-    float contour = abs(fract(low * 2.2) - 0.5);
-    float wisp = (1.0 - smoothstep(0.0, 0.022, contour))
-      * smoothstep(0.60, 0.74, vnoise(q * 1.6 + vec2(5.0, 2.0) + drift))
-      * body * (1.0 - core * 0.5);
-    col = mix(col, mix(uColors[5], vec3(1.0), 0.6), wisp * 0.5);
-
-    // About ten sparse dots on fixed slots near the rim.
-    float dots = 0.0;
-    for (int i = 0; i < 10; i++) {
+    // A few thin wisp arcs: fixed crescents that drift slowly, never a
+    // contour map of the billow field.
+    float wisp = 0.0;
+    for (int i = 0; i < 4; i++) {
       float fi = float(i);
-      float angle = fi * 2.399 + sin(t * 0.07 + fi) * 0.06;
-      float dotRadius = 0.76 + 0.19 * fract(fi * 0.618 + 0.17);
-      vec2 center = vec2(cos(angle), sin(angle)) * dotRadius;
-      dots = max(dots, 1.0 - smoothstep(0.004, 0.013, length(p - center)));
+      vec2 centre = vec2(-0.30 + 0.26 * fi, 0.08 + 0.14 * sin(fi * 2.1)) + vec2(sin(t * 0.09 + fi), cos(t * 0.07 + fi * 1.7)) * 0.03;
+      float arcR = 0.26 + 0.07 * fi;
+      vec2 d = p - centre;
+      float ang = atan(d.y, d.x);
+      float heading = 1.2 + fi * 0.5 + sin(t * 0.06 + fi) * 0.2;
+      float span = 1.0 - smoothstep(0.35, 0.8, abs(atan(sin(ang - heading), cos(ang - heading))));
+      wisp = max(wisp, (1.0 - smoothstep(0.0, 0.011, abs(length(d) - arcR))) * span);
     }
-    col = mix(col, vec3(1.0), dots * 0.7);
+    wisp *= body * (1.0 - core * 0.3);
+    col = mix(col, mix(uColors[5], vec3(1.0), 0.6), wisp * 0.55);
 
-    // One soft filled halo outside the body, never an outline.
-    float halo = (1.0 - smoothstep(0.62, 1.0, r)) * (1.0 - body) * (0.07 + uGlow * 0.04);
-    float alphaBody = body * (0.74 + 0.22 * min(1.0, density));
+    // Ten sparse dots in four loose clusters near the rim (x, y, size), not
+    // an even scatter.
+    float dots = 0.0;
+    vec3 spots[10] = vec3[10](
+      vec3(-0.34, 0.86, 0.012), vec3(-0.27, 0.89, 0.009), vec3(-0.40, 0.80, 0.008),
+      vec3(-0.90, 0.30, 0.011), vec3(-0.93, 0.22, 0.008),
+      vec3(0.93, 0.05, 0.010), vec3(0.95, -0.04, 0.008), vec3(0.91, -0.12, 0.007),
+      vec3(0.12, -0.92, 0.010), vec3(0.20, -0.90, 0.008)
+    );
+    for (int i = 0; i < 10; i++) {
+      vec2 centre = spots[i].xy + vec2(sin(t * 0.08 + float(i)), cos(t * 0.06 + float(i) * 1.3)) * 0.006;
+      dots = max(dots, 1.0 - smoothstep(spots[i].z * 0.5, spots[i].z, length(p - centre)));
+    }
+    col = mix(col, vec3(1.0), dots * 0.75);
+
+    // The halo disc is CSS (.orb-glow); the canvas draws only the cloud.
+    float alphaBody = body * (0.78 + 0.22 * min(1.0, density));
     // The canvas is a square; fade every layer out on a circle before the
     // border so nothing draws a straight rectangular edge.
-    float edgeClip = 1.0 - smoothstep(0.90, 0.985, r);
-    float alpha = max(max(alphaBody, halo), dots * 0.75) * uOpacity * edgeClip;
+    float edgeClip = 1.0 - smoothstep(0.965, 1.0, r);
+    float alpha = max(alphaBody, dots * 0.8) * uOpacity * edgeClip;
 
     col = clamp(col, 0.0, 1.0);
     alpha = clamp(alpha, 0.0, 1.0);

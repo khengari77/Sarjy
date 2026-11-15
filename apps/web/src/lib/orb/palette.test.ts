@@ -1,6 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ORB_PALETTES, ORB_STATE_COLORS, THEME_BACKGROUND, orbAccents, orbDominant, type ThemeName } from './palette';
+import {
+  ORB_CLOUD_HUES,
+  ORB_PALETTES,
+  ORB_STATE_COLORS,
+  THEME_BACKGROUND,
+  orbAccents,
+  orbDominant,
+  type ThemeName,
+} from './palette';
 import { parseHexColor } from './render/colors';
 
 const THEMES: readonly ThemeName[] = ['light', 'dark'];
@@ -121,5 +129,37 @@ describe('palette mirrors the shell tokens', () => {
       expect(accents.length).toBeGreaterThanOrEqual(2);
       expect([...dominant, ...accents]).toEqual([...ORB_PALETTES[theme]]);
     }
+  });
+
+  it('gives the dark cloud its own multi-hue set instead of near-monochrome lavender', () => {
+    const hue = (value: string): number => {
+      const [r, g, b] = parseHexColor(value)!;
+      const max = Math.max(r, g, b);
+      const delta = max - Math.min(r, g, b);
+      if (delta === 0) return 0;
+      const sector = max === r ? ((g - b) / delta) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+      return (sector * 60 + 360) % 360;
+    };
+    const hues = ORB_CLOUD_HUES.dark;
+    expect(hues).toHaveLength(6);
+    // Slot order: cyan, mint, gold, coral, lavender, white-pink core.
+    const [cyan, mint, gold, coral, lavender] = hues.slice(0, 5).map(hue);
+    expect(cyan).toBeGreaterThan(190);
+    expect(cyan).toBeLessThan(225);
+    expect(mint).toBeGreaterThan(150);
+    expect(mint).toBeLessThan(180);
+    expect(gold).toBeGreaterThan(30);
+    expect(gold).toBeLessThan(50);
+    expect(coral).toBeGreaterThan(335);
+    expect(coral).toBeLessThan(350);
+    expect(lavender).toBeGreaterThan(250);
+    expect(lavender).toBeLessThan(270);
+    // The core is bright and pinkish, not another blue.
+    const [r, g, b] = parseHexColor(hues[5]!)!;
+    expect(Math.min(r, g, b)).toBeGreaterThan(0.85);
+    expect(r).toBeGreaterThanOrEqual(g);
+    for (const value of [...ORB_CLOUD_HUES.light, ...hues]) expect(value).toMatch(/^#[0-9a-f]{6}$/);
+    // Light keeps the kit palette; only the dark cloud diverges from tokens.
+    expect(ORB_CLOUD_HUES.light).toEqual(ORB_PALETTES.light);
   });
 });

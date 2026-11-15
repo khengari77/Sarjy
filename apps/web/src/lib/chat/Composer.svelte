@@ -52,9 +52,12 @@
     align-items: center;
     gap: 8px;
     width: 100%;
-    max-width: var(--stage-max-width);
-    margin: 8px auto 24px;
-    padding: 6px 6px 6px 22px;
+    /* Kit composer: a 700px, 64px-tall pill, 80px above the viewport bottom on
+       a 900px-tall window and tighter as the window gets shorter. */
+    max-width: 700px;
+    height: 64px;
+    margin: 8px auto clamp(12px, calc(12px + (100dvh - 640px) * 0.26), 80px);
+    padding: 0 9px 0 24px;
     border: 1px solid var(--border-subtle);
     border-radius: 999px;
     background: var(--surface-elevated);
@@ -87,8 +90,8 @@
     display: grid;
     place-items: center;
     flex: 0 0 auto;
-    width: 42px;
-    height: 42px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     border: 0;
     border-radius: 999px;
@@ -142,6 +145,7 @@
   @media (max-width: 767px) {
     .composer {
       margin-inline: 14px;
+      margin-bottom: calc(16px + env(safe-area-inset-bottom));
       width: auto;
     }
   }

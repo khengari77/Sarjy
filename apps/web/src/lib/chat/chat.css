@@ -47,18 +47,21 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  /* Keep the orb centred when it fits, but top-align and scroll on short
-     viewports (e.g. 1280x720) so the composer never sits below the fold. */
-  justify-content: safe center;
-  gap: 18px;
+  /* The orb zone is a fixed-size block (orb + one fixed slot below it), so
+     it simply centres: nothing in it can grow, and the stage never scrolls. */
+  justify-content: center;
   width: 100%;
   max-width: var(--stage-max-width);
   margin: 0 auto;
-  padding: 32px 20px 12px;
+  /* Kit rhythm: the orb sits a little below the geometric centre. */
+  padding: 46px 20px 0;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: clip;
+  overflow: hidden;
   text-align: center;
+  /* Size container: --orb-size is derived from the stage's own height. */
+  container-type: size;
+  --below-height: 148px;
+  --orb-max: var(--orb-desktop);
 }
 
 .stage-waves {
@@ -89,20 +92,27 @@ button:disabled {
   position: relative;
   display: grid;
   place-items: center;
+  flex: 0 0 auto;
+  /* Kit orbDesktop (290) / orbMobile (220), shrunk when the stage is too short
+     to also fit the fixed block under the orb and a margin (cqh is the content
+     box, so the stage's top padding is already excluded). */
+  --orb-size: clamp(148px, calc(100cqh - var(--below-height) - 24px), var(--orb-max));
+  width: var(--orb-size);
+  height: var(--orb-size);
 }
 
 /* One soft, filled halo disc behind the orb: no outline rings. */
 .orb-glow {
   position: absolute;
-  width: 124%;
+  width: 117%;
   aspect-ratio: 1;
   border-radius: 50%;
   pointer-events: none;
   background: radial-gradient(
     circle,
-    color-mix(in srgb, var(--surface-elevated) 58%, transparent) 0%,
-    color-mix(in srgb, var(--surface-elevated) 42%, transparent) 52%,
-    color-mix(in srgb, var(--orb-glow-color) 9%, transparent) 74%,
+    color-mix(in srgb, var(--surface-elevated) 46%, transparent) 0%,
+    color-mix(in srgb, var(--surface-elevated) 34%, transparent) 60%,
+    color-mix(in srgb, var(--orb-glow-color) 6%, transparent) 84%,
     transparent 100%
   );
 }
@@ -142,13 +152,13 @@ button:disabled {
 .live-phase {
   font-size: 25px;
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 32px;
   color: var(--text-primary);
   letter-spacing: -0.01em;
 }
 
 .connected-pill {
-  margin-top: -6px;
+  margin-top: 0;
 }
 
 .status-dot {
@@ -194,20 +204,49 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 18px;
+  width: 100%;
 }
 
-.voice-stage[data-live='true'] {
-  gap: 12px;
-  padding-top: 18px;
+/* One fixed-height block under the orb. Hero (idle) and live content both
+   fit it, so switching state never moves the orb or the composer. */
+.below {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: var(--below-height);
+  flex: 0 0 auto;
+  padding-top: 24px;
 }
 
-.voice-stage[data-live='true'] .orb-zone {
-  gap: 12px;
+.below[data-hero='true'] {
+  padding-top: 30px;
 }
 
-.voice-stage[data-live='true'] .orb-zone > .orb-wrap {
-  margin-bottom: 0;
+.below[data-hero='true'] .intro {
+  margin-top: 11px;
+}
+
+.below[data-hero='true'] .idle-pill {
+  margin-top: 20px;
+}
+
+/* Exactly one quoted line lives here, whatever the reply length. */
+.caption-slot {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+  height: 48px;
+  margin-top: 14px;
+}
+
+.stage-notices {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
 }
 
 h1 {
@@ -220,15 +259,35 @@ h1 {
 }
 
 .hero-title {
-  font-size: clamp(26px, 3.1vw, 36px);
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 600;
 }
 
+/* Conversation title: floats in the free band above the orb when the stage
+   is tall enough, and stays available to assistive technology otherwise. */
 .stage-heading {
-  margin: 0;
+  position: absolute;
+  inset-block-start: 41px;
+  inset-inline: 20px;
+  margin: 0 auto;
   font-size: 25px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  line-height: 1.25;
+  line-height: 36px;
+  max-width: none;
+}
+
+@container (max-height: 553px) {
+  .stage-heading {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 .intro {
@@ -287,59 +346,52 @@ h1 {
   background: color-mix(in srgb, var(--orb-error) 92%, var(--surface-elevated));
 }
 
+/* The quoted caption is a round-cornered control that opens the transcript. */
 .caption-bubble {
-  display: flex;
-  justify-content: center;
+  display: block;
   width: 100%;
-}
-
-.caption-bubble:empty {
-  display: none;
-}
-
-.voice-stage .caption-bubble .captions {
-  width: 100%;
-  max-width: 560px;
-  padding: 12px 20px;
-  border-radius: var(--radius-panel);
+  max-width: 556px;
+  height: 48px;
+  padding: 0 24px;
   border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
   background: var(--surface-elevated);
-  gap: 4px;
-}
-
-.voice-stage .caption-bubble .caption {
-  text-align: center;
+  color: var(--text-primary);
+  font: inherit;
   font-size: 15px;
-  line-height: 1.5;
+  line-height: 46px;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background var(--transition-quick),
+    border-color var(--transition-quick);
 }
 
-.voice-stage .caption-bubble .caption > span:not(.pending) {
-  position: absolute;
-  width: 1px;
-  height: 1px;
+.caption-bubble:hover {
+  background: var(--surface-hover);
+}
+
+.caption-bubble .caption-text {
+  display: block;
   overflow: hidden;
-  clip-path: inset(50%);
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.voice-stage .caption-bubble .caption.assistant::before {
-  content: '“';
+.caption-bubble.quiet {
+  width: auto;
+  min-width: 140px;
+  color: var(--text-muted);
+  font-size: 14px;
 }
 
-.voice-stage .caption-bubble .caption.assistant::after {
-  content: '”';
-}
-
-.voice-stage .caption-bubble .caption.provisional {
-  border-inline-start: 0;
-  padding-inline-start: 0;
-  font-style: normal;
-  opacity: 1;
+.caption-bubble.provisional .caption-text {
+  opacity: 0.85;
 }
 
 @media (max-width: 767px) {
-  .voice-stage .caption-bubble .expand {
-    min-height: var(--min-tap-target);
+  .voice-stage {
+    --orb-max: var(--orb-mobile);
   }
 
   .stage-notice .ghost-button {
@@ -450,7 +502,7 @@ select {
 
 @media (max-width: 767px) {
   .voice-stage {
-    padding: 20px 14px 8px;
+    padding: 28px 14px 0;
   }
 
   .composer {

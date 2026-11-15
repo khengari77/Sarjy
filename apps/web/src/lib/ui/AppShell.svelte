@@ -20,6 +20,7 @@
     stageDialogOpen = false,
     leftOpen = $bindable(false),
     rightOpen = $bindable(false),
+    rightOpener = $bindable(null),
     onthemechange,
     onthemeready,
   }: ShellProps = $props();
@@ -78,7 +79,7 @@
   const session = createDrawerSession({
     overlay: () => overlayPanel,
     panel: (panel) => (panel === 'left' ? leftPanel : rightPanel),
-    trigger: (panel) => (panel === 'left' ? leftButton : rightButton),
+    trigger: (panel) => (panel === 'left' ? leftButton : (rightOpener ?? rightButton)),
     controls: () => controlsRegion,
     openState: (panel) => (panel === 'left' ? leftOpen : rightOpen),
     setOpen: (panel, open) => {
@@ -109,7 +110,10 @@
 
   function toggle(panel: 'left' | 'right') {
     if (panel === 'left' ? leftOpen : rightOpen) void closePanel(panel);
-    else opening(panel);
+    else {
+      if (panel === 'right') rightOpener = null;
+      opening(panel);
+    }
   }
 
   /**
@@ -124,7 +128,9 @@
     else rightOpen = false;
     await tick();
     if (token !== focusRestoreToken) return;
-    (panel === 'left' ? leftButton : rightButton)?.focus({ preventScroll: true });
+    const opener = panel === 'right' && rightOpener?.isConnected ? rightOpener : null;
+    (panel === 'left' ? leftButton : (opener ?? rightButton))?.focus({ preventScroll: true });
+    if (panel === 'right') rightOpener = null;
   }
 
   function onViewportChange(event: MediaQueryListEvent) {

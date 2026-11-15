@@ -17,7 +17,7 @@ test('GUI captions action and a voice result converge through the one settings p
       action: { kind: 'SetCaptionsVisible', visible: false },
     });
     expect(backend.actionWrites).toHaveLength(0);
-    await expect(page.locator('.captions')).toHaveCount(0);
+    await expect(page.locator('.caption-bubble:not(.quiet)')).toHaveCount(0);
   });
 
   await withPage(browser, async (page, backend) => {
@@ -26,7 +26,7 @@ test('GUI captions action and a voice result converge through the one settings p
     voiceState = await snapshot(page);
     expect(backend.settingsWrites).toHaveLength(0);
     expect(backend.actionWrites).toHaveLength(0);
-    await expect(page.locator('.captions')).toHaveCount(0);
+    await expect(page.locator('.caption-bubble:not(.quiet)')).toHaveCount(0);
   });
 
   expect(voiceState).toEqual(guiState);

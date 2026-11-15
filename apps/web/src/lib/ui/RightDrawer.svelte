@@ -2,14 +2,15 @@
   import type { Snippet } from 'svelte';
 
   /**
-   * Three panels, one concern each:
+   * Four panels, one concern each:
    *  - Controls: every interactive setting (voice, speed, captions).
    *  - Memories: the memory/context search and explorer.
    *  - Context: the compiled-context inspector.
+   *  - Transcript: the full conversation, opened from the caption bubble.
    * Appearance was removed: its theme control lives in the header and captions
    * moved into Controls, so the panel would have been empty.
    */
-  export type TabId = 'memories' | 'controls' | 'context';
+  export type TabId = 'memories' | 'controls' | 'context' | 'transcript';
 
   interface Tab {
     id: TabId;
@@ -23,16 +24,25 @@
     /** Transparent memory/context explorer (#43). Rendered in its own tab;
      *  the argument is true while that tab is visible. */
     memoryPanel?: Snippet<[boolean]>;
+    /** Full conversation transcript. */
+    transcriptPanel?: Snippet;
     /** Selected tab, bindable so command navigation can choose it. */
     activeTab?: TabId;
   }
 
-  let { arabic = false, voicePanel, memoryPanel, activeTab = $bindable<TabId>('controls') }: Props = $props();
+  let {
+    arabic = false,
+    voicePanel,
+    memoryPanel,
+    transcriptPanel,
+    activeTab = $bindable<TabId>('controls'),
+  }: Props = $props();
 
   const tabs: Tab[] = [
     { id: 'memories', label: 'Memories' },
     { id: 'controls', label: 'Controls' },
     { id: 'context', label: 'Context' },
+    { id: 'transcript', label: 'Transcript' },
   ];
 
   let tablist = $state<HTMLDivElement | null>(null);
@@ -87,7 +97,7 @@
   </div>
 
   {#each tabs as tab (tab.id)}
-    <!-- Every tab owns a real panel: all three ids exist in the DOM so each
+    <!-- Every tab owns a real panel: all four ids exist in the DOM so each
          tab's aria-controls resolves. Only the selected panel is shown. -->
     <div
       class="panel"
@@ -111,6 +121,12 @@
             <h2>Memories</h2>
             <p>No remembered items are shown yet.</p>
           </section>
+        {/if}
+      {:else if tab.id === 'transcript'}
+        {#if transcriptPanel}
+          {@render transcriptPanel()}
+        {:else}
+          <p class="placeholder">No messages yet.</p>
         {/if}
       {:else}
         <section class="placeholder-block">
@@ -137,21 +153,21 @@
     top: 0;
     z-index: 1;
     display: flex;
-    gap: 4px;
+    gap: 2px;
     padding: 10px 12px;
     background: var(--bg-sidebar);
     border-bottom: 1px solid var(--border-subtle);
-    overflow-x: auto;
   }
 
   .tab {
     font: inherit;
+    flex: 1 1 auto;
     font-size: 12px;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
     min-height: 36px;
-    padding: 6px 10px;
+    padding: 6px 8px;
     border: 1px solid transparent;
-    border-radius: var(--radius-control);
+    border-radius: var(--radius-pill);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;

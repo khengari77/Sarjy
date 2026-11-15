@@ -30,6 +30,15 @@
   position: relative;
 }
 
+/* Cosmic Cloud page: a diagonal wash with a violet glow at the top right, as
+   in the kit's dark screens. Presentation only; --bg-app (the contrast
+   baseline) is unchanged and every stop stays dark enough for text tokens. */
+[data-theme='dark'] .main-column {
+  background:
+    radial-gradient(ellipse 38% 46% at 78% 13%, rgb(76 66 210 / 0.34) 0%, rgb(60 52 170 / 0.14) 48%, transparent 76%),
+    linear-gradient(135deg, #0b1331 0%, #080f29 52%, #1d1b47 100%);
+}
+
 /* 68px utility header owned by the main column, not the whole shell. */
 .topbar {
   flex: 0 0 auto;
@@ -129,7 +138,7 @@
   width: 40px;
   min-height: 40px;
   padding: 0;
-  border-radius: 10px;
+  border-radius: 50%;
   font-size: 17px;
   line-height: 1;
 }
