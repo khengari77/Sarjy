@@ -67,7 +67,7 @@ Build images from repository root with `infra/api.Dockerfile`, `infra/web.Docker
 
 LiveKit Build quotas must be checked in the account before testing. Hosted agent minutes and direct provider charges are separate. Calls are capped at ten minutes, one active per identity and two globally. Each identity can reserve three calls; the application can reserve 80 calls per calendar month (at most 800 agent minutes), including failed dispatch reservations. This conservative cap does not account for other LiveKit projects; check the account dashboard. Agent cold starts may take 10–20 seconds. Preserve 200 agent minutes for reviewers. The worker stops after 60 seconds without a browser participant. Raw agent recording is disabled.
 
-**Development URL:** https://sarjy-web-dev-otbaod.cranl.net (development login required). API and frontend release `4a80697` are deployed; database migration `0004_voice_cleanup` is applied. See [hosted verification](docs/day1-hosted-verification.md) and the [human acceptance runbook](docs/day1-acceptance-runbook.md).
+**Development URL:** https://sarjy-web-dev-otbaod.cranl.net (development login required). API, frontend and worker release `9148a60` are deployed (2026-11-15); database migration `0014_reviewer_access` is applied. Reviewer invitation links are enabled (`REVIEWER_ACCESS_ENABLED=true` on both the API and the web app); see [reviewer access](docs/reviewer-access.md). See [hosted verification](docs/day1-hosted-verification.md) and the [human acceptance runbook](docs/day1-acceptance-runbook.md).
 
 ## Current limits
 

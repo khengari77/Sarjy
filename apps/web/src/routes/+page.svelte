@@ -25,6 +25,7 @@
   import { createSelectionController } from '../lib/voice/selection';
   import { createCommandSession } from '../lib/commands/commandSession.svelte';
   import CommandStatus from '../lib/commands/CommandStatus.svelte';
+  import WordleLauncher from '../lib/wordle/WordleLauncher.svelte';
   import '../lib/chat/chat.css';
 
   // English-first release: Arabic copy and provider plumbing stay in place but
@@ -33,10 +34,10 @@
   let arabic = $state(false);
   let catalog = $state(initialCatalogState());
   let conversation = $state(initialConversationState());
-  let draft = $state('');
-  let pendingIntent = $state<PendingIntent>(null);
-  let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none');
-  let busy = $state(false);
+  let draft = $state(''),
+    pendingIntent = $state<PendingIntent>(null);
+  let devOverlay = $state<'none' | 'memory_work' | 'confirming' | 'muted' | 'error'>('none'),
+    busy = $state(false);
   // The shell owns storage and OS-preference resolution and reports the answer
   // through onthemechange. `dark` matches the tokens.css SSR fallback, so the
   // server and the first client frame agree before the boot script resolves.
@@ -55,10 +56,8 @@
   });
   const words = $derived(wordsFor(arabic));
   const selectedVoice = $derived(selectedVoiceOption(catalog.voices, catalog.voiceId));
-  const sessionVoice = $derived(voice.live?.voice ?? null);
   // Any finalised turn can save a memory server-side; the panel uses this to
   // invalidate a list it loaded before the save.
-  const memoryRevision = $derived(`${conversation.current ?? ''}:${conversation.turns.length}`);
   // Panel state is a top-level reactive object so the shell bindings and the
   // command store share one source of truth.
   const panels = $state({ history: false, memory_explorer: false });
@@ -198,6 +197,7 @@
   {/snippet}
 
   {#snippet stage()}
+    <WordleLauncher compact />
     <VoiceStage
       {presentation}
       micLevel={voice.micLevel}
@@ -260,14 +260,14 @@
     <AppRightDrawer
       {arabic}
       conversationId={conversation.current}
-      {memoryRevision}
+      memoryRevision={`${conversation.current ?? ''}:${conversation.turns.length}`}
       bind:activeTab={commands.state.panelTab}
       turns={conversation.turns}
       provisional={voice.provisional}
       tools={conversation.toolCalls}
       {catalog}
       {selectedVoice}
-      {sessionVoice}
+      sessionVoice={voice.live?.voice ?? null}
       live={voice.live !== null}
       speakingSpeed={commands.state.settings.speaking_speed}
       captionsVisible={commands.state.settings.captions_visible}

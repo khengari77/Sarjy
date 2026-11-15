@@ -28,8 +28,9 @@ with:
 import MemoryPanel from '$lib/memory/MemoryPanel.svelte';
 ```
 
-The Context tab points at the Memories tab for the inclusion/exclusion
-projection; it does not mount a second copy of the panel.
+The drawer has three tabs (Memories, Controls, Transcript); per-conversation
+context blocks are not exposed in the UI by owner decision (2026-11-15), so the
+memory panel is the single place that shows the inclusion/exclusion projection.
 
 `conversation.current` may be `null`; the panel then shows the owner's stored
 facts without candidates/exclusion annotations and disables exclusion actions.
