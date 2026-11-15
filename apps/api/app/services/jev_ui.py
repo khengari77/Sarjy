@@ -18,7 +18,6 @@ import httpx
 from app.domain.routing import JEV_MODEL, ReservationRequest
 from app.domain.ui_routing import UiClassification, build_ui_request, parse_ui_response
 from app.services.jev import (
-    DEFAULT_DEADLINE_SECONDS,
     JEV_ENDPOINT,
     JevCircuitBreaker,
     ReservationCallback,
@@ -28,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 # Fixed prompt plus a short instruction; a conservative estimate for the audit record.
 _ESTIMATED_INPUT_TOKENS: Final = 900
+
+# Seven questions per request run slower than the routing call (live p90 ~700-830 ms, outliers 2-3 s).
+UI_DEADLINE_SECONDS: Final = 1.2
 
 
 class UiClassifier(Protocol):
@@ -42,7 +44,7 @@ class JevUiClient:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.monotonic,
-        deadline_seconds: float = DEFAULT_DEADLINE_SECONDS,
+        deadline_seconds: float = UI_DEADLINE_SECONDS,
         circuit: JevCircuitBreaker | None = None,
         endpoint: str = JEV_ENDPOINT,
     ):
@@ -120,4 +122,4 @@ class JevUiClient:
             )
 
 
-__all__ = ["JevUiClient", "UiClassifier"]
+__all__ = ["UI_DEADLINE_SECONDS", "JevUiClient", "UiClassifier"]
