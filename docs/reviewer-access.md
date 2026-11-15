@@ -78,10 +78,13 @@ Turn on `REVIEWER_ACCESS_ENABLED=true` for both processes first.
 
 ## Known gaps
 
-- **Per-invitation voice allowance: not built.** All reviewers share the deployment's daily ElevenLabs
-  character budget (`ELEVENLABS_DAILY_CHARACTERS`, default 2500). A per-invitation allowance with its own
-  ledger (and refusal of voice for identity-only sessions) is still open as part of issue #151.
-  Until it exists, a few reviewers can exhaust the day's voice for everyone.
+- **Voice protection is one shared guard, by decision.** There is no per-invitation voice allowance
+  (the migration-0015 design in issue #151 was dropped). All reviewers share the deployment's daily
+  text-to-speech guard (`DEEPGRAM_DAILY_CHARACTERS`, default 50,000 characters, roughly 50 minutes of audio;
+  `ELEVENLABS_DAILY_CHARACTERS` if `TTS_PROVIDER=elevenlabs`), so one heavy reviewer can use up the day for
+  the others. Per-link limits that do exist: calls per invitation (`--max-calls`, default 24), identities per
+  invitation, and the global call caps; the shared daily OpenAI spend ceiling also applies. Raise the guard
+  through the setting if the day runs out.
 - **Hosted state: not verified.** Whether the hosted deployment has this code and migration 0014 applied
   was not checked when this page was written; confirm before sending links.
 - **Recovery:** revoke the affected invitation, or set `REVIEWER_ACCESS_ENABLED=false` to fall back to the
