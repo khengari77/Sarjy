@@ -266,6 +266,7 @@ def create_app(
         app,
         config=config,
         database=database,
+        sessions=sessions,
         embedder=embedder,
         catalog=catalog,
         approved_voice_ids=approved,

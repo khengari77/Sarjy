@@ -163,6 +163,24 @@ test('logout clears the session and returns to the door', async ({ browser }) =>
   await context.close();
 });
 
+test('logout works from the icon-only sign-out button on a phone', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  await page.goto(`${BASE}/?token=${TOKEN}`);
+  await expect(page.locator('#voice-stage')).toBeVisible();
+  const signOut = page.getByRole('button', { name: 'Sign out' });
+  const box = await signOut.boundingBox();
+  expect(box && box.width >= 40 && box.height >= 40).toBe(true);
+  // The header must not scroll sideways or squash the drawer button.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const drawer = await page.getByRole('button', { name: /Show memory and settings/ }).boundingBox();
+  expect(drawer && drawer.width >= 36).toBe(true);
+  await signOut.click();
+  await expect(page).toHaveURL(`${BASE}/`);
+  await expect(page.locator('#access-token')).toBeVisible();
+  await context.close();
+});
+
 test('the form is labelled and keyboard-operable', async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
