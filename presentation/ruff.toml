@@ -1,0 +1,5 @@
+# Presentation scenes only: manim idiom is `from manim import *`; keep the repo's other rules.
+extend = "../pyproject.toml"
+
+[lint.per-file-ignores]
+"scenes/*" = ["F403", "F405"]

@@ -1,0 +1,15 @@
+{
+  "_note": "Seconds per scene. Edit these to retime; scenes scale their beats to fit. Run render.sh afterwards.",
+  "s01_title": 8,
+  "s02_assignment": 25,
+  "s03_why_memory": 50,
+  "s04_why_voice_ui": 55,
+  "s05_architecture": 35,
+  "s06_pipeline": 45,
+  "s07_memory": 55,
+  "s08_ui_commands": 50,
+  "s09_tools": 40,
+  "s10_personas": 25,
+  "s11_multi_agent": 30,
+  "s12_closing": 6
+}
