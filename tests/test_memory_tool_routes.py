@@ -221,3 +221,15 @@ def test_tool_failure_never_claims_success(tmp_path, monkeypatch):
         replay = call(client, headers, PROPOSE, turn, "p1", fact="I work at Acme")
         assert replay.status_code == 503
         assert table_count(file, "memories") == 0
+
+
+def test_already_saved_fact_is_rejected_without_a_proposal_or_disarming_forget(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(client, file, [("name", "My name is Abdulrahma"), ("tea", "I prefer green tea")])
+        assert call(client, headers, FORGET, turn, "f1", query="tea").json()["armed"] is True
+        body = call(client, headers, PROPOSE, turn, "p1", fact="  my NAME is   abdulrahma ").json()
+        assert body["status"] == "rejected" and body["error"] == "MEMORY_ALREADY_SAVED"
+        assert "proposal" not in body and "already saved" in body["message"]
+        assert table_count(file, "memory_write_requests") == 0
+        assert table_count(file, "context_operations", "outcome='proposed'") == 1

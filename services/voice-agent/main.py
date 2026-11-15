@@ -45,6 +45,7 @@ MAX_TIER_OUTPUT_TOKENS = 1024
 MAX_CONTEXT_BYTES = 64000
 MAX_TOOLS = 4
 GENERATION_ATTEMPT_SECONDS = 30.0
+DECISION_TURN_NOTE = "The user is answering the previous confirmation; do not propose anything this turn."
 FAILED_NOTE = "The memory tool failed. Nothing was saved, excluded or changed; do not claim otherwise."
 
 
@@ -244,6 +245,8 @@ class SarjyAgent(Agent):
         # proposal for the same turn must not be re-armed over it. ``forced_speech`` is
         # the deterministic question the next llm_node yields instead of model prose.
         self.tool_armed_turn: str | None = None
+        # The turn that answered a pending confirmation may not start another proposal.
+        self.decision_turn: str | None = None
         self.forced_speech: tuple[str, str] | None = None
 
     @staticmethod
@@ -295,6 +298,7 @@ class SarjyAgent(Agent):
                         # capture candidate, nor reclassified as a command.
                         decided = True
                         self.command_blocked_turn = message.id
+                        self.decision_turn = result["turn_id"]
                     else:
                         # A proposal is a one-shot for the next user turn; never stay armed
                         # across unrelated acknowledgements.
@@ -729,6 +733,8 @@ class SarjyAgent(Agent):
     @function_tool()
     async def propose_memory(self, ctx: RunContext, fact: str):
         """Propose remembering a lasting fact the user stated about themselves, written in first person (for example "I live in Benghazi"). This only proposes: the user is asked to confirm and nothing is saved until they do."""
+        if self.current_turn is not None and self.current_turn == self.decision_turn:
+            return DECISION_TURN_NOTE
         body = await self._memory_tool("memory-propose", ctx, fact=fact)
         proposal = body.get("proposal")
         if body.get("status") == "proposed" and isinstance(proposal, dict) and isinstance(proposal.get("token"), str):
@@ -742,9 +748,16 @@ class SarjyAgent(Agent):
     @function_tool()
     async def propose_forget(self, ctx: RunContext, query: str):
         """Propose excluding a stored memory from this conversation. Pass only a short search query describing it (for example "tea"). This only proposes: the user is asked to confirm and nothing is changed until they do."""
+        if self.current_turn is not None and self.current_turn == self.decision_turn:
+            return DECISION_TURN_NOTE
         body = await self._memory_tool("memory-forget", ctx, query=query)
         spoken = body.get("spoken")
-        if isinstance(spoken, str) and spoken and "error" not in body:
+        if (
+            isinstance(spoken, str)
+            and spoken
+            and "error" not in body
+            and body.get("status") in {"proposed", "not_proposed"}
+        ):
             # A forget request retires any remember proposal; only one may be armed.
             self._disarm_memory_proposal()
             self.tool_armed_turn = self.current_turn
