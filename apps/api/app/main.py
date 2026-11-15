@@ -263,7 +263,13 @@ def create_app(
         owned=owned,
     )
     register_worker_routes(
-        app, config=config, database=database, embedder=embedder, catalog=catalog, approved_voice_ids=approved
+        app,
+        config=config,
+        database=database,
+        sessions=sessions,
+        embedder=embedder,
+        catalog=catalog,
+        approved_voice_ids=approved,
     )
     register_context_routes(app, config=config, database=database, identity=identity, semantic_search=semantic_search)
     register_exclusion_routes(app, config=config, database=database, identity=identity)

@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -37,6 +37,7 @@ from app.services.memory_capture import (
     record_proposal,
 )
 from app.services.memory_tools import memory_forget_tool, memory_propose_tool, memory_recall_tool
+from app.services.titles import generate_conversation_title
 from app.services.tool_operations import (
     ToolOperationError,
     claim_tool_operation,
@@ -129,11 +130,11 @@ PENDING_MEMORY_INSTRUCTION = (
 )
 
 
-def register_worker_routes(app, *, config: Settings, database, embedder, catalog, approved_voice_ids=None):
+def register_worker_routes(app, *, config: Settings, database, sessions, embedder, catalog, approved_voice_ids=None):
     guard = _session_guard(config)
     _register_budget_routes(app, config=config, database=database)
     _register_session_routes(app, database=database, guard=guard)
-    _register_turn_routes(app, config=config, database=database, guard=guard)
+    _register_turn_routes(app, config=config, database=database, guard=guard, sessions=sessions)
     _register_command_routes(
         app,
         database=database,
@@ -312,7 +313,7 @@ def _compile_turn_context(
         raise
 
 
-def _register_turn_routes(app, *, config: Settings, database, guard):
+def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
     @app.post("/internal/agent/turn/start")
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db)
@@ -432,8 +433,6 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
         conversation_id = voice.conversation_id
         owner_id = conversation.owner_id
         db.add(turn)
-        if conversation.title == "New conversation":
-            conversation.title = body.text[:80]
         try:
             await db.commit()
         except IntegrityError:
@@ -452,7 +451,12 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
         return {"turn_id": turn.id, "context": turn.snapshot, "memory_proposal": proposal}
 
     @app.post("/internal/agent/turn/finalize")
-    async def finalize(body: AgentOutput, request: Request, db: AsyncSession = Depends(database)):
+    async def finalize(
+        body: AgentOutput,
+        request: Request,
+        background: BackgroundTasks,
+        db: AsyncSession = Depends(database),
+    ):
         voice = await guard(request, db, allow_ended=True)
         user_turn = await db.get(Turn, body.turn_id)
         if not user_turn or user_turn.conversation_id != voice.conversation_id:
@@ -486,6 +490,19 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
             if not existing:
                 raise
             return {"id": existing.id}
+        # The exchange is durable now; title generation cannot affect this reply.
+        background.add_task(
+            generate_conversation_title,
+            sessions,
+            conversation_id,
+            api_key=config.openai_api_key
+            if config.default_llm_provider == "openai_direct"
+            else config.deepseek_api_key,
+            provider=config.default_llm_provider,
+            reserve_budget=config.deepseek_budget_enabled,
+            budget_units=config.deepseek_request_micro_usd,
+            budget_limit=config.deepseek_daily_micro_usd,
+        )
         return {"id": turn.id}
 
 
