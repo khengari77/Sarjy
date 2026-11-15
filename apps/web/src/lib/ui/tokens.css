@@ -1,0 +1,195 @@
+/*
+ * Sarjy design tokens — Living Cloud v2.1.
+ *
+ * Canonical values live in Sarjy_Living_Cloud_UI_UX_Design_Kit_v2.1/
+ * design/tokens/tokens.json. This file maps them onto the variable names the
+ * shell/chat components already consume, then adds the Living Cloud palette.
+ *
+ * Dark (Cosmic Cloud) is the server-rendered fallback so there is no flash
+ * before the theme resolver applies the saved preference. Light (Sky Prism)
+ * and dark are both first-class; switching is presentation-only and must
+ * never touch the voice session.
+ */
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg-app: #080f29;
+  --bg-sidebar: #101b3b;
+  --surface-elevated: #19284b;
+  --surface-raised: #1b2853;
+  --surface-hover: #203463;
+  --text-primary: #f3f6ff;
+  --text-muted: #a6b6dc;
+  /* Kit value #2e406b is only 1.66:1 on the sidebar. Lightened to reach 3:1
+     for functional boundaries against every shell surface, including
+     --surface-elevated and --surface-hover. */
+  --border-subtle: #75819d;
+  --accent: #7762f6;
+  --focus-ring: #a8b3ff;
+
+  --status-success: #57dfb8;
+  --status-error: #ff7d9d;
+
+  --orb-idle: #4cc9b6;
+  --orb-listening: #4da8ff;
+  --orb-thinking: #a684f7;
+  --orb-speaking: #4add91;
+  --orb-memory: #e9b454;
+  --orb-confirmation: #ffa65a;
+  --orb-error: #f25565;
+  --orb-offline: #5e7189;
+
+  /* Living Cloud render palette (design kit v2.1 `themes.*.orbPalette`).
+     orb/palette.ts reads this file directly, so the renderer, the CSS and
+     the design tokens cannot drift apart. Order is stable: slots 1-2 are the
+     dominant pair, 3-6 are accents. */
+  --orb-palette-1: #548fff;
+  --orb-palette-2: #3b6fff;
+  --orb-palette-3: #9a74f7;
+  --orb-palette-4: #baa7ff;
+  --orb-palette-5: #57d7d2;
+  --orb-palette-6: #f67c9f;
+  /* Kit amber: memory/confirmation accents in both themes. */
+  --orb-amber: #ffd37e;
+
+  --radius-control: 12px;
+  --radius-panel: 18px;
+  --radius-composer: 28px;
+  --radius-pill: 999px;
+  --control-height: 44px;
+  --min-tap-target: 44px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --space-3xl: 48px;
+  --sidebar-left-width: 264px;
+  --sidebar-right-width: 328px;
+  --stage-max-width: 760px;
+  --header-height: 68px;
+  --orb-desktop: 290px;
+  --orb-mobile: 220px;
+  --font-size-caption: 12px;
+  --font-size-body: 14px;
+  --font-size-heading: 25px;
+
+  --font-ui:
+    Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Noto Sans Arabic',
+    'Noto Naskh Arabic', sans-serif;
+
+  --transition-quick: 160ms ease-out;
+  --transition-state: 280ms ease-in-out;
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+
+  /* Deeper than the kit's #eaf6ff: the cloud was washing out against a very
+     bright sky. Still a sky tint, but it separates the orb's edges. */
+  --bg-app: #dceaf7;
+  --bg-sidebar: #eaf4fd;
+  --surface-elevated: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-hover: #deedfb;
+  --text-primary: #122d52;
+  /* Nudged from #526d91 so muted text also clears 4.5:1 on --surface-hover. */
+  --text-muted: #4d678a;
+  /* Kit value #c9def2 is only 1.31:1 on the sidebar. Darkened to reach 3:1
+     for functional boundaries against every shell surface, including
+     --surface-elevated and --surface-hover. */
+  --border-subtle: #72879e;
+  --accent: #2475e6;
+  --focus-ring: #185ac4;
+
+  /* Kit value #15ab7b is only 2.68:1 on --bg-app; this keeps the hue and
+     clears 3:1 for status glyphs. */
+  --status-success: #13976d;
+  --status-error: #c94767;
+
+  /* Sky Prism Living Cloud palette: same slots and intent as the dark theme,
+     with the kit's pastel values. */
+  --orb-palette-1: #9cdbff;
+  --orb-palette-2: #7cdcc7;
+  --orb-palette-3: #ffd37e;
+  --orb-palette-4: #ff9ab0;
+  --orb-palette-5: #b5a0ff;
+  --orb-palette-6: #d6f6ff;
+  --orb-amber: #ffd37e;
+}
+
+/* System preference applies only until the resolver stamps data-theme. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+
+    --bg-app: #eaf6ff;
+    --bg-sidebar: #f3faff;
+    --surface-elevated: #ffffff;
+    --surface-raised: #ffffff;
+    --surface-hover: #deedfb;
+    --text-primary: #122d52;
+    --text-muted: #4d678a;
+    --border-subtle: #72879e;
+    --accent: #2475e6;
+    --focus-ring: #185ac4;
+    --status-success: #13976d;
+    --status-error: #c94767;
+    --orb-palette-1: #9cdbff;
+    --orb-palette-2: #7cdcc7;
+    --orb-palette-3: #ffd37e;
+    --orb-palette-4: #ff9ab0;
+    --orb-palette-5: #b5a0ff;
+    --orb-palette-6: #d6f6ff;
+    --orb-amber: #ffd37e;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition-quick: 0ms;
+    --transition-state: 0ms;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  transition:
+    background-color var(--transition-state),
+    color var(--transition-state);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--orb-listening) 35%, transparent);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

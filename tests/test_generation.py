@@ -20,19 +20,31 @@ async def weather(city: str):
 def request(tools=(), history=()):
     from livekit.agents.llm.utils import build_legacy_openai_schema
 
+    messages = (
+        {"role": "system", "content": "Protected rules"},
+        {"role": "user", "content": "Permitted memory: Tripoli; version 2"},
+        {"role": "user", "content": "Weather?"},
+    )
     return ModelRequest(
         turn_id="turn",
         attempt_id="attempt",
         instructions="Protected rules",
-        selection=ContextSelection(revision=7, excluded_ids={"excluded"}),
+        selection=ContextSelection(
+            revision=7,
+            included=tuple(
+                {"id": identifier, "role": role, "text": content}
+                for identifier, role, content in (
+                    ("system", "system", "Protected rules"),
+                    ("memory-1", "memory", "Permitted memory: Tripoli; version 2"),
+                    ("turn", "user", "Weather?"),
+                )
+            ),
+            excluded_ids={"excluded"},
+        ),
         response_policy=ResponsePolicy.for_tier(2),
         settings=UserSettings(revision=3),
         settings_revision=3,
-        messages=(
-            {"role": "system", "content": "Protected rules"},
-            {"role": "system", "content": "Permitted memory: Tripoli; version 2"},
-            {"role": "user", "content": "Weather?"},
-        ),
+        messages=messages,
         tools=tuple(build_legacy_openai_schema(tool)["function"] for tool in tools),
         tool_history=history,
     )
@@ -150,6 +162,9 @@ def test_native_transport_payload_and_normalized_stream(kind, with_tool):
     payload = captured[0]
     assert payload["stream"] is True
     assert "Protected rules" in json.dumps(payload) and "Permitted memory" in json.dumps(payload)
+    wire_messages = payload["messages"] if kind == "deepseek_direct" else payload["input"]
+    assert [message["role"] for message in wire_messages] == ["system", "user", "user"]
+    assert "Permitted memory" in wire_messages[1]["content"]
     assert "excluded" not in json.dumps(payload)
     assert payload["max_output_tokens" if kind == "openai_direct" else "max_tokens"] == 128
     if kind == "deepseek_direct":

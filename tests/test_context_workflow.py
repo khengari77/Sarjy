@@ -30,7 +30,7 @@ def candidate(record_id, content, kind="memory"):
     return MemoryCandidate(id=record_id, content=content, kind=kind)
 
 
-def test_keep_exceptions_protect_budget_ids_and_terms():
+def test_budget_content_is_ambiguous_without_explicit_budget_scope():
     selection = select_candidates(
         (
             candidate("trip", "Trip to Tripoli from 1 to 5 May"),
@@ -43,8 +43,39 @@ def test_keep_exceptions_protect_budget_ids_and_terms():
     assert selection.excluded_ids == frozenset({"trip", "hotel"})
     assert selection.kept_ids == frozenset({"budget", "passport"})
     reasons = {record.id: record.reason for record in selection.preserved}
-    assert reasons["budget"] == "protected budget"
+    assert reasons["budget"] == "budget requires clarification"
     assert reasons["passport"] == "explicit keep id"
+    assert {record.id for record in selection.ambiguous} == {"budget"}
+    assert selection.requires_clarification is True
+
+
+def test_budget_exclusion_requires_exact_id_or_full_content():
+    budget = candidate("m-budget", "Budget 500 USD for the trip")
+    assert select_candidates((budget,), exclude=("trip",)).excluded_ids == frozenset()
+    assert select_candidates((budget,), exclude=("budget",)).excluded_ids == frozenset()
+    assert select_candidates((budget,), exclude=("m-budget",)).excluded_ids == frozenset({"m-budget"})
+    normalized = select_candidates((budget,), exclude=("  budget   500 USD for the trip ",))
+    assert normalized.excluded_ids == frozenset({"m-budget"})
+    assert select_candidates((budget,), exclude=("trip",)).requires_clarification is True
+
+
+def test_budget_query_without_explicit_authority_is_ambiguous():
+    records = (candidate("budget", "Budget 500 USD for the trip"),)
+    unscoped = select_candidates(records)
+    assert unscoped.excluded_ids == frozenset()
+    assert unscoped.kept_ids == frozenset({"budget"})
+    assert {record.id for record in unscoped.ambiguous} == {"budget"}
+    assert unscoped.requires_clarification is True
+
+    excluded = select_candidates(records, exclude=("budget",))
+    assert excluded.excluded_ids == frozenset({"budget"})
+    assert excluded.ambiguous == ()
+    assert excluded.requires_clarification is False
+
+    kept = select_candidates(records, keep=("budget",), exclude=("budget",))
+    assert kept.excluded_ids == frozenset()
+    assert kept.kept_ids == frozenset({"budget"})
+    assert kept.requires_clarification is False
 
 
 def test_budget_detection_covers_english_and_arabic():
@@ -223,3 +254,15 @@ def test_registered_semantic_actions_find_nonlexical_match_and_replay(tmp_path):
         assert {row["id"] for row in response.json()["result"]["matches"]} == {"trip", "hotel", "budget"}
         assert client.post("/v1/actions", json=body).json() == response.json()
         assert counts(file)[:3] == (0, 0, 0)
+
+
+def test_unrelated_terms_do_not_authorize_budget_changes():
+    records = (candidate("budget", "Budget 500 USD for the trip"),)
+    excluded = select_candidates(records, exclude=("trip",))
+    assert excluded.excluded_ids == frozenset()
+    assert {record.id for record in excluded.ambiguous} == {"budget"}
+    assert excluded.requires_clarification is True
+
+    kept = select_candidates(records, keep=("trip",))
+    assert {record.id for record in kept.ambiguous} == {"budget"}
+    assert kept.requires_clarification is True

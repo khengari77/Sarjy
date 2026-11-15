@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 EMBEDDING_DIMENSIONS = 1536
@@ -18,11 +18,72 @@ class Base(DeclarativeBase):
     pass
 
 
+class MemoryCaptureDecision(Base):
+    """Durable consent and clarification state for one proposal revision."""
+
+    __tablename__ = "memory_capture_decisions"
+    confirmation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64))
+    decision: Mapped[str] = mapped_column(String(16))
+    outcome: Mapped[str] = mapped_column(String(32))
+    target_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    target_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    lease_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    lease_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40))
+    expires_at: Mapped[str] = mapped_column(String(40))
+
+
+class ReviewerInvitation(Base):
+    __tablename__ = "reviewer_invitations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[str] = mapped_column(String(40))
+    # A reviewer credential is always bounded: the service rejects a missing or
+    # past expiry, and the column is NOT NULL as a second line of defence.
+    expires_at: Mapped[str] = mapped_column(String(40))
+    revoked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    max_identities: Mapped[int] = mapped_column(Integer, default=8)
+    identities_created: Mapped[int] = mapped_column(Integer, default=0)
+    max_calls: Mapped[int] = mapped_column(Integer, default=24)
+
+
+class ReviewerAttemptWindow(Base):
+    """Global admission-attempt backstop for one UTC fixed minute."""
+
+    __tablename__ = "reviewer_attempt_windows"
+    minute: Mapped[str] = mapped_column(String(40), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ReviewerSourceAttemptWindow(Base):
+    """Per-source admission-attempt counter for one UTC fixed minute."""
+
+    __tablename__ = "reviewer_source_attempt_windows"
+    source: Mapped[str] = mapped_column(String(64), primary_key=True)
+    minute: Mapped[str] = mapped_column(String(40), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ReviewerCreationWindow(Base):
+    """Per-invitation identity-creation counter for one UTC fixed hour."""
+
+    __tablename__ = "reviewer_creation_windows"
+    invitation_id: Mapped[str] = mapped_column(ForeignKey("reviewer_invitations.id"), primary_key=True)
+    hour: Mapped[str] = mapped_column(String(40), primary_key=True)
+    created: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Identity(Base):
     __tablename__ = "identities"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     expires_at: Mapped[str] = mapped_column(String(40))
+    invitation_id: Mapped[str | None] = mapped_column(ForeignKey("reviewer_invitations.id"), nullable=True, index=True)
 
 
 class Conversation(Base):
@@ -36,7 +97,10 @@ class Conversation(Base):
 
 class Turn(Base):
     __tablename__ = "turns"
-    __table_args__ = (UniqueConstraint("conversation_id", "request_id"),)
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "request_id"),
+        Index("ix_turns_conversation_status_created", "conversation_id", "status", "created_at"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
     request_id: Mapped[str] = mapped_column(String(100))
@@ -67,6 +131,7 @@ class SessionGate(Base):
 
 class ToolCall(Base):
     __tablename__ = "tool_calls"
+    __table_args__ = (Index("ix_tool_calls_turn_state", "turn_id", "state"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     turn_id: Mapped[str] = mapped_column(ForeignKey("turns.id"), index=True)
     # Stable operation identity: one model tool call maps to exactly one row.
@@ -87,11 +152,16 @@ class DevelopmentBudget(Base):
 
 class Memory(Base):
     __tablename__ = "memories"
-    __table_args__ = (UniqueConstraint("owner_id", "request_key"),)
-    supersedes_id: Mapped[str | None] = mapped_column(ForeignKey("memories.id"), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "request_key"),
+        Index("ix_memories_owner_subject_status", "owner_id", "subject", "status"),
+        Index("ix_memories_owner_status_updated", "owner_id", "status", "updated_at", "id"),
+    )
+    supersedes_id: Mapped[str | None] = mapped_column(ForeignKey("memories.id"), nullable=True, index=True)
     request_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    subject: Mapped[str | None] = mapped_column(String(120), nullable=True)
     content: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list | None] = mapped_column(EMBEDDING_TYPE, nullable=True)
     embedding_model: Mapped[str] = mapped_column(String(60), default="text-embedding-3-small")
@@ -192,6 +262,59 @@ class UserSetting(Base):
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
 
 
+class WordlePuzzle(Base):
+    """One stored answer per calendar date.
+
+    A row is inserted as a short-lived claim (``answer`` is null) before the
+    outbound fetch.  The primary key on ``puzzle_date`` plus the claim columns
+    guarantee that concurrent requests make at most one source call.
+    """
+
+    __tablename__ = "wordle_puzzles"
+    puzzle_date: Mapped[str] = mapped_column(String(10), primary_key=True)
+    answer: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    source: Mapped[str] = mapped_column(String(200))
+    fetched_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    claim_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    claim_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    retry_after: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_failure: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    last_attempt_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class WordleGame(Base):
+    __tablename__ = "wordle_games"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "puzzle_date", name="uq_wordle_games_owner_date"),
+        Index("ix_wordle_games_owner_status", "owner_id", "status"),
+        Index("ix_wordle_games_puzzle_date", "puzzle_date"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"))
+    puzzle_date: Mapped[str] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(20), default="in_progress")
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
+class WordleGuess(Base):
+    __tablename__ = "wordle_guesses"
+    __table_args__ = (
+        UniqueConstraint("game_id", "attempt", name="uq_wordle_guesses_game_attempt"),
+        # Idempotency is per owner: two owners may reuse a client-generated id.
+        UniqueConstraint("owner_id", "request_id", name="uq_wordle_guesses_owner_request"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    game_id: Mapped[str] = mapped_column(ForeignKey("wordle_games.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    attempt: Mapped[int] = mapped_column(Integer)
+    word: Mapped[str] = mapped_column(String(5))
+    marks: Mapped[list] = mapped_column(JSON)
+    request_id: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
 class SettingRevision(Base):
     __tablename__ = "setting_revisions"
     __table_args__ = (UniqueConstraint("owner_id", "revision"),)
@@ -199,4 +322,17 @@ class SettingRevision(Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
     revision: Mapped[int] = mapped_column(Integer)
     settings: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
+class SettingWriteRequest(Base):
+    """Owner-scoped replay record for settings writes; no conversation is needed."""
+
+    __tablename__ = "setting_write_requests"
+    __table_args__ = (UniqueConstraint("owner_id", "request_key", name="uq_setting_write_owner_request"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
+    request_key: Mapped[str] = mapped_column(String(100))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    result: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[str] = mapped_column(String(40), default=now)

@@ -1,14 +1,16 @@
 """Context inspection, proposal, confirmation and undo endpoints."""
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.services.context_blocks import DEFAULT_LIMIT, MAX_LIMIT, list_context_blocks
 from app.services.context_operations import (
     ContextOperationError,
     confirm_proposal,
     context_state,
+    create_exclusion_proposal,
     create_proposal,
     list_operations,
     undo_operation,
@@ -19,7 +21,13 @@ class ContextProposalInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, max_length=200)
     keep: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
     limit: int = Field(default=20, ge=1, le=20)
+
+
+class ContextExclusionProposalInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    memory_ids: tuple[str, ...] = Field(min_length=1, max_length=20)
 
 
 class ContextConfirmInput(BaseModel):
@@ -58,6 +66,12 @@ class ContextPreserved(BaseModel):
     reason: str
 
 
+class ContextAmbiguity(BaseModel):
+    id: str
+    content: str
+    reason: str
+
+
 class ContextProposal(BaseModel):
     conversation_id: str
     query: str
@@ -65,6 +79,8 @@ class ContextProposal(BaseModel):
     proposal: str
     matches: list[ContextMatch]
     preserved: list[ContextPreserved]
+    ambiguous: list[ContextAmbiguity]
+    requires_clarification: bool
     diff: ContextDiff
 
 
@@ -113,6 +129,38 @@ class ContextState(BaseModel):
     excluded_ids: list[str]
 
 
+class ContextBlock(BaseModel):
+    id: str
+    kind: str
+    role: str
+    text: str
+    truncated: bool
+    estimated_tokens: int
+    state: str
+    reason: str | None
+
+
+class ContextBlockCounts(BaseModel):
+    included: int
+    excluded: int
+    blocked: int
+    outside_window: int
+    not_sent: int
+    total: int
+
+
+class ContextBlocks(BaseModel):
+    conversation_id: str
+    revision: int
+    token_estimate_method: str
+    included_tokens_estimate: int
+    counts: ContextBlockCounts
+    limit: int
+    offset: int
+    has_more: bool
+    blocks: list[ContextBlock]
+
+
 def _context_error(exc: ContextOperationError) -> HTTPException:
     return HTTPException(exc.status, detail={"code": exc.code})
 
@@ -148,6 +196,7 @@ def register_context_routes(app, *, config: Settings, database, identity, semant
                 conversation_id=conversation_id,
                 query=body.query,
                 keep=body.keep,
+                exclude=body.exclude,
                 limit=body.limit,
                 secret=proposal_secret(),
                 search=semantic_search,
@@ -184,6 +233,50 @@ def register_context_routes(app, *, config: Settings, database, identity, semant
                 operation_id=body.operation_id,
                 expected_revision=body.expected_revision,
                 idempotency_key=body.idempotency_key,
+            )
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+
+def register_exclusion_routes(app, *, config: Settings, database, identity):
+    """Exact-id preview for the transparent memory explorer.
+
+    Kept separate from the search-driven proposal routes so each registration
+    function stays within the project's complexity budget.
+    """
+
+    def proposal_secret() -> str:
+        return config.context_proposal_secret or config.agent_service_secret
+
+    @app.post("/v1/conversations/{conversation_id}/context/exclusions", response_model=ContextProposal)
+    async def propose_exclusion(
+        conversation_id: str,
+        body: ContextExclusionProposalInput,
+        user=Depends(identity),
+        db: AsyncSession = Depends(database),
+    ):
+        try:
+            return await create_exclusion_proposal(
+                db,
+                owner_id=user.id,
+                conversation_id=conversation_id,
+                memory_ids=body.memory_ids,
+                secret=proposal_secret(),
+            )
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+    @app.get("/v1/conversations/{conversation_id}/context/blocks", response_model=ContextBlocks)
+    async def get_context_blocks(
+        conversation_id: str,
+        limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+        offset: int = Query(0, ge=0),
+        user=Depends(identity),
+        db: AsyncSession = Depends(database),
+    ):
+        try:
+            return await list_context_blocks(
+                db, owner_id=user.id, conversation_id=conversation_id, limit=limit, offset=offset
             )
         except ContextOperationError as exc:
             raise _context_error(exc) from exc

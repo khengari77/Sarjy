@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from app.domain.context import prompt_sha256
 from livekit.agents import llm
 from main import SarjyAgent
 from test_generation import request
@@ -41,6 +42,7 @@ def test_worker_replaces_stale_history_and_reserves_before_provider(monkeypatch,
             if http_request.url.path.endswith("/reserve"):
                 order.append("reserve")
                 return httpx.Response(429 if denied else 200, json={})
+            messages = [item.model_dump() for item in request().messages]
             return httpx.Response(
                 200,
                 json={
@@ -48,7 +50,8 @@ def test_worker_replaces_stale_history_and_reserves_before_provider(monkeypatch,
                     "context": {
                         "model_request": request().model_dump(mode="json"),
                         "revision": 7,
-                        "messages": [item.model_dump() for item in request().messages],
+                        "messages": messages,
+                        "canonical_prompt_sha256": prompt_sha256(messages),
                     },
                 },
             )

@@ -1,30 +1,28 @@
 <script lang="ts">
   import type { Conversation } from '../api';
+  import ChatHistorySidebar from '../history/ChatHistorySidebar.svelte';
 
   let {
     conversations,
     current,
+    arabic,
     busy,
-    labelNew,
-    oncreate,
+    loading,
+    error,
     onselect,
+    oncreate,
+    onretry,
   }: {
     conversations: Conversation[];
     current: string | null;
+    arabic: boolean;
     busy: boolean;
-    labelNew: string;
-    oncreate: () => void;
+    loading: boolean;
+    error: string;
     onselect: (id: string) => void;
+    oncreate: () => void;
+    onretry: () => void;
   } = $props();
 </script>
 
-<aside>
-  <strong>سَرْجي <span>SARJY</span></strong>
-  <button disabled={busy} onclick={oncreate}>{labelNew} +</button>
-  {#each conversations as chat (chat.id)}
-    <button class:chosen={current === chat.id} disabled={busy} onclick={() => onselect(chat.id)}>
-      {chat.title}
-    </button>
-  {/each}
-  <p>Voice Context Studio</p>
-</aside>
+<ChatHistorySidebar {conversations} {current} {arabic} {busy} {loading} {error} {onselect} {oncreate} {onretry} />
