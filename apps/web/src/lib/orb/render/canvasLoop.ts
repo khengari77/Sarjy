@@ -1,5 +1,5 @@
 import type { MotionPreset } from '../orbState';
-import { ORB_PALETTES, type ThemeName } from '../palette';
+import { ORB_CLOUD_HUES, type ThemeName } from '../palette';
 import { hexToRgb } from './colors';
 import type { OrbRenderState, Rgb } from './types';
 
@@ -56,26 +56,20 @@ function buildCloudTexture(palette: readonly string[], phase: Rgb, seed: number,
   const white: Rgb = [1, 1, 1];
   const light = colours[5] ?? phase;
   const random = mulberry32(seed);
-  const outer = TEXTURE_SIZE * 0.4;
+  // The cloud fills almost to the CSS ring (body radius ~0.96 of the half-width).
+  const outer = TEXTURE_SIZE * 0.43;
 
   if (!wisp) {
-    // One soft filled halo disc, not concentric outlines.
-    const halo = ctx.createRadialGradient(center, center, 0, center, center, TEXTURE_SIZE * 0.5);
-    halo.addColorStop(0, rgba(colours[0] ?? phase, 0.14));
-    halo.addColorStop(0.75, rgba(colours[0] ?? phase, 0.08));
-    halo.addColorStop(1, rgba(colours[0] ?? phase, 0));
-    ctx.fillStyle = halo;
-    ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
-
+    // The halo disc is CSS (.orb-glow); the texture is only the cloud.
     // Broad translucent body that dissolves toward the edge.
-    const body = ctx.createRadialGradient(center, center, 0, center, center, outer * 1.12);
-    body.addColorStop(0, rgba(light, 0.78));
+    const body = ctx.createRadialGradient(center, center, 0, center, center, outer * 1.1);
+    body.addColorStop(0, rgba(light, 0.84));
     body.addColorStop(0.45, rgba(colours[0] ?? phase, 0.62));
-    body.addColorStop(0.78, rgba(colours[0] ?? phase, 0.2));
+    body.addColorStop(0.86, rgba(colours[0] ?? phase, 0.34));
     body.addColorStop(1, rgba(colours[0] ?? phase, 0));
     ctx.fillStyle = body;
     ctx.beginPath();
-    ctx.arc(center, center, outer * 1.12, 0, Math.PI * 2);
+    ctx.arc(center, center, outer * 1.1, 0, Math.PI * 2);
     ctx.fill();
 
     // Hue islands at the mid radii: lavender, gold, mint, coral, cyan.
@@ -113,19 +107,23 @@ function buildCloudTexture(palette: readonly string[], phase: Rgb, seed: number,
     ctx.fillStyle = tint;
     ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
 
-    // About ten sparse dots.
-    ctx.fillStyle = rgba(white, 0.7);
-    for (let index = 0; index < 10; index += 1) {
-      const angle = index * 2.399;
-      const distance = outer * (0.82 + 0.28 * ((index * 0.618 + 0.17) % 1));
+    // Ten sparse dots in four loose clusters near the rim, not an even scatter.
+    const spots: ReadonlyArray<readonly [number, number, number]> = [
+      [-0.34, 0.86, 1.5],
+      [-0.27, 0.89, 1.1],
+      [-0.4, 0.8, 1],
+      [-0.9, 0.3, 1.4],
+      [-0.93, 0.22, 1],
+      [0.93, 0.05, 1.3],
+      [0.95, -0.04, 1],
+      [0.91, -0.12, 0.9],
+      [0.12, -0.92, 1.3],
+      [0.2, -0.9, 1],
+    ];
+    ctx.fillStyle = rgba(white, 0.78);
+    for (const [x, y, size] of spots) {
       ctx.beginPath();
-      ctx.arc(
-        center + Math.cos(angle) * distance,
-        center + Math.sin(angle) * distance,
-        0.9 + random() * 0.9,
-        0,
-        Math.PI * 2,
-      );
+      ctx.arc(center + x * center, center - y * center, size, 0, Math.PI * 2);
       ctx.fill();
     }
     return texture;
@@ -149,14 +147,15 @@ function buildCloudTexture(palette: readonly string[], phase: Rgb, seed: number,
   }
   ctx.lineWidth = 1;
   ctx.lineCap = 'round';
-  ctx.strokeStyle = rgba([0.95 + 0.05 * light[0], 0.95 + 0.05 * light[1], 1], 0.5);
+  ctx.strokeStyle = rgba([0.95 + 0.05 * light[0], 0.95 + 0.05 * light[1], 1], 0.55);
+  // Four thin crescents (the shader's wisps): fixed centres, short spans.
   for (let index = 0; index < 4; index += 1) {
-    const arcCentreX = center + (random() - 0.5) * outer * 0.7;
-    const arcCentreY = center + (random() - 0.5) * outer * 0.7;
-    const arcRadius = outer * (0.22 + random() * 0.22);
-    const start = random() * Math.PI * 2;
+    const arcCentreX = center + (-0.3 + 0.26 * index) * center;
+    const arcCentreY = center - (0.08 + 0.14 * Math.sin(index * 2.1)) * center;
+    const arcRadius = (0.26 + 0.07 * index) * center;
+    const heading = -(1.2 + index * 0.5);
     ctx.beginPath();
-    ctx.arc(arcCentreX, arcCentreY, arcRadius, start, start + 0.9 + random() * 0.8);
+    ctx.arc(arcCentreX, arcCentreY, arcRadius, heading - 0.7, heading + 0.7);
     ctx.stroke();
   }
   return texture;
@@ -181,7 +180,7 @@ export function startCanvasDrawing(options: CanvasLoopOptions): () => void {
     // Observable proof that the renderer consumed the presentation's theme,
     // not merely that the document carries one.
     canvas.dataset.rendererTheme = theme;
-    const palette = ORB_PALETTES[theme];
+    const palette = ORB_CLOUD_HUES[theme];
     const phase = hexToRgb(renderState.color);
     bodyTexture = buildCloudTexture(palette, phase, 0x5a17, false);
     detailTexture = buildCloudTexture(palette, phase, 0x9e21, true);

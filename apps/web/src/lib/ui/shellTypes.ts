@@ -19,6 +19,12 @@ export interface ShellProps {
   leftOpen?: boolean;
   rightOpen?: boolean;
   /**
+   * Control outside the shell that opened the right panel (for example the
+   * caption bubble). Closing the panel returns focus there instead of to the
+   * header toggle; opening through the header toggle clears it.
+   */
+  rightOpener?: HTMLElement | null;
+  /**
    * Reports the resolved (not preferred) theme. The shell owns storage and
    * OS-preference resolution, so consumers such as the orb must not
    * re-derive it from `data-theme` or `prefers-color-scheme` themselves.

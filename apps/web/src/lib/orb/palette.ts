@@ -21,6 +21,22 @@ export const ORB_PALETTES: Record<ThemeName, readonly string[]> = {
   dark: ['#548fff', '#3b6fff', '#9a74f7', '#baa7ff', '#57d7d2', '#f67c9f'],
 };
 
+/**
+ * Hues the cloud renderers blend, in shader slot order:
+ * 0 base/cyan, 1 mint, 2 gold, 3 coral, 4 lavender, 5 white-pink core.
+ *
+ * Light reuses the kit's Sky Prism palette, whose slots already have that
+ * shape. The kit's dark palette is five blues/violets plus one pink, so a
+ * cloud built only from it reads near-monochrome; the dark cloud therefore
+ * carries its own cyan, mint, gold, coral and lavender with a bright
+ * white-pink core. Phase colours and tokens still come from `ORB_PALETTES`.
+ * Literal hex only (regression B01).
+ */
+export const ORB_CLOUD_HUES: Record<ThemeName, readonly string[]> = {
+  light: ORB_PALETTES.light,
+  dark: ['#3f8cff', '#57e0b8', '#ffc978', '#f67c9f', '#a98cff', '#ffe6f3'],
+};
+
 export function orbPalette(theme: ThemeName): readonly string[] {
   return ORB_PALETTES[theme];
 }

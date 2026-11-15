@@ -20,6 +20,7 @@
     stageDialogOpen = false,
     leftOpen = $bindable(false),
     rightOpen = $bindable(false),
+    rightOpener = $bindable(null),
     onthemechange,
     onthemeready,
   }: ShellProps = $props();
@@ -78,7 +79,7 @@
   const session = createDrawerSession({
     overlay: () => overlayPanel,
     panel: (panel) => (panel === 'left' ? leftPanel : rightPanel),
-    trigger: (panel) => (panel === 'left' ? leftButton : rightButton),
+    trigger: (panel) => (panel === 'left' ? leftButton : (rightOpener ?? rightButton)),
     controls: () => controlsRegion,
     openState: (panel) => (panel === 'left' ? leftOpen : rightOpen),
     setOpen: (panel, open) => {
@@ -99,7 +100,7 @@
   function opening(panel: 'left' | 'right') {
     focusRestoreToken += 1;
     if (panel === 'left') leftOpen = true;
-    else rightOpen = true;
+    else [rightOpen, rightOpener] = [true, null]; // the header toggle opens it now
     // Below the dock breakpoint only one overlay drawer can be open at a time.
     if (!docked) {
       if (panel === 'left') rightOpen = false;
@@ -124,7 +125,7 @@
     else rightOpen = false;
     await tick();
     if (token !== focusRestoreToken) return;
-    (panel === 'left' ? leftButton : rightButton)?.focus({ preventScroll: true });
+    (panel === 'left' ? leftButton : (rightOpener ?? rightButton))?.focus({ preventScroll: true });
   }
 
   function onViewportChange(event: MediaQueryListEvent) {

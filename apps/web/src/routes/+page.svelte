@@ -5,6 +5,7 @@
   import type { ResolvedTheme } from '../lib/ui/theme';
   import type { ThemeControl } from '../lib/ui/themeSession.svelte';
   import AppShell from '../lib/ui/AppShell.svelte';
+  import { revealTranscript } from '../lib/ui/revealTranscript';
   import ConversationList from '../lib/chat/ConversationList.svelte';
   import VoiceStage from '../lib/chat/VoiceStage.svelte';
   import type { PendingIntent } from '../lib/chat/intent';
@@ -61,6 +62,10 @@
   // Panel state is a top-level reactive object so the shell bindings and the
   // command store share one source of truth.
   const panels = $state({ history: false, memory_explorer: false });
+  // The control that opened the drawer on its Transcript tab; focus returns there.
+  let drawerOpener = $state<HTMLElement | null>(null);
+  const openTranscript = (opener: HTMLElement) =>
+    revealTranscript(opener, panels, commands.state, (control) => (drawerOpener = control));
   // The shell owns the theme session and hands back its setter; a voice theme
   // command applies through it once and persists in this browser only.
   let shellTheme: ThemeControl | null = null;
@@ -85,9 +90,7 @@
     }
   }
 
-  function onVoiceError(error: unknown) {
-    voice.voiceErrorCode = errorCode(error);
-  }
+  const onVoiceError = (error: unknown) => (voice.voiceErrorCode = errorCode(error));
 
   function handleOrb() {
     activateOrb(presentation, {
@@ -107,17 +110,9 @@
     else if (!voice.connecting) startConnect();
   }
 
-  function reconnect() {
-    void run(() => connection!.reconnect(), onVoiceError);
-  }
-
-  function startConnect() {
-    void connection!.connect(true).catch(onVoiceError);
-  }
-
-  async function toggleMute() {
-    await run(() => connection!.toggleMute(), onVoiceError);
-  }
+  const reconnect = () => void run(() => connection!.reconnect(), onVoiceError);
+  const startConnect = () => void connection!.connect(true).catch(onVoiceError);
+  const toggleMute = () => run(() => connection!.toggleMute(), onVoiceError);
 
   async function interrupt() {
     if (!voice.live || !canInterrupt) return;
@@ -178,6 +173,7 @@
 <AppShell
   bind:leftOpen={panels.history}
   bind:rightOpen={panels.memory_explorer}
+  bind:rightOpener={drawerOpener}
   dir={arabic ? 'rtl' : 'ltr'}
   stageDialogOpen={pendingIntent !== null}
   languageLabel={arabic ? 'English' : 'العربية'}
@@ -216,7 +212,6 @@
       {pendingIntent}
       turns={conversation.turns}
       provisional={voice.provisional}
-      tools={conversation.toolCalls}
       captionsVisible={commands.state.settings.captions_visible}
       {busy}
       {words}
@@ -225,6 +220,7 @@
       onend={() => run(() => connection!.end(), onVoiceError)}
       onenableaudio={enableAudio}
       onorb={handleOrb}
+      ontranscript={openTranscript}
       oncancelintent={() => (pendingIntent = null)}
       onconfirmintent={() => selection.confirmSwitch()}
     />
@@ -266,6 +262,9 @@
       conversationId={conversation.current}
       {memoryRevision}
       bind:activeTab={commands.state.panelTab}
+      turns={conversation.turns}
+      provisional={voice.provisional}
+      tools={conversation.toolCalls}
       {catalog}
       {selectedVoice}
       {sessionVoice}

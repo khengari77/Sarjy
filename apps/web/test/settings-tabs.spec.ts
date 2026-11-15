@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// The right drawer has three panels, one concern each. Controls holds every
+// The right drawer has four panels, one concern each. Controls holds every
 // interactive setting we actually have: voice, speed and captions. Memory
 // search lives only in Memories; Context is the compiled-context inspector.
 // Appearance was removed because theme lives in the header and captions moved
@@ -38,7 +38,7 @@ test('controls keeps voice, speed and captions together without memory search', 
 
   const drawer = page.locator('#shell-right');
   const tabs = drawer.getByRole('tab');
-  await expect(tabs).toHaveText(['Memories', 'Controls', 'Context']);
+  await expect(tabs).toHaveText(['Memories', 'Controls', 'Context', 'Transcript']);
   await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
 
   const controls = page.locator('#drawer-panel-controls');
@@ -108,13 +108,13 @@ test('arrow, Home and End still move between the renamed tabs', async ({ page })
   await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
 
   await page.keyboard.press('End');
-  await expect(tabs.nth(2)).toBeFocused();
-  await expect(tabs.nth(2)).toHaveAttribute('aria-selected', 'true');
+  await expect(tabs.nth(3)).toBeFocused();
+  await expect(tabs.nth(3)).toHaveAttribute('aria-selected', 'true');
 
   await page.keyboard.press('Home');
   await expect(tabs.nth(0)).toBeFocused();
   await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true');
 
   await page.keyboard.press('ArrowLeft');
-  await expect(tabs.nth(2)).toBeFocused();
+  await expect(tabs.nth(3)).toBeFocused();
 });

@@ -116,24 +116,38 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
 });
 
-test('collapsed captions show two lines, keep the orb and open a transcript', async ({ page }) => {
+test('the caption shows one quoted assistant line and opens the transcript tab', async ({ page }) => {
   await mockData(page);
   await page.goto('/');
 
   await expect(page.locator('.orb-button')).toBeVisible();
-  await expect(page.locator('.caption.user')).toContainText('What is the weather in Riyadh?');
-  await expect(page.locator('.caption.assistant')).toContainText('31°C and sunny');
-  await expect(page.locator('.caption')).toHaveCount(2);
+  const bubble = page.locator('.caption-bubble');
+  await expect(bubble).toHaveCount(1);
+  await expect(bubble).toContainText('It is 31°C and sunny.');
+  await expect(bubble).not.toContainText('What is the weather');
+  // The old overlay panel and the separate stage button are gone.
+  await expect(page.getByRole('dialog', { name: 'Conversation transcript' })).toHaveCount(0);
+  await expect(page.locator('.transcript-trigger')).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Show full transcript' }).click();
-  const drawer = page.getByRole('dialog', { name: 'Conversation transcript' });
+  await bubble.focus();
+  await page.keyboard.press('Enter');
+  const drawer = page.locator('#shell-right');
   await expect(drawer).toBeVisible();
-  await expect(drawer).toContainText('What is the weather in Riyadh?');
+  await expect(drawer.getByRole('tab', { name: 'Transcript' })).toHaveAttribute('aria-selected', 'true');
+  const panel = page.locator('#drawer-panel-transcript');
+  await expect(panel).toContainText('What is the weather in Riyadh?');
+  // Rows are labelled by speaker; completed turns carry no status.
+  await expect(panel.locator('.turn').nth(0).locator('small')).toHaveText('You');
+  await expect(panel.locator('.turn').nth(1).locator('small')).toHaveText('Sarjy');
+  await expect(panel).not.toContainText('completed');
+  await expect(panel).not.toContainText('user ·');
+
   await page.keyboard.press('Escape');
-  await expect(drawer).toHaveCount(0);
+  await expect(drawer).toBeHidden();
+  await expect(bubble).toBeFocused();
 });
 
-test('tool results render only in the transcript, never on the stage or as raw payloads', async ({ page }) => {
+test('tool results render only in the transcript tab, never on the stage or as raw payloads', async ({ page }) => {
   await mockData(page);
   await page.goto('/');
 
@@ -141,10 +155,9 @@ test('tool results render only in the transcript, never on the stage or as raw p
   await expect(page.getByText('Checked weather · Riyadh')).toHaveCount(0);
   await expect(page.locator('pre')).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Show full transcript' }).click();
-  const drawer = page.getByRole('dialog', { name: 'Conversation transcript' });
-  await expect(drawer).toBeVisible();
-  await expect(drawer.getByText('Checked weather · Riyadh')).toBeVisible();
+  await page.locator('.caption-bubble').click();
+  const panel = page.locator('#drawer-panel-transcript');
+  await expect(panel.getByText('Checked weather · Riyadh')).toBeVisible();
 });
 
 test('provisional transcript replaces the final line and clears without commands', async ({ page }) => {
@@ -163,9 +176,9 @@ test('provisional transcript replaces the final line and clears without commands
       speaker: 'assistant',
     }),
   );
-  const provisional = page.locator('.caption.provisional');
+  const provisional = page.locator('.caption-bubble.provisional');
   await expect(provisional).toContainText('It is thirty');
-  await expect(page.locator('.caption')).toHaveCount(2);
+  await expect(page.locator('.caption-bubble')).toHaveCount(1);
 
   await page.evaluate(() =>
     (window as unknown as { __fakeRuntime: { simulate: (event: unknown) => void } }).__fakeRuntime.simulate({
@@ -176,7 +189,7 @@ test('provisional transcript replaces the final line and clears without commands
       speaker: 'assistant',
     }),
   );
-  await expect(page.locator('.caption.provisional')).toHaveCount(0);
+  await expect(page.locator('.caption-bubble.provisional')).toHaveCount(0);
 });
 
 test('turning captions off keeps the session and the transcript reachable', async ({ page }) => {
@@ -189,11 +202,16 @@ test('turning captions off keeps the session and the transcript reachable', asyn
   await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
   await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).click();
   await page.getByRole('checkbox', { name: 'Show captions' }).uncheck();
-  await expect(page.locator('.captions')).toHaveCount(0);
+  // The quote goes away but the bubble stays as the way into the transcript.
+  const bubble = page.getByRole('button', { name: 'Transcript', exact: true });
+  await expect(page.locator('.caption-bubble.quiet')).toHaveCount(1);
+  await expect(page.locator('.caption-bubble')).not.toContainText('31°C');
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Transcript', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Transcript', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Conversation transcript' })).toBeVisible();
+  await bubble.click();
+  await expect(page.locator('#shell-right').getByRole('tab', { name: 'Transcript' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
 });
 
 test('a live session with no turns still exposes the transcript', async ({ page }) => {
@@ -206,8 +224,8 @@ test('a live session with no turns still exposes the transcript', async ({ page 
   const trigger = page.getByRole('button', { name: 'Transcript', exact: true });
   await expect(trigger).toBeVisible();
   await trigger.click();
-  const drawer = page.getByRole('dialog', { name: 'Conversation transcript' });
-  await expect(drawer).toContainText('No messages yet.');
+  const panel = page.locator('#drawer-panel-transcript');
+  await expect(panel).toContainText('No messages yet.');
   await page.keyboard.press('Escape');
   await expect(trigger).toBeFocused();
 });

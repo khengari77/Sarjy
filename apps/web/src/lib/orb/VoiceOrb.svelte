@@ -170,12 +170,16 @@
     position: relative;
     display: grid;
     place-items: center;
-    width: clamp(190px, 27vw, 340px);
+    /* The button is the ring: its diameter is the kit's orbDesktop token,
+       and the stage lowers --orb-size when the viewport is too short for it. */
+    width: var(--orb-size, var(--orb-desktop));
     aspect-ratio: 1;
     padding: 0;
     border: 0;
     border-radius: 50%;
     background: transparent;
+    /* Hairline ring: faint, neutral, never a saturated outline. */
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 14%, transparent);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
@@ -204,7 +208,7 @@
   }
 
   .orb-static {
-    width: 82%;
+    width: 94%;
     aspect-ratio: 1;
     border-radius: 50%;
     background:
@@ -265,11 +269,5 @@
     border: 1px solid var(--border-subtle);
     border-radius: 999px;
     padding: 4px 8px;
-  }
-
-  @media (max-width: 767px) {
-    .orb-button {
-      width: clamp(190px, 62vw, 260px);
-    }
   }
 </style>
