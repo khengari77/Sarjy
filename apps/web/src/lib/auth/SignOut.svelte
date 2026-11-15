@@ -3,5 +3,5 @@
 </script>
 
 <form method="POST" action="/logout" class="signout-form">
-  <button type="submit" class="signout-button">Sign out</button>
+  <button type="submit" class="ghost-button">Sign out</button>
 </form>
