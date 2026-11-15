@@ -14,7 +14,7 @@ class S05Architecture(TimedScene):
         wrk = box("Voice worker", VIOLET, w=3.0, h=1.3, size=36).move_to(RIGHT * 4.8 + UP * 1.2)
         subs = [
             "SvelteKit\nmic, captions,\nmemory panel",
-            "FastAPI\nstate, memory,\ncommands, limits",
+            "FastAPI\nstate, memory,\ncommands, tools",
             "LiveKit agent\nspeech to text,\nmodel, text to speech",
         ]
         notes = VGroup(

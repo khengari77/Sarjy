@@ -6,16 +6,12 @@ Verified from the code: exact phrases and what they do (`apps/api/app/domain/com
 
 ## Pre-flight checklist
 
-1. **Fresh identity.** Use a fresh invitation link (`/review#invitation=...`, see `docs/reviewer-access.md`) or a clean demo session, so the memory panel starts empty and "what is my age" has nothing to find. Each identity gets 3 call reservations in total, and one active call at a time; a failed dispatch also uses a reservation. Plan the recording in at most 3 calls, or have a second fresh invitation ready.
+1. **Fresh identity.** Use a fresh invitation link (`/review#invitation=...`, see `docs/reviewer-access.md`) or a clean demo session, so the memory panel starts empty and "what is my age" has nothing to find.
 2. **Is a new call needed for "new conversation"?** Not verified. **Check live** in a rehearsal: does "New conversation" keep the call alive, or do you need End call then Start call? If it needs a call each time, the demo below uses: call 1 (steps 1 to 5), call 2 (step 6), call 3 (step 7). Everything else is done inside whichever call is open.
 3. **Microphone.** Browser permission granted, headset on (avoids echo that makes Sarjy hear itself), quiet room. The mic indicator on the page should read "Microphone on".
-4. **Provider caps that matter** (all from `README.md` and `.env.example`):
-   - OpenAI model: $1/day, counted as 50 requests/day, tool continuations included. The full demo is about 30 to 35 turns; do not rehearse many full runs on the same day.
-   - Speech synthesis ledger: Deepgram 50,000 characters/day by default; ElevenLabs only 2,500 characters/day. The limerick segment alone speaks the limerick 4 times. Confirm which `TTS_PROVIDER` is live; under ElevenLabs shorten the limerick segment.
-   - Classifier (Jev): 2,000 requests/day, plenty.
-   - A call lasts at most 10 minutes; the worker leaves 60 seconds after the browser disconnects. Agent cold start can take 10 to 20 seconds: start the call and wait for "Connected" before speaking.
+4. **Call timing.** A call lasts at most 10 minutes; the worker leaves 60 seconds after the browser disconnects. Agent cold start can take 10 to 20 seconds: start the call and wait for "Connected" before speaking.
 5. **Feature switches.** Wordle needs `WORDLE_ENABLED=true` on the API (default is off) and a reachable puzzle source. The Wordle voice and model tools live on PR #129 (previously branch `agent/issue-110-wordle-voice`) and may not be in the deployed release: **check live** that "Play Wordle" opens the popup before recording.
-6. **Voice and speed.** The speed control only works for voices that support it (Deepgram English/Spanish voices, ElevenLabs range). Under Deepgram the speed range is 0.8 to 1.2 in 0.1 steps. Note the starting speed in the Controls tab; the script assumes 1.0.
+6. **Voice and speed.** The speed control only works for voices that support it (the Deepgram Aura-2 English voices). The speed range is 0.8 to 1.2 in 0.1 steps. Note the starting speed in the Controls tab; the script assumes 1.0.
 7. **Rehearse once**, off camera, the three riskiest steps: Wordle, the forget and re-ask, and the voice change.
 8. **Screen layout.** Keep the right panel open on the Memories tab for the memory steps, and switch to Controls for speed and captions. Tabs are called Memories, Controls, Transcript.
 
@@ -23,9 +19,8 @@ Verified from the code: exact phrases and what they do (`apps/api/app/domain/com
 
 - Do not edit the failure out of your commentary. Say what you expected, say "let me try that again", repeat the phrase once.
 - If Sarjy did not hear you: check the Transcript tab. A wrong transcript means a recognition miss, so repeat more slowly. Do not keep retrying more than twice.
-- If a call drops or "Start call" is refused: you may be out of call reservations or the global limit (2 concurrent). Wait, use the second invitation, and resume at the step you were on. Memory persists per identity, so a fresh identity needs you to redo the save steps.
+- If a call drops or "Start call" is refused: wait a moment, start a fresh call, and resume at the step you were on. Memory persists per identity.
 - If a spoken command is not understood, use the exact phrase from the tables below (the exact-match path is the most reliable), or use the button in the panel, and say so on camera.
-- If a provider cap is hit, speech stops with an explicit error. Stop recording; do not try to work around it (no resets, no top-ups). Resume after the Tripoli-time midnight reset.
 - Record each numbered step as its own take, so one failure costs only one take.
 
 ## Steps

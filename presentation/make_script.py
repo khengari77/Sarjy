@@ -61,7 +61,7 @@ SCENES = [
         "Part B",
         [
             "Now, how it works. Sarjy has three parts.",
-            "A SvelteKit web app, which holds the microphone, the captions and the memory panel. A FastAPI service, which owns state: conversations, memory, commands and daily limits. And a LiveKit voice worker, which runs the speech pipeline.",
+            "A SvelteKit web app, which holds the microphone, the captions and the memory panel. A FastAPI service, which owns state: conversations, memory, commands and tools. And a LiveKit voice worker, which runs the speech pipeline.",
             "The browser and the worker meet in a LiveKit room, for live audio and small data messages, and the worker talks to the API over an internal channel.",
         ],
     ),
@@ -73,7 +73,7 @@ SCENES = [
             "One voice turn. I speak, and Deepgram turns my speech into text.",
             "When the sentence is finished, the worker asks the API what to do with it. The API checks whether it is a command, and otherwise assembles the context: recent history and my active memories.",
             "The model answers, OpenAI or DeepSeek depending on the configuration. The text goes to text-to-speech, Deepgram Aura or ElevenLabs, and I hear the reply.",
-            "Every speech request is counted against a daily budget before it is synthesized.",
+            "Each spoken turn is one request cycle: listen, decide, answer, speak.",
         ],
     ),
     (

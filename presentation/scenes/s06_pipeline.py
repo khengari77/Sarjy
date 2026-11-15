@@ -25,7 +25,7 @@ class S06Pipeline(TimedScene):
             "Deepgram\nNova-3",
             "API:\ncontext, commands",
             "OpenAI or\nDeepSeek",
-            "Deepgram Aura-2\nor ElevenLabs",
+            "Deepgram\nAura-2",
         ]
         subs = VGroup(
             *[
@@ -53,7 +53,7 @@ class S06Pipeline(TimedScene):
             VGroup(
                 txt("Turn check: one API call per finished user turn", size=30),
                 txt("It may answer a command itself, or hand context to the model", size=30, color=MUTED),
-                txt("Speech is budgeted per day before it is synthesized", size=30, color=MUTED),
+                txt("One request cycle per spoken turn: listen, decide, answer, speak", size=30, color=MUTED),
             )
             .arrange(DOWN, buff=0.3)
             .shift(DOWN * 1.9)

@@ -48,17 +48,17 @@ Sarjy is a mature proof of concept, not a finished product, built in four days. 
 
 ## 05. Three parts (Part B)
 
-_72 words, about 31 s. Scene length 35 s._
+_71 words, about 31 s. Scene length 35 s._
 
 Now, how it works. Sarjy has three parts.
 
-A SvelteKit web app, which holds the microphone, the captions and the memory panel. A FastAPI service, which owns state: conversations, memory, commands and daily limits. And a LiveKit voice worker, which runs the speech pipeline.
+A SvelteKit web app, which holds the microphone, the captions and the memory panel. A FastAPI service, which owns state: conversations, memory, commands and tools. And a LiveKit voice worker, which runs the speech pipeline.
 
 The browser and the worker meet in a LiveKit room, for live audio and small data messages, and the worker talks to the API over an internal channel.
 
 ## 06. One voice turn (Part B)
 
-_83 words, about 36 s. Scene length 45 s._
+_81 words, about 35 s. Scene length 45 s._
 
 One voice turn. I speak, and Deepgram turns my speech into text.
 
@@ -66,7 +66,7 @@ When the sentence is finished, the worker asks the API what to do with it. The A
 
 The model answers, OpenAI or DeepSeek depending on the configuration. The text goes to text-to-speech, Deepgram Aura or ElevenLabs, and I hear the reply.
 
-Every speech request is counted against a daily budget before it is synthesized.
+Each spoken turn is one request cycle: listen, decide, answer, speak.
 
 ## 07. Memory (Part B)
 
