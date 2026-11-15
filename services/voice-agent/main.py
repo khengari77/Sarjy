@@ -256,15 +256,15 @@ class SarjyAgent(Agent):
         # The turn that answered a pending confirmation may not start another proposal.
         self.decision_turn: str | None = None
         self.forced_speech: tuple[str, str] | None = None
+        # Exact Wordle commands are answered by the web client through
+        # sarjy.say; the conversational LLM must stay silent for those turns.
+        self.suppressed: set[str] = set()
 
     @staticmethod
     def _proposal_key(proposal: Mapping[str, Any] | None) -> tuple[Any, Any]:
         if proposal is None:
             return (None, None)
         return (proposal.get("confirmation_id"), proposal.get("confirmation_revision"))
-        # Exact Wordle commands are answered by the web client through
-        # sarjy.say; the conversational LLM must stay silent for those turns.
-        self.suppressed: set[str] = set()
 
     async def compile(self, message):
         if message.id not in self.prepared:
