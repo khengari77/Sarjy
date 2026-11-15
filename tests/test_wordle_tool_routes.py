@@ -45,6 +45,8 @@ def test_play_guess_status_reuse_the_owner_game_and_hide_the_answer(tmp_path):
         assert play["status"] == "in_progress" and play["ui"] == "open"
         assert "6 guesses left" in play["message"]
         guess = call(client, headers, GUESS, turn, "g1", word="slate").json()
+        assert guess["spoken"] == "SLATE: S gray, L gray, A green, T gray, E green. 5 guesses left."
+        assert play["spoken"] == "Today's Wordle is ready. 6 guesses left."
         assert guess["ui"] == "open" and "5 guesses left" in guess["message"]
         assert "S gray" in guess["message"] and "A green" in guess["message"]
         # The web client reads the same server game the tool just changed.
@@ -55,6 +57,7 @@ def test_play_guess_status_reuse_the_owner_game_and_hide_the_answer(tmp_path):
         for body in (play, guess, status):
             assert "CRANE" not in str(body)
         won = call(client, headers, GUESS, turn, "g2", word="crane").json()
+        assert won["spoken"] == "You got it in 2 guesses. Well done."
         assert won["status"] == "won" and "won" in won["message"]
         over = call(client, headers, GUESS, turn, "g3", word="plant").json()
         assert over["status"] == "error" and over["code"] == "WORDLE_GAME_OVER"

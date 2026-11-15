@@ -38,7 +38,14 @@ from livekit.plugins import silero
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
 from wordle_commands import is_wordle_command, parse_say_payload
-from wordle_tools import WordleTools, contains_wordle_guess, publish_wordle
+from wordle_tools import (
+    WordleTools,
+    claims_game_state,
+    extract_guess,
+    has_guess_candidate,
+    is_close_request,
+    publish_wordle,
+)
 
 server = AgentServer()
 
@@ -223,7 +230,10 @@ class SarjyAgent(WordleTools, Agent):
         super().__init__(instructions=instructions)
         self.publish_wordle = publish_wordle
         self.wordle_active = wordle_active or (lambda: False)
-        self.wordle_forced: set[str] = set()
+        self.wordle_spoken: dict[str, list[str]] = {}
+        self.wordle_touched = False
+        self.wordle_calls: set[str] = set()
+        self.current_text = ""
         self.backend = backend
         self.pipeline = pipeline
         self.notify = notify
@@ -281,6 +291,7 @@ class SarjyAgent(WordleTools, Agent):
             self.prepared[message.id] = response.json()
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
+        self.current_text = message.text_content or ""
         await self._publish_resync()
         self._apply_speaking_speed(result["context"])
         decided = False
@@ -526,6 +537,13 @@ class SarjyAgent(WordleTools, Agent):
             self.suppressed.discard(user.id)
             return
         snapshot = await self.compile(user)
+        direct = await self._wordle_turn_speech(user)
+        if direct is not None:
+            # The application owns Wordle speech; an armed memory question must not follow it.
+            self._disarm_memory_proposal()
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=direct))
+            self._schedule_persistence(user, self.session.current_speech)
+            return
         command = None if self.command_blocked_turn == user.id else await self.command_for(user)
         if command is not None:
             await self._publish_command(command)
@@ -581,30 +599,66 @@ class SarjyAgent(WordleTools, Agent):
             request = _with_memory_note(request, note)
         tool_choice = model_settings.tool_choice if model_settings else None
         forced = self._forced_memory_choice(user.id, {schema["name"] for schema in schemas})
-        if forced is None:
-            forced = self._forced_wordle_choice(user, {schema["name"] for schema in schemas})
         if forced is not None:
             tool_choice = forced
-        async for chunk in self._stream_with_fallback(request, tools, tool_choice):
+        async for chunk in self._guard_wordle_prose(self._stream_with_fallback(request, tools, tool_choice)):
             yield chunk
 
-    def _wordle_tools(self, tools):
-        """While a game is open, play_wordle is withdrawn: every turn is a guess or a question."""
-        if not self.wordle_active():
-            return tools
-        return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") != "play_wordle"]
+    async def _guard_wordle_prose(self, stream):
+        """While a Wordle game is (or was) open, prose may not state marks, attempts or outcomes.
 
-    def _forced_wordle_choice(self, user, available: set[str]) -> dict | None:
-        """Force submit_wordle_guess on the FIRST inference of a turn that holds a guess-shaped word.
-
-        The continuation after the tool result is never forced, so it cannot loop.
+        The reply is buffered; if it holds such a claim and no tool ran, the server's real status is spoken.
         """
-        if user.id in self.wordle_forced or "submit_wordle_guess" not in available or not self.wordle_active():
+        if not (self.wordle_active() or self.wordle_touched):
+            async for chunk in stream:
+                yield chunk
+            return
+        chunks = [chunk async for chunk in stream]
+        said = "".join(c.delta.content or "" for c in chunks if c.delta)
+        called = any(c.delta and c.delta.tool_calls for c in chunks)
+        if not called and claims_game_state(said):
+            spoken = await self._wordle_direct("wordle-status")
+            if spoken:
+                yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=spoken))
+                return
+        for chunk in chunks:
+            yield chunk
+
+    async def _wordle_turn_speech(self, user) -> str | None:
+        """Deterministic Wordle speech: the reply after a Wordle tool, or a bare guess while a game is open.
+
+        A whole-utterance guess ("crane", "my word is crane", "uh, C R A N E") is recorded straight away
+        (no model call can skip it); every Wordle reply is the server's own line, never model prose.
+        """
+        turn = self.current_turn or ""
+        spoken = self.wordle_spoken.pop(turn, None)
+        if spoken:
+            return " ".join(spoken)
+        if not self.wordle_active():
             return None
-        if not contains_wordle_guess(user.text_content or ""):
+        text = user.text_content or ""
+        if is_close_request(text):
+            return await self._wordle_direct("wordle-close")
+        word = extract_guess(text)
+        if word is None:
             return None
-        self.wordle_forced.add(user.id)
-        return {"type": "function", "function": {"name": "submit_wordle_guess"}}
+        return await self._wordle_direct("wordle-guess", word=word)
+
+    def _wordle_tools(self, tools):
+        """Offer only the Wordle tools that make sense for this turn.
+
+        play_wordle is withdrawn while a game is open, and submit_wordle_guess is offered only when the
+        utterance holds a five-letter word or spelled letters. A tool already called this turn stays listed
+        so the continuation request remains valid.
+        """
+        if self.current_turn in self.wordle_calls:
+            return tools
+        drop = set()
+        if self.wordle_active():
+            drop.add("play_wordle")
+        if not has_guess_candidate(self.current_text):
+            drop.add("submit_wordle_guess")
+        return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") not in drop]
 
     def _forced_memory_choice(self, message_id: str, available: set[str]) -> dict | None:
         """Force the memory tool Jev named for the FIRST inference of a turn only.

@@ -22,6 +22,7 @@ from app.services.wordle import (
 
 DISABLED = {
     "status": "disabled",
+    "spoken": "Wordle is switched off right now, so I can't start it.",
     "message": "Wordle is switched off in this deployment, so I cannot start or play it right now.",
 }
 REVEAL_HINT = "State only these facts, never marks or outcomes from memory. If the user wants the answer, they should say 'reveal the answer' and confirm; you must not state it."
@@ -36,6 +37,26 @@ UNAVAILABLE = "Today's Wordle puzzle is not available right now. Tell the user i
 
 def _marks_text(word: str, marks: tuple[str, ...]) -> str:
     return f"{word}: " + ", ".join(f"{letter} {mark}" for letter, mark in zip(word, marks, strict=True))
+
+
+def _spoken_board(view) -> str:
+    return " ".join(
+        f"{guess.word}: "
+        + ", ".join(f"{letter} {mark}" for letter, mark in zip(guess.word, guess.marks, strict=True))
+        + "."
+        for guess in view.guesses
+    )
+
+
+def spoken_for(view, *, prefix: str = "") -> str:
+    """The exact line the voice speaks: derived only from the stored game, never from model prose."""
+    if view.status == "won":
+        return f"{prefix}You got it in {len(view.guesses)} guesses. Well done."
+    if view.status != "in_progress":
+        return f"{prefix}Out of guesses. The answer was {view.answer}."
+    left = view.attempts_remaining
+    board = _spoken_board(view)
+    return f"{prefix}{board} {left} guesses left.".strip() if board else f"{prefix}{left} guesses left."
 
 
 def describe_game(view) -> str:
@@ -56,7 +77,11 @@ async def _today(db: AsyncSession, owner_id: str, source: WordleSource, timezone
 
 
 def _error(code: str) -> dict:
-    return {"status": "error", "code": code, "message": ERROR_MESSAGES.get(code, UNAVAILABLE)}
+    spoken = {
+        "WORDLE_GUESS_INVALID": "I need a five-letter word.",
+        "WORDLE_GAME_OVER": "Today's game is already finished.",
+    }.get(code, "Today's Wordle isn't available right now.")
+    return {"status": "error", "code": code, "message": ERROR_MESSAGES.get(code, UNAVAILABLE), "spoken": spoken}
 
 
 async def wordle_tool(
@@ -74,18 +99,29 @@ async def wordle_tool(
     if not enabled:
         return dict(DISABLED)
     if action == "close":
-        return {"status": "closed", "ui": "close", "message": "The Wordle popup was closed. The game is saved."}
+        return {
+            "status": "closed",
+            "ui": "close",
+            "spoken": "Closing Wordle.",
+            "message": "The Wordle popup was closed. The game is saved.",
+        }
     try:
         puzzle, day, view = await _today(db, owner_id, source, timezone)
         if action == "guess":
             if view.status != "in_progress":
-                return {**_error("WORDLE_GAME_OVER"), "ui": "open", "message": describe_game(view)}
+                return {
+                    **_error("WORDLE_GAME_OVER"),
+                    "ui": "open",
+                    "message": describe_game(view),
+                    "spoken": spoken_for(view),
+                }
             tried = (word or "").strip().upper()
             if any(guess.word == tried for guess in view.guesses):
                 # An exact repeat (voice echo or a manual entry) never spends an attempt.
                 return {
                     "status": "repeat",
                     "ui": "refresh",
+                    "spoken": spoken_for(view, prefix=f"You already tried {tried}. No attempt used. "),
                     "message": f"The user already tried {tried}; no attempt was used. " + describe_game(view),
                 }
             outcome = await submit_guess(
@@ -108,5 +144,6 @@ async def wordle_tool(
     return {
         "status": view.status,
         "ui": "open" if action != "status" else "refresh",
+        "spoken": spoken_for(view, prefix="Today's Wordle is ready. " if action == "play" else ""),
         "message": prefix + describe_game(view),
     }

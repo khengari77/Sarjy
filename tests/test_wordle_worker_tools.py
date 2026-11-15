@@ -7,7 +7,14 @@ from types import SimpleNamespace
 import httpx
 from livekit.agents import llm
 from main import SarjyAgent
-from wordle_tools import WORDLE_FAILED, contains_wordle_guess, publish_wordle
+from wordle_tools import (
+    WORDLE_FAILED,
+    claims_game_state,
+    extract_guess,
+    has_guess_candidate,
+    is_close_request,
+    publish_wordle,
+)
 
 
 def build(handler, published, active=False):
@@ -52,7 +59,9 @@ def test_play_posts_the_tool_route_and_opens_the_popup():
             await agent.on_user_turn_completed(None, message)
             reply = await agent.play_wordle._func(agent, ctx())
             assert reply == "Ready, 6 guesses left."
-            await agent.submit_wordle_guess._func(agent, ctx("call-2"), word="crane")
+            assert "did not say" in await agent.submit_wordle_guess._func(agent, ctx("call-2"), word="crane")
+            agent.current_text = "Crane."
+            await agent.submit_wordle_guess._func(agent, ctx("call-3"), word="crane")
 
     asyncio.run(run())
     assert [path for path, _ in seen] == ["/internal/agent/tool/wordle-play", "/internal/agent/tool/wordle-guess"]
@@ -111,31 +120,92 @@ def test_publish_wordle_uses_the_sarjy_wordle_topic():
     assert calls == [({"action": "open"}, True, "sarjy.wordle")]
 
 
-def test_guess_shaped_utterances_are_detected():
-    for text in ("No. My word my word is false.", "F a l s e. False.", "Snark.", "my guess is c-r-a-n-e", "crane"):
-        assert contains_wordle_guess(text), text
-    for text in ("What is the weather?", "how many guesses left", "where are we", "Make your voice a lady", ""):
-        assert not contains_wordle_guess(text), text
+def test_only_whole_utterance_guesses_are_extracted():
+    for text, word in (
+        ("Snake.", "SNAKE"),
+        ("No. My word my word is false.", "FALSE"),
+        ("S N A K E.", "SNAKE"),
+        ("Uh... crane.", "CRANE"),
+        ("Crane. Crane.", "CRANE"),
+        ("I think it's c-r-a-n-e", "CRANE"),
+    ):
+        assert extract_guess(text) == word, text
+    for text in (
+        "Be quick.",
+        "Be quick.",
+        "Is there a vowel in it?",
+        "R.",
+        "Fals.",
+        "Where am I at in this game?",
+        "Make your voice a lady",
+        "",
+    ):
+        assert extract_guess(text) is None, text
 
 
-def test_open_game_forces_the_guess_tool_once_and_withdraws_play():
+def test_state_claims_are_detected():
+    for text in ("N is yellow and A is green.", "You have three guesses left.", "You won!", "Out of attempts."):
+        assert claims_game_state(text), text
+    for text in ("Sure, give me a five-letter word.", "Tell me a joke."):
+        assert not claims_game_state(text), text
+
+
+def test_open_game_withdraws_play_unless_it_was_called_this_turn():
     _, agent = build(lambda request: httpx.Response(200, json={}), [], active=True)
+    agent.current_turn = "t1"
+    agent.current_text = "Crane."
     names = {tool.info.name for tool in agent._wordle_tools(agent.tools)}
     assert "play_wordle" not in names and "submit_wordle_guess" in names
-    message = llm.ChatMessage(id="m1", role="user", content=["No. My word is false."])
-    assert agent._forced_wordle_choice(message, names) == {
-        "type": "function",
-        "function": {"name": "submit_wordle_guess"},
-    }
-    # The continuation inference after the tool result is never forced.
-    assert agent._forced_wordle_choice(message, names) is None
-    chat = llm.ChatMessage(id="m2", role="user", content=["what is the weather"])
-    assert agent._forced_wordle_choice(chat, names) is None
+    agent.wordle_calls.add("t1")
+    assert "play_wordle" in {tool.info.name for tool in agent._wordle_tools(agent.tools)}
 
 
-def test_closed_game_forces_nothing_and_keeps_play_available():
+def test_bare_guess_is_recorded_and_spoken_without_the_model(monkeypatch):
+    seen: list[str] = []
+
+    def handler(request):
+        if request.url.path == "/internal/agent/turn/start":
+            return httpx.Response(200, json={"turn_id": "turn-1", "context": {}})
+        seen.append(request.url.path)
+        return httpx.Response(
+            200, json={"status": "in_progress", "ui": "open", "spoken": "CRANE: C gray. 5 guesses left."}
+        )
+
+    async def run():
+        client, agent = build(handler, [], active=True)
+        async with client:
+            message = llm.ChatMessage(id="m1", role="user", content=["Crane."])
+            await agent.on_user_turn_completed(None, message)
+            agent.prepared["m1"] = {"turn_id": "turn-1", "context": {}}
+            agent.current_turn = "turn-1"
+            assert await agent._wordle_turn_speech(message) == "CRANE: C gray. 5 guesses left."
+            other = llm.ChatMessage(id="m2", role="user", content=["Be quick."])
+            assert await agent._wordle_turn_speech(other) is None
+
+    asyncio.run(run())
+    assert seen == ["/internal/agent/tool/wordle-guess"]
+
+
+def test_closed_game_keeps_play_and_never_records_a_bare_word():
     _, agent = build(lambda request: httpx.Response(200, json={}), [], active=False)
-    names = {tool.info.name for tool in agent._wordle_tools(agent.tools)}
-    assert "play_wordle" in names
+    assert "play_wordle" in {tool.info.name for tool in agent._wordle_tools(agent.tools)}
     message = llm.ChatMessage(id="m1", role="user", content=["false"])
-    assert agent._forced_wordle_choice(message, names) is None
+    assert asyncio.run(agent._wordle_turn_speech(message)) is None
+
+
+def test_close_requests_and_guess_candidates():
+    for text in ("Close the popup.", "back to chat please", "Please close the game", "Hide the board."):
+        assert is_close_request(text), text
+    for text in ("Close the door", "I closed the popup", "Tell me a joke"):
+        assert not is_close_request(text), text
+    assert has_guess_candidate("I think it might be crane") and has_guess_candidate("s n a k e")
+    assert not has_guess_candidate("How are you?") and not has_guess_candidate("Close the popup.")
+
+
+def test_submit_tool_is_offered_only_for_guess_shaped_text():
+    _, agent = build(lambda request: httpx.Response(200, json={}), [], active=True)
+    agent.current_turn = "t9"
+    agent.current_text = "Tell me a joke."
+    assert "submit_wordle_guess" not in {t.info.name for t in agent._wordle_tools(agent.tools)}
+    agent.current_text = "maybe the word is crane"
+    assert "submit_wordle_guess" in {t.info.name for t in agent._wordle_tools(agent.tools)}

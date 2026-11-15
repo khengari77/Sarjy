@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -22,6 +23,16 @@ SPELLED_RUN = re.compile(r"(?:^|\s)(?:[a-z]\s+){4}[a-z](?:\s|$)")
 NOT_GUESSES = frozenset(
     [
         "about",
+        "popup",
+        "close",
+        "board",
+        "start",
+        "begin",
+        "check",
+        "hello",
+        "thank",
+        "sorry",
+        "hurry",
         "above",
         "after",
         "again",
@@ -49,11 +60,15 @@ NOT_GUESSES = frozenset(
         "would",
         "wordle",
         "guess",
-        "state",
-        "music",
-        "voice",
-        "stop",
     ]
+)
+NOT_SAID = (
+    "This was not a guess: the user did not say that word. Ignore this tool, answer what they actually said "
+    "normally, and do not mention guesses, marks or counts."
+)
+CLOSE_REQUEST = re.compile(
+    r"^(?:please\s+)?(?:(?:close|hide|dismiss|exit|leave|quit)\s+(?:the\s+)?(?:wordle|game|pop ?up|board|window)"
+    r"|(?:go\s+)?back to chat)(?:\s+please)?$"
 )
 WORDLE_FAILED = "The Wordle tool failed. Tell the user you could not do that right now; do not guess the outcome."
 
@@ -69,11 +84,27 @@ class WordleTools:
     backend: httpx.AsyncClient
     current_turn: str | None
     publish_wordle: Any
+    wordle_spoken: dict[str, list[str]]
+    wordle_touched: bool
+    wordle_calls: set[str]
+    current_text: str
+    wordle_active: Any
+
+    async def _wordle_direct(self, path: str, **arguments: str) -> str | None:
+        """Run a Wordle tool without the model; returns the exact line to speak (None on failure)."""
+        stub = SimpleNamespace(function_call=SimpleNamespace(call_id=f"direct-{path}"))
+        await self._wordle_tool(path, stub, **arguments)  # type: ignore[arg-type]
+        spoken = self.wordle_spoken.pop(self.current_turn or "", [])
+        return " ".join(spoken) or None
 
     async def _wordle_tool(self, path: str, ctx: RunContext, **arguments: str) -> str:
         if not self.current_turn:
             raise ValueError("TOOL_TURN_REQUIRED")
+        word = arguments.get("word")
+        if path == "wordle-guess" and word is not None and not said_word(self.current_text, word):
+            return NOT_SAID
         call_id = getattr(ctx.function_call, "call_id", "")
+        self.wordle_calls.add(self.current_turn)
         try:
             response = await self.backend.post(
                 f"/internal/agent/tool/{path}",
@@ -89,6 +120,10 @@ class WordleTools:
             return WORDLE_FAILED
         if not isinstance(body, dict):
             return WORDLE_FAILED
+        spoken = body.get("spoken")
+        if isinstance(spoken, str) and spoken:
+            self.wordle_spoken.setdefault(self.current_turn, []).append(spoken)
+            self.wordle_touched = True
         ui = body.get("ui")
         if self.publish_wordle is not None and ui in {"open", "refresh", "close"}:
             try:
@@ -100,11 +135,13 @@ class WordleTools:
     @function_tool()
     async def play_wordle(self, ctx: RunContext):
         """Start or resume the user's daily Wordle and show the popup. Call it ONLY when the user asks to play Wordle and no game is open (for example "can we play the daily Wordle?"). Never call it while a game is open, and never for a guess."""
+        if self.wordle_active():
+            return "A Wordle game is already open. Do not start it again; ask for their guess."
         return await self._wordle_tool("wordle-play", ctx)
 
     @function_tool()
     async def submit_wordle_guess(self, ctx: RunContext, word: str):
-        """Submit a guess in the user's Wordle game. While a Wordle game is open, ANY five-letter word or spelled-out word the user says (for example "false", "F A L S E", "my word is crane") is a guess: you MUST call this tool, and pass the five letters as one word. Never state marks, attempts left or win/loss except from this tool's result; if you did not call it, you do not know the result. An exact repeat of an earlier guess costs no attempt."""
+        """Submit a Wordle guess that the user embedded in a longer sentence (for example "I think the word might be crane"). Call it only when the user's latest message contains a five-letter word or spelled-out letters meant as a guess, and pass exactly those letters as one word. Never call it for anything else (questions, chat, greetings, hints, closing) and never reuse an earlier word. Marks, guesses left and outcomes come only from this tool's result."""
         return await self._wordle_tool("wordle-guess", ctx, word=word)
 
     @function_tool()
@@ -118,10 +155,87 @@ class WordleTools:
         return await self._wordle_tool("wordle-close", ctx)
 
 
-def contains_wordle_guess(text: str) -> bool:
-    """True when an utterance holds a five-letter word or five spelled letters."""
-    normalized = re.sub(r"[^a-z\s'-]", " ", text.lower())
-    if SPELLED_RUN.search(re.sub(r"[-.]", " ", normalized)):
+FILLER = frozenset(
+    [
+        "uh",
+        "um",
+        "uhm",
+        "er",
+        "hmm",
+        "yeah",
+        "yes",
+        "okay",
+        "ok",
+        "so",
+        "well",
+        "no",
+        "please",
+        "my",
+        "word",
+        "is",
+        "its",
+        "it's",
+        "i",
+        "think",
+        "guess",
+        "try",
+        "the",
+        "a",
+        "then",
+        "maybe",
+        "let's",
+        "say",
+        "it",
+        "just",
+    ]
+)
+STATE_CLAIM = re.compile(
+    r"\b(green|yellow|gr[ae]y|correct position|wrong position|not in the word|you (?:won|lost|win|got it)|"
+    r"out of (?:guesses|attempts))\b|\b(?:\d|zero|one|two|three|four|five|six)\s+(?:guesses|attempts|tries)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_guess(text: str) -> str | None:
+    """The word when the WHOLE utterance is a guess: one five-letter word (possibly repeated) or five spelled letters.
+
+    Fillers ("uh", "my word is", "I think it's") are ignored; anything else in the sentence means the model decides.
+    """
+    raw = re.findall(r"[a-z']+", text.lower().replace("-", " "))
+    singles = [t for t in raw if len(t) == 1]
+    if len(singles) == 6 and raw[0] == "i":
+        singles = singles[1:]  # "I think it's c r a n e": the pronoun is not a letter
+    longer = [t for t in raw if len(t) > 1 and t not in FILLER]
+    if len(singles) == 5 and not longer:
+        return "".join(singles).upper()
+    tokens = [t for t in raw if t not in FILLER]
+    words = set(tokens)
+    if len(words) == 1:
+        word = tokens[0]
+        if len(word) == 5 and word.isalpha() and word not in NOT_GUESSES:
+            return word.upper()
+    return None
+
+
+def is_close_request(text: str) -> bool:
+    """A whole-utterance request to close the Wordle popup."""
+    return bool(CLOSE_REQUEST.match(re.sub(r"[^a-z' ]", " ", text.lower()).strip()))
+
+
+def has_guess_candidate(text: str) -> bool:
+    """True when the utterance holds a five-letter word or five spelled letters that could be a guess."""
+    raw = re.findall(r"[a-z']+", text.lower().replace("-", " "))
+    if sum(1 for t in raw if len(t) == 1) >= 5:
         return True
-    words = re.findall(r"[a-z']+", normalized)
-    return any(len(word) == 5 and word not in NOT_GUESSES for word in words)
+    return any(len(t) == 5 and t.isalpha() and t not in NOT_GUESSES for t in raw)
+
+
+def said_word(utterance: str, word: str) -> bool:
+    """True when the guess is literally in what the user said (as a word or spelled letters)."""
+    spoken = re.sub(r"[^a-z]", "", utterance.lower())
+    return bool(word) and re.sub(r"[^a-z]", "", word.lower()) in spoken
+
+
+def claims_game_state(text: str) -> bool:
+    """True when prose states marks, attempts or an outcome (only a Wordle tool result may)."""
+    return bool(STATE_CLAIM.search(text))
