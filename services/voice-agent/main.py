@@ -962,6 +962,9 @@ def apply_control(packet, reveal: RevealState) -> None:
         return
     if value.get("type") == "wordle.reveal_pending":
         reveal.pending = value.get("value") is True
+    elif value.get("type") == "wordle.pending":
+        # A spoken yes/no is awaited for a pending action ("reveal" or "reset"); null clears it.
+        reveal.pending = value.get("value") in {"reveal", "reset"}
     elif value.get("type") == "wordle.active":
         reveal.active = value.get("value") is True
         if not reveal.active:

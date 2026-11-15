@@ -173,7 +173,7 @@ describe('Wordle voice adapter: spoilers', () => {
     await voice.handleEvent(transcript('reveal the answer', 's1'));
     expect(fake.spoken[0]).toContain('Say yes');
     expect(fake.spoken.join(' ')).not.toContain('PLANT');
-    expect(voice.pendingReveal()).toBe(true);
+    expect(voice.pending()).toBe('reveal');
     await voice.handleEvent(transcript('yes', 's2'));
     expect(fake.calls.load).toBe(1);
     expect(fake.spoken.join(' ')).not.toContain('PLANT');
@@ -185,7 +185,7 @@ describe('Wordle voice adapter: spoilers', () => {
     const { fake, voice } = setup({ view: 'playing', answer: 'PLANT' });
     await voice.handleEvent(transcript('reveal the answer', 's1'));
     await voice.handleEvent(transcript('no', 's2'));
-    expect(voice.pendingReveal()).toBe(false);
+    expect(voice.pending()).toBe(null);
     expect(fake.calls.load).toBe(0);
     expect(fake.spoken.at(-1)).toContain("won't reveal");
     expect(fake.spoken.join(' ')).not.toContain('PLANT');
@@ -221,15 +221,15 @@ describe('Wordle voice adapter: spoilers', () => {
     const { fake, voice } = setup({ view: 'playing' });
     await voice.handleEvent(transcript('reveal the answer', 's1'));
     await voice.handleEvent(transcript('yes', 's2'));
-    expect(fake.pendingFlags).toEqual([true, false]);
+    expect(fake.pendingFlags).toEqual(['reveal', null]);
 
     await voice.handleEvent(transcript('reveal the answer', 's3'));
     await voice.handleEvent(transcript('no', 's4'));
-    expect(fake.pendingFlags).toEqual([true, false, true, false]);
+    expect(fake.pendingFlags).toEqual(['reveal', null, 'reveal', null]);
 
     await voice.handleEvent(transcript('reveal the answer', 's5'));
     await voice.handleEvent(transcript('how many guesses left', 's6'));
-    expect(fake.pendingFlags).toEqual([true, false, true, false, true, false]);
+    expect(fake.pendingFlags).toEqual(['reveal', null, 'reveal', null, 'reveal', null]);
   });
 
   it('returns the server answer after confirmation once the game is terminal', async () => {

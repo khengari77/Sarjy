@@ -40,6 +40,8 @@ export interface WordleGamePort {
   close(): void;
   ensureLoaded(): Promise<void>;
   load(): Promise<void>;
+  /** Delete today's game on the server (same puzzle) and show the fresh empty board. */
+  reset(): Promise<boolean>;
   /** Re-read the server game in place (no loading flash) and reveal any new row. */
   refresh(): Promise<void>;
   guessWord(word: string, requestId: string): Promise<GuessOutcome>;

@@ -11,8 +11,8 @@ export interface WordleVoiceDeps {
   speak(text: string): void;
   /** Stable per-install scope for guess request ids. */
   scope(): string;
-  /** Tells the worker whether a spoiler confirmation is pending (yes/no). */
-  onRevealPending?(pending: boolean): void;
+  /** Tells the worker which spoken yes/no confirmation is pending (it then leaves yes/no to the client). */
+  onPending?(kind: PendingKind | null): void;
 }
 
 /** Deliver one command reply to the visible announcer and the non-LLM TTS RPC. */
@@ -29,6 +29,8 @@ export async function speakWordleReply(
     // and in the polite live region instead of failing the command.
   }
 }
+
+export type PendingKind = 'reveal' | 'reset';
 
 export interface VoiceResult {
   handled: boolean;
@@ -116,6 +118,23 @@ async function guessesCommand(deps: WordleVoiceDeps, say: Say): Promise<string> 
   return say(`You've guessed ${state.guesses.map((guess) => guess.word).join(', ')}. ${statusLine(state)}`);
 }
 
+const PROMPTS: Record<PendingKind, string> = {
+  reveal: 'Revealing the answer ends the surprise. Say yes to reveal it, or no to keep playing.',
+  reset: "Reset today's game? Say yes to confirm.",
+};
+const DECLINED: Record<PendingKind, string> = {
+  reveal: "Okay, I won't reveal it.",
+  reset: "Okay, I won't reset it.",
+};
+const NUMBER_WORDS = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six'];
+
+async function confirmResetCommand(deps: WordleVoiceDeps, say: Say): Promise<string> {
+  if (!(await deps.game.reset())) return say("I couldn't reset the game just now.");
+  deps.game.open();
+  const left = guessesLeft(deps.game.state);
+  return say(`Game reset. ${NUMBER_WORDS[left] ?? left} ${left === 1 ? 'guess' : 'guesses'} left.`);
+}
+
 async function confirmRevealCommand(deps: WordleVoiceDeps, say: Say): Promise<string> {
   // Refresh first so a terminal result reached on another device is honoured.
   await deps.game.load();
@@ -136,7 +155,7 @@ async function confirmRevealCommand(deps: WordleVoiceDeps, say: Say): Promise<st
  */
 export function createWordleVoice(deps: WordleVoiceDeps) {
   const seen = new Set<string>();
-  let pendingReveal = false;
+  let pending: PendingKind | null = null;
 
   const say: Say = (text) => {
     deps.speak(text);
@@ -151,14 +170,20 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
     }
   }
 
-  function setPendingReveal(pending: boolean) {
-    pendingReveal = pending;
-    deps.onRevealPending?.(pending);
+  function setPending(kind: PendingKind | null) {
+    pending = kind;
+    deps.onPending?.(kind);
   }
 
-  function askReveal(): string {
-    setPendingReveal(true);
-    return say('Revealing the answer ends the surprise. Say yes to reveal it, or no to keep playing.');
+  function ask(kind: PendingKind): string {
+    setPending(kind);
+    return say(PROMPTS[kind]);
+  }
+
+  async function confirm(): Promise<string> {
+    const kind = pending;
+    setPending(null);
+    return kind === 'reset' ? await confirmResetCommand(deps, say) : await confirmRevealCommand(deps, say);
   }
 
   async function execute(command: WordleCommand): Promise<VoiceResult> {
@@ -181,15 +206,17 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
           spoken: say('Wordle closed. Your progress is saved, and the call is still on.'),
         };
       case 'reveal':
-        return { handled: true, command: command.kind, spoken: askReveal() };
+      case 'reset':
+        return { handled: true, command: command.kind, spoken: ask(command.kind) };
       case 'confirm':
-        if (!pendingReveal) return { handled: false, ignored: 'nothing-pending' };
-        setPendingReveal(false);
-        return { handled: true, command: command.kind, spoken: await confirmRevealCommand(deps, say) };
-      case 'cancel':
-        if (!pendingReveal) return { handled: false, ignored: 'nothing-pending' };
-        setPendingReveal(false);
-        return { handled: true, command: command.kind, spoken: say("Okay, I won't reveal it.") };
+        if (!pending) return { handled: false, ignored: 'nothing-pending' };
+        return { handled: true, command: command.kind, spoken: await confirm() };
+      case 'cancel': {
+        if (!pending) return { handled: false, ignored: 'nothing-pending' };
+        const kind = pending;
+        setPending(null);
+        return { handled: true, command: command.kind, spoken: say(DECLINED[kind]) };
+      }
       case 'ambiguous':
         // Ambiguity mutates nothing and never reaches the game service.
         return { handled: true, command: command.kind, spoken: say(command.spoken) };
@@ -203,13 +230,12 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
 
     const command = parseWordleCommand(input.text, { active: deps.game.state.open });
     if (!command) {
-      if (pendingReveal) setPendingReveal(false);
+      if (pending) setPending(null);
       return { handled: false, ignored: 'unrecognized' };
     }
-    // Any new instruction supersedes a pending spoiler confirmation.
-    if (pendingReveal && command.kind !== 'confirm' && command.kind !== 'cancel' && command.kind !== 'reveal') {
-      setPendingReveal(false);
-    }
+    // Any new instruction supersedes a pending confirmation, unless it restates the pending question.
+    const restates = command.kind === pending;
+    if (pending && command.kind !== 'confirm' && command.kind !== 'cancel' && !restates) setPending(null);
     return execute(command);
   }
 
@@ -220,7 +246,7 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
     return handleFinalized({ text: event.text, segmentId: event.segmentId, epoch: event.epoch });
   }
 
-  return { handleEvent, handleFinalized, pendingReveal: () => pendingReveal };
+  return { handleEvent, handleFinalized, pending: () => pending, expectReset: () => setPending('reset') };
 }
 
 export type WordleVoice = ReturnType<typeof createWordleVoice>;

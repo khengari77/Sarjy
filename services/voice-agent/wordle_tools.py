@@ -125,7 +125,7 @@ class WordleTools:
             self.wordle_spoken.setdefault(self.current_turn, []).append(spoken)
             self.wordle_touched = True
         ui = body.get("ui")
-        if self.publish_wordle is not None and ui in {"open", "refresh", "close"}:
+        if self.publish_wordle is not None and ui in {"open", "refresh", "close", "confirm_reset"}:
             try:
                 await self.publish_wordle(ui)
             except Exception:
@@ -148,6 +148,11 @@ class WordleTools:
     async def wordle_status(self, ctx: RunContext):
         """Read the user's Wordle status: guesses so far with letter feedback, and guesses left. Use it whenever the user asks about their board or attempts; never answer those from memory."""
         return await self._wordle_tool("wordle-status", ctx)
+
+    @function_tool()
+    async def reset_wordle(self, ctx: RunContext):
+        """Use when the user wants to start today's Wordle over in loose phrasing (for example "can we start Wordle over?"). It does NOT reset anything: it asks the user to confirm by voice, and only their spoken "yes" resets the game."""
+        return await self._wordle_tool("wordle-reset", ctx)
 
     @function_tool()
     async def close_wordle(self, ctx: RunContext):

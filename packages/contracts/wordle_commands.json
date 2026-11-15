@@ -27,9 +27,11 @@
     "guesses": "^(?:what did i guess|what have i guessed|what(?:'s| is) my guess|what are my guesses|show(?: me)? my guesses|my guesses|what guesses (?:did i make|have i made)|list my guesses)$",
     "quit": "^(?:quit|exit|close|stop|leave)\\s+(?:the\\s+)?wordle(?:\\s+(?:game|please))?$|^(?:back to chat|return to chat|close (?:the )?game)$",
     "reveal": "^(?:reveal|spoil)\\s+(?:me\\s+)?(?:the\\s+)?(?:wordle\\s+)?answer(?:\\s+please)?$|^(?:show|tell|give)\\s+me\\s+the\\s+wordle\\s+answer$|^reveal\\s+(?:the\\s+)?wordle(?:\\s+answer)?$|^what(?:'s| is) the wordle answer$",
+    "reset": "^(?:please\\s+)?(?:(?:hey|ok|okay)\\s+)?(?:let'?s\\s+)?(?:(?:reset|restart)\\s+(?:the\\s+|today'?s?\\s+|my\\s+)?wordle(?:\\s+(?:game|puzzle))?|start\\s+(?:the\\s+)?wordle\\s+over)(?:\\s+please)?$",
     "confirm": "^(?:yes|yeah|yep|yup|sure|confirm|i'?m sure|go ahead|do it)$",
     "cancel": "^(?:no|nope|cancel|don'?t|do not|never ?mind|stop|keep it secret|no (?:thanks|thank you|never ?mind))$"
   },
+  "reset_active": "^(?:please\\s+)?(?:let'?s\\s+)?(?:(?:reset|restart)\\s+(?:the\\s+|today'?s?\\s+|my\\s+)?(?:game|puzzle|board)|start\\s+(?:the\\s+|my\\s+)?(?:game\\s+)?over|start\\s+over)(?:\\s+please)?$",
   "ambiguous_play": "^(?:wordle|play|start|open|game)$",
   "ambiguous_action": "^(?:play|start|open|resume|quit|exit|close|leave|reveal|stop)\\b.*\\bwordle\\b"
 }

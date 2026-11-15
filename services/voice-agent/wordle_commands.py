@@ -24,6 +24,7 @@ _CONVERSATIONAL = frozenset(str(word) for word in _SPEC["conversational"])
 _GUESS_PATTERNS = tuple(re.compile(str(pattern)) for pattern in _SPEC["guess_intent_patterns"])
 _SPELLED = re.compile(str(_SPEC["spelled_pattern"]))
 _EXACT = {kind: re.compile(str(pattern)) for kind, pattern in _SPEC["exact"].items()}
+_RESET_ACTIVE = re.compile(str(_SPEC["reset_active"]))
 _AMBIGUOUS_PLAY = re.compile(str(_SPEC["ambiguous_play"]))
 _AMBIGUOUS_ACTION = re.compile(str(_SPEC["ambiguous_action"]))
 
@@ -61,6 +62,16 @@ def _guess_intent(normalized: str) -> str | None:
     return "guess"
 
 
+def _open_game_kind(normalized: str) -> str | None:
+    """Intents that count only while a game is open: guesses, spelled letters and a bare reset."""
+    guess = _guess_intent(normalized)
+    if guess:
+        return guess
+    if _SPELLED.match(re.sub(r"\s+(?:please|for me)$", "", normalized).strip()):
+        return "guess"
+    return "reset" if _RESET_ACTIVE.match(normalized) else None
+
+
 def command_kind(text: str, *, reveal_pending: bool = False, wordle_active: bool = False) -> str | None:
     """Return the recognized command kind, or ``None`` for ordinary speech.
 
@@ -80,14 +91,10 @@ def command_kind(text: str, *, reveal_pending: bool = False, wordle_active: bool
             return "cancel"
 
     if wordle_active:
-        guess = _guess_intent(normalized)
-        if guess:
-            return guess
-        spellable = re.sub(r"\s+(?:please|for me)$", "", normalized).strip()
-        if _SPELLED.match(spellable):
-            return "guess"
-
-    for kind in ("play", "remaining", "guesses", "quit", "reveal"):
+        gated = _open_game_kind(normalized)
+        if gated:
+            return gated
+    for kind in ("play", "remaining", "guesses", "quit", "reveal", "reset"):
         if _EXACT[kind].match(normalized):
             return kind
 

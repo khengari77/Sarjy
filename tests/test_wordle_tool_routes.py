@@ -11,6 +11,7 @@ PLAY = "/internal/agent/tool/wordle-play"
 GUESS = "/internal/agent/tool/wordle-guess"
 STATUS = "/internal/agent/tool/wordle-status"
 CLOSE = "/internal/agent/tool/wordle-close"
+RESET = "/internal/agent/tool/wordle-reset"
 
 
 def build(tmp_path, *, enabled=True):
@@ -113,3 +114,15 @@ def test_tool_routes_require_the_worker_secret(tmp_path):
     with TestClient(app) as client:
         response = client.post(PLAY, json={"turn_id": "t", "request_id": "r"})
         assert response.status_code in {401, 403, 404}
+
+
+def test_reset_tool_only_requests_confirmation_and_never_resets(tmp_path):
+    file, app = build(tmp_path)
+    with TestClient(app) as client:
+        headers, turn = begin(client, file)
+        call(client, headers, GUESS, turn, "g1", word="slate")
+        asked = call(client, headers, RESET, turn, "r1").json()
+        assert asked["status"] == "confirm_required" and asked["ui"] == "confirm_reset"
+        assert asked["spoken"] == "Reset today's game? Say yes to confirm."
+        assert [row["word"] for row in client.get("/v1/wordle/today").json()["game"]["guesses"]] == ["SLATE"]
+        assert call(client, headers, RESET, turn, "r1").json() == asked  # ledger replay

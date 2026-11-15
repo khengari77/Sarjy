@@ -102,7 +102,9 @@ describe('sarjy.wordle data messages', () => {
   it('delivers an agent open signal to subscribers through the real DataReceived path', async () => {
     const { room, events } = await connected();
     room.emit('dataReceived', payload('open'), { isAgent: true }, undefined, 'sarjy.wordle');
+    room.emit('dataReceived', payload('confirm_reset'), { isAgent: true }, undefined, 'sarjy.wordle');
     expect(events).toContainEqual(expect.objectContaining({ type: 'wordle', action: 'open' }));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'wordle', action: 'confirm_reset' }));
   });
 
   it('ignores the signal from a non-agent participant or an unknown action', async () => {

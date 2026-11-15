@@ -19,7 +19,13 @@ class WordleToolInput(BaseModel):
     word: str | None = Field(default=None, max_length=40)
 
 
-ROUTES = {"wordle-play": "play", "wordle-guess": "guess", "wordle-status": "status", "wordle-close": "close"}
+ROUTES = {
+    "wordle-play": "play",
+    "wordle-guess": "guess",
+    "wordle-status": "status",
+    "wordle-close": "close",
+    "wordle-reset": "reset",
+}
 
 
 def register_wordle_tool_routes(app, *, config: Settings, database, run_tool, source: WordleSource):

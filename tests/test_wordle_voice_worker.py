@@ -232,3 +232,57 @@ def test_reveal_confirmation_is_suppressed_only_while_pending(monkeypatch):
             assert agent.suppressed == {"y2"}
 
     asyncio.run(run())
+
+
+def test_reset_phrases_are_suppressed_without_a_model_call_and_confirmation_follows_the_pending_flag(monkeypatch):
+    posted: list[str] = []
+
+    def backend(request):
+        posted.append(request.url.path)
+        return httpx.Response(200, json={"turn_id": "turn-1", "context": {}})
+
+    async def fail_stream(*_args, **_kwargs):
+        raise AssertionError("a reset command must not reach conversational generation")
+        yield  # pragma: no cover
+
+    async def run():
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            state = {"pending": False}
+            agent = agent_for(
+                client,
+                is_command=lambda text: is_wordle_command(text, reveal_pending=state["pending"], wordle_active=True),
+            )
+            monkeypatch.setattr(agent, "_stream_with_fallback", fail_stream)
+            for index, text in enumerate(("reset the game", "Restart Wordle", "start over", "start the game over")):
+                await agent.on_user_turn_completed(None, llm.ChatMessage(id=f"r{index}", role="user", content=[text]))
+                assert agent.suppressed == {f"r{index}"}
+                agent.suppressed.clear()
+            assert posted == []
+            # Pending reset: yes / no are the client's answer; anything else is processed normally.
+            state["pending"] = True
+            for index, text in enumerate(("yes", "no", "cancel cancel")):
+                msg = llm.ChatMessage(id=f"c{index}", role="user", content=[text])
+                await agent.on_user_turn_completed(None, msg)
+            assert agent.suppressed == {"c0", "c1"}
+            assert posted == ["/internal/agent/turn/start"]  # only the third, ordinary, turn
+
+    asyncio.run(run())
+
+
+def test_pending_action_control_accepts_reveal_and_reset_from_humans_only():
+    state = RevealState()
+
+    def packet(participant, value):
+        data = json.dumps({"type": "wordle.pending", "value": value}).encode()
+        return SimpleNamespace(topic="sarjy.control", participant=participant, data=data)
+
+    apply_control(packet(AGENT, "reset"), state)
+    assert state.pending is False
+    apply_control(packet(HUMAN, "reset"), state)
+    assert state.pending is True
+    apply_control(packet(HUMAN, None), state)
+    assert state.pending is False
+    apply_control(packet(HUMAN, "reveal"), state)
+    assert state.pending is True
+    apply_control(packet(HUMAN, "delete_everything"), state)
+    assert state.pending is False

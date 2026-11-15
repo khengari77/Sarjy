@@ -255,10 +255,10 @@ test('sends the exact command reply through the voice runtime say RPC', async ({
       const events = await page.evaluate(
         () => (window as unknown as { __sarjyControl: { type: string }[] }).__sarjyControl,
       );
-      return events.filter((event) => event.type === 'wordle.reveal_pending');
+      return events.filter((event) => event.type === 'wordle.pending');
     })
     .toEqual([
-      { type: 'wordle.reveal_pending', value: true },
-      { type: 'wordle.reveal_pending', value: false },
+      { type: 'wordle.pending', value: 'reveal' },
+      { type: 'wordle.pending', value: null },
     ]);
 });

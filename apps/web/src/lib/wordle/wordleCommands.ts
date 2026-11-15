@@ -20,6 +20,7 @@ export type WordleCommand =
   | { kind: 'guesses' }
   | { kind: 'quit' }
   | { kind: 'reveal' }
+  | { kind: 'reset' }
   | { kind: 'confirm' }
   | { kind: 'cancel' }
   | { kind: 'ambiguous'; spoken: string };
@@ -34,6 +35,8 @@ const REMAINING = new RegExp(spec.exact.remaining);
 const GUESSES = new RegExp(spec.exact.guesses);
 const QUIT = new RegExp(spec.exact.quit);
 const REVEAL = new RegExp(spec.exact.reveal);
+const RESET = new RegExp(spec.exact.reset);
+const RESET_ACTIVE = new RegExp(spec.reset_active);
 const CONFIRM = new RegExp(spec.exact.confirm);
 const CANCEL = new RegExp(spec.exact.cancel);
 const AMBIGUOUS_PLAY = new RegExp(spec.ambiguous_play);
@@ -109,6 +112,7 @@ export function parseWordleCommand(text: string, options: { active?: boolean } =
     return { kind: 'guess', word: spellable.replace(/[^a-z]/g, '').toUpperCase() };
   }
 
+  if (RESET.test(normalized) || (active && RESET_ACTIVE.test(normalized))) return { kind: 'reset' };
   if (PLAY.test(normalized)) return { kind: 'play' };
   if (REMAINING.test(normalized)) return { kind: 'remaining' };
   if (GUESSES.test(normalized)) return { kind: 'guesses' };

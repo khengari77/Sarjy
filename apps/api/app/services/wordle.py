@@ -20,7 +20,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -571,6 +571,25 @@ async def ensure_game(
     if game is None:
         raise WordleServiceError(WORDLE_UNAVAILABLE, 503)
     return game
+
+
+async def reset_game(db: AsyncSession, *, owner_id: str, day: date) -> bool:
+    """Delete the owner's game and guesses for ``day``; the puzzle and answer are untouched.
+
+    Idempotent: with no game this is a no-op returning ``False``.  Deleting the game also removes it
+    from the player's stats, so a finished daily result can be replayed.  Nothing else is touched.
+    """
+    game = await db.scalar(
+        select(WordleGame)
+        .where(WordleGame.owner_id == owner_id, WordleGame.puzzle_date == day.isoformat())
+        .execution_options(populate_existing=True)
+    )
+    if game is None:
+        return False
+    await db.execute(delete(WordleGuess).where(WordleGuess.game_id == game.id))
+    await db.execute(delete(WordleGame).where(WordleGame.id == game.id))
+    await db.commit()
+    return True
 
 
 async def game_view(db: AsyncSession, game: WordleGame, *, answer: str) -> GameView:

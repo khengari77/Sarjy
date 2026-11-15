@@ -114,6 +114,14 @@ async def wordle_tool(
     """Run ``play``, ``guess``, ``status`` or ``close`` for the conversation owner."""
     if not enabled:
         return dict(DISABLED)
+    if action == "reset":
+        # The model never resets directly: this only asks the client to run the spoken confirmation.
+        return {
+            "status": "confirm_required",
+            "ui": "confirm_reset",
+            "spoken": "Reset today's game? Say yes to confirm.",
+            "message": "Nothing was reset. The user is being asked to confirm by voice; wait for their answer.",
+        }
     if action == "close":
         return {
             "status": "closed",

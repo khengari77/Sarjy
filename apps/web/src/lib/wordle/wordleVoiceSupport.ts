@@ -8,10 +8,17 @@ export const ZERO_MARKS: WordleGuess['marks'] = ['absent', 'absent', 'absent', '
 export interface FakeWordle {
   port: WordleGamePort;
   spoken: string[];
-  calls: { open: number; close: number; load: number; ensureLoaded: number; guesses: { word: string; id: string }[] };
+  calls: {
+    reset: number;
+    open: number;
+    close: number;
+    load: number;
+    ensureLoaded: number;
+    guesses: { word: string; id: string }[];
+  };
   state: WordleGameState;
   guessResult: (word: string, requestId: string) => GuessOutcome;
-  pendingFlags: boolean[];
+  pendingFlags: (string | null)[];
 }
 
 export function fakeGame(overrides: Partial<WordleGameState> = {}, guess?: FakeWordle['guessResult']): FakeWordle {
@@ -34,7 +41,7 @@ export function fakeGame(overrides: Partial<WordleGameState> = {}, guess?: FakeW
     ...overrides,
   };
   const spoken: string[] = [];
-  const calls: FakeWordle['calls'] = { open: 0, close: 0, load: 0, ensureLoaded: 0, guesses: [] };
+  const calls: FakeWordle['calls'] = { reset: 0, open: 0, close: 0, load: 0, ensureLoaded: 0, guesses: [] };
   const fake: FakeWordle = {
     port: {
       state,
@@ -54,6 +61,13 @@ export function fakeGame(overrides: Partial<WordleGameState> = {}, guess?: FakeW
       },
       refresh: async () => {
         calls.load += 1;
+      },
+      reset: async () => {
+        calls.reset += 1;
+        state.guesses = [];
+        state.attemptsRemaining = 6;
+        state.view = 'playing';
+        return true;
       },
       guessWord: async (word: string, requestId: string) => {
         calls.guesses.push({ word, id: requestId });
@@ -76,12 +90,12 @@ export function setup(
   guess?: FakeWordle['guessResult'],
 ): { fake: FakeWordle; voice: WordleVoice } {
   const fake = fakeGame({ open: true, ...overrides }, guess);
-  const pendingFlags: boolean[] = [];
+  const pendingFlags: (string | null)[] = [];
   const voice = createWordleVoice({
     game: fake.port,
     speak: (text) => fake.spoken.push(text),
     scope: () => 'scope1',
-    onRevealPending: (pending) => pendingFlags.push(pending),
+    onPending: (kind) => pendingFlags.push(kind),
   });
   fake.pendingFlags = pendingFlags;
   return { fake, voice };

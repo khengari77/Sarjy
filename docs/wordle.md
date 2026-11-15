@@ -57,6 +57,12 @@ when `status` is `won` or `lost`; logs contain date/source metadata only.
 - `GET /v1/wordle/today` → `{date, available, game}` (`game` is `null` when unavailable or disabled).
 - `POST /v1/wordle/guesses` `{guess, request_id}` → marks plus game state; retries with the same
   `request_id` replay without consuming another attempt.
+- `POST /v1/wordle/reset` → `{date, available, game}` for the fresh, empty game. Deletes **today's**
+  game and its guesses for the caller (the puzzle and answer are untouched), so the player replays from
+  scratch; it is allowed after a win or a loss too. Because the stats are computed from stored games, a
+  reset game **disappears from the player's stats**, which is how a daily result can be replayed. No other
+  state is touched (no memories, conversations or other days). Idempotent: with no game it is a no-op that
+  still returns the fresh game. Rate-limited like guesses; 503 `WORDLE_DISABLED` when the kill switch is off.
 - `GET /v1/wordle/stats` → `played`, `won`, `current_streak`, `max_streak` computed from stored games.
 
 A game allows six guesses. Submission validates five A-Z letters. No bundled
@@ -141,6 +147,19 @@ seam injects finalized/partial transcript events in browser tests without a
 LiveKit room; it is compiled out of production builds. Those tests also inject
 a fake runtime through `window.__SARJY_VOICE_RUNTIME_FACTORY__` to observe the
 exact `say`/`sendControl` payloads.
+
+### Reset
+
+The popup header has a reset button (confirmation dialog first). By voice, "reset wordle", "restart wordle"
+and "start Wordle over" always work; "reset the game", "start over" and "start the game over" count only
+while a game is open (`wordle.active`). The worker suppresses these turns (no model call); the client asks
+"Reset today's game? Say yes to confirm." and publishes `{type: "wordle.pending", value: "reset"}`
+(`"reveal"` for the spoiler confirmation, `null` to clear; `wordle.reveal_pending` is still accepted).
+"yes" confirms, "no"/"cancel" declines, anything else cancels and is processed normally. The model tool
+`reset_wordle` (`POST /internal/agent/tool/wordle-reset`, same tool-operation ledger) never resets: it
+returns `confirm_required` and the worker signals `sarjy.wordle` `confirm_reset` so the client arms the same
+spoken confirmation. The result is spoken as "Game reset. Six guesses left." and the popup refreshes
+without a reload.
 
 ### Merge overlap
 
