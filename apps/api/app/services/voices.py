@@ -1,10 +1,11 @@
 """Account voice discovery and approval. Credentials and raw provider metadata stay server-side."""
 
-from typing import Literal
+from typing import Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict
 
+from app.domain.deepgram_voices import DEEPGRAM_VOICES, deepgram_voice
 from app.domain.voices import parse_voice_ids
 
 
@@ -209,4 +210,65 @@ class ElevenLabsVoices:
                 continue
             if getattr(voice, trait, None) == value:
                 return voice
+        return None
+
+
+class VoiceProvider(Protocol):
+    """The catalogue surface shared by the ElevenLabs and Deepgram providers."""
+
+    async def list(
+        self, search: str = "", next_page_token: str | None = None, voice_id: str | None = None
+    ) -> VoiceCatalog: ...
+
+    async def require(self, voice_id: str) -> VoiceOption: ...
+
+    async def find_by_name(self, name: str) -> VoiceOption | None: ...
+
+    async def find_by_trait(self, trait: str, value: str, approved: frozenset[str]) -> VoiceOption | None: ...
+
+
+def _deepgram_option(voice) -> VoiceOption:
+    return VoiceOption(
+        id=voice.id,
+        name=voice.name,
+        languages=("en",),
+        gender=voice.gender,
+        accent=voice.accent,
+        age=voice.age,
+        description=voice.description,
+    )
+
+
+class DeepgramVoices:
+    """Static, verified Aura-2 English catalogue. Makes no network call."""
+
+    _options = tuple(_deepgram_option(voice) for voice in DEEPGRAM_VOICES)
+
+    async def list(
+        self, search: str = "", next_page_token: str | None = None, voice_id: str | None = None
+    ) -> VoiceCatalog:
+        wanted = " ".join(search.casefold().split())
+        voices = tuple(
+            option
+            for option in self._options
+            if (voice_id is None or option.id == voice_id)
+            and (not wanted or wanted in option.name.casefold() or wanted in (option.description or ""))
+        )
+        return VoiceCatalog(voices=voices)
+
+    async def require(self, voice_id: str) -> VoiceOption:
+        if deepgram_voice(voice_id) is None:
+            raise VoiceCatalogError("VOICE_UNAVAILABLE", 422)
+        return next(option for option in self._options if option.id == voice_id)
+
+    async def find_by_name(self, name: str) -> VoiceOption | None:
+        wanted = " ".join(name.casefold().split())
+        matches = [option for option in self._options if option.name.casefold() == wanted]
+        return matches[0] if len(matches) == 1 else None
+
+    async def find_by_trait(self, trait: str, value: str, approved: frozenset[str]) -> VoiceOption | None:
+        for voice_id in sorted(approved):
+            option = next((o for o in self._options if o.id == voice_id), None)
+            if option is not None and getattr(option, trait, None) == value:
+                return option
         return None

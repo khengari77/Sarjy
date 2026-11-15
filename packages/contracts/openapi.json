@@ -1732,6 +1732,7 @@
             "enum": [
               "openai",
               "elevenlabs",
+              "deepgram_tts",
               "deepseek"
             ],
             "title": "Provider"

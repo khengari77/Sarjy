@@ -15,13 +15,13 @@ from app.config import Settings
 from app.dependencies import COOKIE
 from app.domain.pipeline import KEYS, PRESET, PipelineConfig, validate_pipeline
 from app.infrastructure.database import Conversation, Identity, ToolCall, Turn
-from app.services.pipeline_settings import configured_keys, default_llm
+from app.services.pipeline_settings import configured_keys, default_llm, default_tts, tts_credential_key
 from app.services.reviewer_access import ReviewerAccessDenied, ReviewerSessionRequired, authorize
-from app.services.voices import ElevenLabsVoices, VoiceCatalog, VoiceCatalogError
+from app.services.voices import VoiceCatalog, VoiceCatalogError, VoiceProvider
 from app.services.weather import WeatherError, get_current_weather
 
 
-def register_system_routes(app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, owned, clock):
+def register_system_routes(app, *, config: Settings, catalog: VoiceProvider, database, identity, owned, clock):
     _register_identity_routes(app, config=config, database=database, clock=clock)
     _register_conversation_routes(app, database=database, identity=identity, owned=owned)
     _register_catalog_routes(app, config=config, catalog=catalog, identity=identity)
@@ -112,16 +112,21 @@ def _register_conversation_routes(app, *, database, identity, owned):
         return [{"id": row.id, "turn_id": row.turn_id, "name": row.name, "result": row.result} for row in rows]
 
 
-def _register_catalog_routes(app, *, config: Settings, catalog: ElevenLabsVoices, identity):
+def _register_catalog_routes(app, *, config: Settings, catalog: VoiceProvider, identity):
     @app.get("/v1/pipelines/providers")
     def providers():
-        choices = PRESET | {"llm": default_llm(config)}
+        choices = PRESET | {"llm": default_llm(config), "tts": default_tts(config)}
         return {
             role: {
                 "provider": provider,
                 "model": model,
                 "configured": bool(
-                    getattr(config, "deepseek_api_key" if provider == "deepseek_direct" else KEYS[role].lower())
+                    getattr(
+                        config,
+                        "deepseek_api_key"
+                        if provider == "deepseek_direct"
+                        else (tts_credential_key(config) if role == "tts" else KEYS[role]).lower(),
+                    )
                 ),
             }
             for role, (provider, model) in choices.items()

@@ -35,7 +35,7 @@ from livekit.agents import (
 )
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
-from provider_factory import SpeakingSpeedController, build_providers
+from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
 
 server = AgentServer()
@@ -229,7 +229,8 @@ class SarjyAgent(Agent):
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
-        self.speaking_speed_control = SpeakingSpeedController()
+        self.speaking_speed_control = speed_controller_for(pipeline)
+        self.tts_budget_provider = tts_budget_provider(pipeline)
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
         self.memory_message: str | None = None
@@ -408,7 +409,7 @@ class SarjyAgent(Agent):
             self.memory_outcome = "failed"
 
     async def reserve(self, provider: str, characters: int = 0):
-        if provider == "elevenlabs" and characters > 500:
+        if provider in {"elevenlabs", "deepgram_tts"} and characters > 500:
             if self.notify:
                 await self.notify("DAILY_BUDGET_EXHAUSTED")
             raise ValueError("DAILY_BUDGET_EXHAUSTED")
@@ -429,11 +430,11 @@ class SarjyAgent(Agent):
                 buffer += part
                 if len(buffer) >= 64:
                     # Charge before forwarding text. Interrupted/failed reservations are retained.
-                    await self.reserve("elevenlabs", len(buffer))
+                    await self.reserve(self.tts_budget_provider, len(buffer))
                     yield buffer
                     buffer = ""
             if buffer:
-                await self.reserve("elevenlabs", len(buffer))
+                await self.reserve(self.tts_budget_provider, len(buffer))
                 yield buffer
 
         async for frame in Agent.default.tts_node(self, budgeted_text(), model_settings):
@@ -831,7 +832,12 @@ async def entrypoint(ctx: JobContext):
                 json.dumps({"code": code}).encode(), reliable=True, topic="sarjy.error"
             )
 
-        providers = build_providers(config, provider_credentials(values, config["llm"]["provider"]))
+        providers = build_providers(
+            config,
+            provider_credentials(
+                values, config["llm"]["provider"], (config.get("tts") or {}).get("provider", "elevenlabs_direct")
+            ),
+        )
         fallback_llm = providers.pop("fallback_llm", None)
         agent = SarjyAgent(
             backend,

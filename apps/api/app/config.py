@@ -5,6 +5,7 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.domain.budget import DEEPSEEK_MINIMUM_REQUEST_MICRO_USD
+from app.domain.deepgram_voices import DEFAULT_DEEPGRAM_VOICE_ID
 from app.domain.voices import parse_voice_ids
 
 
@@ -26,6 +27,10 @@ class Settings(BaseSettings):
     elevenlabs_daily_characters: int = Field(default=2500, ge=1)
     deepseek_request_micro_usd: int = 7_000
     eleven_api_key: str = ""
+    # Text-to-speech provider (#175). Deepgram Aura-2 has no Arabic; ElevenLabs stays available.
+    tts_provider: Literal["deepgram", "elevenlabs"] = "deepgram"
+    # Shared daily Deepgram TTS character reservation. Application guard, not a provider quota.
+    deepgram_daily_characters: int = Field(default=50_000, ge=1)
     # Jev UI-command classifier (#168). An empty key or a false flag disables the feature.
     jev_api_key: str = ""
     jev_commands_enabled: bool = True
@@ -59,6 +64,13 @@ class Settings(BaseSettings):
         # Fail at startup rather than admitting a malformed allow-list later.
         parse_voice_ids(value)
         return value
+
+    @model_validator(mode="after")
+    def default_deepgram_voice(self):
+        # Deepgram's voice id is a model string, so an ElevenLabs id can never be a default.
+        if self.tts_provider == "deepgram" and not self.default_voice_id:
+            self.default_voice_id = DEFAULT_DEEPGRAM_VOICE_ID
+        return self
 
     @model_validator(mode="after")
     def validate_wordle_timezone(self):
