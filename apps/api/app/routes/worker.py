@@ -20,6 +20,7 @@ from app.domain.contracts import (
     UserSettings,
     resolve_response_policy,
 )
+from app.domain.intro import intro_for
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
@@ -299,7 +300,31 @@ def _register_session_routes(app, *, database, guard):
         if not changed.rowcount:
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
         pipeline = normalize_pipeline(voice.pipeline)
-        return {"pipeline": pipeline, "instructions": pipeline_instructions(pipeline), "expires_at": voice.expires_at}
+        row = await db.get(UserSetting, voice.owner_id)
+        intro = intro_for(
+            pipeline.get("llm", {}).get("language", "en"),
+            seen=row is not None and row.intro_seen_at is not None,
+            tts_provider=(pipeline.get("tts") or {}).get("provider"),
+        )
+        return {
+            "pipeline": pipeline,
+            "instructions": pipeline_instructions(pipeline),
+            "expires_at": voice.expires_at,
+            "intro": intro,
+        }
+
+    @app.post("/internal/agent/intro-played")
+    async def intro_played(request: Request, db: AsyncSession = Depends(database)):
+        """Worker confirmation that the full introduction played to the end. Idempotent."""
+        voice = await guard(request, db)
+        row = await db.get(UserSetting, voice.owner_id)
+        if row is None:
+            row = UserSetting(owner_id=voice.owner_id)
+            db.add(row)
+        if row.intro_seen_at is None:
+            row.intro_seen_at = datetime.now(UTC).isoformat()
+            await db.commit()
+        return {"ok": True}
 
 
 def _compile_turn_context(
