@@ -3,6 +3,7 @@
   import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
   import { createWordleGame, type WordleGame } from './wordleGame.svelte';
   import { createWordleVoice, speakWordleReply, type WordleVoice } from './wordleVoice';
+  import { createActiveSync } from './wordleActive';
   import WordleEntry from './WordleEntry.svelte';
   import WordleStage from './WordleStage.svelte';
 
@@ -54,14 +55,20 @@
     // The adapter itself re-checks final/speaker; the runtime also emits
     // assistant and partial segments, which must never dispatch game actions.
     void voice.handleEvent(event);
+    activeSync.handleEvent(event);
   }
 
   // The worker gates guess-style intents on an open game, so ordinary speech
   // such as "make your voice a lady" is never swallowed as a Wordle command.
+  const activeSync = createActiveSync(
+    (event) => (runtime ? runtime.sendControl(event) : Promise.resolve()),
+    () => game.state.open,
+  );
+
   $effect(() => {
-    const active = runtime;
-    if (!active) return;
-    void active.sendControl({ type: 'wordle.active', value: game.state.open }).catch(() => {});
+    const open = game.state.open;
+    void open;
+    activeSync.publish();
   });
 
   $effect(() => {
