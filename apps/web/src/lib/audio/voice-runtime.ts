@@ -1,6 +1,7 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
 import type { CommandResult } from '../commands/commandStore';
+import { interruptAgent, publishControlFlag, sendChatText, speakExact } from './agentRpc';
 import { controlEvent } from './controlPayload';
 import { waitForAgent, type StartupSignal } from './agentStartup';
 import { disposeAudioResources } from './disposeAudio';
@@ -239,41 +240,19 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   }
 
   async sendText(text: string) {
-    if (!this.room) throw new Error('CALL_REQUIRED');
-    await this.room.localParticipant.sendText(text, { topic: 'lk.chat' });
+    await sendChatText(this.room, text);
   }
 
   async say(text: string) {
-    const agent = this.agentParticipant();
-    if (!this.room || !agent) throw new Error('CALL_REQUIRED');
-    await this.room.localParticipant.performRpc({
-      destinationIdentity: agent.identity,
-      method: 'sarjy.say',
-      payload: JSON.stringify({ text }),
-    });
+    await speakExact(this.room, text);
   }
 
   async sendControl(event: Record<string, unknown>) {
-    if (!this.room) return;
-    await this.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(event)), {
-      reliable: true,
-      topic: 'sarjy.control',
-    });
-  }
-
-  private agentParticipant() {
-    return [...(this.room?.remoteParticipants.values() || [])].find((participant) => participant.isAgent);
+    await publishControlFlag(this.room, event);
   }
 
   async interrupt() {
-    const agent = [...(this.room?.remoteParticipants.values() || [])].find((participant) => participant.isAgent);
-    if (agent && this.room) {
-      await this.room.localParticipant.performRpc({
-        destinationIdentity: agent.identity,
-        method: 'sarjy.interrupt',
-        payload: '',
-      });
-    }
+    await interruptAgent(this.room);
   }
 
   /** Abort an in-flight connection attempt and ignore anything it still emits. */

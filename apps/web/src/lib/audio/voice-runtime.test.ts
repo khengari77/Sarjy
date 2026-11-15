@@ -224,26 +224,27 @@ it('resolves the replacement call when the previous teardown rejects', async () 
   }
 });
 
+async function connectedRuntime() {
+  vi.useFakeTimers();
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
+  const runtime = new LiveKitVoiceRuntime();
+  const connecting = runtime.connect(config);
+  await vi.advanceTimersByTimeAsync(1);
+  const room = rooms().at(-1)!;
+  const agent = { isAgent: true, identity: 'agent', attributes: { 'lk.agent.state': 'listening' } };
+  room.remoteParticipants.set('agent', agent as never);
+  room.connectResolve!();
+  await vi.advanceTimersByTimeAsync(100);
+  await connecting;
+  return { runtime, room };
+}
+
 describe('exact command speech', () => {
   it('sends the exact text to the agent sarjy.say RPC', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('window', {});
-    vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
-    const runtime = new LiveKitVoiceRuntime();
-    const connecting = runtime.connect(config);
-    await vi.advanceTimersByTimeAsync(1);
-    const room = rooms().at(-1)!;
-    room.remoteParticipants.set('agent', {
-      isAgent: true,
-      identity: 'agent',
-      attributes: { 'lk.agent.state': 'listening' },
-    });
-    room.connectResolve!();
-    await vi.advanceTimersByTimeAsync(100);
-    await connecting;
-
+    const { runtime, room } = await connectedRuntime();
     const performRpc = vi.fn().mockResolvedValue('{"ok":true}');
-    room.localParticipant.performRpc = performRpc;
+    (room.localParticipant as unknown as { performRpc: typeof performRpc }).performRpc = performRpc;
     await runtime.say('The answer was PLANT.');
     expect(performRpc).toHaveBeenCalledTimes(1);
     expect(performRpc).toHaveBeenCalledWith({
@@ -254,36 +255,18 @@ describe('exact command speech', () => {
   });
 
   it('refuses to speak without a live room', async () => {
-    const runtime = new LiveKitVoiceRuntime();
-    await expect(runtime.say('Hello')).rejects.toThrow('CALL_REQUIRED');
+    await expect(new LiveKitVoiceRuntime().say('Hello')).rejects.toThrow('CALL_REQUIRED');
   });
 
-  it('publishes control flags on the existing data channel and ignores no-room calls', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('window', {});
-    vi.stubGlobal('document', { body: { appendChild: vi.fn() } });
-    const runtime = new LiveKitVoiceRuntime();
-    const connecting = runtime.connect(config);
-    await vi.advanceTimersByTimeAsync(1);
-    const room = rooms().at(-1)!;
-    room.remoteParticipants.set('agent', {
-      isAgent: true,
-      identity: 'agent',
-      attributes: { 'lk.agent.state': 'listening' },
-    });
-    room.connectResolve!();
-    await vi.advanceTimersByTimeAsync(100);
-    await connecting;
-
+  it('publishes control flags on the data channel and ignores no-room calls', async () => {
+    const { runtime, room } = await connectedRuntime();
     const publishData = vi.fn().mockResolvedValue(undefined);
-    room.localParticipant.publishData = publishData;
+    (room.localParticipant as unknown as { publishData: typeof publishData }).publishData = publishData;
     await runtime.sendControl({ type: 'wordle.reveal_pending', value: true });
     expect(publishData).toHaveBeenCalledTimes(1);
     const [data, options] = publishData.mock.calls[0];
     expect(JSON.parse(new TextDecoder().decode(data))).toEqual({ type: 'wordle.reveal_pending', value: true });
     expect(options).toEqual({ reliable: true, topic: 'sarjy.control' });
-
-    const offline = new LiveKitVoiceRuntime();
-    await expect(offline.sendControl({ type: 'wordle.reveal_pending', value: false })).resolves.toBeUndefined();
+    await expect(new LiveKitVoiceRuntime().sendControl({ type: 'x', value: false })).resolves.toBeUndefined();
   });
 });
