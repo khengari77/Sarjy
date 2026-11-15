@@ -147,7 +147,14 @@ def test_a_hidden_or_deleted_memory_surfaces_nowhere(tmp_path, how):
 
         headers, started = start_turn(client, chat, owner, file, memories=(), text="Tell me about tea")
         context = started["context"]
-        assert "green tea" not in str(context["messages"]) + str(context["model_request"]["memories"])
+        assert "green tea" not in str(context["model_request"]["memories"])
+        # Hidden text may appear only inside the quoted retraction block (it tells the model to forget it).
+        leaking = [m for m in context["messages"] if "green tea" in m["content"]]
+        if how == "hidden":
+            assert [m["content"].split(":")[0] for m in leaking] == ["Memory (untrusted memory data, id=retraction"]
+            assert all("do not use, repeat or confirm it" in m["content"] for m in leaking)
+        else:
+            assert leaking == []
 
         recall = client.post(
             RECALL, headers=headers, json={"turn_id": started["turn_id"], "request_id": "r", "query": "tea"}

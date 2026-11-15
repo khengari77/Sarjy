@@ -1,10 +1,11 @@
 """Context inspection, proposal, confirmation and undo endpoints."""
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.services.context_blocks import DEFAULT_LIMIT, MAX_LIMIT, list_context_blocks
 from app.services.context_operations import (
     ContextOperationError,
     confirm_proposal,
@@ -128,6 +129,38 @@ class ContextState(BaseModel):
     excluded_ids: list[str]
 
 
+class ContextBlock(BaseModel):
+    id: str
+    kind: str
+    role: str
+    text: str
+    truncated: bool
+    estimated_tokens: int
+    state: str
+    reason: str | None
+
+
+class ContextBlockCounts(BaseModel):
+    included: int
+    excluded: int
+    blocked: int
+    outside_window: int
+    not_sent: int
+    total: int
+
+
+class ContextBlocks(BaseModel):
+    conversation_id: str
+    revision: int
+    token_estimate_method: str
+    included_tokens_estimate: int
+    counts: ContextBlockCounts
+    limit: int
+    offset: int
+    has_more: bool
+    blocks: list[ContextBlock]
+
+
 def _context_error(exc: ContextOperationError) -> HTTPException:
     return HTTPException(exc.status, detail={"code": exc.code})
 
@@ -229,6 +262,21 @@ def register_exclusion_routes(app, *, config: Settings, database, identity):
                 conversation_id=conversation_id,
                 memory_ids=body.memory_ids,
                 secret=proposal_secret(),
+            )
+        except ContextOperationError as exc:
+            raise _context_error(exc) from exc
+
+    @app.get("/v1/conversations/{conversation_id}/context/blocks", response_model=ContextBlocks)
+    async def get_context_blocks(
+        conversation_id: str,
+        limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+        offset: int = Query(0, ge=0),
+        user=Depends(identity),
+        db: AsyncSession = Depends(database),
+    ):
+        try:
+            return await list_context_blocks(
+                db, owner_id=user.id, conversation_id=conversation_id, limit=limit, offset=offset
             )
         except ContextOperationError as exc:
             raise _context_error(exc) from exc

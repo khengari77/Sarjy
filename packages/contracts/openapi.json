@@ -1453,6 +1453,68 @@
         }
       }
     },
+    "/v1/conversations/{conversation_id}/context/blocks": {
+      "get": {
+        "summary": "Get Context Blocks",
+        "operationId": "get_context_blocks_v1_conversations__conversation_id__context_blocks_get",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextBlocks"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/wordle/today": {
       "get": {
         "summary": "Today",
@@ -1789,6 +1851,16 @@
                 "type": "null"
               }
             ]
+          },
+          "memory_op": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryOpAnswer"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -1926,6 +1998,154 @@
           "reason"
         ],
         "title": "ContextAmbiguity"
+      },
+      "ContextBlock": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          },
+          "estimated_tokens": {
+            "type": "integer",
+            "title": "Estimated Tokens"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "role",
+          "text",
+          "truncated",
+          "estimated_tokens",
+          "state",
+          "reason"
+        ],
+        "title": "ContextBlock"
+      },
+      "ContextBlockCounts": {
+        "properties": {
+          "included": {
+            "type": "integer",
+            "title": "Included"
+          },
+          "excluded": {
+            "type": "integer",
+            "title": "Excluded"
+          },
+          "blocked": {
+            "type": "integer",
+            "title": "Blocked"
+          },
+          "outside_window": {
+            "type": "integer",
+            "title": "Outside Window"
+          },
+          "not_sent": {
+            "type": "integer",
+            "title": "Not Sent"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "included",
+          "excluded",
+          "blocked",
+          "outside_window",
+          "not_sent",
+          "total"
+        ],
+        "title": "ContextBlockCounts"
+      },
+      "ContextBlocks": {
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "token_estimate_method": {
+            "type": "string",
+            "title": "Token Estimate Method"
+          },
+          "included_tokens_estimate": {
+            "type": "integer",
+            "title": "Included Tokens Estimate"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ContextBlockCounts"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/ContextBlock"
+            },
+            "type": "array",
+            "title": "Blocks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conversation_id",
+          "revision",
+          "token_estimate_method",
+          "included_tokens_estimate",
+          "counts",
+          "limit",
+          "offset",
+          "has_more",
+          "blocks"
+        ],
+        "title": "ContextBlocks"
       },
       "ContextConfirmInput": {
         "properties": {
@@ -2709,6 +2929,24 @@
           "updated_at"
         ],
         "title": "MemoryListItem"
+      },
+      "MemoryOpAnswer": {
+        "properties": {
+          "choice": {
+            "type": "string",
+            "title": "Choice"
+          },
+          "probability": {
+            "type": "number",
+            "title": "Probability"
+          }
+        },
+        "type": "object",
+        "required": [
+          "choice",
+          "probability"
+        ],
+        "title": "MemoryOpAnswer"
       },
       "MemoryProposeInput": {
         "properties": {

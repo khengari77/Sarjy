@@ -32,6 +32,13 @@ MEMORY_CANDIDATE_LIMIT = 200
 TOOL_RESULT_LIMIT = 50
 _ID_CHUNK = 400
 DENIED_STATUSES = frozenset({"superseded", "inactive", "excluded"})
+# Retraction lines: one bounded, non-privileged reminder per hidden memory that
+# originated in this conversation, so restatements of a forgotten fact in the
+# history window are not confirmed back to the user.
+RETRACTION_PREFIX = "retraction:"
+RETRACTION_LIMIT = 5
+RETRACTION_TEXT_LIMIT = 300
+RETRACTION_TEMPLATE = "The user asked you to forget this; do not use, repeat or confirm it: {text}"
 
 
 @dataclass(frozen=True)
@@ -74,6 +81,7 @@ class ContextInputs:
     memories: MemoryCandidates
     tool_results: tuple[ContextCandidate, ...]
     blocked_ids: frozenset[str] = frozenset()
+    retractions: tuple[ContextCandidate, ...] = ()
 
     @property
     def excluded_ids(self) -> frozenset[str]:
@@ -178,8 +186,45 @@ def _dependency_ids(turn: Turn) -> set[str]:
     derivation = snapshot.get("derivation")
     values = derivation.get("record_ids") if isinstance(derivation, dict) else snapshot.get("included_record_ids")
     if isinstance(values, list):
-        references.update(value for value in values if isinstance(value, str))
+        # Synthetic retraction ids are not stored records; they never propagate.
+        references.update(
+            value for value in values if isinstance(value, str) and not value.startswith(RETRACTION_PREFIX)
+        )
     return references
+
+
+async def retraction_candidates(
+    db: AsyncSession, *, owner_id: str, conversation_id: str
+) -> tuple[ContextCandidate, ...]:
+    """Bounded retraction blocks for hidden memories that came from this conversation.
+
+    Derived from live status, so unhiding removes the block. Deleted memories have
+    their text wiped and are never quoted. The candidates use the memory origin, so
+    they reach the provider only through the inert untrusted-data envelope (#79).
+    """
+    rows = (
+        await db.scalars(
+            select(Memory)
+            .where(
+                Memory.owner_id == owner_id,
+                Memory.status == "hidden",
+                Memory.source_conversation_id == conversation_id,
+            )
+            .order_by(Memory.updated_at.desc(), Memory.id.desc())
+            .limit(RETRACTION_LIMIT)
+        )
+    ).all()
+    return tuple(
+        ContextCandidate(
+            id=RETRACTION_PREFIX + row.id,
+            role="memory",
+            text=RETRACTION_TEMPLATE.format(text=row.content[:RETRACTION_TEXT_LIMIT]),
+            origin="memory",
+            source="retraction",
+        )
+        for row in sorted(rows, key=lambda item: item.id)
+        if row.content
+    )
 
 
 async def _discover_closure_candidates(
@@ -536,6 +581,7 @@ async def read_context_inputs(
         memories=memories,
         tool_results=tool_results,
         blocked_ids=frozenset(blocked | blocked_tools),
+        retractions=await retraction_candidates(db, owner_id=owner_id, conversation_id=conversation_id),
     )
 
 
@@ -561,8 +607,10 @@ __all__ = [
     "MEMORY_CANDIDATE_LIMIT",
     "MemoryCandidates",
     "MemoryReader",
+    "RETRACTION_PREFIX",
     "TOOL_RESULT_LIMIT",
     "location_evidence",
     "orm_memory_candidates",
     "read_context_inputs",
+    "retraction_candidates",
 ]
