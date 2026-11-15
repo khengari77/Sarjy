@@ -236,14 +236,14 @@ test('resizing across the dock breakpoint keeps focus inside the drawer or resto
   await right.click();
   const drawer = page.locator('#shell-right');
   await expect(drawer).toHaveAttribute('role', 'dialog');
-  await drawer.getByRole('tab', { name: 'Context' }).click();
-  await expect(drawer.getByRole('tab', { name: 'Context' })).toBeFocused();
+  await drawer.getByRole('tab', { name: 'Transcript' }).click();
+  await expect(drawer.getByRole('tab', { name: 'Transcript' })).toBeFocused();
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(right).toHaveAttribute('aria-expanded', 'true');
   await expect(drawer).toBeVisible();
   await expect(drawer).not.toHaveAttribute('role', 'dialog');
-  await expect(drawer.getByRole('tab', { name: 'Context' })).toBeFocused();
+  await expect(drawer.getByRole('tab', { name: 'Transcript' })).toBeFocused();
   expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
   expect(await isInert(page, '.topbar')).toBe(false);
   expect(await isInert(page, '.stage-content')).toBe(false);
