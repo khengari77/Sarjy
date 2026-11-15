@@ -92,8 +92,15 @@ class CommandInput(BaseModel):
     turn_id: str = Field(min_length=1, max_length=100)
 
 
+class MemoryOpAnswer(BaseModel):
+    choice: str
+    probability: float
+
+
 class CommandResponse(BaseModel):
     command: CommandResult | None = None
+    # Jev's memory_op answer from the same single classification call (absent when none was made).
+    memory_op: MemoryOpAnswer | None = None
 
 
 def _session_guard(config: Settings):
@@ -144,7 +151,9 @@ def _memory_secret(config: Settings) -> str:
     return config.context_proposal_secret or config.agent_service_secret
 
 
-def _memory_proposal(config: Settings, *, owner_id: str, conversation_id: str, source_turn_id: str, text: str):
+def _memory_proposal(
+    config: Settings, *, owner_id: str, conversation_id: str, source_turn_id: str, text: str, strict: bool = False
+):
     secret = _memory_secret(config)
     if not secret:
         return None
@@ -155,13 +164,14 @@ def _memory_proposal(config: Settings, *, owner_id: str, conversation_id: str, s
             conversation_id=conversation_id,
             source_turn_id=source_turn_id,
             secret=secret,
+            strict=strict,
         )
     except MemoryCaptureError:
         return None
 
 
 def _context_instructions(
-    config: Settings, pipeline, *, owner_id: str, conversation_id: str, turn
+    config: Settings, pipeline, *, owner_id: str, conversation_id: str, turn, strict_capture: bool = False
 ) -> tuple[str, dict | None]:
     proposal = _memory_proposal(
         config,
@@ -169,6 +179,7 @@ def _context_instructions(
         conversation_id=conversation_id,
         source_turn_id=turn.id,
         text=turn.text,
+        strict=strict_capture,
     )
     instructions = pipeline_instructions(pipeline)
     if proposal is not None:
@@ -332,6 +343,8 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
             owner_id=conversation.owner_id,
             conversation_id=voice.conversation_id,
             turn=turn,
+            # With the model classifier available, regexes only keep the exact "remember that ..." fast path.
+            strict_capture=getattr(app.state, "ui_classifier", None) is not None,
         )
         inputs = await read_context_inputs(db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id)
         compiled = _compile_turn_context(
@@ -499,6 +512,7 @@ def _register_command_routes(app, *, database, guard, catalog, approved_voice_id
         if not isinstance(settings_revision, int):
             settings_row = await db.get(UserSetting, conversation.owner_id)
             settings_revision = settings_row.revision if settings_row is not None else 0
+        classifier = _RecordingClassifier(getattr(app.state, "ui_classifier", None))
         result = await handle_finalized_utterance(
             db,
             owner_id=conversation.owner_id,
@@ -511,9 +525,31 @@ def _register_command_routes(app, *, database, guard, catalog, approved_voice_id
             approved_voice_ids=approved_voice_ids,
             handlers=app.state.action_handlers,
             secret=secret,
-            ui_classifier=getattr(app.state, "ui_classifier", None),
+            ui_classifier=classifier if classifier.inner is not None else None,
         )
-        return {"command": result.model_dump(mode="json") if result is not None else None}
+        return {
+            "command": result.model_dump(mode="json") if result is not None else None,
+            # The one classification of this turn, shared with the worker so it can force a memory tool.
+            "memory_op": classifier.memory_op() if result is None else None,
+        }
+
+
+class _RecordingClassifier:
+    """Wraps the UI classifier so one Jev call per turn also yields ``memory_op``."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.result = None
+
+    async def classify(self, *, request_id: str, instruction: str):
+        self.result = await self.inner.classify(request_id=request_id, instruction=instruction)
+        return self.result
+
+    def memory_op(self) -> dict | None:
+        answer = None if self.result is None else self.result.memory_op
+        if answer is None:
+            return None
+        return {"choice": answer.choice, "probability": answer.probability}
 
 
 def _claim_replay(claim):
