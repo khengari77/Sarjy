@@ -100,7 +100,7 @@
   function opening(panel: 'left' | 'right') {
     focusRestoreToken += 1;
     if (panel === 'left') leftOpen = true;
-    else rightOpen = true;
+    else [rightOpen, rightOpener] = [true, null]; // the header toggle opens it now
     // Below the dock breakpoint only one overlay drawer can be open at a time.
     if (!docked) {
       if (panel === 'left') rightOpen = false;
@@ -110,10 +110,7 @@
 
   function toggle(panel: 'left' | 'right') {
     if (panel === 'left' ? leftOpen : rightOpen) void closePanel(panel);
-    else {
-      if (panel === 'right') rightOpener = null;
-      opening(panel);
-    }
+    else opening(panel);
   }
 
   /**
@@ -128,9 +125,7 @@
     else rightOpen = false;
     await tick();
     if (token !== focusRestoreToken) return;
-    const opener = panel === 'right' && rightOpener?.isConnected ? rightOpener : null;
-    (panel === 'left' ? leftButton : (opener ?? rightButton))?.focus({ preventScroll: true });
-    if (panel === 'right') rightOpener = null;
+    (panel === 'left' ? leftButton : (rightOpener ?? rightButton))?.focus({ preventScroll: true });
   }
 
   function onViewportChange(event: MediaQueryListEvent) {

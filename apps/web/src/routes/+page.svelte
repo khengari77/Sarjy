@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import type { VoiceRuntime } from '../lib/audio/voice-runtime';
   import { activateOrb } from '../lib/orb/orbActions';
   import type { ResolvedTheme } from '../lib/ui/theme';
   import type { ThemeControl } from '../lib/ui/themeSession.svelte';
   import AppShell from '../lib/ui/AppShell.svelte';
+  import { revealTranscript } from '../lib/ui/revealTranscript';
   import ConversationList from '../lib/chat/ConversationList.svelte';
   import VoiceStage from '../lib/chat/VoiceStage.svelte';
   import type { PendingIntent } from '../lib/chat/intent';
@@ -61,19 +62,10 @@
   // Panel state is a top-level reactive object so the shell bindings and the
   // command store share one source of truth.
   const panels = $state({ history: false, memory_explorer: false });
-  // Control that opened the right drawer on its Transcript tab; the shell
-  // returns focus there when the drawer closes.
+  // The control that opened the drawer on its Transcript tab; focus returns there.
   let drawerOpener = $state<HTMLElement | null>(null);
-
-  async function openTranscript(opener: HTMLElement) {
-    drawerOpener = opener;
-    commands.state.panelTab = 'transcript';
-    panels.memory_explorer = true;
-    // A docked drawer never steals focus on its own; this is a keyboard
-    // activation, so move into the drawer (on its selected tab).
-    await tick();
-    document.getElementById('drawer-tab-transcript')?.focus({ preventScroll: true });
-  }
+  const openTranscript = (opener: HTMLElement) =>
+    revealTranscript(opener, panels, commands.state, (control) => (drawerOpener = control));
   // The shell owns the theme session and hands back its setter; a voice theme
   // command applies through it once and persists in this browser only.
   let shellTheme: ThemeControl | null = null;
@@ -98,9 +90,7 @@
     }
   }
 
-  function onVoiceError(error: unknown) {
-    voice.voiceErrorCode = errorCode(error);
-  }
+  const onVoiceError = (error: unknown) => (voice.voiceErrorCode = errorCode(error));
 
   function handleOrb() {
     activateOrb(presentation, {
@@ -120,17 +110,9 @@
     else if (!voice.connecting) startConnect();
   }
 
-  function reconnect() {
-    void run(() => connection!.reconnect(), onVoiceError);
-  }
-
-  function startConnect() {
-    void connection!.connect(true).catch(onVoiceError);
-  }
-
-  async function toggleMute() {
-    await run(() => connection!.toggleMute(), onVoiceError);
-  }
+  const reconnect = () => void run(() => connection!.reconnect(), onVoiceError);
+  const startConnect = () => void connection!.connect(true).catch(onVoiceError);
+  const toggleMute = () => run(() => connection!.toggleMute(), onVoiceError);
 
   async function interrupt() {
     if (!voice.live || !canInterrupt) return;
