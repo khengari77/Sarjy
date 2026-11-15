@@ -2,7 +2,6 @@
   import '../app.css';
   import type { Snippet } from 'svelte';
   import EntryGate from '../lib/auth/EntryGate.svelte';
-  import SignOut from '../lib/auth/SignOut.svelte';
 
   interface Props {
     children: Snippet;
@@ -21,5 +20,4 @@
   />
 {:else}
   {@render children()}
-  {#if data.protectedMode}<SignOut />{/if}
 {/if}
