@@ -312,3 +312,38 @@ def test_a_tool_armed_turn_is_not_rearmed_from_the_turn_start_proposal(monkeypat
         assert agent.memory_proposal is None
 
     run(monkeypatch, steps, tool_bodies=FORGET_BODY, regex_proposals={"tea stuff": stale})
+
+
+SAVED_BODY = {
+    "memory-propose": {"status": "rejected", "error": "MEMORY_ALREADY_SAVED", "message": "That is already saved."}
+}
+
+
+def test_the_confirmation_turn_cannot_start_a_new_proposal(monkeypatch):
+    async def steps(h, agent):
+        await h.say(agent, "I've moved to Benghazi", "propose_memory", fact="I live in Benghazi")
+        posts = len([p for p in h.paths if p.endswith("memory-propose")])
+        # The model re-proposes on the very turn that answers the confirmation.
+        result, _ = await h.say(agent, "yes", "propose_memory", fact="I live in Benghazi")
+        assert [c["decision"] for c in h.confirms] == ["save"]
+        assert "answering the previous confirmation" in result
+        assert len([p for p in h.paths if p.endswith("memory-propose")]) == posts
+        assert agent.memory_proposal is None
+        result, _ = await h.say(agent, "yes", "propose_forget", query="tea")
+        assert agent.forced_speech is None and agent.memory_proposal is None
+
+    run(monkeypatch, steps, tool_bodies=REMEMBER_BODY)
+
+
+def test_an_unrelated_turn_repeat_proposal_is_rejected_and_arms_nothing(monkeypatch):
+    async def steps(h, agent):
+        await h.say(agent, "I've moved to Benghazi", "propose_memory", fact="I live in Benghazi")
+        await h.say(agent, "yes")
+        h.tool_bodies = SAVED_BODY
+        _, chunks = await h.say(agent, "mumble garbled", "propose_memory", fact="I live in Benghazi")
+        assert agent.memory_proposal is None and agent.forced_speech is None
+        assert PROPOSAL["question"] not in chunks
+        await h.say(agent, "yes")
+        assert len(h.confirms) == 1
+
+    run(monkeypatch, steps, tool_bodies=REMEMBER_BODY)
