@@ -47,3 +47,9 @@ htmlcov/
 
 # Design handoff kit (reference only; not app code)
 Sarjy_Living_Cloud_UI_UX_Design_Kit_v2.1/
+presentation/.venv/
+presentation/media/
+presentation/renders/
+presentation/*.log
+presentation/.tmp/
+presentation/.uvcache/
