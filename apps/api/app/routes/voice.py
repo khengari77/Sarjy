@@ -16,11 +16,11 @@ from app.domain.pipeline import PipelineConfig, validate_pipeline
 from app.domain.sessions import admission_error
 from app.infrastructure.database import Identity, ReviewerInvitation, SessionGate, UserSetting, VoiceSession
 from app.services.actions import clear_saved_voice
-from app.services.pipeline_settings import configured_keys, default_llm
+from app.services.pipeline_settings import configured_keys, default_llm, default_tts
 from app.services.session_cleanup import cleanup_room
 from app.services.voices import (
-    ElevenLabsVoices,
     VoiceCatalogError,
+    VoiceProvider,
     approved_voice_ids,
     require_approved,
     resolve_voice,
@@ -84,7 +84,7 @@ def _voice_error(exc: VoiceCatalogError, source: str | None) -> HTTPException:
     return HTTPException(exc.status, detail={"code": code})
 
 
-async def _resolve_call_voice(config: Settings, catalog: ElevenLabsVoices, requested: str | None, saved: str | None):
+async def _resolve_call_voice(config: Settings, catalog: VoiceProvider, requested: str | None, saved: str | None):
     """Resolve, approve and catalog-check the call voice.
 
     A saved voice that the catalog calls unusable (or a transient catalog failure)
@@ -110,11 +110,14 @@ async def _resolve_call_voice(config: Settings, catalog: ElevenLabsVoices, reque
 
 
 def register_voice_routes(
-    app, *, config: Settings, catalog: ElevenLabsVoices, database, identity, cleanup_identity, owned
+    app, *, config: Settings, catalog: VoiceProvider, database, identity, cleanup_identity, owned
 ):
     @app.post("/v1/voice/sessions", status_code=201)
     async def start_voice(body: StartVoice, user=Depends(identity), db: AsyncSession = Depends(database)):
         await owned(body.conversation_id, user, db)
+        if config.tts_provider == "deepgram" and body.language != "en":
+            # Aura-2 has no Arabic; never fall back to an English voice silently.
+            raise HTTPException(422, detail={"code": "TTS_LANGUAGE_UNSUPPORTED"})
         required = ["livekit_url", "livekit_api_key", "livekit_api_secret", "agent_service_secret"]
         missing = [name.upper() for name in required if not getattr(config, name)]
         policy = resolve_response_policy(body.response_preference, body.response_tier)
@@ -122,8 +125,8 @@ def register_voice_routes(
             stt={"provider": "deepgram_direct", "model": "nova-3", "language": body.language},
             llm={"provider": default_llm(config)[0], "model": default_llm(config)[1], "language": body.language},
             tts={
-                "provider": "elevenlabs_direct",
-                "model": "eleven_flash_v2_5",
+                "provider": default_tts(config)[0],
+                "model": default_tts(config)[1],
                 "voice_id": body.voice_id,
                 "language": body.language,
             },

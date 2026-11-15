@@ -29,7 +29,7 @@ from app.services.reviewer_access import (
     ReviewerSessionRequired,
     authorize,
 )
-from app.services.voices import ElevenLabsVoices, approved_voice_ids
+from app.services.voices import DeepgramVoices, ElevenLabsVoices, VoiceProvider, approved_voice_ids
 from app.services.wordle import HttpWordleSource, wordle_refresh_loop
 
 
@@ -135,7 +135,7 @@ def _jev_ui_classifier(config: Settings, sessions) -> JevUiClient | None:
 def create_app(
     settings: Settings | None = None,
     *,
-    voice_catalog: ElevenLabsVoices | None = None,
+    voice_catalog: VoiceProvider | None = None,
     embedding_adapter=None,
     clock=None,
     wordle_source=None,
@@ -151,7 +151,9 @@ def create_app(
         config.cookie_secure and config.development_protected and config.web_service_secret
     ):
         raise ValueError("REVIEWER_ACCESS_CONFIGURATION_INVALID")
-    catalog = voice_catalog or ElevenLabsVoices(config.eleven_api_key)
+    catalog = voice_catalog or (
+        DeepgramVoices() if config.tts_provider == "deepgram" else ElevenLabsVoices(config.eleven_api_key)
+    )
     source = wordle_source or HttpWordleSource(config.wordle_source_url)
     engine = create_async_engine(config.database_url)
     if config.database_url.startswith("sqlite"):
