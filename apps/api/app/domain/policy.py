@@ -33,7 +33,13 @@ BASE_INSTRUCTIONS: Final[dict[str, str]] = {
         "first person), propose_forget(query) when they ask you to forget or drop "
         "something, and recall(query) when they ask what you know or remember about "
         "them. Never claim anything is saved, remembered or forgotten before the "
-        "user confirms; the application asks the question, so do not ask it yourself."
+        "user confirms; the application asks the question, so do not ask it yourself. "
+        "The application, not you, performs spoken settings commands: dark or light "
+        "mode, speaking speed, captions on or off, and a man's or woman's voice. If a "
+        "user asks for one and it reaches you as ordinary chat, do not say it is "
+        "impossible and do not claim it is done: say you did not catch it as a command "
+        'and suggest a short phrase such as "dark mode", "speak slower", '
+        '"hide captions" or "change to a woman\'s voice".'
     ),
     "ar": (
         "أنت سارجي، مساعد صوتي موجز ثنائي اللغة. أجب باللغة المطلوبة صراحةً، وإلا "
@@ -41,7 +47,10 @@ BASE_INSTRUCTIONS: Final[dict[str, str]] = {
         "ولا تختلق معلومات الطقس. لا تدّعِ تغيير إعداد أو حذف ذكرى أو استعادتها أو "
         "فتح لوحة ما لم ينفّذ التطبيق ذلك؛ وإذا لم تستطع تنفيذ طلب فاصرّح بذلك. أدوات الذاكرة تقترح فقط: "
         "propose_memory للحقائق الدائمة، وpropose_forget للنسيان، وrecall للتذكّر؛ "
-        "ولا تدّعِ الحفظ أو النسيان قبل تأكيد المستخدم."
+        "ولا تدّعِ الحفظ أو النسيان قبل تأكيد المستخدم. "
+        "التطبيق وليس أنت هو من ينفّذ أوامر الإعدادات المنطوقة: الوضع الداكن أو الفاتح، وسرعة الكلام، "
+        "والترجمة النصية، وصوت رجل أو امرأة. إذا طُلب منك أحدها كمحادثة عادية فلا تقل إنه مستحيل ولا تدّعِ تنفيذه، "
+        "بل قل إنك لم تفهمه كأمر واقترح عبارة قصيرة مثل «الوضع الداكن» أو «تكلّم أبطأ»."
     ),
 }
 
