@@ -82,6 +82,9 @@ const config: SessionConfig = {
   url: 'ws://fake.invalid',
   token: 'token',
   expires_at: new Date(Date.now() + 60000).toISOString(),
+  voice: { id: 'voice-1', name: 'Voice', languages: ['en'] },
+  voice_language: 'en',
+  voice_source: 'default',
 };
 
 function harness() {
@@ -94,6 +97,8 @@ function harness() {
     getRuntime: () => runtime,
     getLanguage: () => 'en',
     getVoice: () => ({ id: 'v1', name: 'Voice' }),
+    applyCommand: () => {},
+    resyncSettings: () => {},
     meters: {
       startMicMeter: vi.fn(),
       stopMicMeter: vi.fn(),

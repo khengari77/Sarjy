@@ -4,13 +4,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.domain.commands import CommandResult
 from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
 from app.domain.contracts import (
     MemoryRecord,
@@ -19,12 +20,15 @@ from app.domain.contracts import (
     UserSettings,
     resolve_response_policy,
 )
+from app.domain.intro import intro_for
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
 from app.infrastructure.database import Conversation, Memory, Turn, UserSetting, VoiceSession
+from app.routes.wordle_tools import register_wordle_tool_routes
 from app.services.budget import reserve as reserve_development_budget
+from app.services.commands import command_request_id, handle_finalized_utterance
 from app.services.context_assembly import location_evidence, read_context_inputs
 from app.services.memory import MemoryService
 from app.services.memory_capture import (
@@ -34,6 +38,8 @@ from app.services.memory_capture import (
     propose_memory,
     record_proposal,
 )
+from app.services.memory_tools import memory_forget_tool, memory_propose_tool, memory_recall_tool
+from app.services.titles import generate_conversation_title
 from app.services.tool_operations import (
     ToolOperationError,
     claim_tool_operation,
@@ -45,7 +51,7 @@ from app.services.weather import WeatherError, get_current_weather
 
 
 class BudgetReservation(BaseModel):
-    provider: Literal["openai", "elevenlabs", "deepseek"]
+    provider: Literal["openai", "elevenlabs", "deepgram_tts", "deepseek"]
     characters: int = Field(default=0, ge=0, le=500)
 
 
@@ -70,6 +76,34 @@ class WeatherInput(BaseModel):
     request_id: str = Field(min_length=1, max_length=100)
     city: str = Field(min_length=1, max_length=120)
     country: str | None = Field(default=None, max_length=120)
+
+
+class MemoryToolBase(BaseModel):
+    turn_id: str = Field(min_length=1, max_length=100)
+    request_id: str = Field(min_length=1, max_length=100)
+
+
+class MemoryProposeInput(MemoryToolBase):
+    fact: str = Field(min_length=1, max_length=1000)
+
+
+class MemoryQueryInput(MemoryToolBase):
+    query: str = Field(min_length=1, max_length=500)
+
+
+class CommandInput(BaseModel):
+    turn_id: str = Field(min_length=1, max_length=100)
+
+
+class MemoryOpAnswer(BaseModel):
+    choice: str
+    probability: float
+
+
+class CommandResponse(BaseModel):
+    command: CommandResult | None = None
+    # Jev's memory_op answer from the same single classification call (absent when none was made).
+    memory_op: MemoryOpAnswer | None = None
 
 
 def _session_guard(config: Settings):
@@ -98,20 +132,39 @@ PENDING_MEMORY_INSTRUCTION = (
 )
 
 
-def register_worker_routes(app, *, config: Settings, database, embedder):
+def register_worker_routes(
+    app, *, config: Settings, database, sessions, embedder, catalog, approved_voice_ids=None, wordle_source=None
+):
     guard = _session_guard(config)
     _register_budget_routes(app, config=config, database=database)
     _register_session_routes(app, database=database, guard=guard)
-    _register_turn_routes(app, config=config, database=database, guard=guard)
+    _register_turn_routes(app, config=config, database=database, guard=guard, sessions=sessions)
+    _register_command_routes(
+        app,
+        database=database,
+        guard=guard,
+        catalog=catalog,
+        approved_voice_ids=approved_voice_ids,
+        secret=_memory_secret(config),
+    )
     _register_tool_routes(app, database=database, guard=guard)
+    _register_memory_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
+    if wordle_source is not None:
+
+        async def run_tool(db, request, body, name, arguments, effect):
+            return await _run_memory_tool(guard, db, request, body, name, arguments, effect)
+
+        register_wordle_tool_routes(app, config=config, database=database, run_tool=run_tool, source=wordle_source)
 
 
 def _memory_secret(config: Settings) -> str:
     return config.context_proposal_secret or config.agent_service_secret
 
 
-def _memory_proposal(config: Settings, *, owner_id: str, conversation_id: str, source_turn_id: str, text: str):
+def _memory_proposal(
+    config: Settings, *, owner_id: str, conversation_id: str, source_turn_id: str, text: str, strict: bool = False
+):
     secret = _memory_secret(config)
     if not secret:
         return None
@@ -122,13 +175,14 @@ def _memory_proposal(config: Settings, *, owner_id: str, conversation_id: str, s
             conversation_id=conversation_id,
             source_turn_id=source_turn_id,
             secret=secret,
+            strict=strict,
         )
     except MemoryCaptureError:
         return None
 
 
 def _context_instructions(
-    config: Settings, pipeline, *, owner_id: str, conversation_id: str, turn
+    config: Settings, pipeline, *, owner_id: str, conversation_id: str, turn, strict_capture: bool = False
 ) -> tuple[str, dict | None]:
     proposal = _memory_proposal(
         config,
@@ -136,6 +190,7 @@ def _context_instructions(
         conversation_id=conversation_id,
         source_turn_id=turn.id,
         text=turn.text,
+        strict=strict_capture,
     )
     instructions = pipeline_instructions(pipeline)
     if proposal is not None:
@@ -216,6 +271,10 @@ def _register_budget_routes(app, *, config: Settings, database):
         overrides = (
             {"units": config.deepseek_request_micro_usd, "limit": config.deepseek_daily_micro_usd}
             if body.provider == "deepseek"
+            else {"limit": config.elevenlabs_daily_characters}
+            if body.provider == "elevenlabs"
+            else {"limit": config.deepgram_daily_characters}
+            if body.provider == "deepgram_tts"
             else {}
         )
         try:
@@ -241,7 +300,31 @@ def _register_session_routes(app, *, database, guard):
         if not changed.rowcount:
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
         pipeline = normalize_pipeline(voice.pipeline)
-        return {"pipeline": pipeline, "instructions": pipeline_instructions(pipeline), "expires_at": voice.expires_at}
+        row = await db.get(UserSetting, voice.owner_id)
+        intro = intro_for(
+            pipeline.get("llm", {}).get("language", "en"),
+            seen=row is not None and row.intro_seen_at is not None,
+            tts_provider=(pipeline.get("tts") or {}).get("provider"),
+        )
+        return {
+            "pipeline": pipeline,
+            "instructions": pipeline_instructions(pipeline),
+            "expires_at": voice.expires_at,
+            "intro": intro,
+        }
+
+    @app.post("/internal/agent/intro-played")
+    async def intro_played(request: Request, db: AsyncSession = Depends(database)):
+        """Worker confirmation that the full introduction played to the end. Idempotent."""
+        voice = await guard(request, db)
+        row = await db.get(UserSetting, voice.owner_id)
+        if row is None:
+            row = UserSetting(owner_id=voice.owner_id)
+            db.add(row)
+        if row.intro_seen_at is None:
+            row.intro_seen_at = datetime.now(UTC).isoformat()
+            await db.commit()
+        return {"ok": True}
 
 
 def _compile_turn_context(
@@ -264,7 +347,7 @@ def _compile_turn_context(
         raise
 
 
-def _register_turn_routes(app, *, config: Settings, database, guard):
+def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
     @app.post("/internal/agent/turn/start")
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db)
@@ -297,13 +380,15 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
             owner_id=conversation.owner_id,
             conversation_id=voice.conversation_id,
             turn=turn,
+            # With the model classifier available, regexes only keep the exact "remember that ..." fast path.
+            strict_capture=getattr(app.state, "ui_classifier", None) is not None,
         )
         inputs = await read_context_inputs(db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id)
         compiled = _compile_turn_context(
             revision=conversation.revision,
             instructions=instructions,
             history=inputs.history,
-            memories=inputs.memories.included,
+            memories=(*inputs.memories.included, *inputs.retractions),
             tool_results=inputs.tool_results,
             current_turn=ContextCandidate(id=turn.id, role="user", text=turn.text, origin="history"),
             excluded_ids=inputs.excluded_ids,
@@ -382,8 +467,6 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
         conversation_id = voice.conversation_id
         owner_id = conversation.owner_id
         db.add(turn)
-        if conversation.title == "New conversation":
-            conversation.title = body.text[:80]
         try:
             await db.commit()
         except IntegrityError:
@@ -402,7 +485,12 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
         return {"turn_id": turn.id, "context": turn.snapshot, "memory_proposal": proposal}
 
     @app.post("/internal/agent/turn/finalize")
-    async def finalize(body: AgentOutput, request: Request, db: AsyncSession = Depends(database)):
+    async def finalize(
+        body: AgentOutput,
+        request: Request,
+        background: BackgroundTasks,
+        db: AsyncSession = Depends(database),
+    ):
         voice = await guard(request, db, allow_ended=True)
         user_turn = await db.get(Turn, body.turn_id)
         if not user_turn or user_turn.conversation_id != voice.conversation_id:
@@ -436,7 +524,85 @@ def _register_turn_routes(app, *, config: Settings, database, guard):
             if not existing:
                 raise
             return {"id": existing.id}
+        # The exchange is durable now; title generation cannot affect this reply.
+        background.add_task(
+            generate_conversation_title,
+            sessions,
+            conversation_id,
+            api_key=config.openai_api_key
+            if config.default_llm_provider == "openai_direct"
+            else config.deepseek_api_key,
+            provider=config.default_llm_provider,
+            reserve_budget=config.deepseek_budget_enabled,
+            budget_units=config.deepseek_request_micro_usd,
+            budget_limit=config.deepseek_daily_micro_usd,
+        )
         return {"id": turn.id}
+
+
+def _register_command_routes(app, *, database, guard, catalog, approved_voice_ids=None, secret=""):
+    @app.post("/internal/agent/command", response_model=CommandResponse)
+    async def finalized_command(body: CommandInput, request: Request, db: AsyncSession = Depends(database)):
+        """The one worker entry for a finalized user utterance.
+
+        Reads the already-persisted source turn and its frozen revisions; it
+        never accepts a client-supplied revision or transcript.  Returns
+        ``{"command": null}`` when the utterance is ordinary conversation.
+        """
+        voice = await guard(request, db)
+        turn = await db.get(Turn, body.turn_id)
+        if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
+            raise HTTPException(404)
+        conversation = await db.get(Conversation, turn.conversation_id)
+        if conversation is None:
+            raise HTTPException(404)
+        snapshot = turn.snapshot or {}
+        expected_revision = snapshot.get("revision")
+        if not isinstance(expected_revision, int):
+            expected_revision = conversation.revision
+        model_request = snapshot.get("model_request")
+        settings_revision = model_request.get("settings_revision") if isinstance(model_request, dict) else None
+        if not isinstance(settings_revision, int):
+            settings_row = await db.get(UserSetting, conversation.owner_id)
+            settings_revision = settings_row.revision if settings_row is not None else 0
+        classifier = _RecordingClassifier(getattr(app.state, "ui_classifier", None))
+        result = await handle_finalized_utterance(
+            db,
+            owner_id=conversation.owner_id,
+            conversation_id=turn.conversation_id,
+            request_id=command_request_id(turn.id),
+            expected_revision=expected_revision,
+            settings_revision=settings_revision,
+            text=turn.text,
+            catalog=catalog,
+            approved_voice_ids=approved_voice_ids,
+            handlers=app.state.action_handlers,
+            secret=secret,
+            ui_classifier=classifier if classifier.inner is not None else None,
+        )
+        return {
+            "command": result.model_dump(mode="json") if result is not None else None,
+            # The one classification of this turn, shared with the worker so it can force a memory tool.
+            "memory_op": classifier.memory_op() if result is None else None,
+        }
+
+
+class _RecordingClassifier:
+    """Wraps the UI classifier so one Jev call per turn also yields ``memory_op``."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.result = None
+
+    async def classify(self, *, request_id: str, instruction: str):
+        self.result = await self.inner.classify(request_id=request_id, instruction=instruction)
+        return self.result
+
+    def memory_op(self) -> dict | None:
+        answer = None if self.result is None else self.result.memory_op
+        if answer is None:
+            return None
+        return {"choice": answer.choice, "probability": answer.probability}
 
 
 def _claim_replay(claim):
@@ -509,3 +675,87 @@ def _register_tool_routes(app, *, database, guard):
             await db.commit()
             raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"}) from exc
         return result
+
+
+async def _finish_tool_operation(db: AsyncSession, key: str, effect) -> dict:
+    """Run the effect after the durable claim; record exactly one terminal state."""
+    try:
+        result = await effect()
+    except MemoryCaptureError as exc:
+        await db.rollback()
+        await fail_tool_operation(db, operation_key=key, error_code=exc.code)
+        await db.commit()
+        return {"error": exc.code}
+    except Exception:
+        await db.rollback()
+        await unknown_tool_operation(db, operation_key=key, error_code="TOOL_DELIVERY_UNKNOWN")
+        await db.commit()
+        raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"}) from None
+    try:
+        await complete_tool_operation(db, operation_key=key, result=result)
+        await db.commit()
+    except ToolOperationError as exc:
+        await unknown_tool_operation(db, operation_key=key, error_code="TOOL_DELIVERY_UNKNOWN")
+        await db.commit()
+        raise HTTPException(503, detail={"code": "TOOL_DELIVERY_UNKNOWN"}) from exc
+    return result
+
+
+async def _run_memory_tool(guard, db: AsyncSession, request: Request, body, name: str, arguments: dict, effect):
+    voice = await guard(request, db)
+    conversation = await db.get(Conversation, voice.conversation_id)
+    turn = await db.get(Turn, body.turn_id)
+    if conversation is None or not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
+        raise HTTPException(404)
+    try:
+        claim = await claim_tool_operation(
+            db, turn_id=body.turn_id, operation_key=body.request_id, name=name, arguments=arguments
+        )
+    except ToolOperationError as exc:
+        raise HTTPException(exc.status, detail={"code": exc.code}) from exc
+    replay = _claim_replay(claim)
+    if replay is not None:
+        return replay
+    await db.commit()
+    return await _finish_tool_operation(
+        db, body.request_id, lambda: effect(conversation.owner_id, voice.conversation_id)
+    )
+
+
+def _register_memory_tool_routes(app, *, config: Settings, database, guard):
+    """Model-facing memory tools. Every route is propose-only or read-only."""
+    secret = _memory_secret(config)
+
+    @app.post("/internal/agent/tool/memory-propose")
+    async def agent_memory_propose(body: MemoryProposeInput, request: Request, db: AsyncSession = Depends(database)):
+        async def effect(owner_id, conversation_id):
+            return await memory_propose_tool(
+                db,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                turn_id=body.turn_id,
+                fact=body.fact,
+                secret=secret,
+            )
+
+        return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)
+
+    @app.post("/internal/agent/tool/memory-forget")
+    async def agent_memory_forget(body: MemoryQueryInput, request: Request, db: AsyncSession = Depends(database)):
+        async def effect(owner_id, conversation_id):
+            return await memory_forget_tool(
+                db,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                request_id=body.request_id,
+                query=body.query,
+            )
+
+        return await _run_memory_tool(guard, db, request, body, "memory_forget", {"query": body.query}, effect)
+
+    @app.post("/internal/agent/tool/memory-recall")
+    async def agent_memory_recall(body: MemoryQueryInput, request: Request, db: AsyncSession = Depends(database)):
+        async def effect(owner_id, conversation_id):
+            return await memory_recall_tool(db, owner_id=owner_id, conversation_id=conversation_id, query=body.query)
+
+        return await _run_memory_tool(guard, db, request, body, "memory_recall", {"query": body.query}, effect)

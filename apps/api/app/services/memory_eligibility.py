@@ -1,20 +1,28 @@
 """One conversation-scoped exclusion policy for memory and its tracked descendants."""
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database import ContextExclusion, Memory
 
 
 def _blocked_query(owner_id: str, conversation_id: str):
+    # Hidden and deleted memories are blocked in every conversation (memory-level),
+    # so derived history and source turns are dropped exactly like an exclusion.
     seed = (
         select(Memory.id.label("id"))
-        .join(ContextExclusion, ContextExclusion.memory_id == Memory.id)
+        .outerjoin(
+            ContextExclusion,
+            and_(
+                ContextExclusion.memory_id == Memory.id,
+                ContextExclusion.owner_id == owner_id,
+                ContextExclusion.conversation_id == conversation_id,
+                ContextExclusion.active.is_(True),
+            ),
+        )
         .where(
             Memory.owner_id == owner_id,
-            ContextExclusion.owner_id == owner_id,
-            ContextExclusion.conversation_id == conversation_id,
-            ContextExclusion.active.is_(True),
+            or_(ContextExclusion.id.is_not(None), Memory.status.in_(("hidden", "deleted"))),
         )
     )
     # Pre-0006 consumers can use exact-ID exclusions while integrating the schema.

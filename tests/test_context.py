@@ -17,7 +17,7 @@ def test_arabic_deepgram_tts_rejected():
         llm={"provider": "deepseek_direct", "model": "deepseek-flash"},
         tts={"provider": "deepgram_direct", "model": "aura-2", "voice_id": "x"},
     )
-    assert {"role": "tts", "code": "UNSUPPORTED_LANGUAGE"} in validate_pipeline(config, set())
+    assert {"role": "tts", "code": "TTS_LANGUAGE_UNSUPPORTED"} in validate_pipeline(config, set())
 
 
 def test_temporary_openai_default_and_independent_deepseek_key_validation():

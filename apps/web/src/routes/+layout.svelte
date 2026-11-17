@@ -1,6 +1,23 @@
 <script lang="ts">
   import '../app.css';
-  let { children } = $props();
+  import type { Snippet } from 'svelte';
+  import EntryGate from '../lib/auth/EntryGate.svelte';
+
+  interface Props {
+    children: Snippet;
+    data: { entry: boolean; error: boolean; blocked: boolean; next: string; protectedMode: boolean };
+    form?: { error?: boolean; blocked?: boolean; next?: string } | null;
+  }
+
+  let { children, data, form }: Props = $props();
 </script>
 
-{@render children()}
+{#if data.entry}
+  <EntryGate
+    error={data.error || !!form?.error}
+    blocked={data.blocked || !!form?.blocked}
+    next={form?.next ?? data.next}
+  />
+{:else}
+  {@render children()}
+{/if}

@@ -1,9 +1,9 @@
 import { tick } from 'svelte';
-import { nextRendererTier, selectRendererTier, type RendererTier } from '../orbState';
+import { nextRendererTier, selectRendererTier, type RendererEnvironment, type RendererTier } from '../orbState';
 import { createBackingSizer, type CssSize } from './backingSize';
 import { startCanvasDrawing } from './canvasLoop';
 import { hexToRgb } from './colors';
-import type { OrbRendererHooks, OrbRenderState, Rgb } from './types';
+import type { OrbRendererHooks, OrbRenderState, OrbTierState, Rgb } from './types';
 import { setupWebgl } from './webgl';
 
 function createSizer(canvas: HTMLCanvasElement) {
@@ -25,15 +25,20 @@ function createSizer(canvas: HTMLCanvasElement) {
   };
 }
 
+function initialTier(environment: RendererEnvironment, tierState: OrbTierState): RendererTier {
+  const selected = selectRendererTier(environment);
+  return tierState.demoted && selected === 'enhanced' ? 'light' : selected;
+}
+
 export function startOrbRenderer(
   canvas: HTMLCanvasElement,
   renderState: OrbRenderState,
   hooks: OrbRendererHooks,
+  tierState: OrbTierState,
 ): () => void {
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const probe = document.createElement('canvas');
-  const webglAvailable = Boolean(probe.getContext('webgl2'));
-  let tier: RendererTier = selectRendererTier({ reducedMotion: reduced.matches, webglAvailable });
+  const webglAvailable = Boolean(document.createElement('canvas').getContext('webgl2'));
+  let tier = initialTier({ reducedMotion: reduced.matches, webglAvailable }, tierState);
   hooks.onTier(tier);
 
   let disposed = false;
@@ -48,6 +53,12 @@ export function startOrbRenderer(
     hooks.onTier(next);
   }
 
+  /** Downward-only transition: remember it so a remount cannot undo it. */
+  function demote(next: RendererTier) {
+    tierState.demoted = true;
+    setTier(next);
+  }
+
   function monitorFps(delta: number) {
     if (tier === 'static' || disposed || document.hidden) return;
     fpsSamples += 1;
@@ -58,7 +69,7 @@ export function startOrbRenderer(
     fpsElapsed = 0;
     const next = nextRendererTier(tier, fps);
     if (next === tier) return;
-    setTier(next);
+    demote(next);
     if (next === 'static') hooks.onFailed();
     void tick().then(() => setup());
   }
@@ -79,7 +90,10 @@ export function startOrbRenderer(
     if (disposed) return;
     if (tier === 'static') return;
 
-    const gl = tier === 'enhanced' ? canvas.getContext('webgl2', { alpha: true, antialias: true }) : null;
+    const gl =
+      tier === 'enhanced'
+        ? canvas.getContext('webgl2', { alpha: true, antialias: true, premultipliedAlpha: true })
+        : null;
     if (gl) {
       const stop = setupWebgl({
         gl,
@@ -93,20 +107,25 @@ export function startOrbRenderer(
         isDisposed: () => disposed,
         onFailed: hooks.onFailed,
         onContextLost: () => {
-          hooks.onFailed();
-          setTier('static');
+          // A canvas that has owned a WebGL2 context can never hand out 2D, so
+          // the fallback needs the fresh element `handleTier` builds. A lost
+          // context is a downgrade, not a terminal failure: `failed` would pin
+          // the static glyph for the session even though Canvas2D can draw.
+          // `setup` still collapses to static when no tier can start.
           stopDrawing?.();
+          stopDrawing = null;
+          demote('light');
         },
       });
       if (stop) {
         stopDrawing = stop;
         return;
       }
-      setTier('light');
+      demote('light');
     }
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      setTier('static');
+      demote('static');
       return;
     }
     stopDrawing = startCanvasDrawing({
@@ -123,7 +142,11 @@ export function startOrbRenderer(
   }
 
   const onMotionChange = () => {
-    setTier(selectRendererTier({ reducedMotion: reduced.matches, webglAvailable }));
+    const resolved = selectRendererTier({ reducedMotion: reduced.matches, webglAvailable });
+    // Demotion is sticky state, not a tier passed into this constructor: once
+    // the ladder has dropped, a preference change cannot climb back to WebGL.
+    const next = tierState.demoted && resolved === 'enhanced' ? 'light' : resolved;
+    setTier(next);
     void tick().then(() => setup());
   };
   const onResize = () => sizer.refreshCss();

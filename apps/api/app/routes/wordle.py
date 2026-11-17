@@ -23,6 +23,7 @@ from app.services.wordle import (
     ensure_today,
     game_view,
     player_stats,
+    reset_game,
     submit_guess,
 )
 
@@ -87,8 +88,31 @@ def _scheduled_day(timezone: str) -> date:
         raise HTTPException(503, detail={"code": exc.code}) from exc
 
 
+def _register_reset_route(app, *, config: Settings, database, identity, source: WordleSource, limiter):
+    @app.post("/v1/wordle/reset")
+    async def reset(user=Depends(identity), db: AsyncSession = Depends(database)):
+        """Delete today's game for the owner (same puzzle, replayable) and return the fresh empty game."""
+        if not config.wordle_enabled:
+            raise HTTPException(503, detail={"code": "WORDLE_DISABLED"})
+        if not limiter.allow(user.id):
+            raise HTTPException(429, detail={"code": "WORDLE_RATE_LIMITED"})
+        try:
+            puzzle = await ensure_today(db, source=source, timezone=config.wordle_timezone)
+        except WordleServiceError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code}) from exc
+        day = date.fromisoformat(puzzle.puzzle_date)
+        await reset_game(db, owner_id=user.id, day=day)
+        game = await _game_or_unavailable(db, owner_id=user.id, day=day)
+        return {
+            "date": puzzle.puzzle_date,
+            "available": True,
+            "game": _game_payload(await game_view(db, game, answer=puzzle.answer)),
+        }
+
+
 def register_wordle_routes(app, *, config: Settings, database, identity, source: WordleSource):
     limiter = GuessRateLimiter()
+    _register_reset_route(app, config=config, database=database, identity=identity, source=source, limiter=limiter)
     _register_player_routes(app, config=config, database=database, identity=identity, source=source, limiter=limiter)
     _register_refresh_route(app, config=config, database=database, source=source)
     return limiter

@@ -12,17 +12,19 @@ from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.domain.context_operations import classify as _classify
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 from app.domain.memory_capture import is_referential, resolve_subject
 from app.infrastructure.database import Memory, MemoryWriteRequest, Turn, now
 from app.infrastructure.upsert import insert_ignore
 from app.services.authorization import owned_conversation, owned_memory
 from app.services.budget import guarded_openai_request, reserve_in_transaction
+from app.services.context_assembly import orm_memory_candidates
 from app.services.memory_eligibility import blocked_memory_ids
 
 EMBEDDING_TIMEOUT_SECONDS = 20
@@ -131,6 +133,41 @@ def memory_result(row: Memory, distance=None) -> MemoryResult:
         row.supersedes_id,
         distance,
     )
+
+
+@dataclass(frozen=True)
+class MemoryListItem:
+    """One stored fact with the provenance the explorer must show.
+
+    ``excluded_in_conversation`` follows the compiler's exclusion *lineage*,
+    so a correction that supersedes an excluded fact is excluded too.
+    ``candidate_eligible`` means active and not excluded.
+    ``included_in_conversation`` mirrors the compiler's bounded candidate
+    window (``orm_memory_candidates``); it is candidacy for the next compiled
+    context, not a claim about past model input or a promise that character
+    budgeting will keep it.
+    """
+
+    id: str
+    content: str
+    kind: str
+    version: int
+    status: str
+    source_conversation_id: str
+    source_turn_id: str | None
+    supersedes_id: str | None
+    created_at: str
+    updated_at: str
+    excluded_in_conversation: bool | None = None
+    candidate_eligible: bool | None = None
+    included_in_conversation: bool | None = None
+
+
+@dataclass(frozen=True)
+class MemoryListPage:
+    items: tuple[MemoryListItem, ...]
+    total: int
+    next_offset: int | None
 
 
 def _fingerprint(conversation_id, source_turn_id, content, previous_id, expected_version):
@@ -488,6 +525,82 @@ class MemoryService:
         except (ValueError, TypeError, KeyError, IndexError, OverflowError) as exc:
             await self._mark_error(claim["id"], "EMBEDDING_RESPONSE_INVALID")
             raise HTTPException(503, detail={"code": "EMBEDDING_RESPONSE_INVALID"}) from exc
+
+    async def list_memories(
+        self,
+        owner_id,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        conversation_id: str | None = None,
+        status: str | None = None,
+    ) -> MemoryListPage:
+        """Owner-scoped stored-fact page; never scans another owner's rows.
+
+        Pagination is ordered by ``updated_at`` then id so callers can page
+        deterministically while corrections move a fact to the front. When a
+        conversation is supplied, the projection is taken from the *same*
+        reader the compiler uses (:func:`orm_memory_candidates`), so exclusion
+        lineage, the bounded candidate window and correction descendants can
+        never drift from what a turn actually compiles.
+        """
+        if not isinstance(limit, int) or not 1 <= limit <= 100 or not isinstance(offset, int) or offset < 0:
+            raise HTTPException(422, detail={"code": "INVALID_MEMORY_QUERY"})
+        self._require_isolated_caller()
+        async with self.sessions() as db:
+            if conversation_id is not None:
+                await owned_conversation(db, owner_id, conversation_id)
+            # Deleted tombstones never surface; ``status`` narrows to e.g. hidden memories.
+            visible = (Memory.owner_id == owner_id, Memory.status != "deleted")
+            if status is not None:
+                visible = (*visible, Memory.status == status)
+            total = await db.scalar(select(func.count()).select_from(Memory).where(*visible))
+            rows = list(
+                (
+                    await db.scalars(
+                        select(Memory)
+                        .where(*visible)
+                        .order_by(Memory.updated_at.desc(), Memory.id.desc())
+                        .offset(offset)
+                        .limit(limit + 1)
+                    )
+                ).all()
+            )
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+            excluded_ids: set[str] = set()
+            candidate_ids: set[str] = set()
+            if conversation_id is not None:
+                # One authoritative read: the compiler's own candidate view.
+                # ``denied`` is exclusion lineage (the excluded fact *and* any
+                # correction that supersedes it), not just direct exclusion rows.
+                compiled = await orm_memory_candidates(db, owner_id=owner_id, conversation_id=conversation_id)
+                excluded_ids = {candidate.id for candidate in compiled.denied}
+                candidate_ids = {candidate.id for candidate in compiled.included}
+            items = tuple(
+                MemoryListItem(
+                    id=row.id,
+                    content=row.content,
+                    kind="budget" if _classify(row.content) == "budget" else "memory",
+                    version=row.version,
+                    status=row.status,
+                    source_conversation_id=row.source_conversation_id,
+                    source_turn_id=row.source_turn_id,
+                    supersedes_id=row.supersedes_id,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at,
+                    excluded_in_conversation=(row.id in excluded_ids) if conversation_id is not None else None,
+                    # A fact can be eligible (active, not excluded) yet still
+                    # fall outside the compiler's bounded candidate window, so
+                    # eligibility and next-context candidacy stay separate.
+                    candidate_eligible=(
+                        row.status == "active" and row.id not in excluded_ids if conversation_id is not None else None
+                    ),
+                    included_in_conversation=(row.id in candidate_ids) if conversation_id is not None else None,
+                )
+                for row in rows
+            )
+            return MemoryListPage(items, int(total or 0), offset + limit if has_more else None)
 
     async def search_memories(self, owner_id, conversation_id, query, limit=5):
         if not isinstance(query, str) or not query.strip() or len(query) > 4000 or not 1 <= limit <= 20:

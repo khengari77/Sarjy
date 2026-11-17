@@ -1,12 +1,15 @@
 import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: 'test',
+  // The token gate has its own servers/configs; keep it out of the default suite.
+  testIgnore: ['auth.spec.ts', 'auth-expired.spec.ts', 'auth-prod.spec.ts'],
   expect: { timeout: 15000 },
   use: { baseURL: 'http://127.0.0.1:4173' },
   webServer: [
     {
       command: '../../.venv/bin/uvicorn app.main:create_app --factory --app-dir ../api --host 127.0.0.1 --port 8000',
       url: 'http://127.0.0.1:8000/healthz',
+      timeout: 180_000,
       env: {
         DATABASE_URL: 'sqlite+aiosqlite:///./browser-test.db',
         COOKIE_SECURE: 'false',
@@ -23,6 +26,8 @@ export default defineConfig({
     {
       command: 'npm run dev -- --host 127.0.0.1 --port 4173',
       url: 'http://127.0.0.1:4173',
+      // Cold vite boot plus the first SSR compile takes ~45s on this machine.
+      timeout: 180_000,
       env: { API_INTERNAL_URL: 'http://127.0.0.1:8000', DEVELOPMENT_PROTECTED: 'false' },
     },
   ],

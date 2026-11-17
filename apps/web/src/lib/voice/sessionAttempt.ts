@@ -17,7 +17,8 @@ export async function startSessionAttempt(
   },
 ) {
   const voice = deps.getVoice();
-  const config = await startVoiceSession(context.conversationId, deps.getLanguage(), voice.id);
+  const config = await startVoiceSession(context.conversationId, deps.getLanguage());
+  if (config.saved_voice_unavailable) deps.onVoiceFallback?.(config.saved_voice_unavailable);
   // Register the server session before awaiting the transport so cancel/end
   // can release it even while runtime.connect() is still pending.
   context.onSessionCreated?.(config, context.attempt);

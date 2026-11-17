@@ -181,3 +181,81 @@ def test_normalized_configuration_is_idempotent_and_does_not_mutate(tier, prefer
     assert source == before
     assert normalize_pipeline(resolved) == resolved
     assert resolved["max_output_tokens"] == TIER_CAPS[tier - 1]
+
+
+def test_instructions_deny_unperformed_capabilities():
+    """The model must not claim a UI/DB action the application did not perform."""
+    policy = ResponsePolicy.for_tier(2)
+    english = compose_system_message("en", policy)
+    arabic = compose_system_message("ar", policy)
+    assert "Never claim to have changed a setting" in english
+    assert "لا تدّعِ تغيير إعداد" in arabic
+
+
+def test_instructions_tell_the_model_the_app_performs_settings_commands():
+    # A refusal like "I can't change the theme" was spoken to users although the application can;
+    # the model must redirect to a short phrase instead of calling the action impossible.
+    for language, phrase in (("en", "dark mode"), ("ar", "الوضع الداكن")):
+        text = BASE_INSTRUCTIONS[language]
+        assert phrase in text
+        assert "did not catch" in text if language == "en" else "لم تفهمه" in text
+    english = BASE_INSTRUCTIONS["en"]
+    assert "do not say it is impossible" in english and "do not claim it is done" in english
+    assert "Never claim to have changed a setting" in english, "the truthfulness rule must remain"
+
+
+CAPABILITY_KEYWORDS = {
+    "en": (
+        "weather",
+        "propose_memory",
+        "propose_forget",
+        "recall",
+        "undo",
+        "never done by voice",
+        "trash icon",
+        "play_wordle",
+        "submit_wordle_guess",
+        "wordle_status",
+        "close_wordle",
+        "letter by letter",
+        "dark or light",
+        "speaking speed",
+        "captions",
+        "man's or woman's voice",
+        "what you can do",
+        "warm, concise",
+    ),
+    "ar": (
+        "الطقس",
+        "propose_memory",
+        "propose_forget",
+        "recall",
+        "undo",
+        "بالصوت أبدًا",
+        "سلة المهملات",
+        "play_wordle",
+        "submit_wordle_guess",
+        "wordle_status",
+        "close_wordle",
+        "حرفًا حرفًا",
+        "الوضع الداكن",
+        "سرعة الكلام",
+        "الترجمة النصية",
+        "صوت رجل أو امرأة",
+        "عمّا تستطيع",
+        "ودود",
+    ),
+}
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_instructions_cover_every_capability(language):
+    # A capability added or removed in code must change this list and the persona together.
+    text = BASE_INSTRUCTIONS[language]
+    for keyword in CAPABILITY_KEYWORDS[language]:
+        assert keyword in text, keyword
+
+
+def test_instructions_stay_compact_because_they_are_sent_every_turn():
+    assert len(BASE_INSTRUCTIONS["en"]) < 2600 and len(BASE_INSTRUCTIONS["ar"]) < 2600
+    assert "markdown" in VOICE_RULES["en"]

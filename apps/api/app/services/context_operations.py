@@ -19,6 +19,7 @@ Wire format and authorization
 import hashlib
 import re
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Protocol
 from uuid import uuid4
 
@@ -180,6 +181,36 @@ def _digest(*parts: str) -> str:
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 
+async def _already_excluded_operation(
+    db: AsyncSession, owner_id: str, conversation_id: str, excluded_ids
+) -> ContextOperation | None:
+    """The prior operation that excluded every requested fact, if any.
+
+    Returns ``None`` unless *all* ids already have an active exclusion row and
+    those rows belong to one operation, so a partial overlap still writes the
+    missing exclusions instead of silently skipping them.
+    """
+    wanted = sorted(excluded_ids)
+    if not wanted:
+        return None
+    rows = (
+        await db.scalars(
+            select(ContextExclusion).where(
+                ContextExclusion.owner_id == owner_id,
+                ContextExclusion.conversation_id == conversation_id,
+                ContextExclusion.memory_id.in_(wanted),
+                ContextExclusion.active.is_(True),
+            )
+        )
+    ).all()
+    if {row.memory_id for row in rows} != set(wanted):
+        return None
+    operation_ids = {row.operation_id for row in rows}
+    if len(operation_ids) != 1:
+        return None
+    return await db.get(ContextOperation, operation_ids.pop())
+
+
 def _operation_key(owner_id: str, conversation_id: str, kind: str, idempotency_key: str) -> str:
     return _digest("context-operation", owner_id, conversation_id, kind, idempotency_key)
 
@@ -197,6 +228,94 @@ async def _replay(db: AsyncSession, key: str, owner_id: str, conversation_id: st
     response = dict(payload.get("response") or {})
     response["idempotent"] = True
     return response
+
+
+async def create_exclusion_proposal(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    memory_ids: tuple[str, ...],
+    secret: str,
+    expires_at: int | None = None,
+) -> dict:
+    """Preview exclusion of exact stored-fact ids without any mutation.
+
+    The explorer already knows which stored fact the user selected, so it does
+    not need semantic retrieval to find it. The server still signs the exact
+    ids and the revision: confirmation trusts only that token, re-authorizes
+    every id against the owner's active memories, and Undo remains the existing
+    operation-scoped restore.
+    """
+    if not secret:
+        raise ContextOperationError("CONTEXT_PROPOSALS_NOT_CONFIGURED", 503)
+    ids = tuple(dict.fromkeys(memory_ids))
+    if not ids or len(ids) > 20 or any(not isinstance(value, str) or not value for value in ids):
+        raise ContextOperationError("INVALID_MEMORY_SELECTION", 422)
+    conversation = await owned_conversation(db, owner_id, conversation_id)
+    rows = (
+        await db.scalars(
+            select(Memory)
+            .where(Memory.id.in_(ids), Memory.owner_id == owner_id, Memory.status == "active")
+            .order_by(Memory.id)
+        )
+    ).all()
+    by_id = {row.id: row for row in rows}
+    if set(by_id) != set(ids):
+        raise ContextOperationError("MEMORY_NOT_FOUND", 404)
+    candidates = tuple(
+        MemoryCandidate(
+            id=row.id,
+            content=row.content,
+            source_turn_id=row.source_turn_id,
+            score=0.0,
+            kind=classify(row.content),
+        )
+        for row in rows
+    )
+    # Exact ids are the user's explicit exclusion authority, including for
+    # budget-classified records. No keep authority is implied or invented.
+    selection = select_candidates(candidates, keep=(), exclude=ids)
+    revision = conversation.revision
+    token = sign_proposal(
+        {
+            "v": 1,
+            "owner_id": owner_id,
+            "conversation_id": conversation_id,
+            "revision": revision,
+            "query": "",
+            "keep": [],
+            "exclude": list(ids),
+            "excluded_ids": sorted(selection.excluded_ids),
+            "kept_ids": sorted(selection.kept_ids),
+            **({"exp": expires_at} if expires_at is not None else {}),
+        },
+        secret,
+    )
+    return {
+        "conversation_id": conversation_id,
+        "query": "",
+        "revision": revision,
+        "proposal": token,
+        "matches": [
+            {
+                "id": candidate.id,
+                "content": candidate.content,
+                "source_turn_id": candidate.source_turn_id,
+                "score": candidate.score,
+                "kind": "budget" if candidate.is_budget else candidate.kind,
+            }
+            for candidate in selection.matches
+        ],
+        "preserved": [
+            {"id": record.id, "content": record.content, "reason": record.reason} for record in selection.preserved
+        ],
+        "ambiguous": [
+            {"id": record.id, "content": record.content, "reason": record.reason} for record in selection.ambiguous
+        ],
+        "requires_clarification": selection.requires_clarification,
+        "diff": selection.diff(revision, revision),
+    }
 
 
 async def create_proposal(
@@ -310,6 +429,18 @@ async def confirm_proposal(
         exclude=exclude_authority,
     )
 
+    # A repeated confirm must not write a second exclusion row: the table has no
+    # unique constraint (undo reactivates rather than deletes), so a double
+    # click would otherwise leave an active duplicate that a single Undo cannot
+    # clear. When every requested fact is already excluded in this
+    # conversation, replay the operation that excluded it. Undo then targets
+    # the row that actually exists.
+    prior = await _already_excluded_operation(db, owner_id, conversation_id, excluded_ids)
+    if prior is not None:
+        response = dict((prior.payload or {}).get("response") or {})
+        response["idempotent"] = True
+        return response
+
     before = conversation.revision
     after = before + 1
     conversation.revision = after
@@ -408,6 +539,12 @@ def _validate_exclusion(
         raise ContextOperationError("PROPOSAL_INVALID", 400)
     if payload.get("revision") != expected_revision or conversation.revision != expected_revision:
         raise ContextOperationError("REVISION_CONFLICT")
+    expires_at = payload.get("exp")
+    if expires_at is not None:
+        if not isinstance(expires_at, int):
+            raise ContextOperationError("PROPOSAL_INVALID", 400)
+        if expires_at < int(datetime.now(UTC).timestamp()):
+            raise ContextOperationError("PROPOSAL_EXPIRED")
     if not excluded_ids:
         raise ContextOperationError("NO_CONTEXT_CHANGE")
     if excluded_ids & kept_ids:
@@ -536,17 +673,10 @@ async def _undo_operation(
     before = conversation.revision
     after = before + 1
     conversation.revision = after
-    still_excluded = frozenset(
-        (
-            await db.scalars(
-                select(ContextExclusion.memory_id).where(
-                    ContextExclusion.owner_id == owner_id,
-                    ContextExclusion.conversation_id == conversation_id,
-                    ContextExclusion.active.is_(True),
-                )
-            )
-        ).all()
-    )
+    # Same source as the compiler: raw exclusion rows miss correction lineage,
+    # so a superseded descendant of a still-excluded fact would be reported as
+    # restored while the next compiled request keeps omitting it.
+    still_excluded = await blocked_memory_ids(db, owner_id, conversation_id)
     diff = restore_diff(restored_ids, still_excluded, before, after)
     restore_id = str(uuid4())
     response = {

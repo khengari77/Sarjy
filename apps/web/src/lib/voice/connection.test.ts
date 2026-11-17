@@ -90,6 +90,9 @@ const config: SessionConfig = {
   url: 'ws://fake.invalid',
   token: 'token',
   expires_at: new Date(Date.now() + 60000).toISOString(),
+  voice: { id: 'voice-1', name: 'Voice', languages: [] },
+  voice_language: 'en',
+  voice_source: 'default',
 };
 
 function meters() {
@@ -114,6 +117,8 @@ function harness() {
     getRuntime: () => runtime,
     getLanguage: () => 'en',
     getVoice: () => ({ id: 'v1', name: 'Voice' }),
+    applyCommand: () => {},
+    resyncSettings: () => {},
     meters: meter,
   });
   return { state, runtime, meter, connection };
@@ -124,6 +129,18 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
   rooms().length = 0;
+});
+
+describe('server-owned voice resolution', () => {
+  it('starts a call without resending the saved voice', async () => {
+    vi.useFakeTimers();
+    mocks.start.mockResolvedValue(config);
+    const { connection } = harness();
+    void connection.connect(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mocks.start).toHaveBeenCalledWith('c1', 'en');
+    await connection.cancelConnect();
+  });
 });
 
 describe('terminal startup failure cleanup', () => {

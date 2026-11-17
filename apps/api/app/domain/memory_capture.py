@@ -12,8 +12,28 @@ from dataclasses import dataclass
 MAX_CAPTURE_CHARS = 4000
 _WHITESPACE = re.compile(r"\s+")
 _EXPLICIT = (
-    re.compile(r"^\s*(?:please\s+)?remember(?:\s+that)?\s+(?P<content>.+?)\s*$", re.IGNORECASE),
-    re.compile(r"^\s*(?:please\s+)?(?:don't|do not)\s+forget(?:\s+that)?\s+(?P<content>.+?)\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:please\s+)?remember(?:\s+that)?[\s,:;]+(?P<content>.+?)\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:please\s+)?(?:don't|do not)\s+forget(?:\s+that)?[\s,:;]+(?P<content>.+?)\s*$", re.IGNORECASE),
+    # "Save this fact. My name is X." needs a noun or a clear separator so "save this file" never captures.
+    re.compile(
+        r"^\s*(?:please\s+)?(?:save|store|note|record)\s+(?:this|that)\s+(?:fact|memory|information|info|down)"
+        r"\s*[.,:;\-]*\s*(?P<content>.+?)\s*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*(?:please\s+)?(?:save|store|note|record)\s+(?:this|that)\s*[.:;,\-]\s*(?P<content>.+?)\s*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*(?:please\s+)?(?:make\s+a\s+note|note|keep\s+in\s+mind)\s+that[\s,:;]+(?P<content>.+?)\s*$",
+        re.IGNORECASE,
+    ),
+)
+# "Could you remember that my name is X?" is a request to save; "can you remember my name?" is a question.
+# Only the polite forms that carry "that" (or "save this ...") are requests, so the question never saves.
+_POLITE_REQUEST = re.compile(
+    r"^\s*(?:can|could|would|will)\s+you\s+(?:please\s+)?(?=remember\s+that\b|(?:save|store|note|record)\s+(?:this|that)\b)",
+    re.IGNORECASE,
 )
 _HYPOTHETICAL = re.compile(r"\b(?:if|would|could|suppose|supposing|imagine|maybe|perhaps)\b", re.IGNORECASE)
 _REPLACEMENT = re.compile(
@@ -246,7 +266,10 @@ def _capture_for(content: str, *, explicit: bool) -> MemoryCapture | None:
 
 def parse_capture(text: str) -> MemoryCapture | None:
     """Return a candidate for an explicit or ordinary first-person statement."""
-    if text.strip().endswith("?"):
+    polite = _POLITE_REQUEST.match(text)
+    if polite is not None:
+        text = text[polite.end() :].rstrip().rstrip("?")
+    elif text.strip().endswith("?"):
         return None
     candidate = _normalize(text)
     if not candidate or len(candidate) > MAX_CAPTURE_CHARS:
@@ -271,3 +294,82 @@ def parse_capture(text: str) -> MemoryCapture | None:
             return None
 
     return _capture_for(content, explicit=explicit)
+
+
+_STRICT_EXPLICIT = re.compile(
+    r"^\s*(?:please\s+)?(?:remember|(?:don't|do not)\s+forget)\s+that[\s,:;]+(?P<content>.+?)\s*$", re.IGNORECASE
+)
+
+
+def parse_strict_capture(text: str) -> MemoryCapture | None:
+    """Free fast path used when the model classifier is available.
+
+    Only the unambiguous "remember that <clause>" shape is interpreted here;
+    "remember to ...", "remember when ...", "remember me" and every other
+    phrasing is left to the model's typed tool.  The clause gets the same
+    deterministic validation as a model-supplied fact.
+    """
+    if text.strip().endswith("?") or len(text) > MAX_CAPTURE_CHARS:
+        return None
+    match = _STRICT_EXPLICIT.match(text)
+    if match is None:
+        return None
+    return parse_tool_fact(match.group("content"))
+
+
+MAX_TOOL_FACT_CHARS = 500
+MAX_TOOL_QUERY_CHARS = 200
+
+
+def _plain_text(value: str) -> str:
+    """Strip control characters; a model-supplied argument is untrusted data."""
+    return _normalize("".join(char if char.isprintable() else " " for char in value))
+
+
+def parse_tool_fact(fact: str) -> MemoryCapture | None:
+    """Validate a model-supplied fact with the same deterministic checks.
+
+    The model interprets meaning; this function decides whether the result may
+    become a proposal.  It returns ``None`` (never raises) for questions,
+    hypotheticals, quoted text, pronoun-only or referential values, empty or
+    over-long input.  The returned capture is always an *explicit* candidate and
+    is still only a proposal that needs the user's confirmation.
+    """
+    if fact.strip().endswith("?"):
+        return None
+    candidate = _plain_text(fact)
+    if not candidate or len(candidate) > MAX_TOOL_FACT_CHARS:
+        return None
+    if candidate.endswith("?") or _NON_REMEMBERABLE.search(candidate) or _HYPOTHETICAL.search(candidate):
+        return None
+    if _QUOTED.match(candidate) or is_referential(candidate):
+        return None
+    for pattern in _EXPLICIT:
+        match = pattern.match(candidate)
+        if match is not None:
+            candidate = _normalize(match.group("content"))
+            break
+    if not candidate or is_referential(candidate):
+        return None
+    if candidate.casefold() in _PRONOUN_VALUES:
+        return None
+    # A recognised first-person slot with a pronoun-only value ("I live in it") is refused.
+    if _ordinary_matches_pronoun(candidate):
+        return None
+    return _capture_for(candidate, explicit=True)
+
+
+def _ordinary_matches_pronoun(content: str) -> bool:
+    for pattern, _subject in (*_ORDINARY, *_NEGATED):
+        match = pattern.match(content)
+        if match is not None and _normalize(match.group("value")).casefold() in _PRONOUN_VALUES:
+            return True
+    return False
+
+
+def clean_tool_query(query: str) -> str | None:
+    """Bound and sanitise a model-supplied search query; ``None`` when unusable."""
+    cleaned = _plain_text(query)
+    if not cleaned or len(cleaned) > MAX_TOOL_QUERY_CHARS:
+        return None
+    return cleaned

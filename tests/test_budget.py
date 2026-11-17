@@ -29,7 +29,10 @@ def test_budget_day_is_tripoli_calendar_day():
 
 def test_openai_and_elevenlabs_are_separate_and_survive_restart(tmp_path):
     settings = Settings(
-        database_url=f"sqlite+aiosqlite:///{tmp_path}/budget.db", agent_service_secret="test", _env_file=None
+        database_url=f"sqlite+aiosqlite:///{tmp_path}/budget.db",
+        agent_service_secret="test",
+        elevenlabs_daily_characters=500,
+        _env_file=None,
     )
     headers = {"x-agent-secret": "test"}
     with TestClient(create_app(settings)) as client:
@@ -84,3 +87,33 @@ def test_concurrent_reservations_and_next_day_reset(tmp_path):
         await engine.dispose()
 
     asyncio.run(check())
+
+
+def test_settings_boot_with_eleven_key_and_no_voice_ids():
+    # Voice is a per-session user setting (#148): no voice env constant is required to boot.
+    settings = Settings(eleven_api_key="k", approved_voice_ids="", default_voice_id="", _env_file=None)
+    assert settings.eleven_api_key == "k"
+
+
+def test_malformed_voice_allow_list_still_fails_at_boot():
+    with pytest.raises(ValueError):
+        Settings(approved_voice_ids="not a valid id!", _env_file=None)
+
+
+def test_elevenlabs_daily_characters_is_configurable(tmp_path):
+    settings = Settings(
+        database_url=f"sqlite+aiosqlite:///{tmp_path}/limit.db",
+        agent_service_secret="test",
+        elevenlabs_daily_characters=700,
+        _env_file=None,
+    )
+    headers = {"x-agent-secret": "test"}
+    url = "/internal/development/reserve"
+    with TestClient(create_app(settings)) as client:
+        assert client.post(url, headers=headers, json={"provider": "elevenlabs", "characters": 500}).status_code == 200
+        assert client.post(url, headers=headers, json={"provider": "elevenlabs", "characters": 201}).status_code == 429
+        assert client.post(url, headers=headers, json={"provider": "elevenlabs", "characters": 200}).status_code == 200
+
+
+def test_elevenlabs_default_allowance_is_2500():
+    assert Settings(_env_file=None).elevenlabs_daily_characters == 2500

@@ -1,0 +1,43 @@
+/* Sign-out is a header control, so the form must not introduce a box of its
+   own inside the shell's action cluster. */
+.signout-form {
+  display: contents;
+}
+
+.signout-button {
+  position: relative;
+  white-space: nowrap;
+}
+
+.signout-icon {
+  display: none;
+}
+
+/* On phones the label would wrap and squeeze the neighbouring buttons: show a
+   round icon button instead. The text stays in the DOM, so the accessible name
+   is still "Sign out". */
+@media (max-width: 767px) {
+  .signout-button {
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    min-height: 40px;
+    flex: none;
+    padding: 0;
+    border-radius: 50%;
+  }
+
+  .signout-icon {
+    display: block;
+  }
+
+  .signout-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}

@@ -31,7 +31,7 @@ Do not run development servers on these reserved ports. Worktrees share Git refs
 
 Read the Version 5 architecture and docs/execution_checklist_v5.md. Follow explicit issue dependencies; wait for prerequisite PRs to be reviewed and merged. Do not silently stack branches or merge another agent's branch. Report contract conflicts to the coordinator.
 
-Preserve functional-core/imperative-shell design, immutable domain models and meaningful Hypothesis properties. Mock external boundaries in normal CI. Preserve the $1/day OpenAI ceiling, 500 ElevenLabs characters/day, shared durable reservations and DeepSeek funding gate. English is the baseline; Arabic remains experimental until qualification. Development stays protected. Day 4 permits revision only.
+Preserve functional-core/imperative-shell design, immutable domain models and meaningful Hypothesis properties. Mock external boundaries in normal CI. Preserve the $1/day OpenAI ceiling, the configurable per-provider TTS daily character allowances (`DEEPGRAM_DAILY_CHARACTERS`, `ELEVENLABS_DAILY_CHARACTERS`, defaults 50000 and 2500, #151, #175), shared durable reservations and DeepSeek funding gate. English is the baseline; Arabic remains experimental until qualification. Development stays protected. Day 4 permits revision only.
 
 Relevant checks (run from your own worktree):
 

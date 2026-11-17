@@ -5,6 +5,7 @@ import json
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from app.domain.budget import DEEPSEEK_MAX_REQUEST_BYTES
 from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolItem, ToolSpec
 from app.domain.memory_capture import is_referential
 from app.domain.tool_operations import operation_key
+from app.domain.ui_routing import CONFIDENCE_THRESHOLD, FORCED_MEMORY_TOOLS
 from config import provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
 from fallback import fallback_decision, next_attempt
@@ -33,8 +35,17 @@ from livekit.agents import (
 )
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
-from provider_factory import SpeakingSpeedController, build_providers
+from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
+from wordle_commands import is_wordle_command, parse_say_payload
+from wordle_tools import (
+    WordleTools,
+    claims_game_state,
+    extract_guess,
+    has_guess_candidate,
+    is_close_request,
+    publish_wordle,
+)
 
 server = AgentServer()
 
@@ -42,8 +53,10 @@ server = AgentServer()
 # if a stale or tampered backend payload asks for it.
 MAX_TIER_OUTPUT_TOKENS = 1024
 MAX_CONTEXT_BYTES = 64000
-MAX_TOOLS = 1
+MAX_TOOLS = 4
 GENERATION_ATTEMPT_SECONDS = 30.0
+DECISION_TURN_NOTE = "The user is answering the previous confirmation; do not propose anything this turn."
+FAILED_NOTE = "The memory tool failed. Nothing was saved, excluded or changed; do not claim otherwise."
 
 
 def deepseek_request_within_bounds(serialized: bytes) -> bool:
@@ -51,7 +64,7 @@ def deepseek_request_within_bounds(serialized: bytes) -> bool:
 
 
 def openai_request_within_bounds(serialized: bytes, tools: list, max_output_tokens: int) -> bool:
-    """Pure budget guard: 64KB context, one fixed tool and at most the tier-5 cap."""
+    """Pure budget guard: 64KB context, fixed tools and at most the tier-5 cap."""
     return (
         len(serialized) <= MAX_CONTEXT_BYTES and len(tools) <= MAX_TOOLS and max_output_tokens <= MAX_TIER_OUTPUT_TOKENS
     )
@@ -201,20 +214,42 @@ async def _playout_result(handle) -> tuple[str, str]:
     return text, status
 
 
-class SarjyAgent(Agent):
+class SarjyAgent(WordleTools, Agent):
     def __init__(
-        self, backend: httpx.AsyncClient, pipeline: Mapping[str, Any], instructions: str, notify=None, fallback_llm=None
+        self,
+        backend: httpx.AsyncClient,
+        pipeline: Mapping[str, Any],
+        instructions: str,
+        notify=None,
+        fallback_llm=None,
+        publish=None,
+        is_command=None,
+        publish_wordle=None,
+        wordle_active=None,
     ):
         super().__init__(instructions=instructions)
+        self.publish_wordle = publish_wordle
+        self.wordle_active = wordle_active or (lambda: False)
+        self.wordle_spoken: dict[str, list[str]] = {}
+        self.wordle_touched = False
+        self.wordle_calls: set[str] = set()
+        self.current_text = ""
         self.backend = backend
         self.pipeline = pipeline
         self.notify = notify
         self.fallback_llm = fallback_llm
+        self.publish = publish
+        self.is_command = is_command or (lambda _text: False)
         self.prepared: dict[str, dict] = {}
+        self.commands: dict[str, dict | None] = {}
+        # Jev's memory_op answer per user message, shared from the single command call; forced at most once.
+        self.memory_ops: dict[str, dict] = {}
+        self.memory_forced: set[str] = set()
         self.current_turn: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
-        self.speaking_speed_control = SpeakingSpeedController()
+        self.speaking_speed_control = speed_controller_for(pipeline)
+        self.tts_budget_provider = tts_budget_provider(pipeline)
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
         self.memory_message: str | None = None
@@ -225,6 +260,21 @@ class SarjyAgent(Agent):
         # is not evidence that the user heard it.
         self.memory_prompted_key: tuple[Any, Any] | None = None
         self.memory_question_key: tuple[Any, Any] | None = None
+        # A consent decision owns its turn: the command path must not speak a
+        # second, contradictory outcome for the same utterance.
+        self.command_blocked_turn: str | None = None
+        # Set when a committed command result could not be published to the UI.
+        self.command_resync_required = False
+        # Typed memory tools. A tool-armed turn owns the consent state: the turn/start
+        # proposal for the same turn must not be re-armed over it. ``forced_speech`` is
+        # the deterministic question the next llm_node yields instead of model prose.
+        self.tool_armed_turn: str | None = None
+        # The turn that answered a pending confirmation may not start another proposal.
+        self.decision_turn: str | None = None
+        self.forced_speech: tuple[str, str] | None = None
+        # Exact Wordle commands are answered by the web client through
+        # sarjy.say; the conversational LLM must stay silent for those turns.
+        self.suppressed: set[str] = set()
 
     @staticmethod
     def _proposal_key(proposal: Mapping[str, Any] | None) -> tuple[Any, Any]:
@@ -241,6 +291,8 @@ class SarjyAgent(Agent):
             self.prepared[message.id] = response.json()
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
+        self.current_text = message.text_content or ""
+        await self._publish_resync()
         self._apply_speaking_speed(result["context"])
         decided = False
         # A confirmation/rejection utterance is never itself a capture, with or
@@ -271,8 +323,10 @@ class SarjyAgent(Agent):
                         await self._resolve_memory(decision)
                         # One turn, one decision: the utterance that resolved the
                         # pending proposal must not also be enqueued as a new
-                        # capture candidate for the same turn.
+                        # capture candidate, nor reclassified as a command.
                         decided = True
+                        self.command_blocked_turn = message.id
+                        self.decision_turn = result["turn_id"]
                     else:
                         # A proposal is a one-shot for the next user turn; never stay armed
                         # across unrelated acknowledgements.
@@ -285,6 +339,7 @@ class SarjyAgent(Agent):
         if (
             not decided
             and not decision_utterance
+            and self.tool_armed_turn != result["turn_id"]
             and proposal is not None
             and not is_referential(proposal.get("text") or "")
         ):
@@ -377,7 +432,7 @@ class SarjyAgent(Agent):
             self.memory_outcome = "failed"
 
     async def reserve(self, provider: str, characters: int = 0):
-        if provider == "elevenlabs" and characters > 500:
+        if provider in {"elevenlabs", "deepgram_tts"} and characters > 500:
             if self.notify:
                 await self.notify("DAILY_BUDGET_EXHAUSTED")
             raise ValueError("DAILY_BUDGET_EXHAUSTED")
@@ -398,25 +453,114 @@ class SarjyAgent(Agent):
                 buffer += part
                 if len(buffer) >= 64:
                     # Charge before forwarding text. Interrupted/failed reservations are retained.
-                    await self.reserve("elevenlabs", len(buffer))
+                    await self.reserve(self.tts_budget_provider, len(buffer))
                     yield buffer
                     buffer = ""
             if buffer:
-                await self.reserve("elevenlabs", len(buffer))
+                await self.reserve(self.tts_budget_provider, len(buffer))
                 yield buffer
 
         async for frame in Agent.default.tts_node(self, budgeted_text(), model_settings):
             yield frame
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
+        if self.is_command(new_message.text_content or ""):
+            self.suppressed.add(new_message.id)
+            return
         await self.compile(new_message)
+
+    async def command_for(self, message) -> dict | None:
+        """Ask the API to interpret one finalized turn, once per turn.
+
+        A transport/5xx failure is retried once: the request id derives from the
+        source turn and the endpoint replays a committed result, so the retry
+        cannot double-apply. If both attempts fail, the turn continues through
+        the guarded conversational path; no success is spoken for it.
+        """
+        if message.id not in self.commands:
+            result = None
+            for attempt in range(2):
+                try:
+                    response = await self.backend.post(
+                        "/internal/agent/command", json={"turn_id": self.prepared[message.id]["turn_id"]}
+                    )
+                    response.raise_for_status()
+                    body = response.json()
+                    result = body.get("command")
+                    memory_op = body.get("memory_op")
+                    if isinstance(memory_op, dict):
+                        self.memory_ops[message.id] = memory_op
+                    break
+                except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                    retryable = isinstance(exc, httpx.TransportError) or (
+                        isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
+                    )
+                    if attempt == 0 and retryable:
+                        continue
+                    logging.error("Finalized command resolution failed; continuing conversationally")
+                    break
+            self.commands[message.id] = result if isinstance(result, dict) else None
+        return self.commands[message.id]
+
+    async def _publish_command(self, command: Mapping[str, Any]) -> None:
+        if self.publish is None:
+            return
+        for attempt in range(2):
+            try:
+                await self.publish(dict(command))
+                return
+            except Exception:
+                if attempt == 1:
+                    break
+        # The effect is committed but the UI did not receive it. Never retry the
+        # command; ask the next turn boundary to resync the server snapshot.
+        self.command_resync_required = True
+        logging.error("Finalized command result publication failed; resync required")
+
+    async def _publish_resync(self) -> None:
+        """At most once per turn boundary: tell the UI to refetch settings."""
+        if not self.command_resync_required or self.publish is None:
+            return
+        try:
+            await self.publish({"resync": True})
+        except Exception:
+            logging.error("Command resync publication failed; will retry next turn")
+            return
+        self.command_resync_required = False
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         # Also covers typed input and repeated inference after tool calls.
         user = _user_message(chat_ctx)
         if user is None:
             return
+        if user.id in self.suppressed:
+            self.suppressed.discard(user.id)
+            return
         snapshot = await self.compile(user)
+        direct = await self._wordle_turn_speech(user)
+        if direct is not None:
+            # The application owns Wordle speech; an armed memory question must not follow it.
+            self._disarm_memory_proposal()
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=direct))
+            self._schedule_persistence(user, self.session.current_speech)
+            return
+        command = None if self.command_blocked_turn == user.id else await self.command_for(user)
+        if command is not None:
+            await self._publish_command(command)
+            # Exact commands bypass conversational generation entirely; TTS
+            # remains budgeted and the deterministic spoken line is the whole
+            # assistant turn.
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=command["spoken"]))
+            handle = self.session.current_speech
+            self._schedule_persistence(user, handle)
+            return
+        if self.forced_speech is not None and self.forced_speech[0] == self.current_turn:
+            _, forced = self.forced_speech
+            self.forced_speech = None
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=forced))
+            handle = self.session.current_speech
+            self._schedule_persistence(user, handle)
+            return
         proposal = self.memory_proposal
         key = self._proposal_key(proposal)
         if proposal is not None and self.memory_question_key != key:
@@ -436,6 +580,7 @@ class SarjyAgent(Agent):
         handle = self.session.current_speech
         self._schedule_persistence(user, handle)
         request = snapshot_request(snapshot, self.current_turn)
+        tools = self._wordle_tools(tools)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
         request = _with_continuation(request, _continuation(chat_ctx, user), schemas)
         if self.memory_outcome is not None:
@@ -452,10 +597,92 @@ class SarjyAgent(Agent):
                 "not_saved": "The pending memory was not saved; do not claim it was saved.",
             }[outcome]
             request = _with_memory_note(request, note)
-        async for chunk in self._stream_with_fallback(
-            request, tools, model_settings.tool_choice if model_settings else None
-        ):
+        tool_choice = model_settings.tool_choice if model_settings else None
+        forced = self._forced_memory_choice(user.id, {schema["name"] for schema in schemas})
+        if forced is not None:
+            tool_choice = forced
+        async for chunk in self._guard_wordle_prose(self._stream_with_fallback(request, tools, tool_choice)):
             yield chunk
+
+    async def _guard_wordle_prose(self, stream):
+        """While a Wordle game is open, prose may not state marks, attempts or outcomes.
+
+        The reply is buffered; if it holds such a claim and no tool ran, the server's real status is spoken.
+        """
+        if not self.wordle_active():
+            async for chunk in stream:
+                yield chunk
+            return
+        chunks = [chunk async for chunk in stream]
+        said = "".join(c.delta.content or "" for c in chunks if c.delta)
+        called = any(c.delta and c.delta.tool_calls for c in chunks)
+        if not called and claims_game_state(said):
+            spoken = await self._wordle_direct("wordle-status")
+            if spoken:
+                yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=spoken))
+                return
+        for chunk in chunks:
+            yield chunk
+
+    async def _wordle_turn_speech(self, user) -> str | None:
+        """Deterministic Wordle speech: the reply after a Wordle tool, or a bare guess while a game is open.
+
+        A whole-utterance guess ("crane", "my word is crane", "uh, C R A N E") is recorded straight away
+        (no model call can skip it); every Wordle reply is the server's own line, never model prose.
+        """
+        turn = self.current_turn or ""
+        spoken = self.wordle_spoken.pop(turn, None)
+        if spoken:
+            return " ".join(spoken)
+        if not self.wordle_active():
+            return None
+        text = user.text_content or ""
+        if is_close_request(text):
+            return await self._wordle_direct("wordle-close")
+        word = extract_guess(text)
+        if word is None:
+            return None
+        return await self._wordle_direct("wordle-guess", word=word)
+
+    def _wordle_tools(self, tools):
+        """Offer only the Wordle tools that make sense for this turn.
+
+        play_wordle is withdrawn while a game is open, and submit_wordle_guess is offered only when the
+        utterance holds a five-letter word or spelled letters. A tool already called this turn stays listed
+        so the continuation request remains valid.
+        """
+        if self.current_turn in self.wordle_calls:
+            return tools
+        drop = set()
+        if self.wordle_active():
+            drop.add("play_wordle")
+        if not has_guess_candidate(self.current_text):
+            drop.add("submit_wordle_guess")
+        return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") not in drop]
+
+    def _forced_memory_choice(self, message_id: str, available: set[str]) -> dict | None:
+        """Force the memory tool Jev named for the FIRST inference of a turn only.
+
+        The continuation inference after the tool result is never forced, so a
+        forced call cannot loop. Anything missing or below threshold is not forced.
+        """
+        if message_id in self.memory_forced or self.current_turn == self.decision_turn:
+            return None
+        answer = self.memory_ops.get(message_id)
+        if not isinstance(answer, dict):
+            return None
+        tool = FORCED_MEMORY_TOOLS.get(str(answer.get("choice")))
+        probability = answer.get("probability")
+        if (
+            tool is None
+            or tool not in available
+            or isinstance(probability, bool)
+            or not isinstance(probability, (int, float))
+            or probability < CONFIDENCE_THRESHOLD
+        ):
+            return None
+        self.memory_forced.add(message_id)
+        return {"type": "function", "function": {"name": tool}}
 
     def _schedule_prompt_confirmation(self, key: tuple[Any, Any], handle) -> None:
         async def mark_after_playout():
@@ -602,6 +829,177 @@ class SarjyAgent(Agent):
         result.raise_for_status()
         return result.json()
 
+    def _disarm_memory_proposal(self) -> None:
+        self.memory_proposal = None
+        self.memory_clarify = False
+        self.memory_question_turn = None
+        self.memory_prompted_key = None
+        self.memory_question_key = None
+
+    async def _memory_tool(self, path: str, ctx: RunContext, **arguments: str) -> dict:
+        """POST one memory tool call; a failure is reported as not-done, never raised as success."""
+        if not self.current_turn:
+            raise ValueError("TOOL_TURN_REQUIRED")
+        call_id = getattr(ctx.function_call, "call_id", "")
+        try:
+            response = await self.backend.post(
+                f"/internal/agent/tool/{path}",
+                json={
+                    **arguments,
+                    "turn_id": self.current_turn,
+                    "request_id": operation_key(self.current_turn, call_id),
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, ValueError):
+            return {"error": "MEMORY_TOOL_FAILED", "message": FAILED_NOTE}
+        if not isinstance(body, dict) or "error" in body and body.get("status") != "rejected":
+            return {"error": "MEMORY_TOOL_FAILED", "message": FAILED_NOTE}
+        return body
+
+    @function_tool()
+    async def propose_memory(self, ctx: RunContext, fact: str):
+        """Propose remembering a lasting fact the user stated about themselves, written in first person (for example "I live in Benghazi"). This only proposes: the user is asked to confirm and nothing is saved until they do."""
+        if self.current_turn is not None and self.current_turn == self.decision_turn:
+            return DECISION_TURN_NOTE
+        body = await self._memory_tool("memory-propose", ctx, fact=fact)
+        proposal = body.get("proposal")
+        if body.get("status") == "proposed" and isinstance(proposal, dict) and isinstance(proposal.get("token"), str):
+            self._disarm_memory_proposal()
+            self.memory_proposal = proposal
+            self.memory_question_turn = self.current_turn
+            self.tool_armed_turn = self.current_turn
+            self.forced_speech = None
+        return str(body.get("message") or FAILED_NOTE)
+
+    @function_tool()
+    async def propose_forget(self, ctx: RunContext, query: str):
+        """Propose excluding a stored memory from this conversation. Pass only a short search query describing it (for example "tea"). This only proposes: the user is asked to confirm and nothing is changed until they do."""
+        if self.current_turn is not None and self.current_turn == self.decision_turn:
+            return DECISION_TURN_NOTE
+        body = await self._memory_tool("memory-forget", ctx, query=query)
+        spoken = body.get("spoken")
+        if (
+            isinstance(spoken, str)
+            and spoken
+            and "error" not in body
+            and body.get("status") in {"hidden", "not_hidden"}
+        ):
+            # A forget request retires any remember proposal; only one may be armed.
+            self._disarm_memory_proposal()
+            self.tool_armed_turn = self.current_turn
+            self.forced_speech = (self.current_turn or "", spoken)
+        return str(body.get("message") or FAILED_NOTE)
+
+    @function_tool()
+    async def recall(self, ctx: RunContext, query: str):
+        """Look up what is saved about the user for a topic (for example "my job"). Read-only."""
+        body = await self._memory_tool("memory-recall", ctx, query=query)
+        return json.dumps(body, ensure_ascii=False)
+
+
+async def publish_command(room, command: Mapping[str, Any]) -> None:
+    """One authoritative result for the shared UI store (effect already committed)."""
+    await room.local_participant.publish_data(json.dumps(dict(command)).encode(), reliable=True, topic="sarjy.command")
+
+
+class RevealState:
+    """Whether the client is waiting for a spoken spoiler confirmation."""
+
+    pending: bool = False
+    active: bool = False
+
+
+def resolve_say_request(data, participants) -> tuple[str | None, str | None]:
+    """Authenticate a sarjy.say RPC and validate its payload."""
+    caller = participants.get(data.caller_identity)
+    if caller is None or caller.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+        return None, "SARJY_SAY_FORBIDDEN"
+    try:
+        return parse_say_payload(data.payload), None
+    except ValueError:
+        return None, "SARJY_SAY_PAYLOAD_INVALID"
+
+
+async def perform_say(session, data, participants) -> str:
+    """Speak a validated reply without adding it to conversation history."""
+    text, error = resolve_say_request(data, participants)
+    if error is not None or text is None:
+        return json.dumps({"ok": False, "code": error})
+    try:
+        await session.say(text, allow_interruptions=True, add_to_chat_ctx=False)
+    except RuntimeError:
+        return json.dumps({"ok": False, "code": "SARJY_SAY_UNAVAILABLE"})
+    return json.dumps({"ok": True})
+
+
+def register_voice_controls(ctx, session, reveal: RevealState) -> None:
+    """Expose the client-owned speech RPC and the reveal-pending control flag."""
+
+    @ctx.room.local_participant.register_rpc_method("sarjy.say")
+    async def say(data: rtc.RpcInvocationData):
+        # Client-owned, non-LLM speech for exact commands. add_to_chat_ctx is
+        # false so game replies never become conversation history.
+        return await perform_say(session, data, ctx.room.remote_participants)
+
+    @ctx.room.on("data_received")
+    def on_data(packet: rtc.DataPacket):
+        apply_control(packet, reveal)
+
+
+def apply_control(packet, reveal: RevealState) -> None:
+    """Accept only human control messages, and only the supported flags."""
+    if packet.topic != "sarjy.control" or packet.participant is None:
+        return
+    if packet.participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+        return
+    try:
+        value = json.loads(packet.data)
+    except (TypeError, ValueError):
+        return
+    if not isinstance(value, dict):
+        return
+    if value.get("type") == "wordle.reveal_pending":
+        reveal.pending = value.get("value") is True
+    elif value.get("type") == "wordle.pending":
+        # A spoken yes/no is awaited for a pending action ("reveal" or "reset"); null clears it.
+        reveal.pending = value.get("value") in {"reveal", "reset"}
+    elif value.get("type") == "wordle.active":
+        reveal.active = value.get("value") is True
+        if not reveal.active:
+            reveal.pending = False
+
+
+INTRO_WAIT_SECONDS = 15
+
+
+async def play_greeting(session, backend, intro: Mapping[str, Any] | None, wait_for_user) -> str:
+    """Speak the deterministic greeting once the user is in the room; no model turn is started.
+
+    Rule: the full introduction is marked seen on the API only when it played to the end. If
+    the user interrupts it, or speech fails (budget, TTS), it is not marked and plays again
+    next call. The one-line greeting is never marked. Spoken text goes through the agent's
+    tts_node, so characters are reserved in the shared speech budget like any other reply, and
+    LiveKit transcription shows it in captions. Returns what happened, for tests and logs.
+    """
+    if not intro or not isinstance(intro.get("text"), str) or not intro["text"]:
+        return "skipped"
+    try:
+        await asyncio.wait_for(wait_for_user(), timeout=INTRO_WAIT_SECONDS)
+        handle = session.say(intro["text"], allow_interruptions=True, add_to_chat_ctx=False)
+        await handle.wait_for_playout()
+    except (TimeoutError, RuntimeError, ValueError, httpx.HTTPError):
+        return "not_played"
+    if handle.interrupted or handle.exception():
+        return "interrupted"
+    if intro.get("kind") == "full":
+        try:
+            (await backend.post("/internal/agent/intro-played")).raise_for_status()
+        except httpx.HTTPError:
+            return "mark_failed"
+    return "played"
+
 
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
@@ -613,6 +1011,7 @@ async def entrypoint(ctx: JobContext):
         "x-session-id": session_id,
         "x-room-name": ctx.job.room.name,
     }
+    reveal = RevealState()
     async with httpx.AsyncClient(base_url=values["API_INTERNAL_URL"], headers=headers, timeout=15) as backend:
         response = await backend.post("/internal/agent/bootstrap")
         response.raise_for_status()
@@ -624,10 +1023,23 @@ async def entrypoint(ctx: JobContext):
                 json.dumps({"code": code}).encode(), reliable=True, topic="sarjy.error"
             )
 
-        providers = build_providers(config, provider_credentials(values, config["llm"]["provider"]))
+        providers = build_providers(
+            config,
+            provider_credentials(
+                values, config["llm"]["provider"], (config.get("tts") or {}).get("provider", "elevenlabs_direct")
+            ),
+        )
         fallback_llm = providers.pop("fallback_llm", None)
         agent = SarjyAgent(
-            backend, config, instructions=bootstrap["instructions"], notify=notify, fallback_llm=fallback_llm
+            backend,
+            config,
+            instructions=bootstrap["instructions"],
+            notify=notify,
+            fallback_llm=fallback_llm,
+            publish=partial(publish_command, ctx.room),
+            publish_wordle=partial(publish_wordle, ctx.room),
+            wordle_active=lambda: reveal.active,
+            is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending, wordle_active=reveal.active),
         )
         session = AgentSession(
             **providers,
@@ -643,6 +1055,8 @@ async def entrypoint(ctx: JobContext):
         async def interrupt(data: rtc.RpcInvocationData):
             await session.interrupt()
             return "ok"
+
+        register_voice_controls(ctx, session, reveal)
 
         gone = asyncio.Event()
 
@@ -673,6 +1087,11 @@ async def entrypoint(ctx: JobContext):
         await session.start(
             agent, room=ctx.room, record=False, room_options=room_io.RoomOptions(close_on_disconnect=False)
         )
+        greeting = asyncio.create_task(
+            play_greeting(session, backend, bootstrap.get("intro"), lambda: ctx.wait_for_participant())
+        )
+        agent.pending.add(greeting)
+        greeting.add_done_callback(agent.pending.discard)
         expiry = datetime.fromisoformat(bootstrap["expires_at"])
         remaining = max(0, (expiry - datetime.now(UTC)).total_seconds())
         try:
@@ -686,6 +1105,7 @@ async def entrypoint(ctx: JobContext):
                 await asyncio.gather(monitor, return_exceptions=True)
         finally:
             await session.aclose()
+            greeting.cancel()
             if agent.pending:
                 await asyncio.gather(*agent.pending, return_exceptions=True)
             if fallback_llm is not None and hasattr(fallback_llm, "aclose"):

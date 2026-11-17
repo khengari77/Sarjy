@@ -1,14 +1,20 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { SessionConfig } from '../api';
+import type { CommandResult } from '../commands/commandStore';
+import { interruptAgent, publishControlFlag, sendChatText, speakExact } from './agentRpc';
+import { controlEvent } from './controlPayload';
 import { waitForAgent, type StartupSignal } from './agentStartup';
 import { disposeAudioResources } from './disposeAudio';
 import { bindRoomEvents, disconnectRoomInBackground } from './roomLifecycle';
 import { transcriptMetadata } from './transcriptSpeaker';
 
-type VoiceEventBody =
+export type VoiceEventBody =
   | { type: 'status'; source: 'transport' | 'agent'; text: string }
   | { type: 'error'; code: string }
   | { type: 'audio-blocked'; code: string }
+  | { type: 'command'; command: CommandResult }
+  | { type: 'resync' }
+  | { type: 'wordle'; action: 'open' | 'refresh' | 'close' | 'confirm_reset' }
   | { type: 'transcript'; text: string; final: boolean; segmentId: string; speaker: 'user' | 'assistant' };
 
 export type VoiceEvent = VoiceEventBody & { epoch: number };
@@ -20,6 +26,10 @@ export interface VoiceRuntime {
   stopMicrophone(): Promise<void>;
   interrupt(): Promise<void>;
   sendText(text: string): Promise<void>;
+  /** Ask the worker to speak exact text without invoking the conversational LLM. */
+  say(text: string): Promise<void>;
+  /** Publish a validated control flag to the worker (no conversation turn). */
+  sendControl(event: Record<string, unknown>): Promise<void>;
   disconnect(): Promise<void>;
   cancelConnect(): Promise<void>;
   subscribe(handler: (event: VoiceEvent) => void): () => void;
@@ -58,8 +68,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   }
 
   private emit(event: VoiceEventBody) {
-    const tagged = { ...event, epoch: this.sessionEpoch } as VoiceEvent;
-    for (const handler of this.handlers) handler(tagged);
+    for (const handler of this.handlers) handler({ ...event, epoch: this.sessionEpoch } as VoiceEvent);
   }
 
   async connect(config: SessionConfig) {
@@ -116,15 +125,9 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
       if (this.active(room, epoch) && state) this.emit({ type: 'status', source: 'agent', text: state });
     });
     bindings.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-      if (!this.active(room, epoch) || topic !== 'sarjy.error' || !participant?.isAgent) return;
-      try {
-        const event = JSON.parse(new TextDecoder().decode(payload));
-        if (['DAILY_BUDGET_EXHAUSTED', 'BUDGET_SERVICE_UNAVAILABLE'].includes(event.code)) {
-          this.emit({ type: 'error', code: event.code });
-        }
-      } catch {
-        /* malformed control payload: ignore rather than crash the session */
-      }
+      if (!this.active(room, epoch) || !participant?.isAgent) return;
+      const event = controlEvent(topic, payload);
+      if (event) this.emit(event);
     });
     bindings.on(RoomEvent.MediaDevicesError, () => {
       if (this.active(room, epoch)) this.emit({ type: 'error', code: 'MICROPHONE_UNAVAILABLE' });
@@ -237,19 +240,19 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
   }
 
   async sendText(text: string) {
-    if (!this.room) throw new Error('CALL_REQUIRED');
-    await this.room.localParticipant.sendText(text, { topic: 'lk.chat' });
+    await sendChatText(this.room, text);
+  }
+
+  say(text: string) {
+    return speakExact(this.room, text);
+  }
+
+  sendControl(event: Record<string, unknown>) {
+    return publishControlFlag(this.room, event);
   }
 
   async interrupt() {
-    const agent = [...(this.room?.remoteParticipants.values() || [])].find((participant) => participant.isAgent);
-    if (agent && this.room) {
-      await this.room.localParticipant.performRpc({
-        destinationIdentity: agent.identity,
-        method: 'sarjy.interrupt',
-        payload: '',
-      });
-    }
+    await interruptAgent(this.room);
   }
 
   /** Abort an in-flight connection attempt and ignore anything it still emits. */

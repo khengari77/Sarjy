@@ -558,3 +558,40 @@ def test_concurrent_same_request_id_consumes_one_attempt(tmp_path):
             await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_reset_deletes_only_todays_game_and_allows_a_full_replay(tmp_path):
+    with TestClient(create_app(settings(tmp_path), wordle_source=FixtureSource())) as client:
+        assert client.post("/v1/wordle/reset").status_code == 401
+        client.post("/v1/demo-session")
+        for index, word in enumerate(("SLATE", CRANE)):
+            client.post("/v1/wordle/guesses", json={"guess": word, "request_id": f"r{index}"})
+        assert client.get("/v1/wordle/stats").json()["won"] == 1
+        reset = client.post("/v1/wordle/reset")
+        assert reset.status_code == 200
+        game = reset.json()["game"]
+        assert game["status"] == "in_progress" and game["guesses"] == []
+        assert game["attempts_remaining"] == 6 and "answer" not in game and CRANE not in reset.text
+        # A finished daily result is removed from the stats so it can be replayed.
+        assert client.get("/v1/wordle/stats").json()["played"] == 0
+        # Same request ids and the same puzzle work again from scratch.
+        again = client.post("/v1/wordle/guesses", json={"guess": CRANE, "request_id": "r1"})
+        assert again.status_code == 200 and again.json()["status"] == "won"
+
+
+def test_reset_is_idempotent_isolated_and_respects_the_kill_switch(tmp_path):
+    with TestClient(create_app(settings(tmp_path), wordle_source=FixtureSource())) as client:
+        client.post("/v1/demo-session")
+        first = client.post("/v1/wordle/reset").json()
+        second = client.post("/v1/wordle/reset").json()
+        assert first["game"]["guesses"] == second["game"]["guesses"] == []
+        client.post("/v1/wordle/guesses", json={"guess": "SLATE", "request_id": "mine"})
+    (tmp_path / "other").mkdir()
+    with TestClient(create_app(settings(tmp_path / "other"), wordle_source=FixtureSource())) as other:
+        other.post("/v1/demo-session")
+        assert other.post("/v1/wordle/reset").status_code == 200
+    (tmp_path / "off").mkdir()
+    with TestClient(create_app(settings(tmp_path / "off", enabled=False), wordle_source=FixtureSource())) as off:
+        off.post("/v1/demo-session")
+        response = off.post("/v1/wordle/reset")
+        assert response.status_code == 503 and response.json()["detail"]["code"] == "WORDLE_DISABLED"

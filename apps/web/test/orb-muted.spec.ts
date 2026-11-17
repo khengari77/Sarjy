@@ -33,7 +33,8 @@ test.beforeEach(async ({ page }) => {
 test('enhanced WebGL muted speaking renders a supported non-black colour', async ({ page }) => {
   await page.goto(MUTED_PATH);
   const orb = page.locator('.orb-button');
-  await expect(orb).not.toHaveAttribute('data-renderer', 'static');
+  // Canvas2D is also "not static", so require the tier the title names.
+  await expect(orb).toHaveAttribute('data-renderer', 'enhanced');
   await expect(page.locator('.status-line')).toContainText('Speaking');
   await expect(page.locator('.mic-slash')).toBeVisible();
   await assertLiveColor((await page.locator('canvas').getAttribute('data-color')) ?? '');

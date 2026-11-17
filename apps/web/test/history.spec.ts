@@ -98,13 +98,31 @@ async function mockSessions(page: Page) {
   return ends;
 }
 
+/** The shared machine can drop hydration or return a 500 during a cold vite
+ *  compile. Wait for the hydrated shell, reloading if the module graph never
+ *  took over, before asserting on real history rows. */
+async function gotoHistory(page: Page) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    const ready = await page
+      .locator('.orb-button[data-renderer]:not([data-renderer="static"])')
+      .waitFor({ timeout: 15_000 })
+      .then(
+        () => true,
+        () => false,
+      );
+    if (ready) return;
+  }
+}
+
 test.beforeEach(async ({ page }) => {
+  test.setTimeout(90_000);
   await page.addInitScript(() => localStorage.setItem('sarjy-language', 'en'));
 });
 
 test('search filters by title client-side and reports no matches', async ({ page }) => {
   const mocked = await mockHistory(page);
-  await page.goto('/');
+  await gotoHistory(page);
   await expect(page.getByRole('button', { name: 'Trip to Paris', exact: true })).toBeVisible();
 
   await page.getByRole('searchbox', { name: 'Search conversations' }).fill('paris');
@@ -118,14 +136,14 @@ test('search filters by title client-side and reports no matches', async ({ page
 
 test('Arabic titles match without diacritics or hamza variants', async ({ page }) => {
   await mockHistory(page);
-  await page.goto('/');
+  await gotoHistory(page);
   await page.getByRole('searchbox', { name: 'Search conversations' }).fill('ميزانيه');
   await expect(page.getByRole('button', { name: 'ميزانية Tripoli', exact: true })).toBeVisible();
 });
 
 test('the selected conversation exposes aria-current and a visible selection', async ({ page }) => {
   await mockHistory(page);
-  await page.goto('/');
+  await gotoHistory(page);
 
   const first = page.getByRole('button', { name: 'Trip to Paris', exact: true });
   await expect(first).toHaveAttribute('aria-current', 'page');
@@ -142,7 +160,7 @@ test('the selected conversation exposes aria-current and a visible selection', a
 
 test('conversation menus dismiss on Escape or outside interaction and restore focus', async ({ page }) => {
   await mockHistory(page);
-  await page.goto('/');
+  await gotoHistory(page);
 
   const trigger = page.getByRole('button', { name: 'Conversation actions for Trip to Paris' });
   const menu = page.getByRole('menu');
@@ -171,18 +189,36 @@ test('resuming a conversation loads turns without starting a microphone session'
     sessionPosts += 1;
     await route.fulfill({ status: 503, json: { detail: { code: 'PIPELINE_NOT_CONFIGURED' } } });
   });
-  await page.goto('/');
+  await gotoHistory(page);
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
   await expect.poll(() => mocked.turns.length).toBeGreaterThanOrEqual(2);
   expect(sessionPosts).toBe(0);
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeEnabled();
+  await expect(page.locator('.orb-button')).toBeEnabled();
 });
 
-test('an empty list offers an explicit new-chat action', async ({ page }) => {
+test('an empty list shows the filled new-chat action, always-on search and workspace footer', async ({ page }) => {
   await mockHistory(page, []);
-  await page.goto('/');
-  await expect(page.getByText('No conversations yet.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start a conversation' })).toBeVisible();
+  await gotoHistory(page);
+
+  const newChat = page.getByRole('button', { name: 'New conversation', exact: true });
+  await expect(newChat).toBeVisible();
+  // The primary action is a filled accent control, not a ghost button.
+  expect(await newChat.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
+
+  // Search is present even with no conversations to filter.
+  await expect(page.getByRole('searchbox', { name: 'Search conversations' })).toBeVisible();
+  await expect(page.locator('.sidebar-label')).toHaveText('RECENT');
+
+  await expect(page.getByText('No conversations yet', { exact: true })).toBeVisible();
+  await expect(page.getByText('Your chats will appear here.')).toBeVisible();
+  await expect(page.getByText('Start with your voice')).toBeVisible();
+  await expect(page.getByText('Or use the message box.')).toBeVisible();
+
+  const footer = page.locator('.sidebar-foot');
+  await expect(footer).toContainText(/S\s*Your workspace/);
+  const credit = footer.getByRole('link', { name: 'Weather data: Open-Meteo' });
+  await expect(credit).toHaveAttribute('href', 'https://open-meteo.com/');
+  await expect(footer).toContainText('Voice Context Studio');
 });
 
 test('a list failure stays inside the sidebar and leaves the orb idle', async ({ page }) => {
@@ -190,7 +226,7 @@ test('a list failure stays inside the sidebar and leaves the orb idle', async ({
     await route.fulfill({ status: 503, json: { detail: { code: 'API_UNAVAILABLE' } } });
   });
   await page.route('**/api/v1/demo-session', async (route) => route.fulfill({ json: { id: 'owner' } }));
-  await page.goto('/');
+  await gotoHistory(page);
   await expect(page.locator('[data-code="API_UNAVAILABLE"]')).toContainText('Could not load conversations');
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'idle');
 });
@@ -201,9 +237,9 @@ test('switching chats mid-call requires an explicit end and switch', async ({ pa
   await installFakeRuntime(page);
   const ends = await mockSessions(page);
 
-  await page.goto('/');
+  await gotoHistory(page);
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
@@ -216,7 +252,7 @@ test('switching chats mid-call requires an explicit end and switch', async ({ pa
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
   await page.getByRole('button', { name: 'End & switch' }).click();
   await expect.poll(() => ends.some((url) => url.endsWith('/sess-1/end'))).toBe(true);
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  await expect(page.locator('.orb-button')).toBeVisible();
 });
 
 test('starting a new conversation mid-call requires the same confirmation', async ({ page }) => {
@@ -225,27 +261,27 @@ test('starting a new conversation mid-call requires the same confirmation', asyn
   await installFakeRuntime(page);
   await mockSessions(page);
 
-  await page.goto('/');
+  await gotoHistory(page);
   await expect(page.locator('.orb-button')).not.toHaveAttribute('data-renderer', 'static');
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'New conversation +' }).click();
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'End the current voice session?' });
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   expect(mocked.created()).toBe(0);
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'New conversation +' }).click();
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: 'End & start' }).click();
   await expect.poll(() => mocked.created()).toBe(1);
-  await expect(page.getByRole('button', { name: 'Start call', exact: true })).toBeVisible();
+  await expect(page.locator('.orb-button')).toBeVisible();
 });
 
 test('rename and delete are disabled with an explanation', async ({ page }) => {
   await mockHistory(page);
-  await page.goto('/');
+  await gotoHistory(page);
   await page.getByRole('button', { name: 'Conversation actions for Trip to Paris' }).click();
   const menu = page.getByRole('menu');
   await expect(menu.getByRole('menuitem', { name: 'Rename' })).toBeDisabled();

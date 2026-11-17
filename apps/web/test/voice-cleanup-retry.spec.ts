@@ -12,7 +12,7 @@ test('a failed startup cleanup stays actionable instead of turning into Start', 
 
   // Session sess-1 is admitted, then microphone startup fails; its release also
   // fails, so the admission remains the user's to clean up.
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   const retryCleanup = page.getByRole('button', { name: 'Retry ending previous call', exact: true });
   await expect(retryCleanup).toBeVisible();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toHaveCount(0);
@@ -20,7 +20,7 @@ test('a failed startup cleanup stays actionable instead of turning into Start', 
 
   // Starting a new call must not drop the outstanding cleanup.
   await page.evaluate(() => window.__race?.setStartMicFail(false));
-  await page.getByRole('button', { name: 'Start call', exact: true }).click();
+  await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'End call', exact: true }).click();
   await expect(retryCleanup).toBeVisible();
