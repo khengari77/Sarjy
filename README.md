@@ -1,172 +1,180 @@
 # Sarjy — Voice Context Studio
 
-Bilingual SvelteKit UI, FastAPI state service, and LiveKit Python speech worker.
+A bilingual voice assistant that remembers across conversations and lets you see, shape and undo the context a model receives.
 
-## Local development
+## What it is
 
-Install uv, Node 22, and pnpm 10.32.1. From the repository root:
+Sarjy is a working voice and text assistant built around **controllable context**. You talk to it in the browser, it remembers durable facts and preferences, and it compiles a bounded prompt from that memory for every request. A separate deep dive makes that compilation inspectable: you can preview what will be included, exclude a subset while keeping an exception, review the diff, and Undo.
+
+```mermaid
+flowchart LR
+    B["Browser<br/>SvelteKit UI"] --> W["CranL web<br/>adapter-node"]
+    W --> A["FastAPI API<br/>identity, memory, context, actions"]
+    A --> D[("PostgreSQL<br/>Supabase; SQLite locally")]
+    B <-->|"WebRTC audio"| L["LiveKit Cloud"]
+    L --> K["Python voice worker"]
+    K --> P["STT / LLM / TTS providers"]
+    A --> M["Open-Meteo"]
+    K --> A
+```
+
+## Live demo
+
+**https://sarjy-web-dev-otbaod.cranl.net**
+
+The development deployment is protected. Reviewers open an invitation link or enter the shared reviewer token supplied by the operator; neither is published in this repository. Access is enforced server-side and expires. See [reviewer access](docs/reviewer-access.md).
+
+## Quickstart
+
+Install `uv`, Node 22 and pnpm 10.32.1. From a fresh checkout:
 
 ```sh
 uv sync --locked
 pnpm --dir apps/web install --frozen-lockfile
-uv run uvicorn app.main:create_app --factory --app-dir apps/api --reload
 ```
 
-Fill the existing root `.env` with the names in `.env.example` (do not overwrite existing secrets). SQLite defaults to `sarjy.db` and bootstraps locally. In another terminal:
+Create a local `.env` from `.env.example` and fill only what you need; never commit it. SQLite (`DATABASE_URL=sqlite+aiosqlite:///./sarjy.db`) bootstraps locally, so conversation history works without speech credentials.
+
+Run the API and web app in separate terminals:
 
 ```sh
+uv run alembic upgrade head
+uv run uvicorn app.main:create_app --factory --app-dir apps/api --reload
 pnpm --dir apps/web dev
 ```
 
-The frontend proxies `/api/v1/*` to `API_INTERNAL_URL`, defaulting to `http://localhost:8000`. Set this environment variable in the frontend process if using another address. Browser requests use an isolated HttpOnly demo cookie. Conversation history works without speech credentials.
+The frontend proxies `/api/v1/*` to `API_INTERNAL_URL`, defaulting to `http://localhost:8000`. Browser requests use an isolated HttpOnly demo cookie.
 
-For real speech, configure `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `AGENT_SERVICE_SECRET`, `DEEPGRAM_API_KEY` (speech-to-text and, by default, text-to-speech), `DEEPSEEK_API_KEY`, and `ELEVEN_API_KEY` (only when `TTS_PROVIDER=elevenlabs`). Use the same service secret in the API and worker. Set `API_INTERNAL_URL` in the worker to the reachable API address. Then run:
+For real speech, set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `AGENT_SERVICE_SECRET`, `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, and optionally `ELEVEN_API_KEY` (when `TTS_PROVIDER=elevenlabs`). Use the same `AGENT_SERVICE_SECRET` and a reachable `API_INTERNAL_URL` in the API and worker. Then:
 
 ```sh
 uv run -m livekit.agents download-files
 PYTHONPATH=apps/api uv run services/voice-agent/main.py dev
 ```
 
-The temporary default is Nova-3 English → OpenAI GPT-6 Luna → Deepgram Aura-2 (`TTS_PROVIDER=deepgram`; set `TTS_PROVIDER=elevenlabs` for ElevenLabs Flash v2.5). Aura-2 has no Arabic: an Arabic voice session fails with `TTS_LANGUAGE_UNSUPPORTED` under Deepgram instead of using an English voice. DeepSeek Flash direct remains available for an explicit switch after funding. No fallback is silently selected. Arabic voice quality and live provider entitlement still require manual validation.
+The speech pipeline uses Deepgram Nova-3 English STT and Deepgram Aura-2 TTS by default; `TTS_PROVIDER=elevenlabs` selects ElevenLabs Flash v2.5. The LLM provider comes from `DEFAULT_LLM_PROVIDER`. Missing configuration fails explicitly; no provider is silently substituted.
+
+## The deep dive: controllable context
+
+The experiment is not a bigger prompt window. It is a small, auditable pipeline in which **the model proposes and deterministic code decides** which memories and actions are allowed.
+
+The representative request is a keep-exception:
+
+> Exclude my travel memories, but keep my budget.
+
+The flow is deliberately staged:
+
+1. **Preview** — resolve the request against stored memories and show the candidate matches, the records that must be preserved, and any ambiguous records that need a clearer decision.
+2. **Confirm** — apply the exclusion only after an explicit decision. A unique voice "forget" hides one memory in one step and says how to undo it; compound keep-exceptions and exact-id selections go through the preview/confirm API used by the memory explorer.
+3. **Diff** — show exactly what is removed, what is preserved, and what stays excluded.
+4. **Next request** — the context compiler uses the reduced, still-bounded selection; the model sees the exception-compiled result, not the raw memory store.
+5. **Undo** — restore the excluded records and show the restored diff.
+
+Why this shape: a language model is good at interpreting intent but is not a trustworthy authority over storage, consent or spend. Matching, exclusion lineage, budget reservation and action dispatch are deterministic, typed and tested; the model proposes an interpretation and the application either accepts it or reports honestly that nothing changed. The same boundary covers weather calls, UI commands, Wordle actions and memory writes.
+
+## External API
+
+Sarjy uses [Open-Meteo](https://open-meteo.com/) for server-side weather lookups, including geocoding and clarification when a city is ambiguous. Weather turns a voice request into a useful, verifiable real-world action and gives cross-session memory a concrete test: a remembered home city is reused in a later session. Open-Meteo's low-friction API keeps the project focused on the context deep dive while still demonstrating reliable tool calling; use is subject to its attribution and service terms.
+
+## Architecture
+
+Three deployables share one repository:
+
+- `apps/web` — SvelteKit 5 + TypeScript UI, adapter-node, same-origin proxy, browser audio and the memory/Wordle panels.
+- `apps/api` — FastAPI service owning identity, conversations, memory, context compilation, budgets, actions and persistence.
+- `services/voice-agent` — long-running LiveKit Agents worker that joins rooms, streams STT → LLM → TTS, and calls the API for authoritative context and callbacks.
+
+Design boundaries:
+
+- **Pure context compiler.** Domain selection and prompt assembly are pure functions over immutable records; I/O lives in services and adapters.
+- **Consent-first memory.** Facts are captured explicitly, versioned, owner-scoped and never shared across identities. Hides are reversible.
+- **Typed action dispatcher.** Voice commands become typed actions with idempotency and leases, not free-form database access.
+- **Durable budgets.** Spend and call reservations live in the database, survive restarts and fail closed.
+- **Provider adapters.** LLM, STT, TTS and external tools sit behind narrow interfaces, so providers can be swapped without leaking into the domain.
+
+Deeper material: [the Version 5 architecture and plan](sarjy_voice_context_studio_plan_v4_arabic_speech.md), [execution checklist](docs/execution_checklist_v5.md), [typed actions](docs/typed-actions.md), [memory UI notes](apps/web/src/lib/memory/README.md).
 
 ## Checks
+
+Run from a worktree with the locked dependencies installed:
 
 ```sh
 uv run pytest -q
 pnpm --dir apps/web check
 pnpm --dir apps/web build
-pnpm --dir apps/web exec playwright install chromium
-pnpm --dir apps/web test:browser
+pnpm --dir apps/web exec vitest run
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run lint-imports
 ```
 
-Pure tests use immutable records and Hypothesis invariants. Database/API tests cover real persistence and authorization.
+Current evidence for `origin/main` at `ed5c496` (19 November 2026):
 
-Optional PostgreSQL migration parity against a disposable database (never a hosted one):
+- Python: **1,183 passed, 20 skipped, 0 failed** in **13:32** (`uv run pytest -q`).
+- Vitest: **52 files, 443 tests passed** in **53.6s**.
+- `svelte-check`: **0 errors, 1 warning**.
+- `pnpm --dir apps/web build`: succeeds.
+- Ruff, strict mypy and import-linter were green on the same source tree.
+
+Database/API tests exercise real persistence and authorization; pure tests use immutable records and Hypothesis invariants. PostgreSQL parity is optional and requires a disposable database, never a hosted one:
 
 ```sh
-TEST_POSTGRES_URL='postgresql+asyncpg://postgres:test@127.0.0.1:55432/sarjy' uv run pytest -q tests/test_migrations.py
+TEST_POSTGRES_URL='postgresql+asyncpg://postgres:test@127.0.0.1:55432/sarjy' \
+  uv run pytest -q tests/test_migrations.py
 ```
 
-### Delayed resource-warning attribution (opt-in)
+Browser and hosted checks that need LiveKit, provider keys or a real microphone are vendor-gated and are not part of the default CI claim. **Not verified here:** live human English microphone acceptance, measured conversation latency, and a hosted re-run after migration `0015_intro_seen`.
 
-The normal suite keeps `filterwarnings = ["error"]` and never forces garbage collection. To trace a delayed `ResourceWarning` back to the test that allocated the resource:
+## Deployment and provenance
 
-```sh
-uv run python scripts/diagnose_resources.py --self-test
-uv run python scripts/diagnose_resources.py tests/test_session_lifecycle.py
-uv run --python 3.12 python scripts/diagnose_resources.py --self-test
-```
+- `origin/main` is `ed5c496` (merge of PR #191, `integration/living-cloud`).
+- Live sources are `deploy/web` at `905e65c` and `deploy/api` at `2c1da07`. Their code trees are identical to `main`; the only difference is the root `Dockerfile` each deploy branch adds for CranL (`git diff --shortstat origin/deploy/web origin/main` shows one file, and the code-only diff is empty).
+- Because the code is identical, the live app includes the Wordle UI and voice commands, the intro greeting, generated conversation titles and the context blocks described above.
+- The live database has migration `0014_reviewer_access`; `main` adds `0015_intro_seen`. Applying migrations is an operational action, not part of this documentation change.
+- The previous README recorded release `9148a60` as live. That line is stale and has been removed; `9148a60` is not the current deployment.
 
-The helper starts `tracemalloc`, records unclosed SQLite/aiosqlite objects at test boundaries, maps each allocation frame to its originating test, and separates application defects, test defects and unattributed timing observations. `--depth` controls the retained frame count (default 15).
+Release process: merge only a reviewed, green commit into `main`; promote that same commit to `deploy/api`, verify it, then promote it to `deploy/web`. CranL builds from the repository root with `infra/api.Dockerfile` (port 8000) and `infra/web.Dockerfile` (port 3000). Never roll the database back automatically; keep the last successful SHA for recovery.
 
-Outside `--self-test`, any observed unclosed resource makes the command exit `1`; that is the diagnostic signal, not a failing test run. This is diagnostic-only; do not add its forced collection to routine CI.
+## Security, privacy and spend
 
-## Deployment
+- **Protected development.** `DEVELOPMENT_PROTECTED=true` is required on web and API. The web edge admits a reviewer only through the shared token or a per-person invitation link, then issues a signed, expiring cookie. The API re-authorises every `/v1/*` request; a revoked or expired invitation opens no data.
+- **Isolation.** Identities, conversations and memories are owner-scoped. Supabase tables use row-level security and restrict public grants. Worker routes require the shared service secret.
+- **No raw agent recording.** Audio is processed for the live session; raw agent recordings are disabled.
+- **Application spend guards, not vendor quotas.** OpenAI is capped at **$1/day** with durable **$0.02** reservations before each LLM request. Deepgram TTS is capped at **50,000 characters/day**; ElevenLabs at **2,500 characters/day**; the Jev UI classifier at **2,000 requests/day**. Demo calls are limited to **3 per identity**, **80 per calendar month**, **10 minutes** each. Budget ledgers reset at midnight Africa/Tripoli, persist across restarts and fail closed.
+- **No secrets in git.** Provider keys, reviewer tokens and deployment credentials live in hosting secrets or an ignored local `.env`; never commit them, local databases or generated artifacts.
 
-Build images from repository root with `infra/api.Dockerfile`, `infra/web.Dockerfile`, and `infra/agent.Dockerfile`. Use CranL for frontend/API, LiveKit Build for the worker, and Supabase PostgreSQL. Set `DATABASE_URL` to an asyncpg SQLAlchemy URL, run `uv run alembic upgrade head` before API startup, and set `COOKIE_SECURE=true` in production. Never expose provider secrets to the frontend. Configure SvelteKit's trusted public origin for the deployed proxy; retain CSRF checks.
+## Known limits
 
-LiveKit Build quotas must be checked in the account before testing. Hosted agent minutes and direct provider charges are separate. Calls are capped at ten minutes, one active per identity and two globally. Each identity can reserve three calls; the application can reserve 80 calls per calendar month (at most 800 agent minutes), including failed dispatch reservations. This conservative cap does not account for other LiveKit projects; check the account dashboard. Agent cold starts may take 10–20 seconds. Preserve 200 agent minutes for reviewers. The worker stops after 60 seconds without a browser participant. Raw agent recording is disabled.
+- Real provider replies and prerecorded English STT are verified; **live human English microphone acceptance is still pending**.
+- **Latency is not measured.** No latency number is claimed; agent cold starts can take 10–20 seconds.
+- **Arabic is retained but hidden.** The localization and provider code still support Arabic, but the language switch is hidden and the English Deepgram voice has no Arabic. Arabic quality and entitlement are unqualified.
+- Public identity creation needs stronger abuse controls before unrestricted exposure, and data-retention policy is still a gap.
+- Wordle depends on an external publisher source; an outage is reported as unavailable rather than masked with a fabricated answer.
 
-**Development URL:** https://sarjy-web-dev-otbaod.cranl.net (development login required). API, frontend and worker release `9148a60` are deployed (2026-11-15); database migration `0014_reviewer_access` is applied. Reviewer invitation links are enabled (`REVIEWER_ACCESS_ENABLED=true` on both the API and the web app); see [reviewer access](docs/reviewer-access.md). See [hosted verification](docs/day1-hosted-verification.md) and the [human acceptance runbook](docs/day1-acceptance-runbook.md).
+## Repository map
 
-## Current limits
+| Path | Contents |
+| --- | --- |
+| `apps/api/` | FastAPI app: domain, services, infrastructure, routes |
+| `apps/web/` | SvelteKit UI, voice client, memory and Wordle panels |
+| `services/voice-agent/` | LiveKit worker, provider factory, tools, snapshots |
+| `packages/contracts/` | Checked-in OpenAPI schema and generated TypeScript types |
+| `migrations/` | Alembic migrations `0001`–`0015` |
+| `infra/` | API, web and agent Dockerfiles |
+| `tests/` | Python unit, property, API and database tests |
+| `scripts/` | Contracts, deployment, diagnostics and reviewer tooling |
+| `docs/` | Operational notes, evidence and design records |
 
-- Real provider replies and prerecorded English STT are verified; live English conversation acceptance remains pending.
-- Day 1 snapshots capture initial context assembly; tool continuations are retained in the worker but do not yet receive separate request snapshots.
-- Persistent history, extracted memory, context exclusion/Undo and typed action dispatch are implemented and covered by the test suite.
-- Managed DeepSeek/Cartesia fallback candidates are not enabled.
-- Disposable PostgreSQL migration parity and hosted Supabase connectivity/persistence passed; cleanup migration is deployed.
-- Public identity creation needs further abuse controls before unrestricted public exposure.
-- Open-Meteo weather is called server-side, with clarification for ambiguous cities. Weather data: https://open-meteo.com/ . Use is subject to its attribution and service terms.
+## Documentation
 
-## Day 1 acceptance status
+- [docs/](docs/) — operational notes and evidence
+- [CONTRIBUTING.md](CONTRIBUTING.md) — worktree, issue, verification and review rules
+- [STYLE.md](STYLE.md) — Python and frontend style contract
+- [Version 5 architecture and plan](sarjy_voice_context_studio_plan_v4_arabic_speech.md)
+- [Wordle backend](docs/wordle.md)
+- [Reviewer access](docs/reviewer-access.md)
 
-Verified locally: anonymous identity isolation, conversation persistence, worker authorization/idempotent callbacks, deterministic bounded prompt compilation, initial migrations, a live Open-Meteo request for Tripoli, the English-first browser interface, same-origin proxy CSRF rejection, and explicit missing-configuration errors.
+## Contributing
 
-Pending real-account checks: MSA/dialect/code-switching recognition; selected ElevenLabs Arabic voice intelligibility; spoken/typed shared turn flow; interruption and reconnect with real audio; measured free-tier usage; PostgreSQL integration; and the public CranL URL.
-
-New voice sessions start in English. The localization and provider code retains Arabic support, but the language switch is hidden for this release, and a previously saved Arabic preference does not change the session language. Changing reply language during a call still does not rebuild the audio pipeline; ask explicitly if that is needed.
-
-## Shared contracts
-
-Regenerate the checked-in OpenAPI schema and TypeScript input contracts after changing API models:
-
-```sh
-uv run python scripts/export_contracts.py
-pnpm dlx openapi-typescript@7.13.0 packages/contracts/openapi.json -o packages/contracts/api.d.ts
-```
-
-SQLite and disposable PostgreSQL migration/model-parity checks passed locally. All three Docker images build; the frontend HTTP server, API identity/database startup, and worker CLI were smoke-tested. These checks do not establish live speech quality or deployed account access.
-
-## Voice selection
-
-Voice is a user setting, not an environment variable. Under Deepgram the picker lists a static, documentation-verified table of Aura-2 English voices (id = model string such as `aura-2-thalia-en`, default `aura-2-thalia-en`) with no network call. Under ElevenLabs it searches the configured account's voices; the API key remains server-side and custom-rate voices are excluded. Language labels are provider metadata, not proof of Arabic playback quality.
-
-The chosen voice is remembered in this browser and sent explicitly when a call starts. The backend revalidates it and stores it in the session pipeline/snapshots. Changes apply to the next call; an unavailable voice causes an explicit error, never a silent substitution. `ELEVEN_VOICE_ID` is no longer read; an old entry in a local `.env` may be removed.
-
-Conversational personalization is planned next: “I want to speak to a British young lady” becomes model-interpreted catalog criteria, followed by deterministic selection of an accessible voice and an honest no-match path. Spoken in-call changes and response-boundary voice switching are not implemented in the initial picker.
-
-## Development spend limits
-
-OpenAI is the temporary default (`openai_direct`, `gpt-6-luna`, Responses API, reasoning disabled). DeepSeek remains supported; switch `DEFAULT_LLM_PROVIDER=deepseek_direct` only after the user confirms a top-up. Set `OPENAI_API_KEY` server-side.
-
-OpenAI has a separate **$1/day development ceiling**, enforced with durable conservative reservations of **$0.02 before each LLM request** (50 requests/day, including tool continuations). This deliberately stops earlier than token billing would require. The bounded text-only request uses at most 64KB canonical context, the one fixed weather tool, at most 1024 output tokens (tier 5; tier 2 by default), Standard tier, no provider built-in tools, and no SDK/LiveKit retries. The allowance is based on the checked 11 November 2026 Luna rates ($0.10/M input, $0.50/M output); recheck pricing before changing models or request bounds. Reservations are not invoices and are not refunded after errors, interruptions, or uncertain delivery.
-
-Response length is one of five tiers with hard provider caps of **64/128/256/512/1024** output tokens. The session resolves a tier from the saved preference and any explicit request (for automatic/classified requests, `brief` caps at tier 2, `balanced` at tier 3, `detailed` at tier 5; a valid explicit current-turn tier overrides these preference limits), and the tier is stored with the session. The model additionally receives a plain-language word target well below its cap (for example "about 40 words or fewer" for tier 2) so ordinary replies do not approach truncation. Instructions never contain token counts, and complexity never changes reasoning: reasoning stays disabled for every tier. Arabic has separately authored targets because it needs roughly 1.5–2x the tokens per word.
-
-Text-to-speech is guarded per provider by a durable character ledger: Deepgram **50,000 characters/day by default** (`DEEPGRAM_DAILY_CHARACTERS`, ledger key `deepgram_tts`) and ElevenLabs **2500 characters/day by default** (`ELEVENLABS_DAILY_CHARACTERS`), reserved before text is forwarded for synthesis. No unattended audio simulations, repeated synthesis benchmarks, paid top-ups, or quota-triggered provider switching. Prefer text-only development. Partial/failed synthesis reservations also remain charged to this local allowance.
-
-Both limits reset at midnight **Africa/Tripoli**, persist across restarts, are shared through the backend database, and fail closed if the budget service fails. These guards cover Sarjy's guarded application/development calls, not unrelated clients using the same keys or OpenAI subscriptions. Never delete/reset the budget database to regain allowance. Any additional paid development script must reserve against the same ledger before requesting inference.
-
-Apply `uv run alembic upgrade head` before running the new version against a migrated database. SQLite local bootstrap also creates the budget table.
-
-For a minimal OpenAI-only access check after migrations, run `uv run python scripts/check_openai.py`. It makes exactly one small request after reserving $0.02 against the same database ledger; it never synthesizes audio or retries automatically.
-
-## Protected development deployment
-
-Set `DEVELOPMENT_PROTECTED=true` on both web and API. Web requires `REVIEW_ACCESS_TOKEN` (32 random bytes, base64url — not a memorable word), `REVIEW_ACCESS_MAX_USES`, `REVIEW_ACCESS_EXPIRES_AT` (a required absolute ISO-8601 UTC instant; set it in the past to revoke; missing or invalid values fail startup), and `WEB_SERVICE_SECRET`; API requires the same `WEB_SERVICE_SECRET`. Use `SESSION_SECRET` to sign the reviewer cookie; it falls back to `WEB_SERVICE_SECRET` when unset, with a boot warning. The web server shows a styled token-entry page instead of an HTTP Basic dialog, exchanges `/?token=<token>` for a signed session cookie whose lifetime is exactly the remaining time to `REVIEW_ACCESS_EXPIRES_AT`, and never consumes a second use for a browser that already holds a valid session. Usage counters live in `REVIEW_ACCESS_STATE_PATH` (default `/tmp/sarjy-review-access-state.json`) and reset if that file is lost; the absolute expiry still applies. Behind a proxy, set `ADDRESS_HEADER` (for example `x-forwarded-for`) and `XFF_DEPTH` so the failure cap is per reviewer rather than per socket. The proxy injects the independent backend secret. Worker routes retain worker authentication. Missing protection configuration fails startup. Deploy only over HTTPS. Keep these values in hosting secrets. Arabic speech validation is deferred to Day 3.
-
-CranL frontend/API, Supabase persistence, and the LiveKit eu-central worker are configured and verified. Development remains protected. Never create a second spending ledger when running coordinator tools; inject the hosted database URL into the process without overwriting the local .env.
-
-## Historical failed deployment attempt (superseded)
-
-CranL apps `sarjy-api` and `sarjy-web` were created in Netherlands with protection secrets configured before deployment. That earlier deployment attempt failed: API source deployment returned platform internal errors through inline and signed uploads; the web build reports a missing source directory on CranL's build server and its URL returns 502. Details are in ignored `artifacts/deployment/status.json`; access credentials are in ignored `artifacts/deployment/access.json` (mode 0600). Never publish these artifacts. This historical attempt used no inference. The working releases and remaining human acceptance are recorded in the hosted verification document.
-
-## GitHub release workflow
-
-The repository must remain private. Review ignore rules and the complete staged diff before any commit; never publish local databases, provider credentials or artifacts. Develop on `main`; promote only commits whose `checks` workflow passed to `deploy/api`, verify the API, then promote that same commit to `deploy/web`. CranL builds from repository root using `infra/api.Dockerfile` (port 8000) and `infra/web.Dockerfile` (port 3000). Keep PR previews disabled. Configure protection and all server-side secrets before first boot. Preserve Supabase and reconcile the budget ledger before enabling hosted inference. Record the last successful SHA for recovery; database rollback is never automatic.
-
-## Hosted Day 1 verification
-
-Frontend: https://sarjy-web-dev-otbaod.cranl.net (password required). API: https://sarjy-api-dev-hiqked.cranl.net. Anonymous page/static access and direct API requests are blocked. Authenticated frontend conversation creation and Supabase persistence were verified through Chromium; the local HTTP client's TLS stack was reset by the edge. Credentials remain only in ignored deployment storage.
-
-Deployment branches add the appropriate root `Dockerfile` to the same tested source revision; CranL's nested Dockerfile build did not include repository-root files. The API and frontend root-Dockerfile branch checks passed.
-
-Prepare the worker context with `python scripts/prepare_worker_deployment.py`. It includes only lockfiles, manifests, worker Python source, shared domain Python source and the worker Dockerfile. Preparation stages a fresh context before replacing the helper-owned output, so stale files are removed and missing sources leave the previous context intact. Build from the generated context; inject secrets separately through LiveKit. Worker deployment, hosted typed-input speech/weather and cleanup are verified. Human microphone, interruption and reconnect/refresh acceptance remain required before declaring Day 1 complete. Arabic speech stays experimental until Day 3.
-
-## Retryable voice-session cleanup
-
-Session admission status and confirmed room cleanup are separate. An ended session releases capacity immediately; failed room deletion returns `503 ROOM_CLEANUP_FAILED` with `cleanup: pending` and can be retried. Successful deletion or the specific LiveKit `not_found` code records completion. Later requests return `already_complete` without another delete. Missing cleanup credentials return `ROOM_CLEANUP_NOT_CONFIGURED`.
-
-Failed dispatch retains its original error and remains eligible for reconciliation through its original expiry, even after an early successful delete or absent-room response, because remote dispatch can finish late. Early reconciliation reports `pending`; after expiry it can confirm cleanup. Terminal worker bootstrap is rejected. Expiry reaping releases admission capacity but does not itself claim external cleanup.
-
-Apply the additive `0004_voice_cleanup` migration before running this version. Existing terminal sessions are unconfirmed and can be reconciled. No usage/spending reservations are refunded.
-
-Coordinator-only recovery (uses the configured DATABASE_URL; no hosted execution is automatic):
-
-```sh
-uv run python scripts/reconcile_voice_sessions.py             # dry run, at most 20 terminal rows
-uv run python scripts/reconcile_voice_sessions.py --apply     # explicitly delete/reconcile
-uv run python scripts/reconcile_voice_sessions.py --apply --limit 5
-```
-
-Each remote deletion is bounded to 10 seconds. Results report selected/completed/pending/errors; nonzero exit means errors remain. Run again to retry unfinished work after recovery. Active sessions are skipped. Concurrent retries may repeat an idempotent deletion, but confirmed sequential retries skip it; no exactly-once network guarantee is claimed. No scheduler is introduced. Late external creation after the reconciliation window is not covered by an absolute cleanup guarantee.
-
-## Agent contributions
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before claiming work. Use a separate worktree and branch per issue; open a PR and await coordinator review. Authors must not merge.
-
-
-### Response-policy deployment order
-
-Deploy the API before the worker: the new worker requires authoritative `instructions` in bootstrap. Verify the API returns those instructions before updating the worker. Keep the existing worker until that check succeeds; roll back the worker before rolling back the API. This PR does not authorize deployment.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [STYLE.md](STYLE.md) before editing. Claim an issue, work in a fresh worktree and branch from `origin/main`, keep changes inside the assigned scope, run the documented checks, and open a pull request. Authors do not merge their own PRs, push to `main`, enable auto-merge or deploy; every merge needs review of the exact final SHA. Keep secrets, recordings, local databases and generated artifacts out of git.
