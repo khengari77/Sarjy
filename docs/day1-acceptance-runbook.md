@@ -2,7 +2,9 @@
 
 > **Superseded in part (2026-11-24).** The per-identity and monthly call allowances described below
 > were removed in #208. Admission now allows one active session per identity and two globally, with
-> provider spend guards as the only budget. The gate procedure and observations are otherwise historical.
+> provider spend guards as the only budget. **Ignore every step below that
+> gates on an allowance** (`month_used < 80`, remaining calls, "pending for lack of allowance"): only
+> `active_now` still matters. The gate procedure and observations are otherwise historical.
 
 Coordinator-owned procedure for the gates that the automated and typed-input checks in
 [hosted verification](day1-hosted-verification.md) cannot satisfy. Run this at a real browser with a
