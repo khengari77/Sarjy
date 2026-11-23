@@ -609,12 +609,14 @@ def test_stored_invitation_call_cap_is_not_enforced(tmp_path, monkeypatch):
     monkeypatch.setattr(livekit_api, "LiveKitAPI", FakeLiveKitAPI)
     app = create_app(config, voice_catalog=FakeCatalog(), clock=lambda: clock.value)
     with client_for(app) as client:
-        _, token = seed_invitation(config, clock, max_calls=1)
+        invitation_id, token = seed_invitation(config, clock, max_calls=1)
         owner = client.post("/v1/reviewer/session", json={"invitation_token": token}).json()["id"]
         conversation = client.post("/v1/conversations").json()["id"]
         path = config.database_url.removeprefix("sqlite+aiosqlite:///")
         with closing(sqlite3.connect(path)) as connection, connection:
             assert connection.execute("SELECT max_calls FROM reviewer_invitations").fetchone()[0] == 1
+            link = connection.execute("SELECT invitation_id FROM identities WHERE id=?", (owner,)).fetchone()
+            assert link is not None and link[0] == invitation_id
             connection.execute(
                 "INSERT INTO voice_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (

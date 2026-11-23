@@ -283,7 +283,8 @@ async def create_invitation(
 
     An expiry is mandatory. Callers may omit ``expires_at`` to get the 72-hour
     default; anything already in the past is refused. The lifetime identity cap
-    is enforced here so no caller can create an unbounded link.
+    is enforced here and every link expires, so no caller can create an unbounded
+    link. Calls per link are not capped (#208); ``max_calls`` is retained data.
     """
     if expires_at is None:
         expires_at = now + INVITATION_TTL

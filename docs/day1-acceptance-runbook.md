@@ -1,5 +1,9 @@
 # Day 1 human acceptance runbook (D1.3–D1.8)
 
+> **Superseded in part (2026-11-24).** The per-identity and monthly call allowances described below
+> were removed in #208. Admission now allows one active session per identity and two globally, with
+> provider spend guards as the only budget. The gate procedure and observations are otherwise historical.
+
 Coordinator-owned procedure for the gates that the automated and typed-input checks in
 [hosted verification](day1-hosted-verification.md) cannot satisfy. Run this at a real browser with a
 real microphone; only the observations recorded here can close D1.3, D1.5 (voice side), and D1.6.
@@ -35,10 +39,10 @@ point; do not reset or refund the ledger.
 ## Session reservations (read before starting)
 
 Each admitted `POST /v1/voice/sessions` consumes one reservation permanently, even if the call later
-fails, times out or is abandoned. A `429` admission rejection consumes none. The defaults are
-`demo_calls_per_identity=3` counted **all-time per owner** and `demo_session_budget=80` counted per
-calendar month, with at most one active session per identity and two globally. Earlier hosted checks may
-already have consumed part of the identity allowance, so check before running.
+fails, times out or is abandoned. A `429` admission rejection consumes none. Admission allows at most one
+active session per identity and two globally; the per-identity and monthly call allowances were removed
+in #208, so there is no call-count ceiling beyond that and the provider spend guards. The capacity
+queries below describe the retired allowances; keep them only as a historical record.
 
 Read-only capacity checks (owner id is the coordinator's identity; do not write to these tables):
 
@@ -73,7 +77,8 @@ the API's lower-bound check without adding an upper bound. `expires_at` is store
 cast is required in PostgreSQL. A session started just before a month boundary can have an expiry in the
 next month; record the observed values. The query is independent of the database session's timezone.
 
-The procedure needs at most three reservations, allocated as follows. Do not start a fourth.
+The day-1 procedure used at most three reservations, allocated as follows. The call-count ceiling is
+gone (#208); keep this shape only to preserve LiveKit agent minutes.
 
 | Reservation | Scenarios | Notes |
 |---|---|---|
@@ -81,7 +86,7 @@ The procedure needs at most three reservations, allocated as follows. Do not sta
 | S2 | D1.6 microphone denial and recovery, then mute and interruption | Denial is attempted first; if it leaves a live session, recovery through **Enable microphone** reuses it. |
 | S3 | D1.6 reconnect, then refresh mid-call | Reconnect first; if the session survives, reload to exercise refresh. |
 
-Allocate by remaining allowance:
+Historical remaining-allowance table (no longer enforced):
 
 | Remaining | Run | Leave pending |
 |---|---|---|
