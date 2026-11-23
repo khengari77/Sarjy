@@ -10,8 +10,7 @@ import { safeNextPath } from '../lib/auth/redirect';
  * path; this action keeps the page working with JavaScript disabled.
  */
 export const actions: Actions = {
-  default: async ({ request, cookies, url, getClientAddress, setHeaders }) => {
-    setHeaders({ 'cache-control': 'no-store' });
+  default: async ({ request, cookies, url, getClientAddress }) => {
     if (!protectedMode) throw redirect(303, '/');
 
     const form = await request.formData();

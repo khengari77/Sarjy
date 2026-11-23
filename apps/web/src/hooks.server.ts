@@ -43,7 +43,12 @@ function secure(response: Response): Response {
   const type = response.headers.get('content-type') ?? '';
   const html = type.includes('text/html');
   response.headers.set('referrer-policy', html ? 'same-origin' : 'no-referrer');
-  if (html) response.headers.set('cache-control', 'no-store');
+  // The only owner of no-store for pages, redirects and anything issuing a session:
+  // a load that also set it would collide with the form action and answer 500.
+  const redirect = response.status >= 300 && response.status < 400 && response.headers.has('location');
+  // SvelteKit has already attached cookies when `resolve` returns.
+  const issuesCookie = response.headers.has('set-cookie');
+  if (html || redirect || issuesCookie) response.headers.set('cache-control', 'no-store');
   return response;
 }
 

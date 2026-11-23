@@ -98,12 +98,70 @@ def test_built_web_requires_review_token_before_proxying():
                 exchange = client.get(f"/?token={TOKEN}", follow_redirects=False)
                 assert exchange.status_code == 303
                 assert exchange.headers["location"] == "/"
+                assert exchange.headers.get_list("cache-control") == ["no-store"]
                 assert "sarjy_review_session" in exchange.headers["set-cookie"]
 
                 # Secure cookies are not replayed over plain HTTP by httpx;
                 # forward the issued value explicitly to exercise authorization.
                 session_cookie = exchange.headers["set-cookie"].split(";", 1)[0]
+                # Reopening the link issues no cookie; the redirect itself must not be cached.
+                reopened = client.get(f"/?token={TOKEN}", headers={"cookie": session_cookie}, follow_redirects=False)
+                assert reopened.status_code == 303
+                assert "set-cookie" not in reopened.headers
+                assert reopened.headers.get_list("cache-control") == ["no-store"]
                 assert client.get("/api/v1/conversations", headers={"cookie": session_cookie}).status_code == 503
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+
+
+def test_rejected_token_form_renders_the_door():
+    _require_build()
+    port = _free_port()
+    with tempfile.TemporaryDirectory() as state_directory:
+        process = _launch(port, os.path.join(state_directory, "access-state.json"))
+        try:
+            with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=2) as client:
+                _wait_ready(client, process)
+                # adapter-node assumes https when ORIGIN is unset; CSRF compares against that origin.
+                headers = {"origin": f"https://127.0.0.1:{port}", "accept": "text/html"}
+
+                def submit(token: str) -> httpx.Response:
+                    return client.post("/", data={"token": token}, headers=headers, follow_redirects=False)
+
+                for token in ("wrong", ""):
+                    rejected = submit(token)
+                    assert rejected.status_code == 400
+                    assert 'id="access-token"' in rejected.text
+                    assert "That link is not valid." in rejected.text
+                    assert "set-cookie" not in rejected.headers
+                    assert rejected.headers.get_list("cache-control") == ["no-store"]
+
+                admitted = submit(TOKEN)
+                assert admitted.status_code == 303
+                assert admitted.headers.get_list("cache-control") == ["no-store"]
+
+                data = client.post(
+                    "/",
+                    data={"token": TOKEN},
+                    headers=headers | {"accept": "application/json", "x-sveltekit-action": "true"},
+                )
+                assert "sarjy_review_session" in data.headers["set-cookie"]
+                assert data.headers.get_list("cache-control") == ["no-store"]
+
+                exhausted = submit(TOKEN)
+                assert exhausted.status_code == 400
+                assert "set-cookie" not in exhausted.headers
+                assert exhausted.headers.get_list("cache-control") == ["no-store"]
+
+                # Without a session, each of these counts against the address failure limit.
+                client.cookies.clear()
+                for attempt in range(100):
+                    client.get(f"/?token=garbage-{attempt}")
+                blocked = submit(TOKEN)
+                assert blocked.status_code == 429
+                assert "Too many attempts. Try again shortly." in blocked.text
+                assert blocked.headers.get_list("cache-control") == ["no-store"]
         finally:
             process.terminate()
             process.wait(timeout=10)
