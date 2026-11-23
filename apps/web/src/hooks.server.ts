@@ -43,7 +43,10 @@ function secure(response: Response): Response {
   const type = response.headers.get('content-type') ?? '';
   const html = type.includes('text/html');
   response.headers.set('referrer-policy', html ? 'same-origin' : 'no-referrer');
-  if (html) response.headers.set('cache-control', 'no-store');
+  // The only owner of no-store for pages and redirects: a load that also set it
+  // would collide with the form action's header and turn the response into a 500.
+  const redirect = response.status >= 300 && response.status < 400 && response.headers.has('location');
+  if (html || redirect) response.headers.set('cache-control', 'no-store');
   return response;
 }
 
