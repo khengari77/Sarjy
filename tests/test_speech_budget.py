@@ -247,7 +247,7 @@ def test_tail_of_the_allowance_is_spoken_in_few_requests(monkeypatch):
 
 
 @pytest.mark.parametrize("remaining", [1, 5, SMALLEST_BLOCK - 1, SMALLEST_BLOCK, 79])
-def test_any_text_that_fits_what_is_left_is_spoken(monkeypatch, remaining):
+def test_short_text_that_fits_what_is_left_is_spoken(monkeypatch, remaining):
     ledger = Ledger(allowance=remaining)
 
     async def scenario(agent, say, sent, codes):
@@ -284,3 +284,16 @@ def test_shutdown_cancels_a_hung_refill_and_the_waiting_reply_fails_clearly(monk
         assert sent == []
 
     speak(monkeypatch, ledger, scenario)
+
+
+def test_nothing_is_reserved_after_shutdown(monkeypatch):
+    ledger = Ledger()
+
+    async def scenario(agent, say, sent, codes):
+        await agent.stop_speech_refills()
+        with pytest.raises(RuntimeError, match="SPEECH_STOPPED"):
+            await say("hello")
+        assert sent == [] and codes == []
+
+    speak(monkeypatch, ledger, scenario)
+    assert ledger.requests == []
