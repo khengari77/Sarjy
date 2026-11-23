@@ -132,15 +132,25 @@ def test_rejected_token_form_renders_the_door():
                     assert "set-cookie" not in rejected.headers
                     assert rejected.headers.get_list("cache-control") == ["no-store"]
 
-                for _ in range(2):
-                    admitted = submit(TOKEN)
-                    assert admitted.status_code == 303
-                    assert admitted.headers.get_list("cache-control") == ["no-store"]
+                admitted = submit(TOKEN)
+                assert admitted.status_code == 303
+                assert admitted.headers.get_list("cache-control") == ["no-store"]
+
+                data = client.post(
+                    "/",
+                    data={"token": TOKEN},
+                    headers=headers | {"accept": "application/json", "x-sveltekit-action": "true"},
+                )
+                assert "sarjy_review_session" in data.headers["set-cookie"]
+                assert data.headers.get_list("cache-control") == ["no-store"]
 
                 exhausted = submit(TOKEN)
                 assert exhausted.status_code == 400
                 assert "set-cookie" not in exhausted.headers
+                assert exhausted.headers.get_list("cache-control") == ["no-store"]
 
+                # Without a session, each of these counts against the address failure limit.
+                client.cookies.clear()
                 for attempt in range(100):
                     client.get(f"/?token=garbage-{attempt}")
                 blocked = submit(TOKEN)
