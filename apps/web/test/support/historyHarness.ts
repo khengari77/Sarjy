@@ -116,16 +116,24 @@ export async function gotoHistory(page: Page) {
 }
 
 /** The selected row paints through a background transition, so assert the colour
- *  the transition ends on, not the first frame it passes through. Call this with
- *  the pointer off the row: hover overrides the selection background. */
-export async function expectSelectionBackground(item: Locator) {
-  const expected = await item.evaluate((element) => {
-    const probe = document.createElement('span');
-    probe.style.background = getComputedStyle(element).getPropertyValue('--surface-raised');
-    element.parentElement?.append(probe);
-    const colour = getComputedStyle(probe).backgroundColor;
-    probe.remove();
-    return colour;
-  });
-  await expect.poll(() => item.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(expected);
+ *  the transition ends on, not the first frame it passes through. The pointer is
+ *  moved off the row first because hover outranks the selection background. */
+export async function expectSelectionBackground(page: Page, item: Locator) {
+  await page.mouse.move(0, 0);
+  const resolve = () =>
+    item.evaluate((element) => {
+      const parent = element.parentElement;
+      if (!parent) throw new Error('selected row has no parent to probe');
+      const probe = document.createElement('span');
+      probe.style.background = getComputedStyle(element).getPropertyValue('--surface-raised');
+      parent.append(probe);
+      const expected = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return { expected, background: getComputedStyle(element).backgroundColor };
+    });
+
+  const { expected } = await resolve();
+  // A missing token would leave both sides transparent and pass with no selection.
+  expect(expected).not.toBe('rgba(0, 0, 0, 0)');
+  await expect.poll(async () => (await resolve()).background).toBe(expected);
 }

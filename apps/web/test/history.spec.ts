@@ -40,16 +40,13 @@ test('the selected conversation exposes aria-current and a visible selection', a
 
   const first = page.getByRole('button', { name: 'Trip to Paris', exact: true });
   await expect(first).toHaveAttribute('aria-current', 'page');
-  await expectSelectionBackground(first);
+  await expectSelectionBackground(page, first);
 
   const second = page.getByRole('button', { name: 'Work ideas', exact: true });
   await second.click();
   await expect(second).toHaveAttribute('aria-current', 'page');
   await expect(first).not.toHaveAttribute('aria-current', 'page');
-  // The pointer still hovers the clicked row; leave it so the settled colour is
-  // the selection colour and not the hover colour.
-  await page.mouse.move(0, 0);
-  await expectSelectionBackground(second);
+  await expectSelectionBackground(page, second);
 });
 
 test('conversation menus dismiss on Escape or outside interaction and restore focus', async ({ page }) => {
