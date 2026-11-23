@@ -16,8 +16,8 @@ import httpx
 # One block covers most replies; a refill starts while this much is still unspent.
 BLOCK: Final = 160
 LOW_WATER: Final = 64
-# The ledger route rejects larger single reservations.
-MAX_RESERVATION: Final = 500
+# Below this, the remaining allowance is asked for in exactly the size the text needs.
+SMALLEST_BLOCK: Final = 20
 
 
 def _exhausted(exc: BaseException) -> bool:
@@ -36,55 +36,53 @@ class SpeechBudget:
         self._spawn = spawn
         self._available = 0
         self._refill: asyncio.Task[None] | None = None
-        # The last refill was refused for lack of allowance: stop asking for blocks.
-        self._dry = False
+        self._refused = 0
+        # Halved after each refusal, so the tail of a day's allowance costs a few
+        # requests rather than one per streamed piece. It never grows within a call.
+        self._block = BLOCK
 
     async def take(self, wanted: int) -> int:
         """Spend between one and ``wanted`` granted characters, waiting only when none are left."""
         if wanted < 1:
             raise ValueError("SPEECH_CHARACTERS_REQUIRED")
+        needed = min(wanted, SMALLEST_BLOCK)
         while not self._available:
-            if self._dry:
-                await self._grant_exactly(min(wanted, MAX_RESERVATION))
-                continue
-            refill = self._start_refill()
-            # Shielded: an interrupted reply must not lose a grant that is already charged.
+            refill = self._start_refill(self._block or needed)
+            # ``wait`` leaves the refill running if this reply is interrupted: its
+            # grant may already be charged and the next reply can use it.
             await asyncio.wait({refill})
+            if refill.cancelled():
+                raise RuntimeError("SPEECH_REFILL_CANCELLED")
             error = refill.exception()
-            if error is not None and not _exhausted(error):
-                await self._raise(error)
+            if error is None:
+                continue
+            if _exhausted(error) and self._refused > needed:
+                continue
+            # Only text that was really needed reports a failure to the user.
+            if isinstance(error, httpx.HTTPStatusError):
+                await self._report(error)
+            raise error
         spent = min(wanted, self._available)
         self._available -= spent
-        if self._available < LOW_WATER and not self._dry:
-            self._start_refill()
+        if self._available < LOW_WATER and self._block == BLOCK:
+            self._start_refill(BLOCK)
         return spent
 
-    def _start_refill(self) -> asyncio.Task[None]:
+    def _start_refill(self, size: int) -> asyncio.Task[None]:
         if self._refill is None or self._refill.done():
-            self._refill = self._spawn(self._grant_block())
+            self._refill = self._spawn(self._grant(size))
         return self._refill
 
-    async def _grant_block(self) -> None:
+    async def _grant(self, size: int) -> None:
         try:
-            await self._reserve(BLOCK)
+            await self._reserve(size)
         except httpx.HTTPStatusError as exc:
-            self._dry = _exhausted(exc)
+            if _exhausted(exc):
+                self._refused = size
+                smaller = size // 2
+                self._block = smaller if smaller >= SMALLEST_BLOCK else 0
             raise
-        self._available += BLOCK
-
-    async def _grant_exactly(self, characters: int) -> None:
-        # A block no longer fits today's allowance, but this text still might.
-        try:
-            await self._reserve(characters)
-        except httpx.HTTPStatusError as exc:
-            await self._raise(exc)
-        self._available += characters
-
-    async def _raise(self, error: BaseException) -> None:
-        # Only text that was really needed reports a failure to the user.
-        if isinstance(error, httpx.HTTPStatusError):
-            await self._report(error)
-        raise error
+        self._available += size
 
 
-__all__ = ["BLOCK", "LOW_WATER", "SpeechBudget"]
+__all__ = ["BLOCK", "LOW_WATER", "SMALLEST_BLOCK", "SpeechBudget"]

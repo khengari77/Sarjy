@@ -251,6 +251,8 @@ class SarjyAgent(WordleTools, Agent):
         self.speeches: set[str] = set()
         self.speaking_speed_control = speed_controller_for(pipeline)
         self.tts_budget_provider = tts_budget_provider(pipeline)
+        # Prepayments only: cancelled, never awaited, at shutdown.
+        self.speech_refills: set[asyncio.Task] = set()
         self.speech_budget = SpeechBudget(self._reserve_speech, self._report_reservation, self._spawn_refill)
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
@@ -461,16 +463,22 @@ class SarjyAgent(WordleTools, Agent):
 
     def _spawn_refill(self, refill) -> asyncio.Task[None]:
         task = asyncio.create_task(refill)
-        self.pending.add(task)
+        self.speech_refills.add(task)
 
         def settled(done: asyncio.Task[None]) -> None:
-            self.pending.discard(done)
+            self.speech_refills.discard(done)
             if not done.cancelled():
                 # Retrieved here: a refused refill matters only if its text is needed.
                 done.exception()
 
         task.add_done_callback(settled)
         return task
+
+    async def stop_speech_refills(self) -> None:
+        refills = list(self.speech_refills)
+        for refill in refills:
+            refill.cancel()
+        await asyncio.gather(*refills, return_exceptions=True)
 
     async def tts_node(self, text, model_settings):
         async def budgeted_text():
@@ -1127,6 +1135,7 @@ async def entrypoint(ctx: JobContext):
         finally:
             await session.aclose()
             greeting.cancel()
+            await agent.stop_speech_refills()
             if agent.pending:
                 await asyncio.gather(*agent.pending, return_exceptions=True)
             if fallback_llm is not None and hasattr(fallback_llm, "aclose"):
