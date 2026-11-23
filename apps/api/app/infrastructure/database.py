@@ -49,6 +49,7 @@ class ReviewerInvitation(Base):
     revoked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     max_identities: Mapped[int] = mapped_column(Integer, default=8)
     identities_created: Mapped[int] = mapped_column(Integer, default=0)
+    # Stored for historical rows only: admission no longer enforces a call cap (#208).
     max_calls: Mapped[int] = mapped_column(Integer, default=24)
 
 

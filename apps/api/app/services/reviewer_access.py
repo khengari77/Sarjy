@@ -36,7 +36,6 @@ ATTEMPT_LIMIT = 600
 CREATION_LIMIT = 30
 DEFAULT_MAX_IDENTITIES = 8
 MAX_IDENTITIES_LIMIT = 50
-DEFAULT_MAX_CALLS = 24
 
 
 class ReviewerSessionRequired(Exception):
@@ -279,13 +278,12 @@ async def create_invitation(
     expires_at: datetime | None = None,
     now: datetime,
     max_identities: int = DEFAULT_MAX_IDENTITIES,
-    max_calls: int = DEFAULT_MAX_CALLS,
 ) -> tuple[ReviewerInvitation, str]:
     """Create one reusable, bounded invitation.
 
     An expiry is mandatory. Callers may omit ``expires_at`` to get the 72-hour
     default; anything already in the past is refused. The lifetime identity cap
-    and call cap are enforced here so no caller can create an unbounded link.
+    is enforced here so no caller can create an unbounded link.
     """
     if expires_at is None:
         expires_at = now + INVITATION_TTL
@@ -295,8 +293,6 @@ async def create_invitation(
         raise ValueError("INVITATION_EXPIRY_IN_PAST")
     if not 1 <= max_identities <= MAX_IDENTITIES_LIMIT:
         raise ValueError("INVITATION_MAX_IDENTITIES_INVALID")
-    if not 1 <= max_calls <= 1000:
-        raise ValueError("INVITATION_MAX_CALLS_INVALID")
     token = new_token()
     invitation = ReviewerInvitation(
         id=str(uuid4()),
@@ -305,7 +301,6 @@ async def create_invitation(
         expires_at=utc_iso(expires_at),
         max_identities=max_identities,
         identities_created=0,
-        max_calls=max_calls,
     )
     db.add(invitation)
     await db.commit()
@@ -323,7 +318,6 @@ async def list_invitations(db: AsyncSession) -> list[dict]:
             "max_identities": row.max_identities,
             "identities_created": row.identities_created,
             "remaining_identities": remaining_identities(row),
-            "max_calls": row.max_calls,
         }
         for row in rows
     ]

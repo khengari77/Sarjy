@@ -24,7 +24,6 @@ sys.path.insert(0, str(ROOT / "apps/api"))
 
 from app.config import Settings  # noqa: E402
 from app.services.reviewer_access import (  # noqa: E402
-    DEFAULT_MAX_CALLS,
     DEFAULT_MAX_IDENTITIES,
     create_invitation,
     list_invitations,
@@ -80,7 +79,6 @@ async def _create(args) -> int:
                 expires_at=expires_at,
                 now=now_utc(),
                 max_identities=args.max_identities,
-                max_calls=args.max_calls,
             )
     finally:
         await engine.dispose()
@@ -97,7 +95,6 @@ async def _create(args) -> int:
     print(f"expires_at: {invitation.expires_at}")
     print(f"max_identities: {invitation.max_identities}")
     print(f"remaining_identities: {invitation.max_identities - invitation.identities_created}")
-    print(f"max_calls: {invitation.max_calls}")
     return 0
 
 
@@ -138,7 +135,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="ISO-8601 expiry with UTC offset (default: now + 72 hours)",
     )
     create.add_argument("--max-identities", type=int, default=DEFAULT_MAX_IDENTITIES)
-    create.add_argument("--max-calls", type=int, default=DEFAULT_MAX_CALLS)
     create.add_argument("--link-file", required=True)
     create.set_defaults(handler=_create)
 

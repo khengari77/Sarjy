@@ -50,7 +50,6 @@ uv run python scripts/reviewer_invitations.py revoke --invitation-id <id>
 | --- | --- | --- |
 | `--expires-at` | now + 72 hours | ISO-8601 time **with a UTC offset** |
 | `--max-identities` | 8 (max 50) | How many separate reviewers/browsers one link can admit, for its lifetime |
-| `--max-calls` | 24 | Total voice calls the link allows |
 | `--link-file` | required | Must not already exist; created with mode 0600 |
 | `--base-url` | required | Must be an HTTPS origin with no credentials, query or fragment |
 
@@ -82,9 +81,8 @@ Turn on `REVIEWER_ACCESS_ENABLED=true` for both processes first.
   (the migration-0015 design in issue #151 was dropped). All reviewers share the deployment's daily
   text-to-speech guard (`DEEPGRAM_DAILY_CHARACTERS`, default 50,000 characters, roughly 50 minutes of audio;
   `ELEVENLABS_DAILY_CHARACTERS` if `TTS_PROVIDER=elevenlabs`), so one heavy reviewer can use up the day for
-  the others. Per-link limits that do exist: calls per invitation (`--max-calls`, default 24), identities per
-  invitation, and the global call caps; the shared daily OpenAI spend ceiling also applies. Raise the guard
-  through the setting if the day runs out.
+  the others. The only per-link limit is identities per invitation, plus the global concurrent-call cap;
+  the shared daily OpenAI spend ceiling also applies. Raise the guard through the setting if the day runs out.
 - **Hosted state: verified 2026-11-15.** Release `9148a60` is deployed (API, web and worker), migration `0014_reviewer_access` is applied on hosted Supabase after a real-data rehearsal on a disposable PostgreSQL 17 + pgvector copy, and `REVIEWER_ACCESS_ENABLED=true` is set on both the API and the web app. `/review` answers without the shared token, an invitation exchange returned `200` with a reviewer identity valid to seven days, and owner-scoped reads (`/api/v1/settings`, `/api/v1/conversations`) succeeded with the reviewer cookie. Voice now uses Deepgram by default (`TTS_PROVIDER` unset), so the ElevenLabs credit exhaustion no longer blocks replies.
 - **Recovery:** revoke the affected invitation, or set `REVIEWER_ACCESS_ENABLED=false` to fall back to the
   shared-token door. Rotating the shared token or setting `REVIEW_ACCESS_EXPIRES_AT` in the past
