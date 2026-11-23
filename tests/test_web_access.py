@@ -104,6 +104,11 @@ def test_built_web_requires_review_token_before_proxying():
                 # Secure cookies are not replayed over plain HTTP by httpx;
                 # forward the issued value explicitly to exercise authorization.
                 session_cookie = exchange.headers["set-cookie"].split(";", 1)[0]
+                # Reopening the link issues no cookie; the redirect itself must not be cached.
+                reopened = client.get(f"/?token={TOKEN}", headers={"cookie": session_cookie}, follow_redirects=False)
+                assert reopened.status_code == 303
+                assert "set-cookie" not in reopened.headers
+                assert reopened.headers.get_list("cache-control") == ["no-store"]
                 assert client.get("/api/v1/conversations", headers={"cookie": session_cookie}).status_code == 503
         finally:
             process.terminate()
