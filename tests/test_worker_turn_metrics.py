@@ -326,3 +326,18 @@ def test_rejected_metrics_are_logged_without_text_and_late_timings_do_not_reopen
         asyncio.run(run())
     assert [r.getMessage() for r in caplog.records if r.name == "root"] == ["Turn metrics submission failed"]
     assert "private words" not in caplog.text
+
+
+def test_model_reservation_is_timed_for_its_own_turn_only():
+    async def run():
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+        async with httpx.AsyncClient(base_url="http://test", transport=transport) as client:
+            agent = _agent(client)
+            agent.current_turn = "turn-1"
+            agent.turn_stages["turn-1"] = {}
+            await agent.reserve("deepgram_tts", 5)
+            assert agent.turn_stages["turn-1"] == {}
+            await agent.reserve("deepseek")
+            assert set(agent.turn_stages["turn-1"]) == {"llm_reserve_ms"}
+
+    asyncio.run(run())

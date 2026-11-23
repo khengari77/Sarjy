@@ -450,9 +450,12 @@ class SarjyAgent(WordleTools, Agent):
             if self.notify:
                 await self.notify("DAILY_BUDGET_EXHAUSTED")
             raise ValueError("DAILY_BUDGET_EXHAUSTED")
+        turn_id, started = self.current_turn, time.perf_counter()
         response = await self.backend.post(
             "/internal/development/reserve", json={"provider": provider, "characters": characters}
         )
+        if provider in {"openai", "deepseek"}:
+            self._record_stage(turn_id, "llm_reserve_ms", started, first_only=True)
         if not response.is_success:
             if self.notify:
                 await self.notify(
@@ -828,15 +831,12 @@ class SarjyAgent(WordleTools, Agent):
         emitted = False
         if primary_kind == "openai_direct":
             self._require_openai_bounds(request, tools)
-            started = time.perf_counter()
             await self.reserve("openai")
         elif primary_kind == "deepseek_direct":
             self._require_deepseek_bounds(request)
-            started = time.perf_counter()
             await self.reserve("deepseek")
         else:
             raise ValueError("UNSUPPORTED_GENERATION_PROVIDER")
-        self._record_stage(request.turn_id, "llm_reserve_ms", started, first_only=True)
         try:
             async for event in self._stream_attempt(self.session.llm, primary_kind, request, tools, tool_choice):
                 if event.kind in {"text", "tool"}:
