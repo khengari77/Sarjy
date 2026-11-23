@@ -9,6 +9,8 @@ export const variables = defineEnvVars({
   // Reviewer invitations are a second door beside the shared access token.
   // Keep this in step with the API's REVIEWER_ACCESS_ENABLED setting.
   REVIEWER_ACCESS_ENABLED: { schema: (value) => value || 'false' },
+  // Accounts replace both doors above. Keep in step with the API's setting.
+  ACCOUNT_ACCESS_ENABLED: { schema: (value) => value },
   REVIEW_ACCESS_TOKEN: { schema: (value) => value || '' },
   REVIEW_ACCESS_MAX_USES: { schema: (value) => value || '20' },
   REVIEW_ACCESS_EXPIRES_AT: { schema: (value) => value || '' },

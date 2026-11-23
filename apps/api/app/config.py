@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     demo_session_budget: int = 80
     demo_calls_per_identity: int = 3
     reviewer_access_enabled: bool = False
+    # Accounts replace the reviewer/demo identities as the way in. Credentials live in Supabase Auth.
+    account_access_enabled: bool = False
+    supabase_url: str = ""
+    supabase_publishable_key: str = ""
     # Daily Wordle kill switch.  Off by default so an unconfigured deployment
     # never reaches the external source.
     wordle_enabled: bool = False
@@ -90,6 +94,22 @@ class Settings(BaseSettings):
             DEEPSEEK_MINIMUM_REQUEST_MICRO_USD <= self.deepseek_request_micro_usd <= self.deepseek_daily_micro_usd
         ):
             raise ValueError("DEEPSEEK_BUDGET_CONFIGURATION_INVALID")
+        return self
+
+    @model_validator(mode="after")
+    def validate_account_access(self):
+        if not self.account_access_enabled:
+            return self
+        if self.reviewer_access_enabled:
+            raise ValueError("ACCOUNT_ACCESS_EXCLUDES_REVIEWER_ACCESS")
+        if not self.cookie_secure:
+            raise ValueError("ACCOUNT_ACCESS_REQUIRES_SECURE_COOKIES")
+        if not (self.development_protected and self.web_service_secret):
+            raise ValueError("ACCOUNT_ACCESS_REQUIRES_API_PROTECTION")
+        if not (self.supabase_url.startswith("https://") and self.supabase_publishable_key):
+            raise ValueError("ACCOUNT_ACCESS_REQUIRES_SUPABASE")
+        if self.supabase_publishable_key.startswith("sb_secret_"):
+            raise ValueError("ACCOUNT_ACCESS_REFUSES_SECRET_KEY")
         return self
 
     @model_validator(mode="after")

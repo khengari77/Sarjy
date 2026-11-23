@@ -2,6 +2,7 @@ import type { Cookies } from '@sveltejs/kit';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
+  ACCOUNT_ACCESS_ENABLED,
   DEVELOPMENT_PROTECTED,
   REVIEW_ACCESS_EXPIRES_AT,
   REVIEW_ACCESS_MAX_USES,
@@ -13,7 +14,7 @@ import {
 } from '$app/env/private';
 import { createAccessStateStore } from './access-state';
 import { redeemAccessToken, type AccessResult } from './access';
-import { isLocalOrigin, parseProtectedMode } from './config';
+import { isLocalOrigin, parseAccountMode, parseProtectedMode } from './config';
 import { resolveAccessExpiry } from './expiry';
 import { createFailureTrackers } from './rate-limit';
 import { isReviewerMode, REVIEWER_COOKIE } from './reviewer';
@@ -38,9 +39,12 @@ export const maxUses = Number.parseInt(REVIEW_ACCESS_MAX_USES, 10);
 // visitor, while the shared token door keeps its #142 configuration, deadline
 // and failure accounting. Enabling invitations never weakens the base gate.
 export const reviewerMode = isReviewerMode(REVIEWER_ACCESS_ENABLED);
-// Refuse to boot in protected mode when the absolute deadline is missing or
+// Accounts replace the shared token and the invitations; neither is configured or consulted then.
+export const accountMode = parseAccountMode(ACCOUNT_ACCESS_ENABLED);
+// Refuse to boot behind the token door when the absolute deadline is missing or
 // unparseable. An unprotected deployment has no deadline to enforce.
-export const accessExpiresAt = protectedMode ? resolveAccessExpiry(REVIEW_ACCESS_EXPIRES_AT) : Number.NaN;
+export const accessExpiresAt =
+  protectedMode && !accountMode ? resolveAccessExpiry(REVIEW_ACCESS_EXPIRES_AT) : Number.NaN;
 // `/tmp` is writable in the adapter-node container; a relative cwd is not
 // guaranteed to be. Operators can override with REVIEW_ACCESS_STATE_PATH.
 export const accessState = createAccessStateStore({
@@ -51,6 +55,13 @@ export const accessFailures = createFailureTrackers({ addressLimit: 100, tokenLi
 const fingerprint = sessionSecret ? tokenFingerprint(accessToken, sessionSecret) : '';
 
 export function assertAccessConfigured(): void {
+  if (accountMode) {
+    if (!protectedMode || reviewerMode || !WEB_SERVICE_SECRET) throw new Error('ACCOUNT_ACCESS_CONFIGURATION_INVALID');
+    if (!process.env.ADDRESS_HEADER) {
+      console.warn('account access: ADDRESS_HEADER unset; everyone behind the proxy shares one sign-in attempt limit');
+    }
+    return;
+  }
   if (!protectedMode) return;
   if (
     !accessToken ||
@@ -74,7 +85,7 @@ export function assertAccessConfigured(): void {
 }
 
 export function sessionIsValid(cookies: Cookies): boolean {
-  if (!protectedMode) return false;
+  if (!protectedMode || accountMode) return false;
   return verifySession(cookies.get(SESSION_COOKIE), sessionSecret, {
     fingerprint,
     maxExpiresAt: accessExpiresAt,
