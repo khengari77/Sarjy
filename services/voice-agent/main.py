@@ -37,6 +37,7 @@ from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
+from speech_budget import SpeechBudget
 from wordle_commands import is_wordle_command, parse_say_payload
 from wordle_tools import (
     WordleTools,
@@ -250,6 +251,7 @@ class SarjyAgent(WordleTools, Agent):
         self.speeches: set[str] = set()
         self.speaking_speed_control = speed_controller_for(pipeline)
         self.tts_budget_provider = tts_budget_provider(pipeline)
+        self.speech_budget = SpeechBudget(self._reserve_speech, self._report_reservation, self._spawn_refill)
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
         self.memory_message: str | None = None
@@ -436,29 +438,48 @@ class SarjyAgent(WordleTools, Agent):
             if self.notify:
                 await self.notify("DAILY_BUDGET_EXHAUSTED")
             raise ValueError("DAILY_BUDGET_EXHAUSTED")
+        try:
+            await self._post_reservation(provider, characters)
+        except httpx.HTTPStatusError as exc:
+            await self._report_reservation(exc)
+            raise
+
+    async def _post_reservation(self, provider: str, characters: int) -> None:
         response = await self.backend.post(
             "/internal/development/reserve", json={"provider": provider, "characters": characters}
         )
-        if not response.is_success:
-            if self.notify:
-                await self.notify(
-                    "DAILY_BUDGET_EXHAUSTED" if response.status_code == 429 else "BUDGET_SERVICE_UNAVAILABLE"
-                )
-            response.raise_for_status()
+        response.raise_for_status()
+
+    async def _report_reservation(self, exc: httpx.HTTPStatusError) -> None:
+        if self.notify:
+            await self.notify(
+                "DAILY_BUDGET_EXHAUSTED" if exc.response.status_code == 429 else "BUDGET_SERVICE_UNAVAILABLE"
+            )
+
+    async def _reserve_speech(self, characters: int) -> None:
+        await self._post_reservation(self.tts_budget_provider, characters)
+
+    def _spawn_refill(self, refill) -> asyncio.Task[None]:
+        task = asyncio.create_task(refill)
+        self.pending.add(task)
+
+        def settled(done: asyncio.Task[None]) -> None:
+            self.pending.discard(done)
+            if not done.cancelled():
+                # Retrieved here: a refused refill matters only if its text is needed.
+                done.exception()
+
+        task.add_done_callback(settled)
+        return task
 
     async def tts_node(self, text, model_settings):
         async def budgeted_text():
-            buffer = ""
             async for part in text:
-                buffer += part
-                if len(buffer) >= 64:
+                while part:
                     # Charge before forwarding text. Interrupted/failed reservations are retained.
-                    await self.reserve(self.tts_budget_provider, len(buffer))
-                    yield buffer
-                    buffer = ""
-            if buffer:
-                await self.reserve(self.tts_budget_provider, len(buffer))
-                yield buffer
+                    covered = await self.speech_budget.take(len(part))
+                    yield part[:covered]
+                    part = part[covered:]
 
         async for frame in Agent.default.tts_node(self, budgeted_text(), model_settings):
             yield frame
