@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from functools import partial
@@ -37,6 +38,7 @@ from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
+from turn_metrics import assistant_metrics, build_payload, elapsed_ms
 from wordle_commands import is_wordle_command, parse_say_payload
 from wordle_tools import (
     WordleTools,
@@ -246,6 +248,7 @@ class SarjyAgent(WordleTools, Agent):
         self.memory_ops: dict[str, dict] = {}
         self.memory_forced: set[str] = set()
         self.current_turn: str | None = None
+        self.turn_stages: dict[str, dict[str, int | None]] = {}
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
         self.speaking_speed_control = speed_controller_for(pipeline)
@@ -282,13 +285,24 @@ class SarjyAgent(WordleTools, Agent):
             return (None, None)
         return (proposal.get("confirmation_id"), proposal.get("confirmation_revision"))
 
+    def _record_stage(self, turn_id: str | None, name: str, started: float, *, first_only: bool = False) -> None:
+        # Only the turn/start of a turn opens its entry; a late timing must not reopen a sent one.
+        stages = self.turn_stages.get(turn_id) if turn_id is not None else None
+        if stages is None or (first_only and name in stages):
+            return
+        stages[name] = elapsed_ms(started, time.perf_counter())
+
     async def compile(self, message):
         if message.id not in self.prepared:
+            started = time.perf_counter()
             response = await self.backend.post(
                 "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
             )
             response.raise_for_status()
             self.prepared[message.id] = response.json()
+            turn_id = self.prepared[message.id]["turn_id"]
+            self.turn_stages[turn_id] = {}
+            self._record_stage(turn_id, "turn_start_ms", started)
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
         self.current_text = message.text_content or ""
@@ -447,17 +461,29 @@ class SarjyAgent(WordleTools, Agent):
             response.raise_for_status()
 
     async def tts_node(self, text, model_settings):
+        turn_id = self.current_turn
+        first_reserve = True
+
         async def budgeted_text():
+            nonlocal first_reserve
             buffer = ""
             async for part in text:
                 buffer += part
                 if len(buffer) >= 64:
                     # Charge before forwarding text. Interrupted/failed reservations are retained.
+                    started = time.perf_counter() if first_reserve else None
                     await self.reserve(self.tts_budget_provider, len(buffer))
+                    if started is not None:
+                        first_reserve = False
+                        self._record_stage(turn_id, "tts_reserve_ms", started, first_only=True)
                     yield buffer
                     buffer = ""
             if buffer:
+                started = time.perf_counter() if first_reserve else None
                 await self.reserve(self.tts_budget_provider, len(buffer))
+                if started is not None:
+                    first_reserve = False
+                    self._record_stage(turn_id, "tts_reserve_ms", started, first_only=True)
                 yield buffer
 
         async for frame in Agent.default.tts_node(self, budgeted_text(), model_settings):
@@ -478,6 +504,7 @@ class SarjyAgent(WordleTools, Agent):
         the guarded conversational path; no success is spoken for it.
         """
         if message.id not in self.commands:
+            started = time.perf_counter()
             result = None
             for attempt in range(2):
                 try:
@@ -500,6 +527,7 @@ class SarjyAgent(WordleTools, Agent):
                     logging.error("Finalized command resolution failed; continuing conversationally")
                     break
             self.commands[message.id] = result if isinstance(result, dict) else None
+            self._record_stage(self.prepared[message.id]["turn_id"], "command_ms", started, first_only=True)
         return self.commands[message.id]
 
     async def _publish_command(self, command: Mapping[str, Any]) -> None:
@@ -700,6 +728,34 @@ class SarjyAgent(WordleTools, Agent):
         self.pending.add(task)
         task.add_done_callback(self.pending.discard)
 
+    async def _finalize_turn(self, turn_id, text, status) -> None:
+        for attempt in range(3):
+            try:
+                response = await self.backend.post(
+                    "/internal/agent/turn/finalize", json={"turn_id": turn_id, "text": text, "status": status}
+                )
+                response.raise_for_status()
+                return
+            except httpx.HTTPError:
+                if attempt == 2:
+                    logging.error("Turn persistence failed after three attempts")
+                    return
+                await asyncio.sleep(0.25 * (attempt + 1))
+
+    async def _send_turn_metrics(self, turn_id, user, handle) -> None:
+        stages = self.turn_stages.pop(turn_id, {})
+        try:
+            payload = build_payload(
+                turn_id,
+                user_metrics=getattr(user, "metrics", None),
+                assistant_metrics=assistant_metrics(getattr(handle, "chat_items", ())),
+                stages=stages,
+            )
+            response = await self.backend.post("/internal/agent/turn/metrics", json=payload, timeout=2.0)
+            response.raise_for_status()
+        except Exception:
+            logging.warning("Turn metrics submission failed")
+
     def _schedule_persistence(self, user, handle):
         if handle is None or handle.id in self.speeches:
             # One finalize per spoken handle, even across repeated inference.
@@ -709,18 +765,8 @@ class SarjyAgent(WordleTools, Agent):
 
         async def persist_playout():
             text, status = await _playout_result(handle)
-            for attempt in range(3):
-                try:
-                    response = await self.backend.post(
-                        "/internal/agent/turn/finalize", json={"turn_id": turn_id, "text": text, "status": status}
-                    )
-                    response.raise_for_status()
-                    return
-                except httpx.HTTPError:
-                    if attempt == 2:
-                        logging.error("Turn persistence failed after three attempts")
-                        return
-                    await asyncio.sleep(0.25 * (attempt + 1))
+            await self._finalize_turn(turn_id, text, status)
+            await self._send_turn_metrics(turn_id, user, handle)
 
         task = asyncio.create_task(persist_playout())
         self.pending.add(task)
@@ -782,12 +828,15 @@ class SarjyAgent(WordleTools, Agent):
         emitted = False
         if primary_kind == "openai_direct":
             self._require_openai_bounds(request, tools)
+            started = time.perf_counter()
             await self.reserve("openai")
         elif primary_kind == "deepseek_direct":
             self._require_deepseek_bounds(request)
+            started = time.perf_counter()
             await self.reserve("deepseek")
         else:
             raise ValueError("UNSUPPORTED_GENERATION_PROVIDER")
+        self._record_stage(request.turn_id, "llm_reserve_ms", started, first_only=True)
         try:
             async for event in self._stream_attempt(self.session.llm, primary_kind, request, tools, tool_choice):
                 if event.kind in {"text", "tool"}:
