@@ -18,6 +18,8 @@ def packaging(tmp_path):
         "services/voice-agent/main.py": "import app.domain.contracts\n",
         "apps/api/app/domain/contracts.py": "VALUE = 1\n",
         "apps/api/app/domain/nested/module.py": "VALUE = 2\n",
+        "packages/contracts/wordle_commands.json": "{}",
+        "packages/contracts/wordle_command_fixtures.json": "{}",
     }
     for name, content in files.items():
         path = root / name

@@ -1,119 +1,12 @@
-import { expect, test, type Page } from '@playwright/test';
-
-const CHATS = [
-  { id: 'c1', title: 'Trip to Paris', revision: 0 },
-  { id: 'c2', title: 'ميزانية Tripoli', revision: 0 },
-  { id: 'c3', title: 'Work ideas', revision: 0 },
-];
-
-async function mockHistory(page: Page, chats = CHATS) {
-  let listCalls = 0;
-  let created = 0;
-  const turns: string[] = [];
-  await page.route('**/api/v1/conversations', async (route) => {
-    if (route.request().method() === 'GET') {
-      listCalls += 1;
-      await route.fulfill({ json: chats });
-    } else {
-      created += 1;
-      await route.fulfill({ json: { id: 'c-new', title: 'New conversation', revision: 0 } });
-    }
-  });
-  await page.route('**/api/v1/conversations/*/turns', async (route) => {
-    turns.push(route.request().url());
-    await route.fulfill({ json: [] });
-  });
-  await page.route('**/api/v1/conversations/*/tool-calls', async (route) => {
-    await route.fulfill({ json: [] });
-  });
-  await page.route('**/api/v1/demo-session', async (route) => {
-    await route.fulfill({ json: { id: 'owner' } });
-  });
-  return { listCalls: () => listCalls, created: () => created, turns };
-}
-
-async function allowMicrophone(page: Page) {
-  await page.addInitScript(() => {
-    const stream = { getTracks: () => [] } as unknown as MediaStream;
-    Object.defineProperty(navigator, 'mediaDevices', {
-      configurable: true,
-      value: { getUserMedia: async () => stream },
-    });
-  });
-}
-
-async function installFakeRuntime(page: Page) {
-  await page.addInitScript(() => {
-    class FakeRuntime {
-      __epoch = 0;
-      handlers = new Set<(event: unknown) => void>();
-      get epoch() {
-        return this.__epoch;
-      }
-      subscribe(handler: (event: unknown) => void) {
-        this.handlers.add(handler);
-        return () => this.handlers.delete(handler);
-      }
-      emit(event: Record<string, unknown>) {
-        for (const handler of [...this.handlers]) handler({ ...event, epoch: this.__epoch });
-      }
-      async connect() {
-        this.__epoch += 1;
-        this.emit({ type: 'status', source: 'transport', text: 'connected' });
-        this.emit({ type: 'status', source: 'agent', text: 'listening' });
-      }
-      async disconnect() {
-        this.__epoch += 1;
-      }
-      async cancelConnect() {}
-      async startMicrophone() {}
-      async stopMicrophone() {}
-      async sendText() {}
-      async resumeAudio() {}
-      async interrupt() {}
-      microphoneStream() {
-        return null;
-      }
-    }
-    window.__SARJY_VOICE_RUNTIME_FACTORY__ = () => new FakeRuntime();
-  });
-}
-
-async function mockSessions(page: Page) {
-  const ends: string[] = [];
-  await page.route('**/api/v1/voice/sessions', async (route) => {
-    await route.fulfill({
-      json: {
-        id: 'sess-1',
-        url: 'ws://fake.invalid',
-        token: 'fake',
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-      },
-    });
-  });
-  await page.route('**/api/v1/voice/sessions/*/end', async (route) => {
-    ends.push(route.request().url());
-    await route.fulfill({ json: {} });
-  });
-  return ends;
-}
-
-/** The shared machine can drop hydration or return a 500 during a cold vite
- *  compile. Wait for the hydrated shell, reloading if the module graph never
- *  took over, before asserting on real history rows. */
-async function gotoHistory(page: Page) {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    await page.goto('/', { waitUntil: 'domcontentloaded' });
-    const ready = await page
-      .locator('.orb-button[data-renderer]:not([data-renderer="static"])')
-      .waitFor({ timeout: 15_000 })
-      .then(
-        () => true,
-        () => false,
-      );
-    if (ready) return;
-  }
-}
+import { expect, test } from '@playwright/test';
+import {
+  allowMicrophone,
+  expectSelectionBackground,
+  gotoHistory,
+  installFakeRuntime,
+  mockHistory,
+  mockSessions,
+} from './support/historyHarness';
 
 test.beforeEach(async ({ page }) => {
   test.setTimeout(90_000);
@@ -147,15 +40,13 @@ test('the selected conversation exposes aria-current and a visible selection', a
 
   const first = page.getByRole('button', { name: 'Trip to Paris', exact: true });
   await expect(first).toHaveAttribute('aria-current', 'page');
-  const firstBackground = await first.evaluate((element) => getComputedStyle(element).backgroundColor);
-  expect(firstBackground).not.toBe('rgba(0, 0, 0, 0)');
+  await expectSelectionBackground(page, first);
 
   const second = page.getByRole('button', { name: 'Work ideas', exact: true });
   await second.click();
   await expect(second).toHaveAttribute('aria-current', 'page');
   await expect(first).not.toHaveAttribute('aria-current', 'page');
-  const secondBackground = await second.evaluate((element) => getComputedStyle(element).backgroundColor);
-  expect(secondBackground).not.toBe('rgba(0, 0, 0, 0)');
+  await expectSelectionBackground(page, second);
 });
 
 test('conversation menus dismiss on Escape or outside interaction and restore focus', async ({ page }) => {
