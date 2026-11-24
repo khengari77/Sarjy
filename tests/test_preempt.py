@@ -75,7 +75,7 @@ def test_a_changed_transcript_closes_the_early_turn_once_and_opens_the_real_one(
     async def body(agent):
         await agent._open_early_turn(SimpleNamespace(id="early", text_content="What time"))
         await agent.on_user_turn_completed(None, SimpleNamespace(id="final", text_content="What time is it in Rome"))
-        assert agent.preempt is None and "early" not in agent.prepared and "final" in agent.prepared
+        assert agent.preempt is None and "final" in agent.prepared
         agent._retire_preempt()  # a second retirement is a no-op
 
     calls = _run(body)
@@ -125,3 +125,24 @@ def test_the_sdk_still_exposes_the_cancel_the_worker_relies_on():
     from livekit.agents.voice.agent_activity import AgentActivity
 
     assert callable(getattr(AgentActivity, "_cancel_preemptive_generation", None))
+
+
+def test_a_retired_turn_is_never_persisted_or_finalized_a_second_time():
+    async def body(agent):
+        entry = await agent._open_early_turn(SimpleNamespace(id="early", text_content="hello"))
+        agent._retire_preempt()
+        handle = SimpleNamespace(id="speech-1")
+        agent._schedule_persistence(SimpleNamespace(id="early"), handle)  # a late chunk of the cancelled reply
+        assert entry.retired and "speech-1" not in agent.speeches
+
+    calls = _run(body)
+    assert len([1 for path, _ in calls if path.endswith("/turn/finalize")]) == 1
+
+
+def test_an_early_turn_whose_playout_already_started_is_left_to_that_playout():
+    async def body(agent):
+        entry = await agent._open_early_turn(SimpleNamespace(id="early", text_content="hello"))
+        agent.persisting.add(entry.turn_id)
+        agent._retire_preempt()
+
+    assert not [1 for path, _ in _run(body) if path.endswith("/turn/finalize")]

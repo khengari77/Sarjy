@@ -311,6 +311,8 @@ class SarjyAgent(WordleTools, Agent):
         self.reassurance_fillers: dict[str, str] = {}
         self.preemptive = preemptive
         self.preempt: EarlyTurn | None = None
+        self.persisting: set[str] = set()  # turns whose playout is already being finalized
+        self.retired_turns: set[str] = set()  # early turns closed as failed; never finalized again
         self.recent_finals = RecentFinals()
         self.wordle_spoken: dict[str, list[str]] = {}
         self.wordle_touched = False
@@ -746,6 +748,16 @@ class SarjyAgent(WordleTools, Agent):
         async for frame in Agent.default.tts_node(self, budgeted_text(), model_settings):
             yield frame
 
+    def _speech_handle(self):
+        """The speech this reply belongs to; an early reply is not scheduled yet, so it is not ``current_speech``."""
+        try:
+            from livekit.agents.voice.agent_activity import _SpeechHandleContextVar
+
+            handle = _SpeechHandleContextVar.get(None)
+        except ImportError:
+            handle = None
+        return handle if handle is not None else self.session.current_speech
+
     def note_transcript(self, event) -> None:
         if self.preemptive and getattr(event, "is_final", False):
             self.recent_finals.add(getattr(event, "transcript", "") or "")
@@ -767,10 +779,10 @@ class SarjyAgent(WordleTools, Agent):
             return
         entry.retired = True
         turn_id = entry.turn_id
-        self.prepared.pop(entry.message_id, None)
-        self.commands.pop(entry.message_id, None)
-        if turn_id is None:
-            return
+        # ``prepared`` keeps the entry: the cancelled reply may still be unwinding and reads it.
+        if turn_id is None or turn_id in self.persisting:
+            return  # a started playout finalizes the turn (interrupted) by itself
+        self.retired_turns.add(turn_id)
         self.turn_stages.pop(turn_id, None)
         self.turn_anchor.pop(turn_id, None)
         self.reassurance.finish(turn_id)
@@ -960,7 +972,7 @@ class SarjyAgent(WordleTools, Agent):
             if started is not None:
                 self._record_stage(turn_id, "first_answer_ms", started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=direct))
-            self._schedule_persistence(user, self.session.current_speech)
+            self._schedule_persistence(user, self._speech_handle())
             return
         early = self._start_reply_early(user, snapshot, chat_ctx, tools, model_settings)
         try:
@@ -1050,7 +1062,7 @@ class SarjyAgent(WordleTools, Agent):
             # and the deterministic spoken line is the whole assistant turn.
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=command["spoken"]))
-            handle = self.session.current_speech
+            handle = self._speech_handle()
             self._schedule_persistence(user, handle)
             return
         if self.forced_speech is not None and self.forced_speech[0] == turn_id:
@@ -1058,7 +1070,7 @@ class SarjyAgent(WordleTools, Agent):
             self.forced_speech = None
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=forced))
-            handle = self.session.current_speech
+            handle = self._speech_handle()
             self._schedule_persistence(user, handle)
             return
         proposal = self.memory_proposal
@@ -1071,14 +1083,14 @@ class SarjyAgent(WordleTools, Agent):
             self.memory_question_key = key
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=question))
-            handle = self.session.current_speech
+            handle = self._speech_handle()
             if handle is not None:
                 self._schedule_prompt_confirmation(key, handle)
                 # The deterministic question is the turn's spoken answer, so it
                 # must still be persisted like any other assistant turn.
                 self._schedule_persistence(user, handle)
             return
-        handle = self.session.current_speech
+        handle = self._speech_handle()
         self._schedule_persistence(user, handle)
         request, tools, schemas = self._reply_request(user, snapshot, chat_ctx, tools)
         # The held reply was asked for before these could be known.
@@ -1269,8 +1281,11 @@ class SarjyAgent(WordleTools, Agent):
         if handle is None or handle.id in self.speeches:
             # One finalize per spoken handle, even across repeated inference.
             return
-        self.speeches.add(handle.id)
         turn_id = self.prepared[user.id]["turn_id"]
+        if turn_id in self.retired_turns:
+            return
+        self.speeches.add(handle.id)
+        self.persisting.add(turn_id)
 
         async def persist_playout():
             text, status = await _playout_result(handle)
