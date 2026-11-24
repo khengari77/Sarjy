@@ -17,7 +17,7 @@ if not logger.handlers:  # the root logger only prints warnings, so INFO lines w
     _handler.setFormatter(logging.Formatter("%(levelname)s sarjy.statements %(message)s"))
     logger.addHandler(_handler)
     logger.propagate = False
-    logger.setLevel(logging.INFO if os.environ.get("SARJY_LOG_STATEMENTS") == "1" else logging.WARNING)
+    logger.setLevel(logging.INFO)
 
 
 @dataclass
@@ -45,5 +45,12 @@ def install_statement_timing(engine: Engine) -> None:
         timing.ms += elapsed
         timing.count += 1
         # SARJY_LOG_STATEMENTS=1 logs every statement; slow ones are always logged. SQL text only, no parameters.
-        level = logging.WARNING if elapsed >= SLOW_STATEMENT_MS else logging.INFO
-        logger.log(level, "statement %d: %.1f ms %s", timing.count, elapsed, " ".join(statement.split())[:120])
+        slow = elapsed >= SLOW_STATEMENT_MS
+        if slow or os.environ.get("SARJY_LOG_STATEMENTS") == "1":
+            logger.log(
+                logging.WARNING if slow else logging.INFO,
+                "statement %d: %.1f ms %s",
+                timing.count,
+                elapsed,
+                " ".join(statement.split())[:120],
+            )

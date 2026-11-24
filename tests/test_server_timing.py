@@ -78,5 +78,6 @@ def test_slow_statements_are_always_logged(monkeypatch, caplog):
             connection.execute(text("SELECT 1   AS   one"))
     finally:
         timing.current_statement_timing.reset(token)
+        engine.dispose()
     warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
     assert any("SELECT 1 AS one" in message for message in warnings)  # whitespace is collapsed
