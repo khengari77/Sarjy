@@ -11,6 +11,13 @@ from app.services import weather
 from sqlalchemy.exc import OperationalError
 
 
+@pytest.fixture(autouse=True)
+def _weather_cache_is_isolated():
+    weather.clear_weather_cache()
+    yield
+    weather.clear_weather_cache()
+
+
 @pytest.mark.parametrize(
     "payload",
     [None, [], {"results": None}, {"results": [None]}, {"results": [{"name": "x", "latitude": None, "longitude": 0}]}],
@@ -169,6 +176,56 @@ def test_valid_weather_and_empty_search_keep_existing_semantics(monkeypatch):
     assert result["city"] == "Tripoli"
     with pytest.raises(weather.WeatherError, match="LOCATION_NOT_FOUND"):
         asyncio.run(weather.get_current_weather("missing"))
+
+
+def test_repeated_city_geocodes_once_and_reuses_the_client(monkeypatch):
+    hosts = []
+    clients = []
+    client = httpx.AsyncClient
+
+    def transport(request):
+        hosts.append(request.url.host)
+        if "geocoding" in request.url.host:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "name": "Tripoli",
+                            "latitude": 32,
+                            "longitude": 13,
+                            "country": "Libya",
+                            "country_code": "LY",
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "current": {"temperature_2m": 20, "wind_speed_10m": 2, "weather_code": 0},
+                "timezone": "Africa/Tripoli",
+            },
+        )
+
+    def factory(**kw):
+        clients.append(kw)
+        return client(**kw, transport=httpx.MockTransport(transport))
+
+    monkeypatch.setattr(weather.httpx, "AsyncClient", factory)
+
+    async def run():
+        first = await weather.get_current_weather("Tripoli", "LY")
+        second = await weather.get_current_weather(" tripoli ", "ly")
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert first == second
+    assert len(clients) == 1
+    assert clients[0]["limits"].max_keepalive_connections == 4
+    assert clients[0]["limits"].keepalive_expiry == 60
+    assert hosts.count("geocoding-api.open-meteo.com") == 1
+    assert hosts.count("api.open-meteo.com") == 2
 
 
 def _diagnostic_response(mode, request):
