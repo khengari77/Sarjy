@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import Settings
@@ -159,6 +159,25 @@ def _jev_ui_classifier(config: Settings, sessions) -> JevUiClient | None:
     return JevUiClient(config.jev_api_key, reserve)
 
 
+def engine_options(url: str) -> dict:
+    if url.startswith("sqlite"):
+        return {}
+    # The DATABASE_URL must be the session-mode pooler, whose client limit the default pool size (5 + 10
+    # overflow) already respects; recycle before the pooler or the network drops an idle connection.
+    return {"pool_recycle": 240}
+
+
+async def _warm_pool(engine) -> None:
+    async def warm():
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+
+    warmed = await asyncio.gather(*(warm() for _ in range(3)), return_exceptions=True)
+    for outcome in warmed:
+        if isinstance(outcome, Exception):
+            logging.getLogger(__name__).warning("Database pool warm-up failed")
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -183,7 +202,7 @@ def create_app(
         DeepgramVoices() if config.tts_provider == "deepgram" else ElevenLabsVoices(config.eleven_api_key)
     )
     source = wordle_source or HttpWordleSource(config.wordle_source_url)
-    engine = create_async_engine(config.database_url)
+    engine = create_async_engine(config.database_url, **engine_options(config.database_url))
     if config.database_url.startswith("sqlite"):
 
         @event.listens_for(engine.sync_engine, "connect")
@@ -210,6 +229,8 @@ def create_app(
                     if not await db.get(SessionGate, 1):
                         db.add(SessionGate(id=1, marker=1))
                         await db.commit()
+            else:
+                await _warm_pool(engine)
             yield
         finally:
             await _shutdown(refresh_task, engine, classifier)

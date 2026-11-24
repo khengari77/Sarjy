@@ -41,6 +41,7 @@ from livekit.plugins import silero
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
 from speech_budget import SpeechBudget
+from stream_completion import KEEPALIVE_LIMITS
 from turn_metrics import assistant_metrics, build_payload, elapsed_ms
 from wordle_commands import is_wordle_command, parse_say_payload
 from wordle_tools import (
@@ -70,6 +71,7 @@ MAX_TIER_OUTPUT_TOKENS = 1024
 MAX_CONTEXT_BYTES = 64000
 MAX_TOOLS = 4
 GENERATION_ATTEMPT_SECONDS = 30.0
+STALE_CONNECTION_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError, httpx.ConnectError)
 DECISION_TURN_NOTE = "The user is answering the previous confirmation; do not propose anything this turn."
 FAILED_NOTE = "The memory tool failed. Nothing was saved, excluded or changed; do not claim otherwise."
 
@@ -316,10 +318,18 @@ class SarjyAgent(WordleTools, Agent):
     async def compile(self, message):
         if message.id not in self.prepared:
             started = time.perf_counter()
-            response = await self.backend.post(
-                "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
-            )
-            response.raise_for_status()
+            for attempt in range(2):
+                try:
+                    response = await self.backend.post(
+                        "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
+                    )
+                    response.raise_for_status()
+                    break
+                except STALE_CONNECTION_ERRORS:
+                    # A reused connection the other end already closed; a timeout is not retried.
+                    if attempt == 0:
+                        continue
+                    raise
             self.prepared[message.id] = response.json()
             turn_id = self.prepared[message.id]["turn_id"]
             self.turn_stages[turn_id] = {}
@@ -1202,6 +1212,15 @@ async def play_greeting(session, backend, intro: Mapping[str, Any] | None, wait_
     return "played"
 
 
+def backend_client(base_url: str, headers: dict[str, str]) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        base_url=base_url,
+        headers=headers,
+        timeout=httpx.Timeout(15, connect=5),
+        limits=KEEPALIVE_LIMITS,
+    )
+
+
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
     values = read_worker_environment()
@@ -1213,7 +1232,7 @@ async def entrypoint(ctx: JobContext):
         "x-room-name": ctx.job.room.name,
     }
     reveal = RevealState()
-    async with httpx.AsyncClient(base_url=values["API_INTERNAL_URL"], headers=headers, timeout=15) as backend:
+    async with backend_client(values["API_INTERNAL_URL"], headers) as backend:
         response = await backend.post("/internal/agent/bootstrap")
         response.raise_for_status()
         bootstrap = response.json()
