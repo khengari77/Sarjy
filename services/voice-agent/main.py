@@ -272,6 +272,7 @@ class SarjyAgent(WordleTools, Agent):
         # The next model call's budget reservation, started with the turn rather than after it.
         self.prepaid_generation: tuple[str, str, asyncio.Task[None]] | None = None
         self.prepayments: set[asyncio.Task[None]] = set()
+        self.reserving_message: str | None = None
         self.speech_budget = SpeechBudget(self._reserve_speech, self._report_reservation, self._spawn_refill)
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
@@ -325,6 +326,7 @@ class SarjyAgent(WordleTools, Agent):
             self._record_stage(turn_id, "turn_start_ms", started)
         # Typed input never ran the turn hook: an earlier turn's prepayment is not this one's.
         self._discard_prepaid(keep=message.id)
+        self.reserving_message = message.id
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
         self.current_text = message.text_content or ""
@@ -499,7 +501,7 @@ class SarjyAgent(WordleTools, Agent):
     def _take_prepaid(self, provider: str) -> asyncio.Task[None] | None:
         """The reservation started for this turn's first model call; once, and only for that provider."""
         prepaid = self.prepaid_generation
-        if prepaid is None or prepaid[0] != provider:
+        if prepaid is None or prepaid[0] != provider or prepaid[1] != self.reserving_message:
             return None
         self.prepaid_generation = None
         return prepaid[2]
@@ -507,8 +509,9 @@ class SarjyAgent(WordleTools, Agent):
     def _prepay_generation(self, message_id: str) -> None:
         """Start the model reservation now; it does not depend on the turn's context.
 
-        A turn that ends without a model call (a memory question, an interruption) leaves this one request
-        charged; the daily cap counts it, as it counts a dropped early reply.
+        A turn that ends without a model call (a memory question, an interruption, a request over the
+        provider's size bound) leaves this one request charged, and a prepayment already sent when a newer
+        turn replaces it stays charged too: the daily cap counts both, as it counts a dropped early reply.
         """
         provider = {"openai_direct": "openai", "deepseek_direct": "deepseek"}.get(self.pipeline["llm"]["provider"])
         if provider is None or self.speech_stopped:

@@ -188,3 +188,18 @@ def test_commands_and_unknown_providers_do_not_prepay_and_shutdown_cancels_every
         assert held.prepaid_generation is None
 
     run(scenario)
+
+
+def test_a_newer_turn_does_not_hand_its_prepayment_to_an_older_model_call():
+    async def scenario():
+        backend = Backend()
+        agent = agent_for(backend)
+        await agent.on_user_turn_completed(None, message("m1"))  # the older turn is the one being served
+        agent._prepay_generation("m2")  # a newer turn's hook runs while m1 waits on something else
+        await agent.reserve("deepseek")  # m1's own call
+        await settle()
+        # m1 paid for itself; its own prepayment was replaced before it was sent; m2's is untouched.
+        assert len(backend.reservations("deepseek")) == 2
+        assert agent.prepaid_generation is not None and agent.prepaid_generation[1] == "m2"
+
+    run(scenario)
