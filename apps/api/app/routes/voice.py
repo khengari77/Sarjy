@@ -25,7 +25,6 @@ from app.services.voices import (
     require_approved,
     resolve_voice,
     saved_voice_outcome,
-    spoken_voice_language,
 )
 
 
@@ -85,7 +84,7 @@ def register_voice_routes(
     @app.post("/v1/voice/sessions", status_code=201)
     async def start_voice(body: StartVoice, user=Depends(identity), db: AsyncSession = Depends(database)):
         await owned(body.conversation_id, user, db)
-        if config.tts_provider == "deepgram" and body.language != "en":
+        if body.language != "en":
             # Aura-2 has no Arabic; never fall back to an English voice silently.
             raise HTTPException(422, detail={"code": "TTS_LANGUAGE_UNSUPPORTED"})
         required = ["livekit_url", "livekit_api_key", "livekit_api_secret", "agent_service_secret"]
@@ -115,9 +114,9 @@ def register_voice_routes(
             config, catalog, body.voice_id, saved_voice_id
         )
         voice_id = selected_voice.id
-        voice_language = spoken_voice_language(
-            voice_source, body.language, selected_voice, config.default_voice_language
-        )
+        # Aura-2 speaks English only (non-English requests were rejected above), so a configured default
+        # language of "ar" must never reach the stored pipeline: the worker would refuse to build the voice.
+        voice_language = "en"
         pipeline = pipeline.model_copy(
             update={"tts": pipeline.tts.model_copy(update={"voice_id": voice_id, "language": voice_language})}
         )

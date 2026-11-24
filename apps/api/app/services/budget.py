@@ -6,7 +6,6 @@ from app.domain.budget import (
     DEEPGRAM_DAILY_CHARACTERS,
     DEEPSEEK_DAILY_MICRO_USD,
     DEEPSEEK_REQUEST_MICRO_USD,
-    ELEVENLABS_DAILY_CHARACTERS,
     JEV_DAILY_REQUESTS,
     OPENAI_DAILY_MICRO_USD,
     OPENAI_REQUEST_MICRO_USD,
@@ -19,12 +18,11 @@ REQUEST_UNITS = {"openai": OPENAI_REQUEST_MICRO_USD, "deepseek": DEEPSEEK_REQUES
 DAILY_LIMITS = {
     "openai": OPENAI_DAILY_MICRO_USD,
     "deepseek": DEEPSEEK_DAILY_MICRO_USD,
-    "elevenlabs": ELEVENLABS_DAILY_CHARACTERS,
     "deepgram_tts": DEEPGRAM_DAILY_CHARACTERS,
     "jev": JEV_DAILY_REQUESTS,
 }
-CHARACTER_PROVIDERS = frozenset({"elevenlabs", "deepgram_tts"})
-UNIT_LABELS = {"elevenlabs": "characters", "deepgram_tts": "characters", "jev": "requests"}
+CHARACTER_PROVIDERS = frozenset({"deepgram_tts"})
+UNIT_LABELS = {"deepgram_tts": "characters", "jev": "requests"}
 
 
 async def reserve_in_transaction(

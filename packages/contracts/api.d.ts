@@ -396,6 +396,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/agent/intro-played": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Intro Played
+         * @description Worker confirmation that the full introduction played to the end. Idempotent.
+         */
+        post: operations["intro_played_internal_agent_intro_played_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/agent/turn/start": {
         parameters: {
             query?: never;
@@ -424,6 +444,23 @@ export interface paths {
         put?: never;
         /** Finalize */
         post: operations["finalize_internal_agent_turn_finalize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/agent/turn/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Turn Metrics */
+        post: operations["turn_metrics_internal_agent_turn_metrics_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -533,6 +570,91 @@ export interface paths {
         put?: never;
         /** Confirm Memory Route */
         post: operations["confirm_memory_route_internal_agent_memory_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/agent/tool/wordle-play": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Agent Play Wordle */
+        post: operations["agent_play_wordle_internal_agent_tool_wordle_play_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/agent/tool/wordle-guess": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Agent Guess Wordle */
+        post: operations["agent_guess_wordle_internal_agent_tool_wordle_guess_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/agent/tool/wordle-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Agent Status Wordle */
+        post: operations["agent_status_wordle_internal_agent_tool_wordle_status_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/agent/tool/wordle-close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Agent Close Wordle */
+        post: operations["agent_close_wordle_internal_agent_tool_wordle_close_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/agent/tool/wordle-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Agent Reset Wordle */
+        post: operations["agent_reset_wordle_internal_agent_tool_wordle_reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -652,6 +774,26 @@ export interface paths {
         get: operations["get_context_blocks_v1_conversations__conversation_id__context_blocks_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/wordle/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset
+         * @description Delete today's game for the owner (same puzzle, replayable) and return the fresh empty game.
+         */
+        post: operations["reset_v1_wordle_reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -789,7 +931,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "openai" | "elevenlabs" | "deepgram_tts" | "deepseek";
+            provider: "openai" | "deepgram_tts" | "deepseek";
             /**
              * Characters
              * @default 0
@@ -1449,6 +1591,59 @@ export interface components {
             /** @default automatic */
             response_preference: components["schemas"]["ResponsePreference"];
         };
+        /** TurnMetricsInput */
+        TurnMetricsInput: {
+            /** Turn Id */
+            turn_id: string;
+            /** Stt Ms */
+            stt_ms?: number | null;
+            /** Eot Ms */
+            eot_ms?: number | null;
+            /** Llm Ttft Ms */
+            llm_ttft_ms?: number | null;
+            /** Tts Ttfb Ms */
+            tts_ttfb_ms?: number | null;
+            /** Ttfa Ms */
+            ttfa_ms?: number | null;
+            stages?: components["schemas"]["TurnStageMetrics"];
+        };
+        /** TurnStageMetrics */
+        TurnStageMetrics: {
+            /** Turn Start Ms */
+            turn_start_ms?: number | null;
+            /** Command Ms */
+            command_ms?: number | null;
+            /** Llm Reserve Ms */
+            llm_reserve_ms?: number | null;
+            /** Tts Reserve Ms */
+            tts_reserve_ms?: number | null;
+            /** Turn Start Server Ms */
+            turn_start_server_ms?: number | null;
+            /** Turn Start Db Ms */
+            turn_start_db_ms?: number | null;
+            /** Command Server Ms */
+            command_server_ms?: number | null;
+            /** Command Db Ms */
+            command_db_ms?: number | null;
+            /** Model First Chunk Ms */
+            model_first_chunk_ms?: number | null;
+            /** Release Wait Ms */
+            release_wait_ms?: number | null;
+            /** Prompt Cache Hit Tokens */
+            prompt_cache_hit_tokens?: number | null;
+            /** Prompt Cache Miss Tokens */
+            prompt_cache_miss_tokens?: number | null;
+            /** Request Bytes */
+            request_bytes?: number | null;
+            /** Provider Connect Ms */
+            provider_connect_ms?: number | null;
+            /** Provider Headers Ms */
+            provider_headers_ms?: number | null;
+            /** Loop Lag Ms */
+            loop_lag_ms?: number | null;
+            /** Predicted Prefix Hit Pct */
+            predicted_prefix_hit_pct?: number | null;
+        };
         /** UnhandledAction */
         UnhandledAction: {
             /**
@@ -1532,6 +1727,15 @@ export interface components {
             city: string;
             /** Country */
             country?: string | null;
+        };
+        /** WordleToolInput */
+        WordleToolInput: {
+            /** Turn Id */
+            turn_id: string;
+            /** Request Id */
+            request_id: string;
+            /** Word */
+            word?: string | null;
         };
         /**
          * ResponsePolicy
@@ -2457,6 +2661,26 @@ export interface operations {
             };
         };
     };
+    intro_played_internal_agent_intro_played_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     turn_start_internal_agent_turn_start_post: {
         parameters: {
             query?: never;
@@ -2500,6 +2724,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentOutput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    turn_metrics_internal_agent_turn_metrics_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TurnMetricsInput"];
             };
         };
         responses: {
@@ -2698,6 +2955,171 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["MemoryConfirm"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_play_wordle_internal_agent_tool_wordle_play_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WordleToolInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_guess_wordle_internal_agent_tool_wordle_guess_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WordleToolInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_status_wordle_internal_agent_tool_wordle_status_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WordleToolInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_close_wordle_internal_agent_tool_wordle_close_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WordleToolInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_reset_wordle_internal_agent_tool_wordle_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WordleToolInput"];
             };
         };
         responses: {
@@ -2953,6 +3375,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_v1_wordle_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

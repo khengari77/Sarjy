@@ -81,7 +81,6 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
             "API_INTERNAL_URL": "http://test",
             "AGENT_SERVICE_SECRET": "test-secret",
             "DEEPGRAM_API_KEY": "test",
-            "ELEVEN_API_KEY": "test",
             "OPENAI_API_KEY": "test",
         },
     )

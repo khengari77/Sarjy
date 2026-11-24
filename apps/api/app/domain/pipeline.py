@@ -34,19 +34,19 @@ class PipelineConfig(BaseModel):
         return TIER_CAPS[self.response_tier - 1]
 
 
+DEEPGRAM_TTS = ("deepgram_direct", "aura-2")
 PRESET = {
     "stt": ("deepgram_direct", "nova-3"),
     "llm": ("openai_direct", "gpt-6-luna"),
-    "tts": ("elevenlabs_direct", "eleven_flash_v2_5"),
+    "tts": DEEPGRAM_TTS,
 }
-DEEPGRAM_TTS = ("deepgram_direct", "aura-2")
-TTS_CHOICES = {PRESET["tts"], DEEPGRAM_TTS}
-TTS_KEYS = {"elevenlabs_direct": "ELEVEN_API_KEY", "deepgram_direct": "DEEPGRAM_API_KEY"}
+TTS_CHOICES = {DEEPGRAM_TTS}
+TTS_KEYS = {"deepgram_direct": "DEEPGRAM_API_KEY"}
 LLM_CHOICES = {
     ("openai_direct", "gpt-6-luna"): "OPENAI_API_KEY",
     ("deepseek_direct", "deepseek-flash"): "DEEPSEEK_API_KEY",
 }
-KEYS = {"stt": "DEEPGRAM_API_KEY", "llm": "OPENAI_API_KEY", "tts": "ELEVEN_API_KEY"}
+KEYS = {"stt": "DEEPGRAM_API_KEY", "llm": "OPENAI_API_KEY", "tts": "DEEPGRAM_API_KEY"}
 
 
 def validate_pipeline(config: PipelineConfig, configured: set[str]) -> list[dict[str, Any]]:

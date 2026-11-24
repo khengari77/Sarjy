@@ -51,12 +51,12 @@ for token, name, description in cases:
 for filename, description in [
     (
         "03-live-arabic-weather.mp4",
-        "Live Arabic weather reply using OpenAI, ElevenLabs, LiveKit, and Open-Meteo. Input is typed; this does not verify human microphone input.",
+        "Live Arabic weather reply using OpenAI, LiveKit, and Open-Meteo. Input is typed; this does not verify human microphone input.",
     ),
     ("04-live-arabic-reply.mp4", "Live short Arabic greeting with browser-captured assistant speech. Input is typed."),
     (
         "05-live-voice-to-voice.mp4",
-        "Voice-to-voice check: reused prerecorded Arabic clip through Chromium microphone capture, real Deepgram STT, OpenAI reply, ElevenLabs speech, and browser playback. Includes both captured input and output; this is not a human microphone recording.",
+        "Voice-to-voice check: reused prerecorded Arabic clip through Chromium microphone capture, real Deepgram STT, OpenAI reply, speech synthesis, and browser playback. Includes both captured input and output; this is not a human microphone recording.",
     ),
 ]:
     live = output / filename

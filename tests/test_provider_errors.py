@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from app.services import weather
-from app.services.voices import ElevenLabsVoices, VoiceCatalogError
 from sqlalchemy.exc import OperationalError
 
 
@@ -17,38 +16,6 @@ def _weather_cache_is_isolated():
     weather.clear_weather_cache()
     yield
     weather.clear_weather_cache()
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        None,
-        [],
-        {"voices": None},
-        {"voices": [], "has_more": "yes"},
-        {"voices": [], "next_page_token": 5},
-        {"voices": [], "has_more": True},
-        {"voices": [], "has_more": True, "next_page_token": None},
-        {"voices": [], "has_more": True, "next_page_token": ""},
-        {"voices": [{"voice_id": 1, "name": "n"}]},
-        {"voices": [{"voice_id": "v", "name": "n", "verified_languages": {}}]},
-        {"voices": [{"voice_id": "v", "name": "n", "labels": []}]},
-        {"voices": [None]},
-        {"voices": [{"voice_id": "v", "name": "n", "labels": "PRIVATE"}]},
-        {"voices": [{"voice_id": "v", "name": "n", "verified_languages": [None]}]},
-    ],
-)
-def test_malformed_catalog_is_typed(payload):
-    async def run():
-        service = ElevenLabsVoices(
-            "PRIVATE", transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
-        )
-        with pytest.raises(VoiceCatalogError) as caught:
-            await service.list()
-        assert caught.value.code == "VOICE_CATALOG_UNAVAILABLE"
-        assert "PRIVATE" not in str(caught.value)
-
-    asyncio.run(run())
 
 
 @pytest.mark.parametrize(

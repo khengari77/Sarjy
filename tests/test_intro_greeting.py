@@ -10,9 +10,8 @@ import main as worker
 import pytest
 from app.domain.intro import INTRO, SHORT_GREETING, intro_for
 from app.main import create_app
-from app.services.voices import ElevenLabsVoices
 from fastapi.testclient import TestClient
-from test_voices import catalog_transport, configured, livekit_control_plane  # noqa: F401
+from test_voices import configured, livekit_control_plane  # noqa: F401
 
 
 def test_intro_text_is_one_constant_per_language_and_fits_one_reservation():
@@ -23,11 +22,10 @@ def test_intro_text_is_one_constant_per_language_and_fits_one_reservation():
 
 def test_intro_for_full_short_and_unspeakable_cases():
     assert intro_for("en", seen=False, tts_provider="deepgram_direct") == {"kind": "full", "text": INTRO["en"]}
-    assert intro_for("en", seen=True, tts_provider="elevenlabs_direct") == {
+    assert intro_for("en", seen=True, tts_provider="deepgram_direct") == {
         "kind": "short",
         "text": SHORT_GREETING["en"],
     }
-    assert intro_for("ar", seen=False, tts_provider="elevenlabs_direct")["text"] == INTRO["ar"]
     # Aura-2 has no Arabic: skip silently rather than speak English over an Arabic call.
     assert intro_for("ar", seen=False, tts_provider="deepgram_direct") is None
     assert intro_for("fr", seen=False, tts_provider=None) is None
@@ -35,14 +33,13 @@ def test_intro_for_full_short_and_unspeakable_cases():
 
 @pytest.mark.usefixtures("livekit_control_plane")
 def test_bootstrap_flag_is_per_identity_and_set_only_by_the_played_callback(tmp_path):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+    with TestClient(create_app(configured(tmp_path))) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
 
         def call():
             session = client.post(
-                "/v1/voice/sessions", json={"conversation_id": chat, "voice_id": "other-voice"}
+                "/v1/voice/sessions", json={"conversation_id": chat, "voice_id": "aura-2-apollo-en"}
             ).json()
             with closing(sqlite3.connect(tmp_path / "voice.db")) as db:
                 room = db.execute("SELECT room_name FROM voice_sessions WHERE id=?", (session["id"],)).fetchone()[0]
@@ -218,7 +215,6 @@ def test_entrypoint_starts_the_greeting_after_the_session_runs(monkeypatch):
             "API_INTERNAL_URL": "http://test",
             "AGENT_SERVICE_SECRET": "s",
             "DEEPGRAM_API_KEY": "k",
-            "ELEVEN_API_KEY": "k",
             "OPENAI_API_KEY": "k",
         },
     )

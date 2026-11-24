@@ -26,10 +26,10 @@ def test_temporary_openai_default_and_independent_deepseek_key_validation():
     assert PRESET["llm"] == ("openai_direct", "gpt-6-luna")
     base = {
         "stt": {"provider": "deepgram_direct", "model": "nova-3"},
-        "tts": {"provider": "elevenlabs_direct", "model": "eleven_flash_v2_5", "voice_id": "voice"},
+        "tts": {"provider": "deepgram_direct", "model": "aura-2", "voice_id": "voice", "language": "en"},
     }
     config = PipelineConfig(**base, llm={"provider": "openai_direct", "model": "gpt-6-luna"})
-    keys = {"DEEPGRAM_API_KEY", "ELEVEN_API_KEY", "OPENAI_API_KEY"}
+    keys = {"DEEPGRAM_API_KEY", "OPENAI_API_KEY"}
     assert validate_pipeline(config, keys) == []
     # Frozen configs: a provider change produces a new value, never a mutation.
     swapped = PipelineConfig(**base, llm={"provider": "deepseek_direct", "model": "deepseek-flash"})

@@ -95,7 +95,6 @@ def settings(tmp_path, **overrides):
         "openai_api_key": "",
         "deepseek_api_key": "",
         "deepgram_api_key": "",
-        "eleven_api_key": "",
         "_env_file": None,
     }
     return Settings(**(values | overrides))

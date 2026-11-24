@@ -10,7 +10,6 @@ WORKER_KEYS = (
     "API_INTERNAL_URL",
     "AGENT_SERVICE_SECRET",
     "DEEPGRAM_API_KEY",
-    "ELEVEN_API_KEY",
     "OPENAI_API_KEY",
     "DEEPSEEK_API_KEY",
     "ENDPOINTING_MIN_DELAY_SECONDS",
@@ -69,9 +68,7 @@ def require_values(values: Mapping[str, str], *names: str) -> dict[str, str]:
     return {name: values[name] for name in names}
 
 
-def provider_credentials(
-    values: Mapping[str, str], primary_provider: str, tts_provider: str = "elevenlabs_direct"
-) -> dict[str, str]:
+def provider_credentials(values: Mapping[str, str], primary_provider: str) -> dict[str, str]:
     """Return required primary credentials plus an optional OpenAI fallback key.
 
     The fallback key is optional: a missing OpenAI key must not block a
@@ -79,12 +76,7 @@ def provider_credentials(
     provider factory so the fallback can be constructed.
     """
     provider_key = "OPENAI_API_KEY" if primary_provider == "openai_direct" else "DEEPSEEK_API_KEY"
-    credentials = require_values(
-        values,
-        "DEEPGRAM_API_KEY",
-        *(() if tts_provider == "deepgram_direct" else ("ELEVEN_API_KEY",)),
-        provider_key,
-    )
+    credentials = require_values(values, "DEEPGRAM_API_KEY", provider_key)
     if primary_provider == "deepseek_direct" and values.get("OPENAI_API_KEY"):
         credentials["OPENAI_API_KEY"] = values["OPENAI_API_KEY"]
     return credentials

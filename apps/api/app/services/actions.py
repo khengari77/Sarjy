@@ -355,7 +355,7 @@ async def dispatch_setting(db, *, owner_id, request_id, expected_revision, actio
     bind = db.bind
     factory = async_sessionmaker(bind.engine if isinstance(bind, AsyncConnection) else bind, expire_on_commit=False)
     # Replay must not depend on the voice provider: a committed receipt is
-    # authoritative even while ElevenLabs is down, so check it before validating.
+    # authoritative even while the catalogue is down, so check it before validating.
     replayed = await _setting_receipt(factory, owner_id, key, fingerprint)
     if replayed is not None:
         return replayed

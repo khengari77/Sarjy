@@ -56,7 +56,6 @@ def build(tmp_path, monkeypatch, **overrides):
         deepseek_api_key=overrides.pop("deepseek_api_key", ""),
         default_llm_provider=overrides.pop("default_llm_provider", "openai_direct"),
         deepgram_api_key="test-deepgram",
-        eleven_api_key="test-eleven",
         approved_voice_ids="test-voice",
         livekit_url="https://fake.livekit",
         livekit_api_key="key" * 8,

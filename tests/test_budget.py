@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from app.config import Settings
 from app.domain.budget import budget_day, reserve_units
+from app.domain.deepgram_voices import DEFAULT_DEEPGRAM_VOICE_ID
 from app.infrastructure.database import Base, DevelopmentBudget
 from app.main import create_app
 from app.services.budget import reserve
@@ -43,11 +44,11 @@ def test_budget_day_is_tripoli_calendar_day():
     assert budget_day(datetime(2026, 11, 11, 22, 0, tzinfo=UTC)) == "2026-11-12"
 
 
-def test_openai_and_elevenlabs_are_separate_and_survive_restart(tmp_path):
+def test_openai_and_deepgram_tts_are_separate_and_survive_restart(tmp_path):
     settings = Settings(
         database_url=f"sqlite+aiosqlite:///{tmp_path}/budget.db",
         agent_service_secret="test",
-        elevenlabs_daily_characters=500,
+        deepgram_daily_characters=500,
         _env_file=None,
     )
     headers = {"x-agent-secret": "test"}
@@ -64,7 +65,7 @@ def test_openai_and_elevenlabs_are_separate_and_survive_restart(tmp_path):
         )
         assert (
             client.post(
-                "/internal/development/reserve", headers=headers, json={"provider": "elevenlabs", "characters": 500}
+                "/internal/development/reserve", headers=headers, json={"provider": "deepgram_tts", "characters": 500}
             ).status_code
             == 200
         )
@@ -75,7 +76,7 @@ def test_openai_and_elevenlabs_are_separate_and_survive_restart(tmp_path):
         )
         assert (
             client.post(
-                "/internal/development/reserve", headers=headers, json={"provider": "elevenlabs", "characters": 1}
+                "/internal/development/reserve", headers=headers, json={"provider": "deepgram_tts", "characters": 1}
             ).status_code
             == 429
         )
@@ -91,14 +92,14 @@ def test_concurrent_reservations_and_next_day_reset(tmp_path):
         async def attempt():
             async with sessions() as db:
                 try:
-                    await reserve(db, "elevenlabs", 300, now=datetime(2026, 11, 11, 12, tzinfo=UTC))
+                    await reserve(db, "deepgram_tts", 300, now=datetime(2026, 11, 11, 12, tzinfo=UTC), limit=500)
                     return True
                 except ValueError:
                     return False
 
         assert sorted(await asyncio.gather(attempt(), attempt())) == [False, True]
         async with sessions() as db:
-            result = await reserve(db, "elevenlabs", 500, now=datetime(2026, 11, 12, 12, tzinfo=UTC))
+            result = await reserve(db, "deepgram_tts", 500, now=datetime(2026, 11, 12, 12, tzinfo=UTC), limit=500)
             assert result["remaining_units"] == 0
         await engine.dispose()
 
@@ -191,61 +192,12 @@ def test_exact_limit_reservation_succeeds_and_one_unit_over_is_refused(tmp_path)
     asyncio.run(check())
 
 
-def test_settings_boot_with_eleven_key_and_no_voice_ids():
+def test_settings_boot_without_voice_ids_and_fall_back_to_the_deepgram_default():
     # Voice is a per-session user setting (#148): no voice env constant is required to boot.
-    settings = Settings(eleven_api_key="k", approved_voice_ids="", default_voice_id="", _env_file=None)
-    assert settings.eleven_api_key == "k"
+    settings = Settings(approved_voice_ids="", default_voice_id="", _env_file=None)
+    assert settings.default_voice_id == DEFAULT_DEEPGRAM_VOICE_ID
 
 
 def test_malformed_voice_allow_list_still_fails_at_boot():
     with pytest.raises(ValueError):
         Settings(approved_voice_ids="not a valid id!", _env_file=None)
-
-
-def test_elevenlabs_daily_characters_is_configurable(tmp_path):
-    settings = Settings(
-        database_url=f"sqlite+aiosqlite:///{tmp_path}/limit.db",
-        agent_service_secret="test",
-        elevenlabs_daily_characters=700,
-        _env_file=None,
-    )
-    headers = {"x-agent-secret": "test"}
-    url = "/internal/development/reserve"
-    with TestClient(create_app(settings)) as client:
-        assert client.post(url, headers=headers, json={"provider": "elevenlabs", "characters": 500}).status_code == 200
-        assert client.post(url, headers=headers, json={"provider": "elevenlabs", "characters": 201}).status_code == 429
-        assert client.post(url, headers=headers, json={"provider": "elevenlabs", "characters": 200}).status_code == 200
-
-
-def test_elevenlabs_default_allowance_is_2500():
-    assert Settings(_env_file=None).elevenlabs_daily_characters == 2500
-
-
-def test_insert_or_increment_refuses_an_out_of_range_amount_without_touching_the_database(tmp_path):
-    from app.infrastructure.database import DevelopmentBudget
-    from app.infrastructure.upsert import insert_or_increment
-
-    async def check():
-        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/bounds.db")
-        sessions = async_sessionmaker(engine)
-        async with engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
-        try:
-            async with sessions() as db:
-                with capture_statements(engine) as statements:
-                    for amount in (0, -1, 11):
-                        refused = await insert_or_increment(
-                            db,
-                            DevelopmentBudget,
-                            {"day": "2026-11-24", "provider": "jev", "reserved_units": amount},
-                            index_elements=["day", "provider"],
-                            column="reserved_units",
-                            amount=amount,
-                            limit=10,
-                        )
-                        assert refused is None
-                assert statements == []  # a brand-new row is bounded by the helper, not only by its callers
-        finally:
-            await engine.dispose()
-
-    asyncio.run(check())

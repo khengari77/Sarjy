@@ -573,7 +573,7 @@ class SarjyAgent(WordleTools, Agent):
             self.memory_outcome = "failed"
 
     async def reserve(self, provider: str, characters: int = 0, report=None):
-        if provider in {"elevenlabs", "deepgram_tts"} and characters > 500:
+        if provider == "deepgram_tts" and characters > 500:
             if self.notify:
                 await self.notify("DAILY_BUDGET_EXHAUSTED")
             raise ValueError("DAILY_BUDGET_EXHAUSTED")
@@ -1530,12 +1530,7 @@ async def entrypoint(ctx: JobContext):
                 json.dumps({"code": code}).encode(), reliable=True, topic="sarjy.error"
             )
 
-        providers = build_providers(
-            config,
-            provider_credentials(
-                values, config["llm"]["provider"], (config.get("tts") or {}).get("provider", "elevenlabs_direct")
-            ),
-        )
+        providers = build_providers(config, provider_credentials(values, config["llm"]["provider"]))
         fallback_llm = providers.pop("fallback_llm", None)
         warmup = ConnectionWarmup(backend, providers.get("llm"))
         agent = SarjyAgent(

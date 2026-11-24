@@ -2,7 +2,6 @@
 
 from typing import Literal, Protocol
 
-import httpx
 from pydantic import BaseModel, ConfigDict
 
 from app.domain.deepgram_voices import DEEPGRAM_VOICES, deepgram_voice
@@ -98,123 +97,8 @@ def spoken_voice_language(source: str | None, requested: str, option: VoiceOptio
     return requested
 
 
-def _trait(labels: dict, key: str) -> str | None:
-    value = labels.get(key)
-    if not isinstance(value, str):
-        return None
-    cleaned = " ".join(value.split())[:100].casefold()
-    return cleaned or None
-
-
-def public_catalog(payload: dict) -> VoiceCatalog:
-    """Pure projection: never pass through samples, settings, or account metadata."""
-    if not isinstance(payload, dict) or not isinstance(payload.get("voices"), list):
-        raise ValueError("INVALID_VOICE_CATALOG")
-    voices = []
-    for voice in payload.get("voices", []):
-        if not isinstance(voice, dict) or not all(isinstance(voice.get(key), str) for key in ("voice_id", "name")):
-            raise ValueError("INVALID_VOICE_CATALOG")
-        entries = voice.get("verified_languages", [])
-        labels = voice.get("labels")
-        if labels is None:
-            labels = {}
-        if (
-            not isinstance(entries, list)
-            or any(not isinstance(entry, dict) or not isinstance(entry.get("language", ""), str) for entry in entries)
-            or not isinstance(labels, dict)
-            or not isinstance(labels.get("language", ""), str)
-        ):
-            raise ValueError("INVALID_VOICE_CATALOG")
-        languages = {entry["language"] for entry in voice.get("verified_languages", []) if entry.get("language")}
-        label = (voice.get("labels") or {}).get("language")
-        if label:
-            languages.add(label)
-        voices.append(
-            VoiceOption(
-                id=voice["voice_id"],
-                name=voice["name"],
-                languages=tuple(sorted(languages)),
-                **{trait: _trait(labels, trait) for trait in ("gender", "accent", "age", "description")},
-            )
-        )
-    if not isinstance(payload.get("has_more", False), bool) or (
-        payload.get("next_page_token") is not None and not isinstance(payload["next_page_token"], str)
-    ):
-        raise ValueError("INVALID_VOICE_CATALOG")
-    if payload.get("has_more") and not payload.get("next_page_token"):
-        raise ValueError("INVALID_VOICE_CATALOG")
-    return VoiceCatalog(
-        voices=tuple(voices), next_page_token=payload.get("next_page_token") if payload.get("has_more") else None
-    )
-
-
-class ElevenLabsVoices:
-    def __init__(self, api_key: str, *, transport: httpx.AsyncBaseTransport | None = None):
-        self.api_key = api_key
-        self.transport = transport
-
-    async def list(
-        self, search: str = "", next_page_token: str | None = None, voice_id: str | None = None
-    ) -> VoiceCatalog:
-        if not self.api_key:
-            raise VoiceCatalogError("VOICE_PROVIDER_NOT_CONFIGURED")
-        params = {"page_size": "100", "include_total_count": "false", "include_custom_rates": "false"}
-        if search:
-            params["search"] = search
-        if next_page_token:
-            params["next_page_token"] = next_page_token
-        if voice_id:
-            params["voice_ids"] = voice_id
-        try:
-            async with httpx.AsyncClient(timeout=8, transport=self.transport) as client:
-                result = await client.get(
-                    "https://api.elevenlabs.io/v2/voices", params=params, headers={"xi-api-key": self.api_key}
-                )
-                if result.status_code in {401, 403}:
-                    raise VoiceCatalogError("VOICE_CATALOG_ACCESS_DENIED")
-                result.raise_for_status()
-                return public_catalog(result.json())
-        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-            raise VoiceCatalogError("VOICE_CATALOG_UNAVAILABLE") from exc
-
-    async def require(self, voice_id: str) -> VoiceOption:
-        catalog = await self.list(voice_id=voice_id)
-        for voice in catalog.voices:
-            if voice.id == voice_id:
-                return voice
-        raise VoiceCatalogError("VOICE_UNAVAILABLE", 422)
-
-    async def find_by_name(self, name: str) -> VoiceOption | None:
-        """Resolve an exact, case-insensitive voice name; ambiguity means absent.
-
-        The provider returns at most one page of candidates; a name outside that
-        page is treated as not found rather than guessed.
-        """
-        wanted = " ".join(name.casefold().split())
-        if not wanted:
-            return None
-        catalog = await self.list(search=name)
-        matches = [voice for voice in catalog.voices if " ".join(voice.name.casefold().split()) == wanted]
-        return matches[0] if len(matches) == 1 else None
-
-    async def find_by_trait(self, trait: str, value: str, approved: frozenset[str]) -> VoiceOption | None:
-        """First approved voice whose provider trait equals ``value``; never an unapproved or invented id.
-
-        Approved ids are checked in sorted order so the choice is deterministic.
-        A voice the provider cannot confirm is skipped, not guessed.
-        """
-        for voice_id in sorted(approved):
-            try:
-                voice = await self.require(voice_id)
-            except VoiceCatalogError:
-                continue
-            if getattr(voice, trait, None) == value:
-                return voice
-        return None
-
-
 class VoiceProvider(Protocol):
-    """The catalogue surface shared by the ElevenLabs and Deepgram providers."""
+    """The catalogue surface the API consumes from a voice provider."""
 
     async def list(
         self, search: str = "", next_page_token: str | None = None, voice_id: str | None = None

@@ -459,9 +459,9 @@ class FakeClassifier:
         return self.result
 
 
-def speak(tmp_path, fake, text, name="jev"):
+def speak(tmp_path, fake, text, name="jev", **settings):
     app = create_app(
-        Settings(database_url=f"sqlite+aiosqlite:///{tmp_path}/{name}.db", tts_provider="elevenlabs", _env_file=None),
+        Settings(database_url=f"sqlite+aiosqlite:///{tmp_path}/{name}.db", _env_file=None, **settings),
         ui_classifier=fake,
     )
     with TestClient(app) as client:
@@ -527,7 +527,8 @@ def test_compound_gets_one_change_at_a_time(tmp_path):
 
 def test_gender_voice_without_approved_voice_is_honest_refusal(tmp_path):
     fake = FakeClassifier(classification(family="voice", voice="female"))
-    body, _ = speak(tmp_path, fake, "could I hear a woman speaking instead")
+    # Only a male voice is approved, so the female request must not invent one.
+    body, _ = speak(tmp_path, fake, "could I hear a woman speaking instead", default_voice_id="aura-2-zeus-en")
     assert body["result"]["detail"] == "VOICE_GENDER_NOT_FOUND"
 
 
@@ -557,7 +558,6 @@ def test_flag_and_credential_gating(tmp_path):
         app = create_app(
             Settings(
                 database_url=f"sqlite+aiosqlite:///{tmp_path}/g.db",
-                tts_provider="elevenlabs",
                 _env_file=None,
                 **settings,
             )

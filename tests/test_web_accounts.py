@@ -82,7 +82,6 @@ class Site:
             openai_api_key="",
             deepseek_api_key="",
             deepgram_api_key="",
-            eleven_api_key="",
             _env_file=None,
         )
         self.api_port, self.port = _free_port(), _free_port()
