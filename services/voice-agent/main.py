@@ -323,6 +323,9 @@ class SarjyAgent(WordleTools, Agent):
         self.memory_forced: set[str] = set()
         self.current_turn: str | None = None
         self.turn_stages: dict[str, dict[str, int | None]] = {}
+        # Per-turn reference point for the timeline stages: the start of on_user_turn_completed.
+        self.turn_anchor: dict[str, float] = {}
+        self.turn_anchor_pending: dict[str, float] = {}
         self.previous_prompt: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
@@ -388,10 +391,23 @@ class SarjyAgent(WordleTools, Agent):
             name = second_name
         stages[name] = elapsed_ms(started, time.perf_counter())
 
+    def _bind_turn_anchor(self, message_id: str, turn_id: str) -> None:
+        anchor = self.turn_anchor_pending.get(message_id)
+        if anchor is not None:
+            self.turn_anchor[turn_id] = anchor
+
+    def _record_offset(self, turn_id: str | None, name: str, at: float, *, first_only: bool = False) -> None:
+        """Record an instant relative to the turn's hook anchor; a turn without one records nothing."""
+        anchor = self.turn_anchor.get(turn_id) if turn_id is not None else None
+        if anchor is None:
+            return
+        _record_value(self, turn_id, name, elapsed_ms(anchor, at), first_only=first_only)
+
     async def compile(self, message):
         self.loop_lag.take()  # this turn's window starts here, not at the end of the last reply
         if message.id not in self.prepared:
             started = time.perf_counter()
+            turn_start_begin = started
             phase = None
             for attempt in range(2):
                 attempt_phase = CompletionState()
@@ -412,8 +428,11 @@ class SarjyAgent(WordleTools, Agent):
                 break
             self.prepared[message.id] = response.json()
             turn_id = self.prepared[message.id]["turn_id"]
+            self._bind_turn_anchor(message.id, turn_id)
             self.turn_stages[turn_id] = {}
             self._record_stage(turn_id, "turn_start_ms", started)
+            self._record_offset(turn_id, "t_turn_start_begin_ms", turn_start_begin, first_only=True)
+            self._record_offset(turn_id, "t_turn_start_end_ms", time.perf_counter(), first_only=True)
             _record_value(self, turn_id, "turn_start_server_ms", _header_int(response, "x-server-ms"), first_only=True)
             _record_value(self, turn_id, "turn_start_db_ms", _header_int(response, "x-db-ms"), first_only=True)
             _record_value(
@@ -714,6 +733,7 @@ class SarjyAgent(WordleTools, Agent):
                     if first_take:
                         first_take = False
                         self._record_stage(turn_id, "tts_reserve_ms", started, first_only=True)
+                        self._record_offset(turn_id, "t_tts_first_ms", time.perf_counter(), first_only=True)
                     yield part[:covered]
                     part = part[covered:]
 
@@ -726,7 +746,11 @@ class SarjyAgent(WordleTools, Agent):
             self.suppressed.add(new_message.id)
             return
         self._prepay_generation(new_message.id)
-        await self.compile(new_message)
+        self.turn_anchor_pending[new_message.id] = started
+        try:
+            await self.compile(new_message)
+        finally:
+            self.turn_anchor_pending.pop(new_message.id, None)
         self.reassurance.begin(self.prepared[new_message.id]["turn_id"], started)
 
     async def command_for(self, message) -> dict | None:
@@ -739,6 +763,7 @@ class SarjyAgent(WordleTools, Agent):
         """
         if message.id not in self.commands:
             started = time.perf_counter()
+            command_begin = started
             result = None
             for attempt in range(2):
                 phase = CompletionState()
@@ -771,7 +796,10 @@ class SarjyAgent(WordleTools, Agent):
                 finally:
                     api_phase_state.reset(token)
             self.commands[message.id] = result if isinstance(result, dict) else None
-            self._record_stage(self.prepared[message.id]["turn_id"], "command_ms", started, first_only=True)
+            turn_id = self.prepared[message.id]["turn_id"]
+            self._record_stage(turn_id, "command_ms", started, first_only=True)
+            self._record_offset(turn_id, "t_command_begin_ms", command_begin, first_only=True)
+            self._record_offset(turn_id, "t_command_end_ms", time.perf_counter(), first_only=True)
         return self.commands[message.id]
 
     async def _publish_command(self, command: Mapping[str, Any]) -> None:
@@ -963,11 +991,13 @@ class SarjyAgent(WordleTools, Agent):
         used_early = early is not None and usable and forced is None
         model_started = None
         if used_early:
+            self._record_offset(turn_id, "t_model_request_ms", early.started, first_only=True)
             stream = early.released(self._report_reservation)
         else:
             if early is not None:
                 early.cancel()
             model_started = time.perf_counter()
+            self._record_offset(turn_id, "t_model_request_ms", model_started, first_only=True)
             stream = self._stream_with_fallback(request, tools, tool_choice)
         async with aclosing(stream), aclosing(self._guard_wordle_prose(stream)) as guarded:
             async for chunk in guarded:
@@ -980,6 +1010,7 @@ class SarjyAgent(WordleTools, Agent):
                         model_started,
                         first_only=True,
                     )
+                    self._record_offset(turn_id, "t_model_first_chunk_ms", time.perf_counter(), first_only=True)
                 self._record_early_chunk(turn_id, early, used_early)
                 yield chunk
 
@@ -993,6 +1024,7 @@ class SarjyAgent(WordleTools, Agent):
             elapsed_ms(early.started, early.first_item_at),
             first_only=True,
         )
+        self._record_offset(turn_id, "t_model_first_chunk_ms", early.first_item_at, first_only=True)
 
     async def _guard_wordle_prose(self, stream):
         """While a Wordle game is open, prose may not state marks, attempts or outcomes.
@@ -1107,6 +1139,7 @@ class SarjyAgent(WordleTools, Agent):
 
     async def _send_turn_metrics(self, turn_id, user, handle) -> None:
         stages = self.turn_stages.pop(turn_id, {})
+        self.turn_anchor.pop(turn_id, None)
         try:
             payload = build_payload(
                 turn_id,
@@ -1316,14 +1349,19 @@ class SarjyAgent(WordleTools, Agent):
         """Get current weather for an explicitly identified city. Use an ISO 3166-1 alpha-2 country code such as LY when a country is known. Ask for city if missing."""
         if not self.current_turn:
             raise ValueError("TOOL_TURN_REQUIRED")
+        turn_id = self.current_turn
         call_id = getattr(ctx.function_call, "call_id", "")
-        key = operation_key(self.current_turn, call_id)
-        result = await self.backend.post(
-            "/internal/agent/tool/weather",
-            json={"city": city, "country": country, "turn_id": self.current_turn, "request_id": key},
-        )
-        result.raise_for_status()
-        return result.json()
+        key = operation_key(turn_id, call_id)
+        self._record_offset(turn_id, "t_tool_start_ms", time.perf_counter(), first_only=True)
+        try:
+            result = await self.backend.post(
+                "/internal/agent/tool/weather",
+                json={"city": city, "country": country, "turn_id": turn_id, "request_id": key},
+            )
+            result.raise_for_status()
+            return result.json()
+        finally:
+            self._record_offset(turn_id, "t_tool_end_ms", time.perf_counter(), first_only=True)
 
     def _disarm_memory_proposal(self) -> None:
         self.memory_proposal = None
@@ -1336,23 +1374,28 @@ class SarjyAgent(WordleTools, Agent):
         """POST one memory tool call; a failure is reported as not-done, never raised as success."""
         if not self.current_turn:
             raise ValueError("TOOL_TURN_REQUIRED")
+        turn_id = self.current_turn
         call_id = getattr(ctx.function_call, "call_id", "")
+        self._record_offset(turn_id, "t_tool_start_ms", time.perf_counter(), first_only=True)
         try:
-            response = await self.backend.post(
-                f"/internal/agent/tool/{path}",
-                json={
-                    **arguments,
-                    "turn_id": self.current_turn,
-                    "request_id": operation_key(self.current_turn, call_id),
-                },
-            )
-            response.raise_for_status()
-            body = response.json()
-        except (httpx.HTTPError, ValueError):
-            return {"error": "MEMORY_TOOL_FAILED", "message": FAILED_NOTE}
-        if not isinstance(body, dict) or "error" in body and body.get("status") != "rejected":
-            return {"error": "MEMORY_TOOL_FAILED", "message": FAILED_NOTE}
-        return body
+            try:
+                response = await self.backend.post(
+                    f"/internal/agent/tool/{path}",
+                    json={
+                        **arguments,
+                        "turn_id": turn_id,
+                        "request_id": operation_key(turn_id, call_id),
+                    },
+                )
+                response.raise_for_status()
+                body = response.json()
+            except (httpx.HTTPError, ValueError):
+                return {"error": "MEMORY_TOOL_FAILED", "message": FAILED_NOTE}
+            if not isinstance(body, dict) or "error" in body and body.get("status") != "rejected":
+                return {"error": "MEMORY_TOOL_FAILED", "message": FAILED_NOTE}
+            return body
+        finally:
+            self._record_offset(turn_id, "t_tool_end_ms", time.perf_counter(), first_only=True)
 
     @function_tool()
     async def propose_memory(self, ctx: RunContext, fact: str):
