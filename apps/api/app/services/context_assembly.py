@@ -51,6 +51,8 @@ class MemoryCandidates:
     inactive: tuple[ContextCandidate, ...] = ()
     blocked_sources: frozenset[str] = frozenset()
     rows: Mapping[str, Memory] = field(default_factory=dict)
+    # Derived from the same blocked rows: hidden memories from this conversation.
+    retractions: tuple[ContextCandidate, ...] = ()
 
     @property
     def excluded_ids(self) -> frozenset[str]:
@@ -161,7 +163,14 @@ async def orm_memory_candidates(
                 created_at=row.created_at,
             )
         )
-    return MemoryCandidates(tuple(included), tuple(denied), (), sources, active_by_id)
+    return MemoryCandidates(
+        included=tuple(included),
+        denied=tuple(denied),
+        inactive=(),
+        blocked_sources=sources,
+        rows=active_by_id,
+        retractions=_retraction_candidates_from_rows(blocked_rows, conversation_id=conversation_id),
+    )
 
 
 async def _memory_rows_for_ids(db: AsyncSession, owner_id: str, ids) -> list[Memory]:
@@ -207,6 +216,32 @@ def _dependency_ids(turn: Turn, snapshots: Mapping[str, dict] | None = None) -> 
     return references
 
 
+def _retraction_candidates_from_rows(rows: Sequence[Memory], *, conversation_id: str) -> tuple[ContextCandidate, ...]:
+    """Bounded retraction blocks from already-loaded memory rows.
+
+    Applies the same predicate (hidden, from this conversation), order (newest
+    ``updated_at`` then id) and limit as ``retraction_candidates``' SQL. The turn
+    start passes the owner's blocked rows, which is correct only because
+    ``blocked_memory_rows`` seeds every hidden memory of the owner: if that read is
+    ever bounded or scoped, retraction blocks would silently change.
+    ``test_retractions_from_blocked_rows_match_the_query`` pins that dependency.
+    """
+    hidden = [row for row in rows if row.status == "hidden" and row.source_conversation_id == conversation_id]
+    newest = sorted(hidden, key=lambda row: (row.updated_at, row.id), reverse=True)[:RETRACTION_LIMIT]
+    return tuple(
+        ContextCandidate(
+            id=RETRACTION_PREFIX + row.id,
+            role="memory",
+            text=RETRACTION_TEMPLATE.format(text=row.content[:RETRACTION_TEXT_LIMIT]),
+            origin="memory",
+            source="retraction",
+            created_at=row.created_at,
+        )
+        for row in sorted(newest, key=lambda item: item.id)
+        if row.content
+    )
+
+
 async def retraction_candidates(
     db: AsyncSession, *, owner_id: str, conversation_id: str
 ) -> tuple[ContextCandidate, ...]:
@@ -228,18 +263,7 @@ async def retraction_candidates(
             .limit(RETRACTION_LIMIT)
         )
     ).all()
-    return tuple(
-        ContextCandidate(
-            id=RETRACTION_PREFIX + row.id,
-            role="memory",
-            text=RETRACTION_TEMPLATE.format(text=row.content[:RETRACTION_TEXT_LIMIT]),
-            origin="memory",
-            source="retraction",
-            created_at=row.created_at,
-        )
-        for row in sorted(rows, key=lambda item: item.id)
-        if row.content
-    )
+    return _retraction_candidates_from_rows(rows, conversation_id=conversation_id)
 
 
 async def _discover_closure_candidates(
@@ -623,12 +647,19 @@ async def read_context_inputs(
         for call, turn in tool_rows
         if call.id not in blocked_tools
     )
+    # The ORM reader derives retractions from the blocked rows it already loaded;
+    # any alternate reader keeps the separate read so its results are unchanged.
+    retractions = (
+        memories.retractions
+        if memory_reader is None
+        else await retraction_candidates(db, owner_id=owner_id, conversation_id=conversation_id)
+    )
     return ContextInputs(
         history=history,
         memories=memories,
         tool_results=tool_results,
         blocked_ids=frozenset(blocked | blocked_tools),
-        retractions=await retraction_candidates(db, owner_id=owner_id, conversation_id=conversation_id),
+        retractions=retractions,
     )
 
 

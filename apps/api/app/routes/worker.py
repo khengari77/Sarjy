@@ -141,22 +141,28 @@ class CommandResponse(BaseModel):
     memory_op: MemoryOpAnswer | None = None
 
 
-def _session_is_active(voice: VoiceSession | None, room_name: str | None, *, allow_ended: bool) -> bool:
-    statuses = {"starting", "active", "ended"} if allow_ended else {"starting", "active"}
+def _require_agent_secret(request: Request, config: Settings) -> None:
+    secret = request.headers.get("x-agent-secret", "")
+    if not secret_matches(secret, config.agent_service_secret):
+        raise HTTPException(401, detail={"code": "WORKER_AUTH_REQUIRED"})
+
+
+def _session_window(allow_ended: bool) -> tuple[tuple[str, ...], str]:
+    statuses = ("starting", "active", "ended") if allow_ended else ("starting", "active")
     cutoff = datetime.now(UTC) - timedelta(seconds=60 if allow_ended else 0)
-    return (
-        voice is not None
-        and voice.room_name == room_name
-        and voice.status in statuses
-        and voice.expires_at > cutoff.isoformat()
-    )
+    return statuses, cutoff.isoformat()
+
+
+def _session_is_active(voice: VoiceSession | None, room_name: str | None, *, allow_ended: bool) -> bool:
+    if voice is None:
+        return False
+    statuses, cutoff = _session_window(allow_ended)
+    return voice.room_name == room_name and voice.status in statuses and voice.expires_at > cutoff
 
 
 def _session_guard(config: Settings):
     async def worker_session(request: Request, db: AsyncSession, allow_ended: bool = False):
-        secret = request.headers.get("x-agent-secret", "")
-        if not secret_matches(secret, config.agent_service_secret):
-            raise HTTPException(401, detail={"code": "WORKER_AUTH_REQUIRED"})
+        _require_agent_secret(request, config)
         voice = await db.get(VoiceSession, request.headers.get("x-session-id", ""))
         if not _session_is_active(voice, request.headers.get("x-room-name"), allow_ended=allow_ended):
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
@@ -443,12 +449,57 @@ async def _locked_turn_context(db: AsyncSession, conversation_id: str, request_i
     return locked
 
 
+async def _locked_turn_context_for_session(
+    db: AsyncSession, session_id: str, request_id: str, *, room_name: str | None
+):
+    """The locked context plus the active session, in one statement; None when any precondition fails.
+
+    The lock target stays the conversation only, and the session preconditions are
+    part of the query so an inactive session never takes the conversation lock.
+    """
+    statuses, cutoff = _session_window(False)
+    return (
+        await db.execute(
+            select(Conversation, Turn, UserSetting, VoiceSession)
+            .join(VoiceSession, VoiceSession.conversation_id == Conversation.id)
+            .outerjoin(Turn, and_(Turn.conversation_id == Conversation.id, Turn.request_id == request_id))
+            .outerjoin(UserSetting, UserSetting.owner_id == Conversation.owner_id)
+            .where(
+                VoiceSession.id == session_id,
+                VoiceSession.room_name == room_name,
+                VoiceSession.status.in_(statuses),
+                VoiceSession.expires_at > cutoff,
+            )
+            .with_for_update(of=Conversation)
+        )
+    ).one_or_none()
+
+
+async def _turn_start_context(db: AsyncSession, request: Request, request_id: str, *, guard, config: Settings):
+    """Resolve the locked turn context and its session in one statement when the session is live.
+
+    A missing or inactive session falls back to the guard so its 401/403 codes and
+    the conversation-not-found 404 are unchanged.
+    """
+    _require_agent_secret(request, config)
+    room_name = request.headers.get("x-room-name")
+    locked = await _locked_turn_context_for_session(
+        db, request.headers.get("x-session-id", ""), request_id, room_name=room_name
+    )
+    if locked is not None and _session_is_active(locked[3], room_name, allow_ended=False):
+        return locked
+    voice = await guard(request, db)
+    conversation, existing, settings_row = await _locked_turn_context(db, voice.conversation_id, request_id)
+    return conversation, existing, settings_row, voice
+
+
 def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
     @app.post("/internal/agent/turn/start")
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
-        voice = await guard(request, db)
         # Serializes worker retries and preserves the conversation's authoritative order.
-        conversation, existing, settings_row = await _locked_turn_context(db, voice.conversation_id, body.request_id)
+        conversation, existing, settings_row, voice = await _turn_start_context(
+            db, request, body.request_id, guard=guard, config=config
+        )
         if existing:
             return await _replayed_turn_response(
                 db,
