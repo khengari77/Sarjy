@@ -52,7 +52,17 @@ from wordle_tools import (
     publish_wordle,
 )
 
-server = AgentServer()
+
+def prewarm(process) -> None:
+    """Load the voice activity model before a call needs it."""
+    try:
+        process.userdata["vad"] = silero.VAD.load()
+    except Exception:
+        # The call loads it then, and fails alone; a worker that cannot start serves nobody.
+        logging.exception("Voice activity model could not be loaded ahead of calls")
+
+
+server = AgentServer(setup_fnc=prewarm)
 
 # D2.9 tier 5 ceiling. The worker refuses anything above the published caps even
 # if a stale or tampered backend payload asks for it.
@@ -1175,7 +1185,7 @@ async def entrypoint(ctx: JobContext):
         )
         session = AgentSession(
             **providers,
-            vad=silero.VAD.load(),
+            vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),
             preemptive_generation=False,
             conn_options=SessionConnectOptions(
                 llm_conn_options=APIConnectOptions(max_retry=0), tts_conn_options=APIConnectOptions(max_retry=0)

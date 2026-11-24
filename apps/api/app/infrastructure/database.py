@@ -193,7 +193,8 @@ class Memory(Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
     subject: Mapped[str | None] = mapped_column(String(120), nullable=True)
     content: Mapped[str] = mapped_column(Text)
-    embedding: Mapped[list | None] = mapped_column(EMBEDDING_TYPE, nullable=True)
+    # About 1,500 numbers per row that only semantic search reads (#81); ``undefer`` it there.
+    embedding: Mapped[list | None] = mapped_column(EMBEDDING_TYPE, nullable=True, deferred=True)
     embedding_model: Mapped[str] = mapped_column(String(60), default="text-embedding-3-small")
     source_turn_id: Mapped[str | None] = mapped_column(ForeignKey("turns.id"), index=True, nullable=True)
     source_conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
