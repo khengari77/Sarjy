@@ -1,12 +1,13 @@
 """Worker-only endpoints for bootstrap, turns, weather and budget reservations."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -186,6 +187,7 @@ def register_worker_routes(
 ):
     guard = _session_guard(config)
     _register_budget_routes(app, config=config, database=database)
+    _register_warm_route(app, config=config, database=database)
     _register_session_routes(app, database=database, guard=guard)
     _register_turn_routes(app, config=config, database=database, guard=guard, sessions=sessions)
     _register_command_routes(
@@ -303,6 +305,26 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
             raise HTTPException(
                 429 if str(exc) == "DAILY_BUDGET_EXHAUSTED" else 422, detail={"code": str(exc)}
             ) from exc
+
+
+def _register_warm_route(app, *, config: Settings, database):
+    @app.post("/internal/agent/warm")
+    async def warm(request: Request, background: BackgroundTasks, db: AsyncSession = Depends(database)):
+        """Best-effort latency warm-up; no turn, budget reservation or session state is involved."""
+        _require_agent_secret(request, config)
+        await db.execute(text("SELECT 1"))
+        classifier = getattr(app.state, "ui_classifier", None)
+        warm_jev = getattr(classifier, "warm", None)
+        if callable(warm_jev):
+            background.add_task(_warm_jev, warm_jev)
+        return {"ok": True}
+
+
+async def _warm_jev(warm) -> None:
+    try:
+        await warm()
+    except Exception:
+        logging.getLogger(__name__).debug("jev warm-up failed", exc_info=True)
 
 
 def _register_budget_routes(app, *, config: Settings, database):

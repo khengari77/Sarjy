@@ -179,6 +179,9 @@ def test_entrypoint_starts_the_greeting_after_the_session_runs(monkeypatch):
         def __init__(self, **kwargs):
             super().__init__()
 
+        def on(self, event, callback=None):
+            return callback
+
         async def start(self, agent, **kwargs):
             events.append("session-start")
 
