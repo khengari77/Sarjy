@@ -588,3 +588,29 @@ def test_client_reuses_one_connection_and_closes_it():
         assert Transport.closed == 1
 
     asyncio.run(run())
+
+
+def test_a_stale_connection_is_retried_once_and_is_not_a_provider_failure():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            raise httpx.RemoteProtocolError("closed")
+        return httpx.Response(200, json=payload(family="theme", theme="dark"))
+
+    client = client_for(handler)
+    assert asyncio.run(client.classify(request_id="r", instruction="go dark")) is not None
+    assert len(calls) == 2 and not client.circuit.is_open()
+
+
+def test_a_closed_client_can_be_used_by_the_next_lifespan():
+    client = client_for(lambda request: httpx.Response(200, json=payload(family="theme", theme="dark")))
+
+    async def once():
+        result = await client.classify(request_id="r", instruction="go dark")
+        await client.aclose()
+        return result
+
+    assert asyncio.run(once()) is not None
+    assert asyncio.run(once()) is not None

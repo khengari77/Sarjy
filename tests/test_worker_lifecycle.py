@@ -69,7 +69,7 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
     )
     monkeypatch.setattr(worker, "AgentSession", Session)
     monkeypatch.setattr(worker, "build_providers", lambda config, credentials: {})
-    ctx.proc = SimpleNamespace(userdata={"vad": None})
+    ctx.proc = SimpleNamespace(userdata={"vad": object()})
     monkeypatch.setattr(
         worker,
         "read_worker_environment",
@@ -90,3 +90,21 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
         "session-close",
         "shutdown",
     ]
+
+
+def test_the_voice_activity_model_is_loaded_before_calls(monkeypatch):
+    import main as worker
+
+    process = SimpleNamespace(userdata={})
+    monkeypatch.setattr(worker.silero.VAD, "load", lambda: "model")
+    worker.prewarm(process)
+    assert process.userdata == {"vad": "model"}
+    assert worker.server._setup_fnc is worker.prewarm
+
+    def broken():
+        raise RuntimeError("no model")
+
+    process = SimpleNamespace(userdata={})
+    monkeypatch.setattr(worker.silero.VAD, "load", broken)
+    worker.prewarm(process)
+    assert process.userdata == {}

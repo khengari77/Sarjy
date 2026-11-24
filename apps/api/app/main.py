@@ -184,9 +184,11 @@ def create_app(
                         await db.commit()
             yield
         finally:
-            if classifier is not None:
-                await classifier.aclose()
-            await _shutdown(refresh_task, engine)
+            try:
+                if classifier is not None:
+                    await classifier.aclose()
+            finally:
+                await _shutdown(refresh_task, engine)
 
     app = FastAPI(
         title="Sarjy API",

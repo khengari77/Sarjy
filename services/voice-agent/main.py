@@ -53,7 +53,11 @@ from wordle_tools import (
 
 def prewarm(process) -> None:
     """Load the voice activity model before a call needs it."""
-    process.userdata["vad"] = silero.VAD.load()
+    try:
+        process.userdata["vad"] = silero.VAD.load()
+    except Exception:
+        # The call loads it then, and fails alone; a worker that cannot start serves nobody.
+        logging.exception("Voice activity model could not be loaded ahead of calls")
 
 
 server = AgentServer(setup_fnc=prewarm)
@@ -64,8 +68,6 @@ MAX_TIER_OUTPUT_TOKENS = 1024
 MAX_CONTEXT_BYTES = 64000
 MAX_TOOLS = 4
 GENERATION_ATTEMPT_SECONDS = 30.0
-# A caller hears silence until the first words. With another model ready, a stalled one is left sooner.
-FIRST_OUTPUT_SECONDS = 4.0
 DECISION_TURN_NOTE = "The user is answering the previous confirmation; do not propose anything this turn."
 FAILED_NOTE = "The memory tool failed. Nothing was saved, excluded or changed; do not claim otherwise."
 
@@ -838,20 +840,15 @@ class SarjyAgent(WordleTools, Agent):
         if not openai_request_within_bounds(serialized, tools, request.response_policy.max_output_tokens):
             raise ValueError("OPENAI_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS")
 
-    async def _stream_attempt(
-        self, provider, provider_kind, request, tools, tool_choice, *, first_output: float | None = None
-    ):
+    async def _stream_attempt(self, provider, provider_kind, request, tools, tool_choice):
         """Stream one attempt; buffer usage so a failed attempt cannot leak it."""
         adapter = adapter_for(provider, provider_kind)
         buffered_usage = None
         emitted = False
         try:
-            deadline = asyncio.get_running_loop().time() + GENERATION_ATTEMPT_SECONDS
-            async with asyncio.timeout(first_output or GENERATION_ATTEMPT_SECONDS) as limit:
+            async with asyncio.timeout(GENERATION_ATTEMPT_SECONDS):
                 async for event in adapter.stream(request, tools, tool_choice):
                     if event.kind in {"text", "tool"}:
-                        if not emitted:
-                            limit.reschedule(deadline)
                         emitted = True
                     if event.kind == "usage":
                         buffered_usage = event
@@ -882,10 +879,7 @@ class SarjyAgent(WordleTools, Agent):
         else:
             raise ValueError("UNSUPPORTED_GENERATION_PROVIDER")
         try:
-            patience = FIRST_OUTPUT_SECONDS if self.fallback_llm is not None else None
-            async for event in self._stream_attempt(
-                self.session.llm, primary_kind, request, tools, tool_choice, first_output=patience
-            ):
+            async for event in self._stream_attempt(self.session.llm, primary_kind, request, tools, tool_choice):
                 if event.kind in {"text", "tool"}:
                     emitted = True
                 chunk = livekit_chunk(event)
@@ -1139,7 +1133,7 @@ async def entrypoint(ctx: JobContext):
         )
         session = AgentSession(
             **providers,
-            vad=ctx.proc.userdata["vad"],
+            vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),
             preemptive_generation=False,
             conn_options=SessionConnectOptions(
                 llm_conn_options=APIConnectOptions(max_retry=0), tts_conn_options=APIConnectOptions(max_retry=0)
