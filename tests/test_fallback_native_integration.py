@@ -46,7 +46,7 @@ def test_native_stream_failure_respects_output_boundary(partial):
                 {"llm": {"provider": "openai_direct", "model": "gpt-6-luna"}}, keys, client=fallback_client
             )
 
-            async def reserve(provider):
+            async def reserve(provider, report=None):
                 order.append("reserve:" + provider)
 
             agent = SimpleNamespace(
