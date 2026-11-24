@@ -186,3 +186,26 @@ def test_a_missing_conversation_is_a_404_not_a_crash(tmp_path):
             db.execute("DELETE FROM conversations WHERE id=?", (chat,))
         response = client.post(START, headers=headers, json={"request_id": "r-gone", "text": "hello"})
         assert response.status_code == 404
+
+
+def test_statement_log_is_opt_in(monkeypatch, caplog):
+    import logging
+
+    from app.infrastructure.timing import StatementTiming, current_statement_timing, install_statement_timing
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine("sqlite://")
+    install_statement_timing(engine)
+    token = current_statement_timing.set(StatementTiming())
+    try:
+        with caplog.at_level(logging.INFO, logger="sarjy.statements"):
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+            assert "statement 1" not in caplog.text
+            monkeypatch.setenv("SARJY_LOG_STATEMENTS", "1")
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 2"))
+            assert "SELECT 2" in caplog.text
+    finally:
+        current_statement_timing.reset(token)
+        engine.dispose()
