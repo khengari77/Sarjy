@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if ((BASH_VERSINFO[0] < 4)); then
-  echo "scripts/run_push_tests.sh requires bash 4 or newer (found $BASH_VERSION)." >&2
+if ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 404)); then
+  echo "scripts/run_push_tests.sh requires bash 4.4 or newer (found $BASH_VERSION)." >&2
   exit 1
 fi
 
@@ -43,10 +43,13 @@ if ! git diff --quiet HEAD; then
   exit 1
 fi
 
+untracked_file=$(mktemp)
+trap 'rm -f "$untracked_file"' EXIT
+git ls-files --others --exclude-standard -z -- apps services scripts tests migrations packages infra .githooks >"$untracked_file"
 untracked=()
 while IFS= read -r -d '' path; do
   untracked+=("$path")
-done < <(git ls-files --others --exclude-standard -z -- apps services scripts tests migrations packages infra .githooks)
+done <"$untracked_file"
 if [[ ${#untracked[@]} -gt 0 ]]; then
   echo 'Refusing to push with untracked files in source trees:' >&2
   printf '  %s\n' "${untracked[@]}" >&2
@@ -70,10 +73,11 @@ resolve_base() {
 
 diff_file=$(mktemp)
 branch_file=$(mktemp)
+both_file=$(mktemp)
 tests_file=$(mktemp)
 web_file=$(mktemp)
 web_unit_file=$(mktemp)
-trap 'rm -f "$diff_file" "$branch_file" "$tests_file" "$web_file" "$web_unit_file"' EXIT
+trap 'rm -f "$untracked_file" "$diff_file" "$branch_file" "$both_file" "$tests_file" "$web_file" "$web_unit_file"' EXIT
 
 changed=()
 declare -A seen=()
@@ -94,12 +98,14 @@ for entry in "${entries[@]}"; do
   else
     cp "$diff_file" "$branch_file"
   fi
+  # Not a process substitution: its failure would look like a push that changes nothing.
+  sort -z "$diff_file" "$branch_file" | uniq -zd >"$both_file"
   while IFS= read -r -d '' path; do
     if [[ -z "${seen[$path]+set}" ]]; then
       seen[$path]=1
       changed+=("$path")
     fi
-  done < <(sort -z "$diff_file" "$branch_file" | uniq -zd)
+  done <"$both_file"
 done
 
 for path in "${changed[@]}"; do

@@ -240,6 +240,17 @@ def test_pre_push_does_not_retest_what_a_merge_of_main_brings(tmp_path):
     assert "test_from_main" not in selection and "test_sample" not in selection
 
 
+def test_pre_push_fails_when_the_changed_files_cannot_be_listed(tmp_path):
+    repo, _, second = _push_repo(tmp_path)
+    binary = _fake_uv(tmp_path)
+    broken = binary / "uniq"
+    broken.write_text("#!/bin/sh\nexit 1\n")
+    broken.chmod(0o755)
+    result = _run_pre_push(repo, _environment(binary), second)
+    assert result.returncode != 0
+    assert "No Python tests selected" not in result.stdout
+
+
 def test_pre_push_refuses_untracked_source_files(tmp_path):
     repo, _, second = _push_repo(tmp_path)
     _write(repo / "tests" / "test_untracked.py", "def test_x():\n    assert True\n")
