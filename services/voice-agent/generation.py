@@ -1,7 +1,7 @@
 """Immutable request boundary around native provider streaming plugins."""
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict, cast
 
@@ -52,6 +52,7 @@ class ProviderAdapter:
         self.prompt_cache_miss_tokens: int | None = None
         self.provider_connect_ms: int | None = None
         self.provider_headers_ms: int | None = None
+        self.on_first_chunk: Callable[[], None] | None = None
 
     async def stream(
         self, request: ModelRequest, tools: Sequence[Any] = (), tool_choice: Any = None
@@ -74,6 +75,10 @@ class ProviderAdapter:
                 **kwargs,
             ) as stream:
                 async for chunk in stream:
+                    if not received and self.on_first_chunk is not None:
+                        # Any chunk proves the provider is answering, including a tool call it streams
+                        # before this adapter releases it at the end.
+                        self.on_first_chunk()
                     received = True
                     for event in _chunk_events(chunk, identity, buffered_tools):
                         partial = partial or event.kind == "text"

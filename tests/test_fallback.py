@@ -222,6 +222,128 @@ def test_attempt_deadline_raises_timeout_generation_failure(monkeypatch):
         raise AssertionError("expected a timeout GenerationFailure")
 
 
+def test_first_event_deadline_raises_timeout_before_any_output(monkeypatch):
+    import main as worker
+
+    class StalledAdapter:
+        async def stream(self, request, tools, tool_choice=None):
+            await asyncio.sleep(1)
+            yield GenerationEvent("completed", turn_id="turn", attempt_id="attempt")
+
+    agent = type("FakeAgent", (), {})()
+    agent._stream_attempt = worker.SarjyAgent._stream_attempt.__get__(agent)
+    monkeypatch.setattr(worker, "FIRST_EVENT_SECONDS", 0.02)
+    monkeypatch.setattr(worker, "GENERATION_ATTEMPT_SECONDS", 5.0)
+    monkeypatch.setattr(worker, "adapter_for", lambda provider, kind: StalledAdapter())
+
+    async def collect():
+        return [event async for event in agent._stream_attempt("provider", "deepseek_direct", FakeRequest(), [], None)]
+
+    try:
+        asyncio.run(collect())
+    except GenerationFailure as exc:
+        assert exc.event.error_code == "timeout"
+        assert exc.event.partial is False
+    else:
+        raise AssertionError("expected a first-event timeout GenerationFailure")
+
+
+def test_first_event_earns_the_whole_attempt_deadline(monkeypatch):
+    import main as worker
+
+    class GappedAdapter:
+        prompt_cache_hit_tokens = None
+        prompt_cache_miss_tokens = None
+
+        async def stream(self, request, tools, tool_choice=None):
+            yield GenerationEvent("text", turn_id="turn", attempt_id="attempt", text="first")
+            await asyncio.sleep(0.05)
+            yield GenerationEvent("completed", turn_id="turn", attempt_id="attempt")
+
+    agent = type("FakeAgent", (), {})()
+    agent._stream_attempt = worker.SarjyAgent._stream_attempt.__get__(agent)
+    monkeypatch.setattr(worker, "FIRST_EVENT_SECONDS", 0.02)
+    monkeypatch.setattr(worker, "GENERATION_ATTEMPT_SECONDS", 5.0)
+    monkeypatch.setattr(worker, "adapter_for", lambda provider, kind: GappedAdapter())
+
+    async def collect():
+        return [event async for event in agent._stream_attempt("provider", "deepseek_direct", FakeRequest(), [], None)]
+
+    assert [event.kind for event in asyncio.run(collect())] == ["text", "completed"]
+
+
+def test_a_streaming_tool_call_satisfies_the_first_event_deadline(monkeypatch):
+    """The adapter releases tool calls only at the end; its first raw chunk must count."""
+    import main as worker
+
+    class ToolAdapter:
+        prompt_cache_hit_tokens = None
+        prompt_cache_miss_tokens = None
+        on_first_chunk = None
+
+        async def stream(self, request, tools, tool_choice=None):
+            self.on_first_chunk()  # the provider started streaming a tool call
+            await asyncio.sleep(0.05)  # longer than the first-event deadline
+            yield GenerationEvent("tool", turn_id="turn", attempt_id="attempt")
+            yield GenerationEvent("completed", turn_id="turn", attempt_id="attempt")
+
+    agent = type("FakeAgent", (), {})()
+    agent._stream_attempt = worker.SarjyAgent._stream_attempt.__get__(agent)
+    monkeypatch.setattr(worker, "FIRST_EVENT_SECONDS", 0.02)
+    monkeypatch.setattr(worker, "GENERATION_ATTEMPT_SECONDS", 5.0)
+    monkeypatch.setattr(worker, "adapter_for", lambda provider, kind: ToolAdapter())
+
+    async def collect():
+        return [event async for event in agent._stream_attempt("provider", "deepseek_direct", FakeRequest(), [], None)]
+
+    assert [event.kind for event in asyncio.run(collect())] == ["tool", "completed"]
+
+
+def test_stalled_primary_falls_back_after_first_event_deadline(monkeypatch):
+    import main as worker
+
+    class StalledAdapter:
+        async def stream(self, request, tools, tool_choice=None):
+            await asyncio.sleep(1)
+            yield GenerationEvent("completed", turn_id="turn", attempt_id="attempt")
+
+    class AnsweringAdapter:
+        prompt_cache_hit_tokens = None
+        prompt_cache_miss_tokens = None
+
+        async def stream(self, request, tools, tool_choice=None):
+            yield GenerationEvent("text", turn_id="turn", attempt_id="attempt", text="fallback")
+            yield GenerationEvent("completed", turn_id="turn", attempt_id="attempt")
+
+    reserved = []
+    agent = type("FakeAgent", (), {})()
+    agent.pipeline = {"llm": {"provider": "deepseek_direct"}}
+    agent.session = type("Session", (), {"llm": "primary"})()
+    agent.fallback_llm = "fallback"
+    agent._require_openai_bounds = lambda request, tools: None
+    agent._require_deepseek_bounds = lambda request: None
+    agent._stream_attempt = worker.SarjyAgent._stream_attempt.__get__(agent)
+    agent._stream_with_fallback = worker.SarjyAgent._stream_with_fallback.__get__(agent)
+
+    async def reserve(provider, characters=0, report=None):
+        reserved.append(provider)
+
+    agent.reserve = reserve
+    adapters = {"primary": StalledAdapter(), "fallback": AnsweringAdapter()}
+    monkeypatch.setattr(worker, "adapter_for", lambda provider, kind: adapters[provider])
+    monkeypatch.setattr(worker, "livekit_chunk", lambda event: event)
+    monkeypatch.setattr(worker, "FIRST_EVENT_SECONDS", 0.02)
+    monkeypatch.setattr(worker, "GENERATION_ATTEMPT_SECONDS", 5.0)
+
+    async def collect():
+        return [event async for event in agent._stream_with_fallback(FakeRequest(), [], None)]
+
+    events = asyncio.run(collect())
+    assert reserved == ["deepseek", "openai"]
+    assert [event.kind for event in events] == ["text", "completed"]
+    assert events[0].text == "fallback"
+
+
 def test_fallback_budget_denial_never_invokes_fallback(monkeypatch):
     calls = []
     original = FakeAdapter.stream
@@ -243,3 +365,36 @@ def test_fallback_budget_denial_never_invokes_fallback(monkeypatch):
     assert reserved == ["deepseek", "openai"]
     assert len(calls) == 1
     assert isinstance(error, ValueError)
+
+
+def test_a_deadline_cancellation_mapped_by_the_adapter_still_becomes_a_timeout(monkeypatch):
+    """The real adapter re-raises cancellation as GenerationCancelled; Python 3.12 would not convert it."""
+    import main as worker
+    from generation import GenerationCancelled
+
+    class MappingAdapter:
+        prompt_cache_hit_tokens = None
+        prompt_cache_miss_tokens = None
+        on_first_chunk = None
+
+        async def stream(self, request, tools, tool_choice=None):
+            try:
+                await asyncio.sleep(1)
+            except asyncio.CancelledError as exc:  # mirrors ProviderAdapter.stream
+                raise GenerationCancelled(GenerationEvent("cancelled", turn_id="turn", attempt_id="attempt")) from exc
+            yield GenerationEvent("completed", turn_id="turn", attempt_id="attempt")
+
+    agent = type("FakeAgent", (), {})()
+    agent._stream_attempt = worker.SarjyAgent._stream_attempt.__get__(agent)
+    monkeypatch.setattr(worker, "FIRST_EVENT_SECONDS", 0.02)
+    monkeypatch.setattr(worker, "adapter_for", lambda provider, kind: MappingAdapter())
+
+    async def collect():
+        return [event async for event in agent._stream_attempt("provider", "deepseek_direct", FakeRequest(), [], None)]
+
+    try:
+        asyncio.run(collect())
+    except GenerationFailure as exc:
+        assert exc.event.error_code == "timeout" and exc.event.partial is False
+    else:
+        raise AssertionError("expected a timeout GenerationFailure")

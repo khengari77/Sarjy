@@ -101,6 +101,7 @@ def test_turn_metrics_round_trip_new_measurement_stages(worker):
         "provider_connect_ms": 9,
         "provider_headers_ms": 10,
         "loop_lag_ms": 11,
+        "predicted_prefix_hit_pct": 73,
     }
     response = client.post(METRICS_PATH, headers=headers, json={"turn_id": turn_id, "stages": stages})
     assert response.status_code == 200
