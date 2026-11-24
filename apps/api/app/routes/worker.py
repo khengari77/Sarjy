@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
-from sqlalchemy import select, update
+from sqlalchemy import and_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +25,7 @@ from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
-from app.infrastructure.database import Conversation, Memory, Turn, TurnMetric, UserSetting, VoiceSession
+from app.infrastructure.database import Conversation, Turn, TurnMetric, UserSetting, VoiceSession
 from app.infrastructure.upsert import insert_ignore
 from app.routes.wordle_tools import register_wordle_tool_routes
 from app.services.budget import reserve as reserve_development_budget
@@ -397,12 +397,18 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db)
         # Serializes worker retries and preserves the conversation's authoritative order.
-        conversation = await db.scalar(
-            select(Conversation).where(Conversation.id == voice.conversation_id).with_for_update()
-        )
-        existing = await db.scalar(
-            select(Turn).where(Turn.conversation_id == voice.conversation_id, Turn.request_id == body.request_id)
-        )
+        conversation, existing, settings_row = (
+            await db.execute(
+                select(Conversation, Turn, UserSetting)
+                .outerjoin(
+                    Turn,
+                    and_(Turn.conversation_id == Conversation.id, Turn.request_id == body.request_id),
+                )
+                .outerjoin(UserSetting, UserSetting.owner_id == Conversation.owner_id)
+                .where(Conversation.id == voice.conversation_id)
+                .with_for_update(of=Conversation)
+            )
+        ).one()
         if existing:
             return await _replayed_turn_response(
                 db,
@@ -454,7 +460,6 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
                 else None
             ),
         }
-        settings_row = await db.get(UserSetting, conversation.owner_id)
         settings_value = (
             UserSettings()
             if settings_row is None
@@ -466,15 +471,9 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
                 revision=settings_row.revision,
             )
         )
-        memory_rows = (
-            await db.scalars(
-                select(Memory).where(
-                    Memory.owner_id == conversation.owner_id,
-                    Memory.id.in_(compiled.included_ids),
-                    Memory.status == "active",
-                )
-            )
-        ).all()
+        memory_rows = [
+            inputs.memories.rows[memory_id] for memory_id in compiled.included_ids if memory_id in inputs.memories.rows
+        ]
         model_request = ModelRequest(
             turn_id=turn.id,
             attempt_id=str(uuid4()),
