@@ -71,7 +71,7 @@ MAX_TIER_OUTPUT_TOKENS = 1024
 MAX_CONTEXT_BYTES = 64000
 MAX_TOOLS = 4
 GENERATION_ATTEMPT_SECONDS = 30.0
-STALE_CONNECTION_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError, httpx.ConnectError)
+STALE_CONNECTION_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
 DECISION_TURN_NOTE = "The user is answering the previous confirmation; do not propose anything this turn."
 FAILED_NOTE = "The memory tool failed. Nothing was saved, excluded or changed; do not claim otherwise."
 

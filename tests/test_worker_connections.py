@@ -20,7 +20,7 @@ def test_worker_backend_client_keeps_connections_alive():
     async def run():
         client = backend_client("http://api", {"x-agent-secret": "secret"})
         try:
-            assert client._transport._pool._keepalive_expiry >= 60
+            assert client._transport._pool._keepalive_expiry == 50
         finally:
             await client.aclose()
 
@@ -72,17 +72,33 @@ def test_turn_start_raises_after_two_transport_errors():
 
     def backend(request):
         calls.append(request.url.path)
-        raise httpx.ConnectError("unreachable")
+        raise httpx.RemoteProtocolError("server disconnected")
 
     async def run():
         async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
             agent = _agent(client)
-            with pytest.raises(httpx.ConnectError):
+            with pytest.raises(httpx.RemoteProtocolError):
                 await agent.compile(_message())
             assert agent.prepared == {}
 
     asyncio.run(run())
     assert calls == ["/internal/agent/turn/start", "/internal/agent/turn/start"]
+
+
+def test_an_unreachable_server_is_not_retried():
+    calls = []
+
+    def backend(request):
+        calls.append(request.url.path)
+        raise httpx.ConnectError("unreachable")
+
+    async def run():
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            with pytest.raises(httpx.ConnectError):
+                await _agent(client).compile(_message())
+
+    asyncio.run(run())
+    assert calls == ["/internal/agent/turn/start"]
 
 
 def test_provider_transport_keeps_idle_connections(monkeypatch):
@@ -100,7 +116,7 @@ def test_provider_transport_keeps_idle_connections(monkeypatch):
         {"DEEPSEEK_API_KEY": "test"},
     )
     http_client = captured["http_client"]
-    assert http_client._transport.transport._pool._keepalive_expiry == 120
+    assert http_client._transport.transport._pool._keepalive_expiry == 50
 
     async def close():
         await http_client.aclose()
@@ -129,3 +145,35 @@ def test_a_timeout_is_not_retried():
 
     asyncio.run(run())
     assert calls == ["/internal/agent/turn/start"]
+
+
+def test_the_default_provider_transport_keeps_idle_connections_shorter_than_servers_do():
+    from stream_completion import KEEPALIVE_LIMITS, ObservedTransport
+
+    assert KEEPALIVE_LIMITS.keepalive_expiry == 50
+    assert ObservedTransport().transport._pool._keepalive_expiry == 50
+
+
+def test_pool_warm_up_is_bounded_and_never_raises():
+    import time
+
+    from app.main import _warm_pool
+
+    class Hung:
+        def connect(self):
+            return self
+
+        async def __aenter__(self):
+            await asyncio.sleep(30)
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class Broken(Hung):
+        async def __aenter__(self):
+            raise ConnectionError("down")
+
+    started = time.perf_counter()
+    asyncio.run(_warm_pool(Hung()))
+    assert time.perf_counter() - started < 6
+    asyncio.run(_warm_pool(Broken()))

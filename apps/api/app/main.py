@@ -168,14 +168,19 @@ def engine_options(url: str) -> dict:
 
 
 async def _warm_pool(engine) -> None:
+    """Open a few connections before the first request; best effort and bounded, never a reason to start late."""
+
     async def warm():
         async with engine.connect() as connection:
             await connection.execute(text("SELECT 1"))
 
-    warmed = await asyncio.gather(*(warm() for _ in range(3)), return_exceptions=True)
-    for outcome in warmed:
-        if isinstance(outcome, Exception):
-            logging.getLogger(__name__).warning("Database pool warm-up failed")
+    try:
+        outcomes = await asyncio.wait_for(asyncio.gather(*(warm() for _ in range(3)), return_exceptions=True), 3)
+    except TimeoutError:
+        logging.getLogger(__name__).warning("Database pool warm-up timed out")
+        return
+    if any(isinstance(outcome, Exception) for outcome in outcomes):
+        logging.getLogger(__name__).warning("Database pool warm-up failed")
 
 
 def create_app(
