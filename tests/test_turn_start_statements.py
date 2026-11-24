@@ -139,3 +139,50 @@ def test_excluded_memory_is_absent_from_request_memories_and_messages(tmp_path):
         rendered = json.dumps(context["model_request"]["messages"], ensure_ascii=False)
         message_ids = {memory_id for memory_id in ("mem-0", "mem-1", "mem-2") if f"id={memory_id}" in rendered}
         assert memory_ids == message_ids == {"mem-0", "mem-2"}
+
+
+def test_with_an_exclusion_the_snapshots_are_loaded_once_and_provenance_still_applies(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = seed(file, chat, excluded=True)
+        with capture_statements() as statements:
+            context = start_turn(client, headers)
+        snapshot_reads = [s for s in statements if s.startswith("SELECT turns.id, turns.snapshot")]
+        assert len(snapshot_reads) == 1
+        assert "mem-1" not in context["included_record_ids"]
+
+
+def test_a_reader_that_supplies_no_rows_still_gets_its_memory_records(tmp_path, monkeypatch):
+    import dataclasses
+
+    from app.services import context_assembly
+
+    original = context_assembly.orm_memory_candidates
+
+    async def without_rows(*args, **kwargs):
+        return dataclasses.replace(await original(*args, **kwargs), rows={})
+
+    monkeypatch.setattr(context_assembly, "orm_memory_candidates", without_rows)
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = seed(file, chat)
+        context = start_turn(client, headers)
+        memory_ids = {item["id"] for item in context["model_request"]["memories"]}
+        assert memory_ids == {"mem-0", "mem-1", "mem-2"}
+
+
+def test_a_missing_conversation_is_a_404_not_a_crash(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = seed(file, chat)
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("PRAGMA foreign_keys=OFF")
+            db.execute("DELETE FROM conversations WHERE id=?", (chat,))
+        response = client.post(START, headers=headers, json={"request_id": "r-gone", "text": "hello"})
+        assert response.status_code == 404

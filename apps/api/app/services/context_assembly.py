@@ -397,6 +397,8 @@ async def _closure_page(
             return True, fetched
         for row in rows:
             loaded[row.id] = row
+            if snapshots is not None and "snapshot" not in inspect(row).unloaded:
+                snapshots.setdefault(row.id, row.snapshot or {})
             frontier.update(_dependency_ids(row, snapshots))
 
     if admitted_tools:
