@@ -34,6 +34,7 @@ from app.services.reviewer_access import (
     authorize,
 )
 from app.services.voices import DeepgramVoices, ElevenLabsVoices, VoiceProvider, approved_voice_ids
+from app.services.weather import close_weather_client
 from app.services.wordle import HttpWordleSource, wordle_refresh_loop
 
 
@@ -71,7 +72,10 @@ async def _shutdown(refresh_task, engine, classifier: JevUiClient | None = None)
             if classifier is not None:
                 await classifier.aclose()
         finally:
-            await engine.dispose()
+            try:
+                await close_weather_client()
+            finally:
+                await engine.dispose()
 
 
 REVIEWER_CLEANUP_PATH = re.compile(r"^/v1/voice/sessions/[^/]+/end$")
