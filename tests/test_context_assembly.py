@@ -84,6 +84,68 @@ def test_memory_and_tool_order_never_changes_the_hash(entries):
     assert forward.to_snapshot() == backward.to_snapshot()
 
 
+def test_newer_memories_and_tool_results_append_to_their_blocks():
+    older_memories = (
+        ContextCandidate(
+            id="m-z", role="memory", text="Second memory", origin="memory", created_at="2026-11-12T00:00:02+00:00"
+        ),
+        ContextCandidate(
+            id="m-a", role="memory", text="First memory", origin="memory", created_at="2026-11-12T00:00:01+00:00"
+        ),
+    )
+    newer_memory = ContextCandidate(
+        id="m-0", role="memory", text="New memory", origin="memory", created_at="2026-11-12T00:00:03+00:00"
+    )
+    older_tools = (
+        ContextCandidate(
+            id="t-z",
+            role="tool",
+            text='{"n": 2}',
+            origin="tool",
+            source="get_current_weather",
+            created_at="2026-11-12T00:00:02+00:00",
+        ),
+        ContextCandidate(
+            id="t-a",
+            role="tool",
+            text='{"n": 1}',
+            origin="tool",
+            source="get_current_weather",
+            created_at="2026-11-12T00:00:01+00:00",
+        ),
+    )
+    newer_tool = ContextCandidate(
+        id="t-0",
+        role="tool",
+        text='{"n": 3}',
+        origin="tool",
+        source="get_current_weather",
+        created_at="2026-11-12T00:00:03+00:00",
+    )
+    before = compile_turn_context(
+        revision=1,
+        instructions="Rules",
+        history=(history("h1", "Earlier turn"),),
+        memories=older_memories,
+        tool_results=older_tools,
+        current_turn=history("u1", "Current question"),
+    )
+    after = compile_turn_context(
+        revision=1,
+        instructions="Rules",
+        history=(history("h1", "Earlier turn"),),
+        memories=(*older_memories, newer_memory),
+        tool_results=(*older_tools, newer_tool),
+        current_turn=history("u1", "Current question"),
+    )
+
+    assert before.included_ids == ("system", "m-a", "m-z", "h1", "t-a", "t-z", "u1")
+    assert after.included_ids == ("system", "m-a", "m-z", "m-0", "h1", "t-a", "t-z", "t-0", "u1")
+    # The newer records land last in their blocks, so every earlier message is unchanged.
+    memory_end = 1 + len(older_memories)
+    assert after.messages[:memory_end] == before.messages[:memory_end]
+
+
 def test_system_instructions_survive_small_budgets():
     compiled = compile_turn_context(
         revision=0,

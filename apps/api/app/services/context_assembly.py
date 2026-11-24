@@ -139,6 +139,7 @@ async def orm_memory_candidates(
             origin="memory",
             source=row.source_turn_id,
             status="active",
+            created_at=row.created_at,
         )
         for row in sorted(rows, key=lambda item: item.id)
         if row.id not in excluded_ids
@@ -156,6 +157,7 @@ async def orm_memory_candidates(
                 origin="memory",
                 source=row.source_turn_id,
                 status="superseded",
+                created_at=row.created_at,
             )
         )
     return MemoryCandidates(tuple(included), tuple(denied), (), sources, active_by_id)
@@ -232,6 +234,7 @@ async def retraction_candidates(
             text=RETRACTION_TEMPLATE.format(text=row.content[:RETRACTION_TEXT_LIMIT]),
             origin="memory",
             source="retraction",
+            created_at=row.created_at,
         )
         for row in sorted(rows, key=lambda item: item.id)
         if row.content
@@ -612,8 +615,11 @@ async def read_context_inputs(
             origin="tool",
             source=call.name,
             dependencies=tool_dependencies[call.id],
+            # Tool calls carry no timestamp of their own; their parent turn places
+            # them chronologically.
+            created_at=turn.created_at,
         )
-        for call, _ in tool_rows
+        for call, turn in tool_rows
         if call.id not in blocked_tools
     )
     return ContextInputs(

@@ -45,6 +45,7 @@ class ContextCandidate:
     source: str | None = None
     status: Literal["active", "superseded", "inactive"] = "active"
     dependencies: frozenset[str] = frozenset()
+    created_at: str | None = None
 
 
 def freeze_json(value: Any) -> Any:
@@ -164,8 +165,9 @@ def compile_turn_context(
     * an excluded ID never enters the canonical messages or the included set;
     * only allowlisted origins and active memories are eligible;
     * tool results are admitted only for allowlisted tool names;
-    * memories and tool results are sorted by ID because their input order is
-      not semantic, so a shuffled input yields byte-identical output;
+    * memories and tool results are emitted chronologically, oldest first and
+      newest last, tied by ID, so a new record appends to its block and a
+      shuffled input yields byte-identical output;
     * history and the current turn keep caller order because turn order is
       semantic;
     * only the synthetic instructions entry may be a provider system message:
@@ -250,6 +252,11 @@ def _eligible(
     return candidate.origin != "tool" or candidate.source in permitted_tools
 
 
+def _chronological_key(candidate: ContextCandidate) -> tuple[str, str]:
+    """Oldest first, newest last; records without a timestamp lead, then ID."""
+    return (candidate.created_at or "", candidate.id)
+
+
 def _select_messages(
     *,
     instructions: str,
@@ -276,7 +283,7 @@ def _select_messages(
             "memory",
             untrusted_data_message(candidate.id, "memory", candidate.text, candidate.source),
         )
-        for candidate in sorted(memories, key=lambda item: item.id)
+        for candidate in sorted(memories, key=_chronological_key)
         if eligible(candidate)
     )
     selected.extend(
@@ -284,7 +291,7 @@ def _select_messages(
     )
     selected.extend(
         (candidate.id, "tool", untrusted_data_message(candidate.id, "tool", candidate.text, candidate.source))
-        for candidate in sorted(tool_results, key=lambda item: item.id)
+        for candidate in sorted(tool_results, key=_chronological_key)
         if eligible(candidate)
     )
     if current_turn is not None and current_turn.id not in excluded:
