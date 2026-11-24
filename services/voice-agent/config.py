@@ -13,7 +13,26 @@ WORKER_KEYS = (
     "ELEVEN_API_KEY",
     "OPENAI_API_KEY",
     "DEEPSEEK_API_KEY",
+    "GENERATION_FIRST_EVENT_SECONDS",
 )
+
+FIRST_EVENT_SECONDS_DEFAULT = 2.5
+FIRST_EVENT_SECONDS_MIN = 0.5
+FIRST_EVENT_SECONDS_MAX = 30.0
+
+
+def first_event_seconds(values: Mapping[str, str]) -> float:
+    """Read the first-event deadline, defaulting when the worker was not configured."""
+    raw = values.get("GENERATION_FIRST_EVENT_SECONDS", "").strip()
+    if not raw:
+        return FIRST_EVENT_SECONDS_DEFAULT
+    try:
+        seconds = float(raw)
+    except ValueError:
+        raise ValueError("GENERATION_FIRST_EVENT_SECONDS must be a number between 0.5 and 30") from None
+    if not FIRST_EVENT_SECONDS_MIN <= seconds <= FIRST_EVENT_SECONDS_MAX:
+        raise ValueError("GENERATION_FIRST_EVENT_SECONDS must be between 0.5 and 30")
+    return seconds
 
 
 def read_worker_environment(env_file: Path | None = None, environ: Mapping[str, str] | None = None) -> dict[str, str]:

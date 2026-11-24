@@ -1,7 +1,15 @@
 import os
 
 import pytest
-from config import provider_credentials, read_worker_environment, require_values
+from config import first_event_seconds, provider_credentials, read_worker_environment, require_values
+
+
+def test_first_event_seconds_defaults_and_validates():
+    assert first_event_seconds({}) == 2.5
+    assert first_event_seconds({"GENERATION_FIRST_EVENT_SECONDS": "1.25"}) == 1.25
+    for bad in ("0.4", "31", "not-a-number"):
+        with pytest.raises(ValueError, match="GENERATION_FIRST_EVENT_SECONDS"):
+            first_event_seconds({"GENERATION_FIRST_EVENT_SECONDS": bad})
 
 
 def test_cli_imported_job_gets_file_credentials_without_mutating_environment(tmp_path):
