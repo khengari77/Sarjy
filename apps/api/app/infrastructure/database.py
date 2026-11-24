@@ -87,6 +87,35 @@ class Identity(Base):
     invitation_id: Mapped[str | None] = mapped_column(ForeignKey("reviewer_invitations.id"), nullable=True, index=True)
 
 
+class Account(Base):
+    """One durable person: a provider user id mapped to exactly one identity."""
+
+    __tablename__ = "accounts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    auth_user_id: Mapped[str] = mapped_column(String(64), unique=True)
+    identity_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), unique=True)
+    created_at: Mapped[str] = mapped_column(String(40))
+    disabled_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class AccountSession(Base):
+    __tablename__ = "account_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"), index=True)
+    created_at: Mapped[str] = mapped_column(String(40))
+    expires_at: Mapped[str] = mapped_column(String(40))
+    revoked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class AccountAttemptWindow(Base):
+    """Attempts per keyed digest (never a raw address or email) and fixed window."""
+
+    __tablename__ = "account_attempt_windows"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window: Mapped[str] = mapped_column(String(40), primary_key=True, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions } from './$types';
-import { accessFailures, issueSession, protectedMode, redeem } from '../lib/auth/guard.server';
+import { accessFailures, accountMode, issueSession, protectedMode, redeem } from '../lib/auth/guard.server';
 import { tokenKey } from '../lib/auth/access-state';
 import { failureKey } from '../lib/auth/rate-limit';
 import { safeNextPath } from '../lib/auth/redirect';
@@ -11,7 +11,7 @@ import { safeNextPath } from '../lib/auth/redirect';
  */
 export const actions: Actions = {
   default: async ({ request, cookies, url, getClientAddress }) => {
-    if (!protectedMode) throw redirect(303, '/');
+    if (!protectedMode || accountMode) throw redirect(303, '/');
 
     const form = await request.formData();
     const submitted = form.get('token');
