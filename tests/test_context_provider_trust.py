@@ -316,7 +316,7 @@ def test_fallback_request_also_keeps_lower_trust_data_out_of_instructions():
     async def run():
         order = []
 
-        async def reserve(provider):
+        async def reserve(provider, report=None):
             order.append(provider)
 
         async with (
