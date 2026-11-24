@@ -166,6 +166,8 @@ def create_app(
 
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
+    classifier = None if ui_classifier else _jev_ui_classifier(config, sessions)
+
     @asynccontextmanager
     async def lifespan(app):
         # Dispose on every exit path: startup failure, normal shutdown and an
@@ -182,6 +184,8 @@ def create_app(
                         await db.commit()
             yield
         finally:
+            if classifier is not None:
+                await classifier.aclose()
             await _shutdown(refresh_task, engine)
 
     app = FastAPI(
@@ -199,7 +203,7 @@ def create_app(
     app.middleware("http")(_web_service_gate(config))
 
     app.state.settings = config
-    app.state.ui_classifier = ui_classifier or _jev_ui_classifier(config, sessions)
+    app.state.ui_classifier = ui_classifier or classifier
     database, identity, cleanup_user, owned = build_dependencies(sessions, settings=config, clock=now)
 
     from app.routes.actions import register_action_routes

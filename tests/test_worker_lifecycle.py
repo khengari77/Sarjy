@@ -69,7 +69,7 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
     )
     monkeypatch.setattr(worker, "AgentSession", Session)
     monkeypatch.setattr(worker, "build_providers", lambda config, credentials: {})
-    monkeypatch.setattr(worker.silero.VAD, "load", lambda: None)
+    ctx.proc = SimpleNamespace(userdata={"vad": None})
     monkeypatch.setattr(
         worker,
         "read_worker_environment",

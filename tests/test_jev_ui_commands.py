@@ -567,3 +567,24 @@ def test_flag_and_credential_gating(tmp_path):
     assert state() is None
     assert state(jev_api_key="k", jev_commands_enabled=False) is None
     assert isinstance(state(jev_api_key="k"), JevUiClient)
+
+
+def test_client_reuses_one_connection_and_closes_it():
+    class Transport(httpx.AsyncBaseTransport):
+        closed = 0
+
+        async def handle_async_request(self, request):
+            return httpx.Response(200, json=payload(family="theme", theme="dark"), request=request)
+
+        async def aclose(self):
+            Transport.closed += 1
+
+    async def run():
+        client = JevUiClient("k", allow, transport=Transport())
+        for _ in range(3):
+            assert await client.classify(request_id="r", instruction="go dark") is not None
+        assert Transport.closed == 0
+        await client.aclose()
+        assert Transport.closed == 1
+
+    asyncio.run(run())
