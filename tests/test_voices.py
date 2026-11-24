@@ -629,3 +629,29 @@ def test_committed_settings_receipt_replays_during_catalog_outage(tmp_path):
         )
         assert unseen.status_code == 503
         assert unseen.json()["detail"]["code"] == "VOICE_CATALOG_UNAVAILABLE"
+
+
+def test_a_configured_arabic_default_language_never_reaches_the_stored_pipeline(tmp_path, livekit_control_plane):
+    """Aura-2 is English only: DEFAULT_VOICE_LANGUAGE=ar must not admit a session the worker refuses to build."""
+    from app.config import Settings
+    from app.main import create_app
+    from fastapi.testclient import TestClient
+
+    settings = Settings(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'ar.db'}",
+        deepgram_api_key="test-deepgram",
+        deepseek_api_key="test-deepseek",
+        openai_api_key="test-openai",
+        default_voice_language="ar",
+        livekit_url="https://fake.livekit",
+        livekit_api_key="key" * 8,
+        livekit_api_secret="secret" * 8,
+        agent_service_secret="agent-secret-value",
+        _env_file=None,
+    )
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201, response.text
+        assert response.json()["voice_language"] == "en"

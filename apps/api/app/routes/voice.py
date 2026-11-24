@@ -25,7 +25,6 @@ from app.services.voices import (
     require_approved,
     resolve_voice,
     saved_voice_outcome,
-    spoken_voice_language,
 )
 
 
@@ -115,9 +114,9 @@ def register_voice_routes(
             config, catalog, body.voice_id, saved_voice_id
         )
         voice_id = selected_voice.id
-        voice_language = spoken_voice_language(
-            voice_source, body.language, selected_voice, config.default_voice_language
-        )
+        # Aura-2 speaks English only (non-English requests were rejected above), so a configured default
+        # language of "ar" must never reach the stored pipeline: the worker would refuse to build the voice.
+        voice_language = "en"
         pipeline = pipeline.model_copy(
             update={"tts": pipeline.tts.model_copy(update={"voice_id": voice_id, "language": voice_language})}
         )
