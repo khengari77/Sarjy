@@ -8,6 +8,8 @@ therefore lives here, in one mapping; passing a legacy keyword next to it is a s
 from collections.abc import Mapping
 from typing import TypedDict
 
+from config import preemptive_generation
+
 MIN_DELAY_KEY = "ENDPOINTING_MIN_DELAY_SECONDS"
 MAX_DELAY_KEY = "ENDPOINTING_MAX_DELAY_SECONDS"
 
@@ -20,8 +22,20 @@ class EndpointingOptions(TypedDict, total=False):
     max_delay: float
 
 
-class PreemptiveGenerationOptions(TypedDict):
+class PreemptiveGenerationOptions(TypedDict, total=False):
     enabled: bool
+    preemptive_tts: bool
+    max_retries: int
+    max_speech_duration: float
+
+
+PREEMPTIVE_ON: PreemptiveGenerationOptions = {
+    "enabled": True,
+    "preemptive_tts": False,
+    "max_retries": 1,
+    "max_speech_duration": 8.0,
+}
+PREEMPTIVE_OFF: PreemptiveGenerationOptions = {"enabled": False}
 
 
 class TurnHandlingOptions(TypedDict, total=False):
@@ -36,11 +50,13 @@ class EndpointingKwargs(TypedDict, total=False):
 def endpointing_kwargs(values: Mapping[str, str]) -> EndpointingKwargs:
     """Return the AgentSession ``turn_handling`` keyword argument.
 
-    Preemptive generation is always off: a speculative reply would run the turn hook
-    (``/turn/start``) on an interim transcript and create a second user turn per utterance.
+    Preemptive generation stays opt-in: the worker adopts an early reply only when the final
+    transcript matches, so a speculative turn cannot create a second user turn per utterance.
     Endpointing delays are added only when configured; unset keeps the SDK defaults.
     """
-    turn_handling: TurnHandlingOptions = {"preemptive_generation": {"enabled": False}}
+    turn_handling: TurnHandlingOptions = {
+        "preemptive_generation": dict(PREEMPTIVE_ON if preemptive_generation(values) else PREEMPTIVE_OFF)
+    }
     raw_min = values.get(MIN_DELAY_KEY, "").strip()
     raw_max = values.get(MAX_DELAY_KEY, "").strip()
     if not raw_min and not raw_max:

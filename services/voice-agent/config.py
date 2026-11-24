@@ -15,6 +15,7 @@ WORKER_KEYS = (
     "ENDPOINTING_MIN_DELAY_SECONDS",
     "ENDPOINTING_MAX_DELAY_SECONDS",
     "GENERATION_FIRST_EVENT_SECONDS",
+    "PREEMPTIVE_GENERATION",
     "REASSURANCE_AFTER_SECONDS",
 )
 
@@ -24,6 +25,11 @@ FIRST_EVENT_SECONDS_MAX = 30.0
 
 REASSURANCE_SECONDS_DEFAULT = 1.6
 REASSURANCE_SECONDS_MAX = 10.0
+
+
+def preemptive_generation(values: Mapping[str, str]) -> bool:
+    """Read the opt-in preemptive-generation flag; anything other than 1/true leaves it off."""
+    return values.get("PREEMPTIVE_GENERATION", "").strip().casefold() in {"1", "true"}
 
 
 def reassurance_seconds(values: Mapping[str, str]) -> float:

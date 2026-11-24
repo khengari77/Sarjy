@@ -19,6 +19,7 @@ from app.domain.tool_operations import operation_key
 from app.domain.ui_routing import CONFIDENCE_THRESHOLD, FORCED_MEMORY_TOOLS
 from config import (
     first_event_seconds,
+    preemptive_generation,
     provider_credentials,
     read_worker_environment,
     reassurance_seconds,
@@ -46,6 +47,7 @@ from livekit.agents import (
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from loop_lag import LoopLagMonitor
+from preempt import EarlyTurn, RecentFinals, transcripts_equivalent
 from prefix_stability import canonical_prompt, predicted_prefix_hit_pct
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from reassurance import PHRASES, ReassuranceTimer, with_reassurance
@@ -300,12 +302,18 @@ class SarjyAgent(WordleTools, Agent):
         publish_wordle=None,
         wordle_active=None,
         reassurance_seconds: float = 1.6,
+        preemptive: bool = False,
     ):
         super().__init__(instructions=instructions)
         self.publish_wordle = publish_wordle
         self.wordle_active = wordle_active or (lambda: False)
         self.reassurance = ReassuranceTimer(reassurance_seconds)
         self.reassurance_fillers: dict[str, str] = {}
+        self.preemptive = preemptive
+        self.preempt: EarlyTurn | None = None
+        self.persisting: set[str] = set()  # turns whose playout is already being finalized
+        self.retired_turns: set[str] = set()  # early turns closed as failed; never finalized again
+        self.recent_finals = RecentFinals()
         self.wordle_spoken: dict[str, list[str]] = {}
         self.wordle_touched = False
         self.wordle_calls: set[str] = set()
@@ -403,29 +411,34 @@ class SarjyAgent(WordleTools, Agent):
             return
         _record_value(self, turn_id, name, elapsed_ms(anchor, at), first_only=first_only)
 
-    async def compile(self, message):
+    async def _post_turn_start(self, message):
+        phase = None
+        response = None
+        for attempt in range(2):
+            attempt_phase = CompletionState()
+            token = api_phase_state.set(attempt_phase)
+            try:
+                response = await self.backend.post(
+                    "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
+                )
+                response.raise_for_status()
+            except STALE_CONNECTION_ERRORS:
+                # A reused connection the other end already closed; a timeout is not retried.
+                if attempt == 0:
+                    continue
+                raise
+            finally:
+                api_phase_state.reset(token)
+            phase = attempt_phase
+            break
+        return response, phase
+
+    async def compile(self, message, live=None):
         self.loop_lag.take()  # this turn's window starts here, not at the end of the last reply
         if message.id not in self.prepared:
             started = time.perf_counter()
             turn_start_begin = started
-            phase = None
-            for attempt in range(2):
-                attempt_phase = CompletionState()
-                token = api_phase_state.set(attempt_phase)
-                try:
-                    response = await self.backend.post(
-                        "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
-                    )
-                    response.raise_for_status()
-                except STALE_CONNECTION_ERRORS:
-                    # A reused connection the other end already closed; a timeout is not retried.
-                    if attempt == 0:
-                        continue
-                    raise
-                finally:
-                    api_phase_state.reset(token)
-                phase = attempt_phase
-                break
+            response, phase = await self._post_turn_start(message)
             self.prepared[message.id] = response.json()
             turn_id = self.prepared[message.id]["turn_id"]
             self._bind_turn_anchor(message.id, turn_id)
@@ -442,6 +455,8 @@ class SarjyAgent(WordleTools, Agent):
                 self, turn_id, "api_headers_ms", phase.provider_headers_ms if phase else None, first_only=True
             )
             _record_value(self, turn_id, "api_body_ms", phase.provider_body_ms if phase else None, first_only=True)
+        if live is not None and not live():
+            return None  # an abandoned early turn must not touch the state the live turn owns
         # Typed input never ran the turn hook: an earlier turn's prepayment is not this one's.
         self._discard_prepaid(keep=message.id)
         self.reserving_message = message.id
@@ -740,8 +755,105 @@ class SarjyAgent(WordleTools, Agent):
         async for frame in Agent.default.tts_node(self, budgeted_text(), model_settings):
             yield frame
 
+    def _speech_handle(self):
+        """The speech this reply belongs to; an early reply is not scheduled yet, so it is not ``current_speech``."""
+        try:
+            from livekit.agents.voice.agent_activity import _SpeechHandleContextVar
+
+            handle = _SpeechHandleContextVar.get(None)
+        except ImportError:
+            handle = None
+        return handle if handle is not None else self.session.current_speech
+
+    def note_transcript(self, event) -> None:
+        if self.preemptive and getattr(event, "is_final", False):
+            self.recent_finals.add(getattr(event, "transcript", "") or "")
+
+    def _cancel_preemption(self) -> None:
+        """Tell the SDK not to adopt its early reply (it then answers the finalized turn afresh)."""
+        try:
+            activity = getattr(self.session, "_activity", None)
+        except RuntimeError:  # not running inside a session
+            return
+        cancel = getattr(activity, "_cancel_preemptive_generation", None)
+        if callable(cancel):
+            cancel()
+
+    def _retire_preempt(self) -> None:
+        """Drop an early turn nobody adopted: close it as failed so no later prompt can read it."""
+        entry, self.preempt = self.preempt, None
+        if entry is None or entry.adopted or entry.retired:
+            return
+        entry.retired = True
+        if not entry.decided.done():
+            entry.decided.set_result(False)
+        if not entry.ready.done():
+            entry.ready.set_result(False)
+        # Memory state the discarded interim compile armed must not reach the next real turn.
+        if entry.saved and (self.memory_message == entry.message_id or self.current_turn == entry.turn_id):
+            for name, value in entry.saved.items():
+                setattr(self, name, value)
+        self._finalize_retired(entry)
+
+    def _close_orphan(self, entry: EarlyTurn, user, task) -> None:
+        """Finalize the turn an abandoned early open created after all."""
+        if task.cancelled() or task.exception() is not None or user.id not in self.prepared:
+            return
+        entry.turn_id = self.prepared[user.id]["turn_id"]
+        self._finalize_retired(entry)
+
+    def _finalize_retired(self, entry: EarlyTurn) -> None:
+        turn_id = entry.turn_id
+        # ``prepared`` keeps the entry: the cancelled reply may still be unwinding and reads it.
+        if turn_id is None or turn_id in self.persisting or turn_id in self.retired_turns:
+            return  # a started playout finalizes the turn (interrupted) by itself
+        self.retired_turns.add(turn_id)
+        self.turn_stages.pop(turn_id, None)
+        self.turn_anchor.pop(turn_id, None)
+        self.reassurance.finish(turn_id)
+        task = asyncio.create_task(self._finalize_turn(turn_id, "", "failed"))
+        self.pending.add(task)
+
+        def settled(done: asyncio.Task) -> None:
+            self.pending.discard(done)
+            if not done.cancelled() and done.exception() is not None:
+                logging.warning("Closing an abandoned early turn failed", exc_info=done.exception())
+
+        task.add_done_callback(settled)
+
+    async def _adopt_preempt(self, text: str) -> bool:
+        """Let the finalized turn take over the early reply, which already opened its turn."""
+        entry = self.preempt
+        if (
+            entry is None
+            or entry.mode != "early"
+            or self.is_command(text)
+            or not transcripts_equivalent(entry.text, text)
+        ):
+            return False
+        try:
+            opened = await asyncio.wait_for(asyncio.shield(entry.ready), timeout=3.0)
+        except Exception:
+            return False
+        except BaseException:
+            self._retire_preempt()  # the hook itself is being cancelled: never leave the gate hanging
+            raise
+        if not opened or entry.retired or self.preempt is not entry or entry.turn_id is None:
+            return False
+        entry.adopted = True
+        self.preempt = None
+        if not entry.decided.done():
+            entry.decided.set_result(True)
+        return True
+
     async def on_user_turn_completed(self, turn_ctx, new_message):
         started = time.perf_counter()
+        self.recent_finals.clear()
+        if self.preempt is not None:
+            if await self._adopt_preempt(new_message.text_content or ""):
+                return
+            self._cancel_preemption()
+            self._retire_preempt()
         if self.is_command(new_message.text_content or ""):
             self.suppressed.add(new_message.id)
             return
@@ -829,13 +941,86 @@ class SarjyAgent(WordleTools, Agent):
         self.command_resync_required = False
 
     async def llm_node(self, chat_ctx, tools, model_settings):
-        # Also covers typed input and repeated inference after tool calls.
+        # Also covers typed input, repeated inference after tool calls and early (preemptive) replies.
         user = _user_message(chat_ctx)
         if user is None:
             return
         if user.id in self.suppressed:
             self.suppressed.discard(user.id)
             return
+        early_turn = None
+        if self.preemptive and user.id not in self.prepared and self.recent_finals.covers(user.text_content or ""):
+            early_turn = await self._open_early_turn(user)
+            if early_turn.mode == "wait" or early_turn.retired:
+                return
+        try:
+            served = self._serve(user, chat_ctx, tools, model_settings, filler=early_turn is None, gate=early_turn)
+            async with aclosing(served):
+                async for chunk in served:
+                    yield chunk
+        finally:
+            if early_turn is not None and not early_turn.adopted:
+                self._retire_preempt_entry(early_turn)
+
+    async def _open_early_turn(self, user) -> EarlyTurn:
+        """Open the turn for an early reply, unless state the real turn would change is in play."""
+        self._retire_preempt()
+        text = user.text_content or ""
+        entry = EarlyTurn(user.id, text, asyncio.get_running_loop().create_future())
+        self.preempt = entry
+        if (
+            self.memory_proposal is not None
+            or self._question_due()
+            or self.wordle_active()
+            or self.is_command(text)
+            or self.forced_speech is not None
+            or self.memory_outcome is not None
+        ):
+            # The turn hook must run first; it cancels this reply and the SDK answers afresh.
+            entry.mode = "wait"
+            return entry
+        entry.saved = {
+            name: getattr(self, name)
+            for name in (
+                "memory_proposal",
+                "memory_question_turn",
+                "memory_prompted_key",
+                "memory_question_key",
+                "memory_clarify",
+                "memory_outcome",
+                "memory_message",
+                "current_turn",
+                "current_text",
+            )
+        }
+        opening = asyncio.ensure_future(self.compile(user, live=lambda: not entry.retired))
+        try:
+            await asyncio.shield(opening)
+        except BaseException:
+            # Never store the error: a waiting hook would re-raise it (a CancelledError would cancel the hook).
+            if not entry.ready.done():
+                entry.ready.set_result(False)
+            self._retire_preempt_entry(entry)
+            if not opening.done():  # the backend may still create the turn: close it when it does
+                opening.add_done_callback(lambda task: self._close_orphan(entry, user, task))
+            else:
+                self._close_orphan(entry, user, opening)
+            raise
+        if user.id not in self.prepared:
+            return entry
+        entry.turn_id = self.prepared[user.id]["turn_id"]
+        if entry.retired:  # retired while the turn was still opening: close it now
+            self._finalize_retired(entry)
+        elif not entry.ready.done():
+            entry.ready.set_result(True)
+        return entry
+
+    def _retire_preempt_entry(self, entry: EarlyTurn) -> None:
+        if not entry.retired and not entry.adopted:
+            self.preempt = entry
+            self._retire_preempt()
+
+    async def _serve(self, user, chat_ctx, tools, model_settings, *, filler: bool, gate=None):
         snapshot = await self.compile(user)
         turn_id = self.prepared[user.id]["turn_id"]
         self.reassurance.begin_if_missing(turn_id, time.perf_counter())
@@ -847,10 +1032,12 @@ class SarjyAgent(WordleTools, Agent):
             if started is not None:
                 self._record_stage(turn_id, "first_answer_ms", started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=direct))
-            self._schedule_persistence(user, self.session.current_speech)
+            self._schedule_persistence(user, self._speech_handle())
             return
         early = self._start_reply_early(user, snapshot, chat_ctx, tools, model_settings)
         try:
+            if gate is not None and not await asyncio.shield(gate.decided):
+                return  # an early reply never acts on a transcript the turn may still replace
             command = None if self.command_blocked_turn == user.id else await self.command_for(user)
 
             def on_filler(phrase: str) -> None:
@@ -867,7 +1054,7 @@ class SarjyAgent(WordleTools, Agent):
                 reply,
                 self.reassurance,
                 turn_id,
-                allowed=self._reassurance_allowed(user, command, turn_id),
+                allowed=filler and self._reassurance_allowed(user, command, turn_id),
                 on_filler=on_filler,
                 on_answer=on_answer,
             )
@@ -937,7 +1124,7 @@ class SarjyAgent(WordleTools, Agent):
             # and the deterministic spoken line is the whole assistant turn.
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=command["spoken"]))
-            handle = self.session.current_speech
+            handle = self._speech_handle()
             self._schedule_persistence(user, handle)
             return
         if self.forced_speech is not None and self.forced_speech[0] == turn_id:
@@ -945,7 +1132,7 @@ class SarjyAgent(WordleTools, Agent):
             self.forced_speech = None
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=forced))
-            handle = self.session.current_speech
+            handle = self._speech_handle()
             self._schedule_persistence(user, handle)
             return
         proposal = self.memory_proposal
@@ -958,14 +1145,14 @@ class SarjyAgent(WordleTools, Agent):
             self.memory_question_key = key
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=question))
-            handle = self.session.current_speech
+            handle = self._speech_handle()
             if handle is not None:
                 self._schedule_prompt_confirmation(key, handle)
                 # The deterministic question is the turn's spoken answer, so it
                 # must still be persisted like any other assistant turn.
                 self._schedule_persistence(user, handle)
             return
-        handle = self.session.current_speech
+        handle = self._speech_handle()
         self._schedule_persistence(user, handle)
         request, tools, schemas = self._reply_request(user, snapshot, chat_ctx, tools)
         # The held reply was asked for before these could be known.
@@ -1156,8 +1343,11 @@ class SarjyAgent(WordleTools, Agent):
         if handle is None or handle.id in self.speeches:
             # One finalize per spoken handle, even across repeated inference.
             return
-        self.speeches.add(handle.id)
         turn_id = self.prepared[user.id]["turn_id"]
+        if turn_id in self.retired_turns:
+            return
+        self.speeches.add(handle.id)
+        self.persisting.add(turn_id)
 
         async def persist_playout():
             text, status = await _playout_result(handle)
@@ -1587,6 +1777,7 @@ async def entrypoint(ctx: JobContext):
             wordle_active=lambda: reveal.active,
             is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending, wordle_active=reveal.active),
             reassurance_seconds=reassurance_seconds(values),
+            preemptive=preemptive_generation(values),
         )
         agent.loop_lag.start()
         session = AgentSession(
@@ -1599,6 +1790,7 @@ async def entrypoint(ctx: JobContext):
         )
         await ctx.connect()
 
+        session.on("user_input_transcribed", agent.note_transcript)
         session.on("user_state_changed", warmup.user_state_changed)
 
         @ctx.room.local_participant.register_rpc_method("sarjy.interrupt")
