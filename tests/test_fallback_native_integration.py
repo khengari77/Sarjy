@@ -72,3 +72,15 @@ def test_native_stream_failure_respects_output_boundary(partial):
                 await fallback.aclose()
 
     asyncio.run(run())
+
+
+def test_the_real_tool_list_passes_the_openai_bounds():
+    """The bound once allowed 4 tools while the agent always offered 7-9, so the fallback never ran."""
+    backend = SimpleNamespace(post=None)
+    agent = worker.SarjyAgent(backend, {"llm": {"provider": "deepseek_direct"}, "max_output_tokens": 128}, "Rules")
+    tools = list(agent.tools)
+    assert len(tools) >= 7
+    assert len(tools) <= worker.MAX_TOOLS
+    agent._require_openai_bounds(request(), tools)  # raises when the real tools exceed the bounds
+    with pytest.raises(ValueError, match="OPENAI_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS"):
+        agent._require_openai_bounds(request(), tools + tools)
