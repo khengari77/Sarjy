@@ -20,7 +20,7 @@ import { isReviewerPublicPath } from '../lib/auth/reviewer';
  * `hooks.server.ts`; this load serves the door and performs the `?token=`
  * exchange server-side, so a valid link lands in the app on the first paint.
  */
-export const load: LayoutServerLoad = async ({ request, url, cookies, getClientAddress, setHeaders }) => {
+export const load: LayoutServerLoad = async ({ request, url, cookies, getClientAddress }) => {
   if (!protectedMode) return { entry: false, error: false, blocked: false, next: '/', protectedMode };
 
   // Reviewer mode must render its own landing page and must not hide the app
@@ -34,7 +34,6 @@ export const load: LayoutServerLoad = async ({ request, url, cookies, getClientA
   const next = safeNextPath(url.searchParams.get('next'));
   const token = url.searchParams.get('token');
   const authenticated = sessionIsValid(cookies);
-  if (token !== null || !authenticated) setHeaders({ 'cache-control': 'no-store' });
 
   if (authenticated) {
     // A valid session opening the link again must not consume a use; the
