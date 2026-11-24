@@ -198,8 +198,11 @@ def engine_options(url: str) -> dict:
     if url.startswith("sqlite"):
         return {}
     # The DATABASE_URL must be the session-mode pooler, whose client limit the default pool size (5 + 10
-    # overflow) already respects; recycle before the pooler or the network drops an idle connection.
-    return {"pool_recycle": 240}
+    # overflow) already respects; recycle before the pooler or the network drops an idle connection. LIFO
+    # reuse keeps hitting the most recently used connection, preserving its asyncpg prepared-statement cache
+    # and warm TCP/TLS state; the default FIFO rotation reaches a cold connection on each request and pays an
+    # extra pooler round trip for every unprepared statement.
+    return {"pool_recycle": 240, "pool_use_lifo": True}
 
 
 async def _warm_pool(engine) -> None:

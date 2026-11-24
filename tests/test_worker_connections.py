@@ -128,6 +128,7 @@ def test_engine_options_only_tune_non_sqlite():
     assert engine_options("sqlite+aiosqlite:///worker.db") == {}
     assert engine_options("postgresql+asyncpg://user:pass@pooler:6543/db") == {
         "pool_recycle": 240,
+        "pool_use_lifo": True,
     }
 
 
