@@ -29,7 +29,7 @@ def upgrade():
     op.create_table(
         "account_attempt_windows",
         sa.Column("key", sa.String(64), primary_key=True),
-        sa.Column("window", sa.String(40), primary_key=True),
+        sa.Column("window", sa.String(40), primary_key=True, index=True),
         sa.Column("attempts", sa.Integer(), nullable=False),
     )
     if op.get_bind().dialect.name == "postgresql":

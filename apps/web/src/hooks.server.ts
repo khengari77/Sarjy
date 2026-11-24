@@ -1,3 +1,4 @@
+import { redirect } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit/hooks';
 import { isAccountPublicPath } from './lib/auth/account';
 import { accountSession } from './lib/auth/account.server';
@@ -85,9 +86,11 @@ const accountGate: Handle = async ({ event, resolve }) => {
   if (session === 'valid') return secure(await resolve(event));
   // Not knowing is not the same as signed out: keep the cookie and say so.
   if (session === 'unavailable') return refused(503, 'Sarjy is not available right now. Try again shortly.');
-  if (!isPageRequest(event.request)) return refused(401, 'Authentication required');
   const next = nextPath(pathname, search);
-  return redirected(next === '/' ? '/sign-in' : `/sign-in?next=${encodeURIComponent(next)}`);
+  const door = next === '/' ? '/sign-in' : `/sign-in?next=${encodeURIComponent(next)}`;
+  // A navigation inside the app: SvelteKit turns this into one its router follows.
+  if (event.isDataRequest) throw redirect(303, door);
+  return isPageRequest(event.request) ? redirected(door) : refused(401, 'Authentication required');
 };
 
 export const handle: Handle = async ({ event, resolve }) => {

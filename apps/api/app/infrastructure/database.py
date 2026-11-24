@@ -111,7 +111,7 @@ class AccountAttemptWindow(Base):
 
     __tablename__ = "account_attempt_windows"
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
-    window: Mapped[str] = mapped_column(String(40), primary_key=True)
+    window: Mapped[str] = mapped_column(String(40), primary_key=True, index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
 
 

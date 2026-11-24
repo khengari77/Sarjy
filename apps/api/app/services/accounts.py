@@ -7,10 +7,11 @@ address and network source used to count attempts.
 import hashlib
 import hmac
 import secrets
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.accounts import (
@@ -47,25 +48,41 @@ def attempt_key(secret: str, limit: AttemptLimit, value: str) -> str:
     return hmac.new(secret.encode(), f"{limit.name}:{value}".encode(), hashlib.sha256).hexdigest()
 
 
-async def record_attempt(db: AsyncSession, key: str, limit: AttemptLimit, now: datetime) -> None:
-    """Count one attempt durably before any provider call; raise when the window is full."""
-    start = window_start(now, limit.window).isoformat()
+async def record_attempts(db: AsyncSession, attempts: Sequence[tuple[str, AttemptLimit]], now: datetime) -> None:
+    """Count one attempt against every limit, durably and before any provider call, or against none."""
     await db.execute(
         delete(AccountAttemptWindow).where(AccountAttemptWindow.window < (now - ATTEMPT_RETENTION).isoformat())
     )
-    await insert_ignore(db, AccountAttemptWindow, {"key": key, "window": start, "attempts": 0})
-    counted = await db.execute(
-        update(AccountAttemptWindow)
-        .where(
-            AccountAttemptWindow.key == key,
-            AccountAttemptWindow.window == start,
-            AccountAttemptWindow.attempts < limit.attempts,
+    for key, limit in attempts:
+        start = window_start(now, limit.window).isoformat()
+        await insert_ignore(db, AccountAttemptWindow, {"key": key, "window": start, "attempts": 0})
+        counted = await db.execute(
+            update(AccountAttemptWindow)
+            .where(
+                AccountAttemptWindow.key == key,
+                AccountAttemptWindow.window == start,
+                AccountAttemptWindow.attempts < limit.attempts,
+            )
+            .values(attempts=AccountAttemptWindow.attempts + 1)
         )
-        .values(attempts=AccountAttemptWindow.attempts + 1)
-    )
+        if counted.rowcount != 1:
+            await db.rollback()
+            raise AccountAttemptLimit(retry_after_seconds(now, limit.window))
     await db.commit()
-    if counted.rowcount != 1:
-        raise AccountAttemptLimit(retry_after_seconds(now, limit.window))
+
+
+async def forgive_attempts(db: AsyncSession, attempts: Sequence[tuple[str, AttemptLimit]], now: datetime) -> None:
+    """Give a successful attempt back. The caller's commit makes it durable."""
+    for key, limit in attempts:
+        await db.execute(
+            update(AccountAttemptWindow)
+            .where(
+                AccountAttemptWindow.key == key,
+                AccountAttemptWindow.window == window_start(now, limit.window).isoformat(),
+                AccountAttemptWindow.attempts > 0,
+            )
+            .values(attempts=AccountAttemptWindow.attempts - 1)
+        )
 
 
 async def open_session(
@@ -78,6 +95,12 @@ async def open_session(
     if account.disabled_at is not None:
         await db.rollback()
         raise AccountSessionRequired
+    await db.execute(
+        delete(AccountSession).where(
+            AccountSession.account_id == account.id,
+            or_(AccountSession.revoked_at.is_not(None), AccountSession.expires_at <= now.isoformat()),
+        )
+    )
     token = secrets.token_urlsafe(32)
     db.add(
         AccountSession(

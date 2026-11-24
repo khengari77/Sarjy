@@ -57,9 +57,8 @@ const fingerprint = sessionSecret ? tokenFingerprint(accessToken, sessionSecret)
 export function assertAccessConfigured(): void {
   if (accountMode) {
     if (!protectedMode || reviewerMode || !WEB_SERVICE_SECRET) throw new Error('ACCOUNT_ACCESS_CONFIGURATION_INVALID');
-    if (!process.env.ADDRESS_HEADER) {
-      console.warn('account access: ADDRESS_HEADER unset; everyone behind the proxy shares one sign-in attempt limit');
-    }
+    // Without it every visitor is the proxy, and anyone could use up the attempts of all.
+    if (!process.env.ADDRESS_HEADER) throw new Error('ACCOUNT_ACCESS_REQUIRES_ADDRESS_HEADER');
     return;
   }
   if (!protectedMode) return;

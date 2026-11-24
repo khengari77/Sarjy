@@ -108,8 +108,9 @@ class Settings(BaseSettings):
             raise ValueError("ACCOUNT_ACCESS_REQUIRES_API_PROTECTION")
         if not (self.supabase_url.startswith("https://") and self.supabase_publishable_key):
             raise ValueError("ACCOUNT_ACCESS_REQUIRES_SUPABASE")
-        if self.supabase_publishable_key.startswith("sb_secret_"):
-            raise ValueError("ACCOUNT_ACCESS_REFUSES_SECRET_KEY")
+        if not self.supabase_publishable_key.startswith("sb_publishable_"):
+            # Refuses secret keys and legacy JWT keys, which may carry the service role.
+            raise ValueError("ACCOUNT_ACCESS_REQUIRES_PUBLISHABLE_KEY")
         return self
 
     @model_validator(mode="after")

@@ -151,6 +151,8 @@ def test_a_stranger_is_sent_to_sign_in_and_reaches_no_data(site):
     assert browser.send("GET", "/").headers["location"] == "/sign-in"
     assert browser.send("GET", "/", headers={"accept": "*/*"}).status_code == 401
     assert browser.send("POST", "/", data={"token": "anything"}).status_code == 401
+    data = browser.send("GET", "/__data.json", headers={"accept": "*/*"})
+    assert (data.json()["type"], data.json()["location"]) == ("redirect", "/sign-in")
     for path in ("conversations", "settings", "demo-session", "auth/session"):
         assert browser.send("GET", f"/api/v1/{path}").status_code in {401, 405}
     assert browser.send("POST", "/api/v1/demo-session", json={}).status_code == 401
@@ -221,9 +223,9 @@ def test_next_never_leaves_the_site_and_attempts_count_per_visitor(site):
     # The same POST reaches the API's source limit from this address only.
     assert browser.enter("sign-up", email="eve@example.test", next_path="//evil.test/x").headers["location"] == "/"
     statuses = [
-        browser.enter("sign-in", email="eve@example.test", password="wrong guess").status_code for _ in range(10)
+        browser.enter("sign-in", email="eve@example.test", password="wrong guess").status_code for _ in range(11)
     ]
-    assert statuses[-1] == 429 and 400 in statuses
+    assert statuses == [400] * 10 + [429]
     assert "Too many attempts" in browser.enter("sign-in", email="eve@example.test").text
     assert Browser(site, "198.51.100.10").enter("sign-in", email="eve@example.test").status_code == 303
 
@@ -251,9 +253,10 @@ def test_an_api_outage_keeps_the_cookie_and_never_opens_the_app(tmp_path):
         {"DEVELOPMENT_PROTECTED": "false"},
         {"WEB_SERVICE_SECRET": ""},
         {"REVIEWER_ACCESS_ENABLED": "true"},
+        {"ADDRESS_HEADER": ""},
     ],
 )
-def test_an_unsafe_account_configuration_serves_nothing(overrides):
+def test_an_unsafe_account_configuration_does_not_serve_the_app(overrides):
     _require_build()
     port = _free_port()
     process = _web(port, 1, **overrides)

@@ -23,12 +23,12 @@ class AttemptLimit:
     window: timedelta
 
 
+# Failures only: a success is given back, so people sharing one network address do
+# not use up each other's attempts. There is no limit on an email address alone:
+# it would let a stranger lock its owner out, with the right password, from anywhere.
 SOURCE_LIMIT: Final = AttemptLimit("source", 30, timedelta(minutes=10))
-# Tight per address and source, loose per address alone: a stranger elsewhere
-# must not be able to lock a person out cheaply.
 EMAIL_SOURCE_LIMIT: Final = AttemptLimit("email-source", 10, timedelta(minutes=10))
-EMAIL_LIMIT: Final = AttemptLimit("email", 60, timedelta(minutes=10))
-SIGN_UP_LIMIT: Final = AttemptLimit("sign-up", 10, timedelta(hours=1))
+SIGN_UP_LIMIT: Final = AttemptLimit("sign-up", 60, timedelta(hours=1))
 ATTEMPT_RETENTION: Final = timedelta(days=1)
 
 

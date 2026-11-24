@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.dependencies import ACCOUNT_COOKIE
 from app.domain.accounts import (
-    EMAIL_LIMIT,
     EMAIL_SOURCE_LIMIT,
     SESSION_TTL,
     SIGN_UP_LIMIT,
@@ -29,8 +28,9 @@ from app.services.accounts import (
     attempt_key,
     authorize_account,
     close_session,
+    forgive_attempts,
     open_session,
-    record_attempt,
+    record_attempts,
 )
 
 NO_STORE = {"Cache-Control": "no-store"}
@@ -85,9 +85,8 @@ async def _credentials(request: Request) -> tuple[str, str]:
     return email, body.password
 
 
-async def _count(db: AsyncSession, config: Settings, now, *attempts: tuple[AttemptLimit, str]) -> None:
-    for limit, value in attempts:
-        await record_attempt(db, attempt_key(config.web_service_secret, limit, value), limit, now)
+def _keyed(config: Settings, *attempts: tuple[AttemptLimit, str]) -> list[tuple[str, AttemptLimit]]:
+    return [(attempt_key(config.web_service_secret, limit, value), limit) for limit, value in attempts]
 
 
 def _set_session(response: JSONResponse, config: Settings, token: str) -> JSONResponse:
@@ -116,25 +115,25 @@ def register_account_routes(app, *, config: Settings, database, clock, credentia
             raise CredentialsRejected("ACCOUNT_CREDENTIALS_INVALID") from None
         return _set_session(JSONResponse({"id": identity.id}, headers=NO_STORE), config, token)
 
-    def attempts(request: Request, email: str) -> tuple[tuple[AttemptLimit, str], ...]:
-        source = attempt_source(request, config)
-        return (SOURCE_LIMIT, source), (EMAIL_SOURCE_LIMIT, f"{source} {email}"), (EMAIL_LIMIT, email)
+    async def enter(request: Request, db: AsyncSession, provider, *, new: bool) -> JSONResponse:
+        email, password = await _credentials(request)
+        now, source = clock(), attempt_source(request, config)
+        attempts = _keyed(config, (SOURCE_LIMIT, source), (EMAIL_SOURCE_LIMIT, f"{source} {email}"))
+        created = _keyed(config, (SIGN_UP_LIMIT, source)) if new else []
+        with _answers():
+            await record_attempts(db, attempts + created, now)
+            # No transaction stays open across the provider call.
+            auth_user_id = await provider(email, password)
+            await forgive_attempts(db, attempts, now)
+            return await start(request, db, auth_user_id, now)
 
     @app.post("/v1/auth/sign-up")
     async def sign_up(request: Request, db: AsyncSession = Depends(database)):
-        email, password = await _credentials(request)
-        now = clock()
-        with _answers():
-            await _count(db, config, now, *attempts(request, email), (SIGN_UP_LIMIT, attempt_source(request, config)))
-            return await start(request, db, await credentials.sign_up(email, password), now)
+        return await enter(request, db, credentials.sign_up, new=True)
 
     @app.post("/v1/auth/sign-in")
     async def sign_in(request: Request, db: AsyncSession = Depends(database)):
-        email, password = await _credentials(request)
-        now = clock()
-        with _answers():
-            await _count(db, config, now, *attempts(request, email))
-            return await start(request, db, await credentials.sign_in(email, password), now)
+        return await enter(request, db, credentials.sign_in, new=False)
 
     @app.post("/v1/auth/sign-out")
     async def sign_out(request: Request, db: AsyncSession = Depends(database)):

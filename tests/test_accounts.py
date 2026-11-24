@@ -12,7 +12,6 @@ import pytest
 from app.config import Settings
 from app.dependencies import ACCOUNT_COOKIE, COOKIE
 from app.domain.accounts import (
-    EMAIL_LIMIT,
     EMAIL_SOURCE_LIMIT,
     PASSWORD_MAX_BYTES,
     SESSION_TTL,
@@ -206,7 +205,7 @@ def test_old_identities_cannot_enter_and_their_data_is_untouched(world):
     assert client.get("/v1/auth/session").json()["id"] != "old"
 
 
-def test_rejections_do_not_say_which_part_was_wrong(world):
+def test_sign_in_rejections_do_not_say_which_part_was_wrong(world):
     post(world.browser(), "sign-up")
     wrong = post(world.browser(), "sign-in", password="not the password")
     unknown = post(world.browser(), "sign-in", email="nobody@example.test")
@@ -264,12 +263,38 @@ def test_attempts_are_limited_per_email_and_source_before_the_provider_is_called
     assert post(world.browser(), "sign-in").status_code == 401
 
 
-def test_one_email_is_still_bounded_across_sources(world):
-    statuses = [
-        post(world.browser(), "sign-in", headers={"x-reviewer-source": f"192.0.2.{index}"}).status_code
-        for index in range(EMAIL_LIMIT.attempts + 1)
-    ]
-    assert statuses == [401] * EMAIL_LIMIT.attempts + [429]
+def test_a_stranger_cannot_lock_an_owner_out_from_elsewhere(world):
+    post(world.browser(), "sign-up")
+    for index in range(30):
+        source = {"x-reviewer-source": f"192.0.2.{index}"}
+        for _ in range(EMAIL_SOURCE_LIMIT.attempts):
+            post(world.browser(), "sign-in", password="wrong password", headers=source)
+    assert post(world.browser(), "sign-in").status_code == 200
+
+
+def test_successes_do_not_use_up_a_shared_address(world):
+    post(world.browser(), "sign-up")
+    for _ in range(SOURCE_LIMIT.attempts + 5):
+        assert post(world.browser(), "sign-in").status_code == 200
+
+
+def test_a_refused_attempt_counts_against_nothing(world):
+    for _ in range(EMAIL_SOURCE_LIMIT.attempts):
+        post(world.browser(), "sign-in")
+    before = world.rows("SELECT key, attempts FROM account_attempt_windows ORDER BY key")
+    assert post(world.browser(), "sign-in").status_code == 429
+    assert world.rows("SELECT key, attempts FROM account_attempt_windows ORDER BY key") == before
+
+
+def test_ended_sessions_are_removed_at_the_next_sign_in(world):
+    browser = world.browser()
+    post(browser, "sign-up")
+    browser.post("/v1/auth/sign-out")
+    post(world.browser(), "sign-in")
+    assert world.rows("SELECT count(*) FROM account_sessions") == [(1,)]
+    world.clock.advance(seconds=SESSION_TTL.total_seconds())
+    post(world.browser(), "sign-in")
+    assert world.rows("SELECT count(*) FROM account_sessions") == [(1,)]
 
 
 def test_sign_ups_and_sources_are_limited_and_the_source_comes_from_the_proxy(world):
