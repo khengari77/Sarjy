@@ -322,7 +322,7 @@ def test_pre_push_runs_the_full_unit_suite_for_web_configuration(tmp_path):
     assert "--dir apps/web test:unit" in log.read_text()
 
 
-def test_pre_push_runs_related_vitest_files_without_pass_with_no_tests(tmp_path):
+def test_pre_push_runs_the_related_vitest_files_once(tmp_path):
     repo, second = _web_repo(tmp_path)
     (repo / "apps" / "web" / "node_modules").mkdir()
     binary = _fake_uv(tmp_path)
@@ -331,28 +331,8 @@ def test_pre_push_runs_related_vitest_files_without_pass_with_no_tests(tmp_path)
     environment = _environment(binary, FAKE_UV_LOG=str(tmp_path / "uv.log"), FAKE_PNPM_LOG=str(log))
     result = _run_pre_push(repo, environment, second)
     assert result.returncode == 0
-    assert "Related Vitest files:" in result.stdout
-    lines = log.read_text().splitlines()
-    assert any("--passWithNoTests --reporter=json -- src/lib/api.ts" in line for line in lines)
-    assert any("vitest related --run -- src/lib/api.ts" in line and "--passWithNoTests" not in line for line in lines)
-
-
-def test_pre_push_treats_no_related_vitest_files_as_success(tmp_path):
-    repo, second = _web_repo(tmp_path)
-    (repo / "apps" / "web" / "node_modules").mkdir()
-    binary = _fake_uv(tmp_path)
-    _fake_pnpm(binary)
-    log = tmp_path / "pnpm.log"
-    environment = _environment(
-        binary,
-        FAKE_UV_LOG=str(tmp_path / "uv.log"),
-        FAKE_PNPM_LOG=str(log),
-        FAKE_PNPM_RELATED="empty",
-    )
-    result = _run_pre_push(repo, environment, second)
-    assert result.returncode == 0
-    assert "No related Vitest files." in result.stdout
-    assert [line for line in log.read_text().splitlines() if "vitest related" in line] != []
+    runs = [line for line in log.read_text().splitlines() if "vitest related" in line]
+    assert len(runs) == 1 and runs[0].endswith("--run --passWithNoTests src/lib/api.ts")
 
 
 def test_pre_push_does_not_run_vitest_for_deleted_web_files(tmp_path):
