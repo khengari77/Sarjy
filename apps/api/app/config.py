@@ -42,8 +42,6 @@ class Settings(BaseSettings):
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     agent_service_secret: str = ""
-    demo_session_budget: int = 80
-    demo_calls_per_identity: int = 3
     reviewer_access_enabled: bool = False
     # Accounts replace the reviewer/demo identities as the way in. Credentials live in Supabase Auth.
     account_access_enabled: bool = False
