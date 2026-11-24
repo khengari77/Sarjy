@@ -85,6 +85,34 @@ def test_turn_metrics_route_records_stages_and_ignores_a_duplicate(worker):
     assert "text" not in columns
 
 
+def test_turn_metrics_round_trip_new_measurement_stages(worker):
+    client, database, _, _, headers = worker
+    turn_id = _user_turn(client, headers)
+    stages = {
+        "turn_start_server_ms": 5,
+        "turn_start_db_ms": 1,
+        "command_server_ms": 6,
+        "command_db_ms": 2,
+        "model_first_chunk_ms": 7,
+        "release_wait_ms": 8,
+        "prompt_cache_hit_tokens": 1024,
+        "prompt_cache_miss_tokens": 2048,
+        "request_bytes": 4096,
+        "provider_connect_ms": 9,
+        "provider_headers_ms": 10,
+        "loop_lag_ms": 11,
+    }
+    response = client.post(METRICS_PATH, headers=headers, json={"turn_id": turn_id, "stages": stages})
+    assert response.status_code == 200
+    assert response.json() == {"recorded": True}
+    with closing(sqlite3.connect(database)) as db:
+        usage = db.execute("SELECT usage FROM turn_metrics WHERE turn_id=?", (turn_id,)).fetchone()[0]
+    assert json.loads(usage) == {"stages": stages}
+
+    unknown = client.post(METRICS_PATH, headers=headers, json={"turn_id": turn_id, "stages": {"unknown_ms": 1}})
+    assert unknown.status_code == 422
+
+
 def test_turn_metrics_rejects_another_conversation_and_assistant_turns(worker):
     client, database, owner, _, headers = worker
     turn_id = _user_turn(client, headers)
