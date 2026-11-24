@@ -59,3 +59,24 @@ def test_public_route_does_not_carry_timing_headers(worker):
     assert response.status_code == 200
     for name in TIMING_HEADERS:
         assert name not in response.headers
+
+
+def test_slow_statements_are_always_logged(monkeypatch, caplog):
+    """A statement over the threshold is a network or pooler stall and must reach the logs without a flag."""
+    import logging
+
+    from app.infrastructure import timing
+    from sqlalchemy import create_engine, text
+
+    monkeypatch.setattr(timing, "SLOW_STATEMENT_MS", 0.0)
+    monkeypatch.setattr(timing.logger, "propagate", True)  # the production handler would bypass caplog
+    engine = create_engine("sqlite://")
+    timing.install_statement_timing(engine)
+    token = timing.current_statement_timing.set(timing.StatementTiming())
+    try:
+        with caplog.at_level(logging.WARNING, logger="sarjy.statements"), engine.connect() as connection:
+            connection.execute(text("SELECT 1   AS   one"))
+    finally:
+        timing.current_statement_timing.reset(token)
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("SELECT 1 AS one" in message for message in warnings)  # whitespace is collapsed
