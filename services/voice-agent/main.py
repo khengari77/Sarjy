@@ -754,7 +754,9 @@ class SarjyAgent(WordleTools, Agent):
         return proposal is not None and self.memory_question_key != self._proposal_key(proposal)
 
     def _reply_request(self, user, snapshot, chat_ctx, tools):
-        request = snapshot_request(snapshot, self.current_turn)
+        # The turn this snapshot was compiled for, not the newest turn: a later utterance may
+        # already have moved ``current_turn`` while this reply is still being built.
+        request = snapshot_request(snapshot, self.prepared[user.id]["turn_id"])
         tools = self._wordle_tools(tools)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
         return _with_continuation(request, _continuation(chat_ctx, user), schemas), tools, schemas
@@ -1387,7 +1389,6 @@ async def entrypoint(ctx: JobContext):
             **providers,
             **endpointing_kwargs(values),
             vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),
-            preemptive_generation=False,
             conn_options=SessionConnectOptions(
                 llm_conn_options=APIConnectOptions(max_retry=0), tts_conn_options=APIConnectOptions(max_retry=0)
             ),
