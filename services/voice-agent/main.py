@@ -38,6 +38,7 @@ from livekit.agents import (
 )
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
+from loop_lag import LoopLagMonitor
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
 from speech_budget import SpeechBudget
@@ -319,6 +320,7 @@ class SarjyAgent(WordleTools, Agent):
         # Exact Wordle commands are answered by the web client through
         # sarjy.say; the conversational LLM must stay silent for those turns.
         self.suppressed: set[str] = set()
+        self.loop_lag = LoopLagMonitor()
 
     @staticmethod
     def _proposal_key(proposal: Mapping[str, Any] | None) -> tuple[Any, Any]:
@@ -334,6 +336,7 @@ class SarjyAgent(WordleTools, Agent):
         stages[name] = elapsed_ms(started, time.perf_counter())
 
     async def compile(self, message):
+        self.loop_lag.start()
         if message.id not in self.prepared:
             started = time.perf_counter()
             for attempt in range(2):
@@ -1033,6 +1036,9 @@ class SarjyAgent(WordleTools, Agent):
             _record_value(
                 self, request.turn_id, "prompt_cache_miss_tokens", adapter.prompt_cache_miss_tokens, first_only=True
             )
+            _record_value(self, request.turn_id, "provider_connect_ms", adapter.provider_connect_ms, first_only=True)
+            _record_value(self, request.turn_id, "provider_headers_ms", adapter.provider_headers_ms, first_only=True)
+            _record_value(self, request.turn_id, "loop_lag_ms", self.loop_lag.take(), first_only=True)
         except TimeoutError as exc:
             raise GenerationFailure(
                 GenerationEvent(

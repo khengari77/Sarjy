@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from collections.abc import AsyncIterator
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ class CompletionState:
     done: bool = False
     prompt_cache_hit_tokens: int | None = None
     prompt_cache_miss_tokens: int | None = None
+    provider_connect_ms: int | None = None  # TCP+TLS for this request; 0 when a kept-alive socket was reused
+    provider_headers_ms: int | None = None  # request headers sent -> response headers received
 
 
 def _usage_int(usage: object, name: str) -> int | None:
@@ -111,13 +114,37 @@ class DecodedResponseStream(httpx.AsyncByteStream):
 KEEPALIVE_LIMITS = httpx.Limits(max_keepalive_connections=8, keepalive_expiry=50)
 
 
+class _PhaseTrace:
+    """httpcore trace hook: how long the connection setup and the wait for response headers took."""
+
+    def __init__(self, state: CompletionState) -> None:
+        self.state = state
+        self.headers_started: float | None = None
+        self.connect_started: float | None = None
+
+    async def __call__(self, event: str, info: object) -> None:
+        now = time.perf_counter()
+        if event.endswith(".connect_tcp.started"):
+            self.connect_started = now
+        elif event.endswith((".connect_tcp.complete", ".start_tls.complete")) and self.connect_started is not None:
+            self.state.provider_connect_ms = round((now - self.connect_started) * 1000)
+        elif event.endswith(".send_request_headers.started"):
+            self.headers_started = now
+            if self.state.provider_connect_ms is None:
+                self.state.provider_connect_ms = 0
+        elif event.endswith(".receive_response_headers.complete") and self.headers_started is not None:
+            self.state.provider_headers_ms = round((now - self.headers_started) * 1000)
+
+
 class ObservedTransport(httpx.AsyncBaseTransport):
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.transport = transport or httpx.AsyncHTTPTransport(retries=0, limits=KEEPALIVE_LIMITS)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        response = await self.transport.handle_async_request(request)
         state = completion_state.get()
+        if state is not None:
+            request.extensions = {**request.extensions, "trace": _PhaseTrace(state)}
+        response = await self.transport.handle_async_request(request)
         if state is None or response.status_code != 200:
             return response
         headers = [
