@@ -101,6 +101,8 @@ class TurnStageMetrics(BaseModel):
     first_answer_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     prompt_cache_hit_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
     prompt_cache_miss_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
+    prompt_cache_hit_tokens_2: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
+    prompt_cache_miss_tokens_2: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
     request_bytes: StrictInt | None = Field(default=None, ge=0, le=1_000_000)
     provider_connect_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     provider_headers_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
@@ -201,7 +203,7 @@ def register_worker_routes(
         approved_voice_ids=approved_voice_ids,
         secret=_memory_secret(config),
     )
-    _register_tool_routes(app, database=database, guard=guard)
+    _register_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
     if wordle_source is not None:
@@ -553,7 +555,9 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
             # With the model classifier available, regexes only keep the exact "remember that ..." fast path.
             strict_capture=getattr(app.state, "ui_classifier", None) is not None,
         )
-        inputs = await read_context_inputs(db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id)
+        inputs = await read_context_inputs(
+            db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id, combined_read=True
+        )
         compiled = _compile_turn_context(
             revision=conversation.revision,
             instructions=instructions,
@@ -801,13 +805,29 @@ def _claim_replay(claim):
     return None
 
 
-def _register_tool_routes(app, *, database, guard):
+def _register_tool_routes(app, *, config, database, guard):
     @app.post("/internal/agent/tool/weather")
     async def agent_weather(body: WeatherInput, request: Request, db: AsyncSession = Depends(database)):
-        voice = await guard(request, db)
-        turn = await db.get(Turn, body.turn_id)
-        if not turn or turn.conversation_id != voice.conversation_id:
-            raise HTTPException(404)
+        # The common case is one joined read instead of the guard and turn reads.
+        row = (
+            await db.execute(
+                select(VoiceSession, Turn)
+                .join(Turn, Turn.conversation_id == VoiceSession.conversation_id)
+                .where(VoiceSession.id == request.headers.get("x-session-id", ""), Turn.id == body.turn_id)
+            )
+        ).first()
+        if (
+            row is None
+            or not _session_is_active(row[0], request.headers.get("x-room-name"), allow_ended=False)
+            or not secret_matches(request.headers.get("x-agent-secret", ""), config.agent_service_secret)
+        ):
+            # Fall back to the shared guard so 401/403/404 stay exactly as before.
+            voice = await guard(request, db)
+            turn = await db.get(Turn, body.turn_id)
+            if not turn or turn.conversation_id != voice.conversation_id:
+                raise HTTPException(404)
+        else:
+            _, turn = row
         policy = (turn.snapshot or {}).get("weather_policy") or {}
         decision = decide_weather_request(
             city=body.city,
