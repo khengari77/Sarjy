@@ -14,7 +14,7 @@ from sqlalchemy.engine import Engine
 # Measured on the same fixture: the pre-#224 path issued 12 statements and the
 # three collapses in this change leave 9.
 STATEMENTS_BEFORE = 12
-STATEMENTS_AFTER = 9
+STATEMENTS_AFTER = 8
 START = "/internal/agent/turn/start"
 
 
