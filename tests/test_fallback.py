@@ -115,7 +115,7 @@ def run_fallback(
     agent._stream_attempt = worker.SarjyAgent._stream_attempt.__get__(agent)
     agent._stream_with_fallback = worker.SarjyAgent._stream_with_fallback.__get__(agent)
 
-    async def reserve(provider, characters=0):
+    async def reserve(provider, characters=0, report=None):
         reserved.append(provider)
         if reserve_error is not None and provider == denied_provider:
             raise reserve_error
