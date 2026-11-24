@@ -365,3 +365,36 @@ def test_fallback_budget_denial_never_invokes_fallback(monkeypatch):
     assert reserved == ["deepseek", "openai"]
     assert len(calls) == 1
     assert isinstance(error, ValueError)
+
+
+def test_a_deadline_cancellation_mapped_by_the_adapter_still_becomes_a_timeout(monkeypatch):
+    """The real adapter re-raises cancellation as GenerationCancelled; Python 3.12 would not convert it."""
+    import main as worker
+    from generation import GenerationCancelled
+
+    class MappingAdapter:
+        prompt_cache_hit_tokens = None
+        prompt_cache_miss_tokens = None
+        on_first_chunk = None
+
+        async def stream(self, request, tools, tool_choice=None):
+            try:
+                await asyncio.sleep(1)
+            except asyncio.CancelledError as exc:  # mirrors ProviderAdapter.stream
+                raise GenerationCancelled(GenerationEvent("cancelled", turn_id="turn", attempt_id="attempt")) from exc
+            yield GenerationEvent("completed", turn_id="turn", attempt_id="attempt")
+
+    agent = type("FakeAgent", (), {})()
+    agent._stream_attempt = worker.SarjyAgent._stream_attempt.__get__(agent)
+    monkeypatch.setattr(worker, "FIRST_EVENT_SECONDS", 0.02)
+    monkeypatch.setattr(worker, "adapter_for", lambda provider, kind: MappingAdapter())
+
+    async def collect():
+        return [event async for event in agent._stream_attempt("provider", "deepseek_direct", FakeRequest(), [], None)]
+
+    try:
+        asyncio.run(collect())
+    except GenerationFailure as exc:
+        assert exc.event.error_code == "timeout" and exc.event.partial is False
+    else:
+        raise AssertionError("expected a timeout GenerationFailure")

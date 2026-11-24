@@ -20,7 +20,7 @@ from app.domain.ui_routing import CONFIDENCE_THRESHOLD, FORCED_MEMORY_TOOLS
 from config import first_event_seconds, provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
 from fallback import fallback_decision, next_attempt
-from generation import GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
+from generation import GenerationCancelled, GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
 from held_stream import EarlyReply
 from livekit import rtc
 from livekit.agents import (
@@ -1021,6 +1021,7 @@ class SarjyAgent(WordleTools, Agent):
         buffered_usage = None
         emitted = False
         overall_deadline = asyncio.get_running_loop().time() + GENERATION_ATTEMPT_SECONDS
+        deadline: asyncio.Timeout | None = None
         try:
             async with asyncio.timeout(min(FIRST_EVENT_SECONDS, GENERATION_ATTEMPT_SECONDS)) as deadline:
 
@@ -1046,6 +1047,21 @@ class SarjyAgent(WordleTools, Agent):
                 self, request.turn_id, "prompt_cache_miss_tokens", adapter.prompt_cache_miss_tokens, first_only=True
             )
         except TimeoutError as exc:
+            raise GenerationFailure(
+                GenerationEvent(
+                    "error",
+                    turn_id=request.turn_id,
+                    attempt_id=request.attempt_id,
+                    partial=emitted,
+                    error_code="timeout",
+                )
+            ) from exc
+        except GenerationCancelled as exc:
+            # Python 3.12's asyncio.timeout converts only a bare CancelledError into TimeoutError; the adapter
+            # re-raises our deadline's cancellation as this subclass, which would otherwise end the turn
+            # silently instead of falling back.
+            if deadline is None or not deadline.expired():
+                raise
             raise GenerationFailure(
                 GenerationEvent(
                     "error",
