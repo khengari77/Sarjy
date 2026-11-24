@@ -714,7 +714,12 @@ def _tool_from_combined_row(row) -> ToolCall:
 async def _combined_context_rows(
     db: AsyncSession, *, owner_id: str, conversation_id: str, history_limit: int
 ) -> tuple[list[Memory], list[Memory], list[tuple[ToolCall, Turn]], list[Turn]]:
-    """Hydrate the four turn-start reads from their single combined statement."""
+    """Hydrate the four turn-start reads from their single combined statement.
+
+    The hydrated rows are transient ORM objects built from a UNION ALL result,
+    not tracked by the session identity map, so callers must not mutate or
+    flush them.
+    """
     rows = (await db.execute(_combined_read_statement(owner_id, conversation_id, history_limit=history_limit))).all()
     blocked_rows: list[Memory] = []
     active_rows: list[Memory] = []
@@ -763,7 +768,11 @@ async def read_context_inputs(
     history_limit: int = HISTORY_LIMIT,
     combined_read: bool = False,
 ) -> ContextInputs:
-    """Read everything the compiler may consider for the next turn."""
+    """Read everything the compiler may consider for the next turn.
+
+    ``combined_read=True`` is ignored when a ``memory_reader`` is injected.
+    The combined single statement is used only when no reader is supplied.
+    """
     if combined_read and memory_reader is None:
         memories, tool_rows, window = await _combined_context_read(
             db, owner_id=owner_id, conversation_id=conversation_id, history_limit=history_limit
