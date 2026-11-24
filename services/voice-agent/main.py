@@ -637,10 +637,8 @@ class SarjyAgent(WordleTools, Agent):
             return None
         request, tools, _ = self._reply_request(user, snapshot, chat_ctx, tools)
         choice = model_settings.tool_choice if model_settings else None
-        early = EarlyReply(lambda report: self._stream_with_fallback(request, tools, choice, report))
-        self.pending.add(early.task)
-        early.task.add_done_callback(self.pending.discard)
-        return early
+        # Not in ``pending``: its owner stops it, and shutdown must not wait for a provider that will not close.
+        return EarlyReply(lambda report: self._stream_with_fallback(request, tools, choice, report))
 
     def _question_due(self) -> bool:
         proposal = self.memory_proposal

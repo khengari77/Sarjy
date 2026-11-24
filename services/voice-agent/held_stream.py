@@ -79,7 +79,6 @@ class EarlyReply:
         self._refusals: list[httpx.HTTPStatusError] = []
         self._announce: Report | None = None
         self._held: HeldStream[Any] = HeldStream(start(self._report))
-        self.task = self._held.task
 
     async def _report(self, refusal: httpx.HTTPStatusError) -> None:
         if self._announce is None:
@@ -99,6 +98,8 @@ class EarlyReply:
         self._held.cancel()
 
     async def discard(self) -> None:
+        # Nothing it still does is this turn's news.
+        self._announce = None
         await self._held.discard()
 
 

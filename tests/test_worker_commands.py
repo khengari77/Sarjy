@@ -55,7 +55,7 @@ def _agent(command, provider, published, paths, monkeypatch):
     async def backend(http_request):
         paths.append(http_request.url.path)
         # A real round trip lets other tasks run.
-        await asyncio.sleep(0.005)
+        await asyncio.sleep(0.2 if http_request.url.path.endswith("/command") else 0.005)
         if http_request.url.path.endswith("/turn/start"):
             return httpx.Response(200, json=_snapshot())
         if http_request.url.path.endswith("/internal/agent/command"):

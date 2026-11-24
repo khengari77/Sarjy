@@ -191,6 +191,12 @@ def test_turns_the_answer_or_application_owns_do_not_start_early(monkeypatch, re
             elif reason == "outcome":
                 agent.memory_outcome = "save"
             elif reason == "forced":
+                agent.forced_speech = ("another turn", "Should I?")
+                early = agent._start_reply_early(
+                    context.items[-1], await agent.compile(context.items[-1]), context, [], None
+                )
+                assert early is not None
+                await early.discard()
                 agent.forced_speech = (agent.current_turn, "Should I?")
             elif reason == "question":
                 agent.memory_proposal = {"confirmation_id": "c", "confirmation_revision": 1, "question": "Keep it?"}
