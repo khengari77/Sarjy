@@ -32,6 +32,67 @@ def test_turn_start_and_command_record_the_servers_own_timing():
     assert stages["command_server_ms"] == 640 and stages["command_db_ms"] == 90
 
 
+def test_turn_start_and_command_api_phases_are_traced_on_a_real_connection():
+    import socket
+    import threading
+
+    from main import backend_client
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(2)
+    port = server.getsockname()[1]
+
+    def serve():
+        for _ in range(2):
+            connection, _ = server.accept()
+            request = connection.recv(65536)
+            body = (
+                b'{"turn_id": "turn-1", "context": {}}'
+                if request.split(b" ")[1].endswith(b"/turn/start")
+                else b'{"command": null}'
+            )
+            connection.sendall(
+                b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: "
+                + str(len(body)).encode()
+                + b"\r\nconnection: close\r\n\r\n"
+                + body
+            )
+            connection.close()
+        server.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+
+    async def run():
+        async with backend_client(f"http://127.0.0.1:{port}", {}) as client:
+            agent = _agent(client)
+            message = SimpleNamespace(id="m1", text_content="Hi")
+            await agent.compile(message)
+            await agent.command_for(message)
+            return agent.turn_stages["turn-1"]
+
+    stages = asyncio.run(run())
+    assert stages["api_connect_ms"] >= 0
+    assert stages["api_headers_ms"] >= 0
+    assert stages["api_body_ms"] >= 0
+    assert stages["command_api_headers_ms"] >= 0
+    assert "command_api_body_ms" not in stages
+
+
+def test_phase_trace_records_body_time_and_a_reused_connection_as_zero():
+    from stream_completion import CompletionState, _PhaseTrace
+
+    state = CompletionState()
+    trace = _PhaseTrace(state)
+    asyncio.run(trace("http11.send_request_headers.started", {}))  # no connect event: a kept-alive socket
+    assert state.provider_connect_ms == 0
+    asyncio.run(trace("http11.receive_response_headers.complete", {}))
+    assert state.provider_headers_ms is not None
+    asyncio.run(trace("http11.receive_response_body.started", {}))
+    asyncio.run(trace("http11.receive_response_body.complete", {}))
+    assert state.provider_body_ms is not None
+
+
 def test_missing_or_malformed_timing_headers_record_nothing():
     def backend(request):
         return httpx.Response(200, headers={"x-server-ms": "slow", "x-db-ms": ""}, json={"turn_id": "t", "context": {}})
