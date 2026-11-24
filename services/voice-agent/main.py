@@ -46,6 +46,7 @@ from snapshot_request import snapshot_request
 from speech_budget import SpeechBudget
 from stream_completion import KEEPALIVE_LIMITS
 from turn_metrics import assistant_metrics, build_payload, elapsed_ms
+from warm import ConnectionWarmup
 from wordle_commands import is_wordle_command, parse_say_payload
 from wordle_tools import (
     WordleTools,
@@ -1371,6 +1372,7 @@ async def entrypoint(ctx: JobContext):
             ),
         )
         fallback_llm = providers.pop("fallback_llm", None)
+        warmup = ConnectionWarmup(backend, providers.get("llm"))
         agent = SarjyAgent(
             backend,
             config,
@@ -1393,6 +1395,8 @@ async def entrypoint(ctx: JobContext):
             ),
         )
         await ctx.connect()
+
+        session.on("user_state_changed", warmup.user_state_changed)
 
         @ctx.room.local_participant.register_rpc_method("sarjy.interrupt")
         async def interrupt(data: rtc.RpcInvocationData):
@@ -1453,6 +1457,7 @@ async def entrypoint(ctx: JobContext):
                 greeting.cancel()
                 agent.loop_lag.stop()
                 await agent.stop_speech_refills()
+                await warmup.aclose()
             if agent.pending:
                 await asyncio.gather(*agent.pending, return_exceptions=True)
             if fallback_llm is not None and hasattr(fallback_llm, "aclose"):

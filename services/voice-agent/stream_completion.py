@@ -118,6 +118,26 @@ KEEPALIVE_LIMITS = httpx.Limits(max_keepalive_connections=8, keepalive_expiry=50
 MAX_PHASE_MS = 120_000  # the metrics API rejects larger values
 
 
+class HttpWarmup:
+    """One cheap request on an owned client so the next call reuses a live TLS connection.
+
+    /models returns immediately and spends no tokens; every failure is ignored
+    because a warm-up is never a reason to fail a turn.
+    """
+
+    def __init__(self, client: httpx.AsyncClient, url: str, api_key: str) -> None:
+        self._client = client
+        self._url = url
+        self._api_key = api_key
+
+    async def __call__(self) -> None:
+        try:
+            response = await self._client.get(self._url, headers={"Authorization": "Bearer " + self._api_key})
+            await response.aclose()
+        except Exception:
+            logging.getLogger(__name__).debug("provider connection warm-up failed", exc_info=True)
+
+
 class _PhaseTrace:
     """httpcore trace hook: how long the connection setup and the wait for response headers took."""
 
