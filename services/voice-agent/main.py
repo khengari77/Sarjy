@@ -269,6 +269,8 @@ class SarjyAgent(WordleTools, Agent):
         # Prepayments in flight. Cancelled at shutdown, after which none may start.
         self.speech_stopped = False
         self.speech_refills: set[asyncio.Task] = set()
+        # The next model call's budget reservation, started with the turn rather than after it.
+        self.prepaid_generation: tuple[str, asyncio.Task[None]] | None = None
         self.speech_budget = SpeechBudget(self._reserve_speech, self._report_reservation, self._spawn_refill)
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
@@ -475,12 +477,39 @@ class SarjyAgent(WordleTools, Agent):
 
     async def _post_reservation(self, provider: str, characters: int) -> None:
         turn_id, started = self.current_turn, time.perf_counter()
+        paid = self._take_prepaid(provider)
+        try:
+            if paid is not None:
+                await paid
+            else:
+                await self._send_reservation(provider, characters)
+        finally:
+            if provider in {"openai", "deepseek"}:
+                self._record_stage(turn_id, "llm_reserve_ms", started, first_only=True)
+
+    async def _send_reservation(self, provider: str, characters: int) -> None:
         response = await self.backend.post(
             "/internal/development/reserve", json={"provider": provider, "characters": characters}
         )
-        if provider in {"openai", "deepseek"}:
-            self._record_stage(turn_id, "llm_reserve_ms", started, first_only=True)
         response.raise_for_status()
+
+    def _take_prepaid(self, provider: str) -> asyncio.Task[None] | None:
+        """The reservation already started for this turn's first model call, once."""
+        prepaid, self.prepaid_generation = self.prepaid_generation, None
+        return prepaid[1] if prepaid is not None and prepaid[0] == provider else None
+
+    def _prepay_generation(self) -> None:
+        """Start the model reservation now; it does not depend on the turn's context.
+
+        A turn that never reaches the model leaves this one request charged, like a dropped early reply.
+        """
+        provider = {"openai_direct": "openai", "deepseek_direct": "deepseek"}.get(self.pipeline["llm"]["provider"])
+        if provider is None or self.speech_stopped:
+            return
+        task = asyncio.create_task(self._send_reservation(provider, 0))
+        # A refusal matters only if the model call takes this reservation.
+        task.add_done_callback(lambda done: done.cancelled() or done.exception())
+        self.prepaid_generation = (provider, task)
 
     async def _report_reservation(self, exc: httpx.HTTPStatusError) -> None:
         if self.notify:
@@ -510,6 +539,9 @@ class SarjyAgent(WordleTools, Agent):
     async def stop_speech_refills(self) -> None:
         self.speech_stopped = True
         refills = list(self.speech_refills)
+        if self.prepaid_generation is not None:
+            refills.append(self.prepaid_generation[1])
+            self.prepaid_generation = None
         for refill in refills:
             refill.cancel()
         await asyncio.gather(*refills, return_exceptions=True)
@@ -539,6 +571,7 @@ class SarjyAgent(WordleTools, Agent):
         if self.is_command(new_message.text_content or ""):
             self.suppressed.add(new_message.id)
             return
+        self._prepay_generation()
         await self.compile(new_message)
 
     async def command_for(self, message) -> dict | None:
