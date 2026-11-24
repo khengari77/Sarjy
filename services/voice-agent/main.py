@@ -245,10 +245,22 @@ def _header_int(response: httpx.Response, name: str) -> int | None:
         return None
 
 
-def _record_value(agent, turn_id: str | None, name: str, value: int | None, *, first_only: bool = False) -> None:
+def _record_value(
+    agent,
+    turn_id: str | None,
+    name: str,
+    value: int | None,
+    *,
+    first_only: bool = False,
+    second_name: str | None = None,
+) -> None:
     stages = getattr(agent, "turn_stages", {}).get(turn_id) if turn_id is not None else None
-    if stages is None or value is None or (first_only and name in stages):
+    if stages is None or value is None:
         return
+    if first_only and name in stages:
+        if second_name is None or second_name in stages:
+            return
+        name = second_name
     stages[name] = value
 
 
@@ -331,11 +343,23 @@ class SarjyAgent(WordleTools, Agent):
             return (None, None)
         return (proposal.get("confirmation_id"), proposal.get("confirmation_revision"))
 
-    def _record_stage(self, turn_id: str | None, name: str, started: float, *, first_only: bool = False) -> None:
+    def _record_stage(
+        self,
+        turn_id: str | None,
+        name: str,
+        started: float,
+        *,
+        first_only: bool = False,
+        second_name: str | None = None,
+    ) -> None:
         # Only the turn/start of a turn opens its entry; a late timing must not reopen a sent one.
         stages = self.turn_stages.get(turn_id) if turn_id is not None else None
-        if stages is None or (first_only and name in stages):
+        if stages is None:
             return
+        if first_only and name in stages:
+            if second_name is None or second_name in stages:
+                return
+            name = second_name
         stages[name] = elapsed_ms(started, time.perf_counter())
 
     async def compile(self, message):
@@ -566,6 +590,23 @@ class SarjyAgent(WordleTools, Agent):
         if provider is None or self.speech_stopped:
             return
         self._discard_prepaid()
+        self._start_prepayment(provider, message_id)
+
+    def _prepay_continuation(self, provider_kind: str) -> None:
+        """Start the continuation's reservation once this model call returns a tool call.
+
+        The continuation asks for a model call only after the tool result exists, so waiting until then
+        puts the reservation round trip on that path. One reservation per call: a second tool call in the
+        same response is served by the same continuation.
+        """
+        provider = {"openai_direct": "openai", "deepseek_direct": "deepseek"}.get(provider_kind)
+        if provider is None or self.speech_stopped or self.reserving_message is None:
+            return
+        if self.prepaid_generation is not None:
+            return
+        self._start_prepayment(provider, self.reserving_message)
+
+    def _start_prepayment(self, provider: str, message_id: str) -> None:
         task = asyncio.create_task(self._send_reservation(provider, 0))
         self.prepayments.add(task)
 
@@ -857,7 +898,13 @@ class SarjyAgent(WordleTools, Agent):
                 self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
                 if model_started is not None:
                     # A Wordle game buffers prose, so there this is when the guarded text is released.
-                    self._record_stage(turn_id, "model_first_chunk_ms", model_started, first_only=True)
+                    self._record_stage(
+                        turn_id,
+                        "model_first_chunk_ms",
+                        model_started,
+                        first_only=True,
+                        second_name="model_first_chunk_2_ms",
+                    )
                 self._record_early_chunk(turn_id, early, used_early)
                 yield chunk
 
@@ -870,6 +917,7 @@ class SarjyAgent(WordleTools, Agent):
             "model_first_chunk_ms",
             elapsed_ms(early.started, early.first_item_at),
             first_only=True,
+            second_name="model_first_chunk_2_ms",
         )
 
     async def _guard_wordle_prose(self, stream):
@@ -1044,6 +1092,8 @@ class SarjyAgent(WordleTools, Agent):
         adapter = adapter_for(provider, provider_kind)
         buffered_usage = None
         emitted = False
+        continuation_prepaid = False
+        prepay_continuation = getattr(self, "_prepay_continuation", None)
         overall_deadline = asyncio.get_running_loop().time() + GENERATION_ATTEMPT_SECONDS
         deadline: asyncio.Timeout | None = None
         try:
@@ -1058,6 +1108,10 @@ class SarjyAgent(WordleTools, Agent):
                     if event.kind in {"text", "tool"}:
                         emitted = True
                         answering()  # adapters that do not report their first chunk
+                    if event.kind == "tool" and not continuation_prepaid and prepay_continuation is not None:
+                        # The next inference is now certain; reserve it while the tool runs.
+                        prepay_continuation(provider_kind)
+                        continuation_prepaid = True
                     if event.kind == "usage":
                         buffered_usage = event
                         continue
@@ -1065,10 +1119,20 @@ class SarjyAgent(WordleTools, Agent):
                         yield buffered_usage
                     yield event
             _record_value(
-                self, request.turn_id, "prompt_cache_hit_tokens", adapter.prompt_cache_hit_tokens, first_only=True
+                self,
+                request.turn_id,
+                "prompt_cache_hit_tokens",
+                adapter.prompt_cache_hit_tokens,
+                first_only=True,
+                second_name="prompt_cache_hit_tokens_2",
             )
             _record_value(
-                self, request.turn_id, "prompt_cache_miss_tokens", adapter.prompt_cache_miss_tokens, first_only=True
+                self,
+                request.turn_id,
+                "prompt_cache_miss_tokens",
+                adapter.prompt_cache_miss_tokens,
+                first_only=True,
+                second_name="prompt_cache_miss_tokens_2",
             )
         except TimeoutError as exc:
             raise GenerationFailure(

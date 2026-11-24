@@ -172,12 +172,69 @@ def test_loop_lag_monitor_sees_a_blocked_loop_and_resets():
     assert second < first
 
 
+def test_a_second_inference_records_its_own_stage_names():
+    import time
+
+    from main import _record_value
+
+    agent = _agent(None)
+    agent.turn_stages["t"] = {}
+    agent._record_stage(
+        "t", "model_first_chunk_ms", time.perf_counter(), first_only=True, second_name="model_first_chunk_2_ms"
+    )
+    first = agent.turn_stages["t"]["model_first_chunk_ms"]
+    agent._record_stage(
+        "t", "model_first_chunk_ms", time.perf_counter(), first_only=True, second_name="model_first_chunk_2_ms"
+    )
+    second = agent.turn_stages["t"]["model_first_chunk_2_ms"]
+    agent._record_stage(
+        "t", "model_first_chunk_ms", time.perf_counter(), first_only=True, second_name="model_first_chunk_2_ms"
+    )
+    _record_value(
+        agent,
+        "t",
+        "prompt_cache_hit_tokens",
+        10,
+        first_only=True,
+        second_name="prompt_cache_hit_tokens_2",
+    )
+    _record_value(
+        agent,
+        "t",
+        "prompt_cache_hit_tokens",
+        20,
+        first_only=True,
+        second_name="prompt_cache_hit_tokens_2",
+    )
+    _record_value(
+        agent,
+        "t",
+        "prompt_cache_miss_tokens",
+        30,
+        first_only=True,
+        second_name="prompt_cache_miss_tokens_2",
+    )
+    assert first is not None and second is not None
+    assert agent.turn_stages["t"] == {
+        "model_first_chunk_ms": first,
+        "model_first_chunk_2_ms": second,
+        "prompt_cache_hit_tokens": 10,
+        "prompt_cache_hit_tokens_2": 20,
+        "prompt_cache_miss_tokens": 30,
+    }
+
+
 def test_stage_fields_match_the_api_schema_and_a_failing_trace_hook_is_harmless():
     from app.routes.worker import TurnStageMetrics
     from stream_completion import CompletionState, _PhaseTrace
     from turn_metrics import STAGE_FIELDS, TurnStages
 
     assert set(STAGE_FIELDS) == set(TurnStageMetrics.model_fields) == set(TurnStages.__annotations__)
+    assert {
+        "model_first_chunk_2_ms",
+        "prompt_cache_hit_tokens_2",
+        "prompt_cache_miss_tokens_2",
+    } <= set(STAGE_FIELDS)
 
     trace = _PhaseTrace(CompletionState())
     trace._observe = lambda event: 1 / 0  # type: ignore[method-assign]
