@@ -219,3 +219,33 @@ def test_elevenlabs_daily_characters_is_configurable(tmp_path):
 
 def test_elevenlabs_default_allowance_is_2500():
     assert Settings(_env_file=None).elevenlabs_daily_characters == 2500
+
+
+def test_insert_or_increment_refuses_an_out_of_range_amount_without_touching_the_database(tmp_path):
+    from app.infrastructure.database import DevelopmentBudget
+    from app.infrastructure.upsert import insert_or_increment
+
+    async def check():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/bounds.db")
+        sessions = async_sessionmaker(engine)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        try:
+            async with sessions() as db:
+                with capture_statements(engine) as statements:
+                    for amount in (0, -1, 11):
+                        refused = await insert_or_increment(
+                            db,
+                            DevelopmentBudget,
+                            {"day": "2026-11-24", "provider": "jev", "reserved_units": amount},
+                            index_elements=["day", "provider"],
+                            column="reserved_units",
+                            amount=amount,
+                            limit=10,
+                        )
+                        assert refused is None
+                assert statements == []  # a brand-new row is bounded by the helper, not only by its callers
+        finally:
+            await engine.dispose()
+
+    asyncio.run(check())

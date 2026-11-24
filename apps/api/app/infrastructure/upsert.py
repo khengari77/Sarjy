@@ -37,9 +37,13 @@ async def insert_or_increment(
     """Insert one row or add ``amount`` to ``column`` while staying within ``limit``.
 
     The insert and the conditional increment are one statement, so a concurrent
-    writer can neither lose an increment nor push the total past the limit.
+    writer can neither lose an increment nor push the total past the limit on the
+    conflict path. A brand-new row has no existing total to compare, so the helper
+    refuses ``amount <= 0`` or ``amount > limit`` itself rather than trusting callers.
     Returns the new column value, or ``None`` when the increment was refused.
     """
+    if amount <= 0 or amount > limit:
+        return None
     target = getattr(model, column)
     statement = (
         _insert_for(db)(model)
