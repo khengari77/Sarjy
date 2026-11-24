@@ -19,8 +19,9 @@ def said(text):
 class Worker:
     """A worker whose command answer and model are controlled by the test."""
 
-    def __init__(self, monkeypatch, answer, *, refuse=False):
+    def __init__(self, monkeypatch, answer, *, refuse=False, **agent_kwargs):
         self.answer, self.refuse = answer, refuse
+        self.agent_kwargs = agent_kwargs
         self.gate = asyncio.Event()
         self.model_started = asyncio.Event()
         self.model_gate = asyncio.Event()
@@ -59,6 +60,7 @@ class Worker:
                 "Rules",
                 notify=self.notify,
                 publish=self.publish,
+                **self.agent_kwargs,
             )
             agent._stream_attempt = self.attempt
             context = llm.ChatContext()

@@ -17,7 +17,13 @@ from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolI
 from app.domain.memory_capture import is_referential
 from app.domain.tool_operations import operation_key
 from app.domain.ui_routing import CONFIDENCE_THRESHOLD, FORCED_MEMORY_TOOLS
-from config import first_event_seconds, provider_credentials, read_worker_environment, require_values
+from config import (
+    first_event_seconds,
+    provider_credentials,
+    read_worker_environment,
+    reassurance_seconds,
+    require_values,
+)
 from dotenv import load_dotenv
 from endpointing import endpointing_kwargs
 from fallback import fallback_decision, next_attempt
@@ -42,6 +48,7 @@ from livekit.plugins import silero
 from loop_lag import LoopLagMonitor
 from prefix_stability import canonical_prompt, predicted_prefix_hit_pct
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
+from reassurance import PHRASES, ReassuranceTimer, with_reassurance
 from snapshot_request import snapshot_request
 from speech_budget import SpeechBudget
 from stream_completion import KEEPALIVE_LIMITS, CompletionState, TracedTransport, api_phase_state
@@ -180,11 +187,22 @@ def _user_message(chat_ctx):
     )
 
 
-def _continuation(chat_ctx, user):
+def _without_leading_filler(text: str, filler: str | None) -> str:
+    if not filler or not text.startswith(filler):
+        return text
+    return text[len(filler) :].lstrip()
+
+
+def _continuation(chat_ctx, user, filler: str | None = None):
     continuation = []
     for item in chat_ctx.items[chat_ctx.items.index(user) + 1 :]:
         if isinstance(item, llm.ChatMessage) and item.role == "assistant":
-            continuation.append(AssistantContinuation(content=item.text_content, interrupted=item.interrupted))
+            continuation.append(
+                AssistantContinuation(
+                    content=_without_leading_filler(item.text_content or "", filler),
+                    interrupted=item.interrupted,
+                )
+            )
         elif isinstance(item, llm.FunctionCall):
             continuation.append(
                 ModelToolItem(kind="call", call_id=item.call_id, name=item.name, content=item.arguments)
@@ -264,10 +282,13 @@ class SarjyAgent(WordleTools, Agent):
         is_command=None,
         publish_wordle=None,
         wordle_active=None,
+        reassurance_seconds: float = 1.6,
     ):
         super().__init__(instructions=instructions)
         self.publish_wordle = publish_wordle
         self.wordle_active = wordle_active or (lambda: False)
+        self.reassurance = ReassuranceTimer(reassurance_seconds)
+        self.reassurance_fillers: dict[str, str] = {}
         self.wordle_spoken: dict[str, list[str]] = {}
         self.wordle_touched = False
         self.wordle_calls: set[str] = set()
@@ -377,7 +398,11 @@ class SarjyAgent(WordleTools, Agent):
         self._discard_prepaid(keep=message.id)
         self.reserving_message = message.id
         result = self.prepared[message.id]
+        previous_turn = self.current_turn
         self.current_turn = result["turn_id"]
+        if previous_turn is not None and previous_turn != self.current_turn:
+            # The filler phrase stays until that turn's playout is persisted; a fast next turn must not lose it.
+            self.reassurance.finish(previous_turn)
         self.current_text = message.text_content or ""
         await self._publish_resync()
         self._apply_speaking_speed(result["context"])
@@ -631,8 +656,15 @@ class SarjyAgent(WordleTools, Agent):
             async for part in text:
                 while part:
                     # Charge before forwarding text. Interrupted/failed reservations are retained.
+                    filler = part.strip() in PHRASES
                     started = time.perf_counter()
-                    covered = await self.speech_budget.take(len(part))
+                    try:
+                        covered = await self.speech_budget.take(len(part), report=not filler)
+                    except Exception:
+                        # A refused reassurance is dropped silently; the real answer still reports.
+                        if filler:
+                            break
+                        raise
                     if first_take:
                         first_take = False
                         self._record_stage(turn_id, "tts_reserve_ms", started, first_only=True)
@@ -643,11 +675,13 @@ class SarjyAgent(WordleTools, Agent):
             yield frame
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
+        started = time.perf_counter()
         if self.is_command(new_message.text_content or ""):
             self.suppressed.add(new_message.id)
             return
         self._prepay_generation(new_message.id)
         await self.compile(new_message)
+        self.reassurance.begin(self.prepared[new_message.id]["turn_id"], started)
 
     async def command_for(self, message) -> dict | None:
         """Ask the API to interpret one finalized turn, once per turn.
@@ -729,23 +763,58 @@ class SarjyAgent(WordleTools, Agent):
             self.suppressed.discard(user.id)
             return
         snapshot = await self.compile(user)
+        turn_id = self.prepared[user.id]["turn_id"]
+        self.reassurance.begin_if_missing(turn_id, time.perf_counter())
+        started = self.reassurance.started_at(turn_id)
         direct = await self._wordle_turn_speech(user)
         if direct is not None:
             # The application owns Wordle speech; an armed memory question must not follow it.
             self._disarm_memory_proposal()
+            if started is not None:
+                self._record_stage(turn_id, "first_answer_ms", started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=direct))
             self._schedule_persistence(user, self.session.current_speech)
             return
         early = self._start_reply_early(user, snapshot, chat_ctx, tools, model_settings)
         try:
             command = None if self.command_blocked_turn == user.id else await self.command_for(user)
+
+            def on_filler(phrase: str) -> None:
+                if started is not None:
+                    self._record_stage(turn_id, "reassurance_ms", started, first_only=True)
+                self.reassurance_fillers[turn_id] = phrase
+
+            def on_answer() -> None:
+                if started is not None:
+                    self._record_stage(turn_id, "first_answer_ms", started, first_only=True)
+
             reply = self._reply(user, snapshot, chat_ctx, tools, model_settings, command, early)
-            async with aclosing(reply):
-                async for chunk in reply:
+            chunks = with_reassurance(
+                reply,
+                self.reassurance,
+                turn_id,
+                allowed=self._reassurance_allowed(user, command, turn_id),
+                on_filler=on_filler,
+                on_answer=on_answer,
+            )
+            async with aclosing(chunks):
+                async for chunk in chunks:
                     yield chunk
         finally:
             if early is not None:
                 await early.discard()
+
+    def _reassurance_allowed(self, user, command, turn_id: str) -> bool:
+        """Turns the model or application already owns speak deterministically, so never add a filler."""
+        return (
+            command is None
+            and self.command_blocked_turn != user.id
+            and self.decision_turn != turn_id
+            and self.memory_outcome is None
+            and not self._question_due()
+            and not (self.forced_speech is not None and self.forced_speech[0] == turn_id)
+            and not self.wordle_active()
+        )
 
     def _start_reply_early(self, user, snapshot, chat_ctx, tools, model_settings) -> EarlyReply | None:
         """Start the reply this turn gets if it turns out not to be a command.
@@ -775,10 +844,12 @@ class SarjyAgent(WordleTools, Agent):
     def _reply_request(self, user, snapshot, chat_ctx, tools):
         # The turn this snapshot was compiled for, not the newest turn: a later utterance may
         # already have moved ``current_turn`` while this reply is still being built.
-        request = snapshot_request(snapshot, self.prepared[user.id]["turn_id"])
+        turn_id = self.prepared[user.id]["turn_id"]
+        request = snapshot_request(snapshot, turn_id)
         tools = self._wordle_tools(tools)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
-        return _with_continuation(request, _continuation(chat_ctx, user), schemas), tools, schemas
+        continuation = _continuation(chat_ctx, user, self.reassurance_fillers.get(turn_id))
+        return _with_continuation(request, continuation, schemas), tools, schemas
 
     async def _reply(self, user, snapshot, chat_ctx, tools, model_settings, command, early):
         reply_started = time.perf_counter()
@@ -1006,6 +1077,7 @@ class SarjyAgent(WordleTools, Agent):
 
         async def persist_playout():
             text, status = await _playout_result(handle)
+            text = _without_leading_filler(text, self.reassurance_fillers.pop(turn_id, None))
             await self._finalize_turn(turn_id, text, status)
             await self._send_turn_metrics(turn_id, user, handle)
 
@@ -1404,6 +1476,7 @@ async def entrypoint(ctx: JobContext):
             publish_wordle=partial(publish_wordle, ctx.room),
             wordle_active=lambda: reveal.active,
             is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending, wordle_active=reveal.active),
+            reassurance_seconds=reassurance_seconds(values),
         )
         agent.loop_lag.start()
         session = AgentSession(
