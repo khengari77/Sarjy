@@ -51,6 +51,8 @@ class MemoryCandidates:
     inactive: tuple[ContextCandidate, ...] = ()
     blocked_sources: frozenset[str] = frozenset()
     rows: Mapping[str, Memory] = field(default_factory=dict)
+    # Derived from the same blocked rows: hidden memories from this conversation.
+    retractions: tuple[ContextCandidate, ...] = ()
 
     @property
     def excluded_ids(self) -> frozenset[str]:
@@ -159,7 +161,14 @@ async def orm_memory_candidates(
                 status="superseded",
             )
         )
-    return MemoryCandidates(tuple(included), tuple(denied), (), sources, active_by_id)
+    return MemoryCandidates(
+        included=tuple(included),
+        denied=tuple(denied),
+        inactive=(),
+        blocked_sources=sources,
+        rows=active_by_id,
+        retractions=_retraction_candidates_from_rows(blocked_rows, conversation_id=conversation_id),
+    )
 
 
 async def _memory_rows_for_ids(db: AsyncSession, owner_id: str, ids) -> list[Memory]:
@@ -205,6 +214,28 @@ def _dependency_ids(turn: Turn, snapshots: Mapping[str, dict] | None = None) -> 
     return references
 
 
+def _retraction_candidates_from_rows(rows: Sequence[Memory], *, conversation_id: str) -> tuple[ContextCandidate, ...]:
+    """Bounded retraction blocks from already-loaded blocked rows.
+
+    The SQL read applies the same predicate, ordering and limit; deriving from
+    every blocked row of the owner yields the identical five rows because hidden
+    memories from the conversation are always inside that blocked set.
+    """
+    hidden = [row for row in rows if row.status == "hidden" and row.source_conversation_id == conversation_id]
+    newest = sorted(hidden, key=lambda row: (row.updated_at, row.id), reverse=True)[:RETRACTION_LIMIT]
+    return tuple(
+        ContextCandidate(
+            id=RETRACTION_PREFIX + row.id,
+            role="memory",
+            text=RETRACTION_TEMPLATE.format(text=row.content[:RETRACTION_TEXT_LIMIT]),
+            origin="memory",
+            source="retraction",
+        )
+        for row in sorted(newest, key=lambda item: item.id)
+        if row.content
+    )
+
+
 async def retraction_candidates(
     db: AsyncSession, *, owner_id: str, conversation_id: str
 ) -> tuple[ContextCandidate, ...]:
@@ -226,17 +257,7 @@ async def retraction_candidates(
             .limit(RETRACTION_LIMIT)
         )
     ).all()
-    return tuple(
-        ContextCandidate(
-            id=RETRACTION_PREFIX + row.id,
-            role="memory",
-            text=RETRACTION_TEMPLATE.format(text=row.content[:RETRACTION_TEXT_LIMIT]),
-            origin="memory",
-            source="retraction",
-        )
-        for row in sorted(rows, key=lambda item: item.id)
-        if row.content
-    )
+    return _retraction_candidates_from_rows(rows, conversation_id=conversation_id)
 
 
 async def _discover_closure_candidates(
@@ -617,12 +638,19 @@ async def read_context_inputs(
         for call, _ in tool_rows
         if call.id not in blocked_tools
     )
+    # The ORM reader derives retractions from the blocked rows it already loaded;
+    # any alternate reader keeps the separate read so its results are unchanged.
+    retractions = (
+        memories.retractions
+        if memory_reader is None
+        else await retraction_candidates(db, owner_id=owner_id, conversation_id=conversation_id)
+    )
     return ContextInputs(
         history=history,
         memories=memories,
         tool_results=tool_results,
         blocked_ids=frozenset(blocked | blocked_tools),
-        retractions=await retraction_candidates(db, owner_id=owner_id, conversation_id=conversation_id),
+        retractions=retractions,
     )
 
 
