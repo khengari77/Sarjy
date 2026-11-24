@@ -48,6 +48,10 @@ class ProviderAdapter:
 
     def __init__(self, provider: Any) -> None:
         self.provider = provider
+        self.prompt_cache_hit_tokens: int | None = None
+        self.prompt_cache_miss_tokens: int | None = None
+        self.provider_connect_ms: int | None = None
+        self.provider_headers_ms: int | None = None
 
     async def stream(
         self, request: ModelRequest, tools: Sequence[Any] = (), tool_choice: Any = None
@@ -74,6 +78,8 @@ class ProviderAdapter:
                     for event in _chunk_events(chunk, identity, buffered_tools):
                         partial = partial or event.kind == "text"
                         yield event
+            self.prompt_cache_hit_tokens = state.prompt_cache_hit_tokens
+            self.prompt_cache_miss_tokens = state.prompt_cache_miss_tokens
             if _incomplete_response(token, state):
                 raise GenerationFailure(
                     GenerationEvent("error", **identity, partial=partial, error_code="incomplete_response")
@@ -94,6 +100,8 @@ class ProviderAdapter:
                 GenerationEvent("error", **identity, partial=partial, error_code=code, status_code=status)
             ) from exc
         finally:
+            self.provider_connect_ms = state.provider_connect_ms
+            self.provider_headers_ms = state.provider_headers_ms
             if token is not None:
                 completion_state.reset(token)
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
 from typing import Any, Final
@@ -25,6 +26,7 @@ class HeldStream[T]:
     def __init__(self, stream: AsyncGenerator[T]) -> None:
         self._stream = stream
         self._items: asyncio.Queue[T | object] = asyncio.Queue()
+        self.first_item_at: float | None = None
         self._task = asyncio.create_task(self._run())
         self._task.add_done_callback(self._retrieve)
 
@@ -41,6 +43,8 @@ class HeldStream[T]:
     async def _run(self) -> None:
         try:
             async for item in self._stream:
+                if self.first_item_at is None:
+                    self.first_item_at = time.perf_counter()
                 self._items.put_nowait(item)
         finally:
             try:
@@ -78,7 +82,12 @@ class EarlyReply:
     def __init__(self, start: Callable[[Report], AsyncGenerator[Any]]) -> None:
         self._refusals: list[httpx.HTTPStatusError] = []
         self._announce: Report | None = None
+        self.started = time.perf_counter()
         self._held: HeldStream[Any] = HeldStream(start(self._report))
+
+    @property
+    def first_item_at(self) -> float | None:
+        return self._held.first_item_at
 
     async def _report(self, refusal: httpx.HTTPStatusError) -> None:
         if self._announce is None:
