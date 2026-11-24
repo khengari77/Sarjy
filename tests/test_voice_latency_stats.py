@@ -620,7 +620,6 @@ def test_report_prints_paths_invalid_connect_and_warns_on_count_difference(tmp_p
                 {"type": "meta", "rounds": 1, "phrase_count": 2, "api_host_kind": "local", "git_head": "bbb"},
                 {"type": "connect", "round": 1, "connect_ms": 60.0},
                 _row("chat", ANSWERED, 120.0, "chat-01"),
-                _row("chat", BARGE_IN, identifier="chat-02"),
                 _row("chat", ANSWERED, 130.0, "chat-02"),
             )
         )
@@ -818,3 +817,14 @@ def test_run_and_report_agree_on_the_meta_row():
     written = probe._meta_row("http://127.0.0.1:8000", 2, 20)
     assert probe._read_meta([{"type": "connect"}, written]) == written
     assert (written["rounds"], written["phrase_count"], written["api_host_kind"]) == (2, 20, "local")
+
+
+def test_an_interrupted_run_is_not_compared(tmp_path, capsys):
+    meta = probe._meta_row("http://127.0.0.1:8000", 1, 2)
+    row = {"type": "phrase", "id": "a", "category": "chat", "outcome": "answered", "latency_ms": 5.0}
+    complete, cut = tmp_path / "complete.jsonl", tmp_path / "cut.jsonl"
+    complete.write_text("\n".join(json.dumps(item) for item in (meta, row, row)))
+    cut.write_text("\n".join(json.dumps(item) for item in (meta, row)))
+    assert report([complete, complete]) == 0
+    assert report([complete, cut]) == 2
+    assert "cut.jsonl is not a complete run" in capsys.readouterr().err

@@ -73,6 +73,7 @@ DEFAULT_REPORT = Path("artifacts/voice-latency.jsonl")
 GREETING_SILENCE_S = 1.5
 AGENT_JOIN_TIMEOUT_S = 20.0
 ROOM_CONNECT_TIMEOUT_S = 20.0
+TEARDOWN_TIMEOUT_S = 10.0
 MICROPHONE_STALL_MARGIN_S = 10.0
 # The API gives sessions 10 minutes; stop comfortably before that expiry.
 SESSION_LIMIT_S = 480.0
@@ -268,9 +269,9 @@ class Microphone:
     async def play(self, samples: np.ndarray) -> float:
         """Play the trimmed phrase and return the reference timestamp."""
         done = asyncio.Event()
-        self._queue.put_nowait((samples, done))
         if self._task is None:
             raise RuntimeError("microphone is not running")
+        self._queue.put_nowait((samples, done))
         deadline = samples.size / SAMPLE_RATE + MICROPHONE_STALL_MARGIN_S
         finished = asyncio.create_task(done.wait())
         try:
@@ -574,9 +575,10 @@ async def _run_session(
             _attach_existing_audio(room, agent_audio)
             source = rtc.AudioSource(SAMPLE_RATE, 1, queue_size_ms=100)
             track = rtc.LocalAudioTrack.create_audio_track("voice-latency-probe", source)
-            await room.local_participant.publish_track(
+            publish = room.local_participant.publish_track(
                 track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
             )
+            await asyncio.wait_for(publish, ROOM_CONNECT_TIMEOUT_S)
             microphone = Microphone(source)
             await microphone.start()
         except Exception as exc:
@@ -609,13 +611,15 @@ async def _run_session(
                 return remaining
         return remaining
     finally:
-        if microphone is not None:
-            await microphone.stop()
-        if agent_audio is not None:
-            await agent_audio.close()
-        if room is not None:
-            with contextlib.suppress(Exception):
-                await room.disconnect()
+        for teardown in (
+            microphone.stop if microphone is not None else None,
+            agent_audio.close if agent_audio is not None else None,
+            room.disconnect if room is not None else None,
+        ):
+            if teardown is not None:
+                # A call that died must not keep the session from being ended.
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(teardown(), TEARDOWN_TIMEOUT_S)
         if session is not None and not await _end_session(client, api, str(session["id"])):
             sink.write({"type": "end_failed", "round": round_number})
 
@@ -668,7 +672,7 @@ def _api_host_kind(api: str) -> str:
     return "remote"
 
 
-def _meta_row(api: str, rounds: int, phrase_count: int) -> dict[str, object]:
+def _meta_row(api: str, rounds: int, phrase_count: int, cookie_name: str = COOKIE_NAME) -> dict[str, object]:
     return {
         "type": "meta",
         "utc": datetime.now(UTC).isoformat(),
@@ -676,6 +680,7 @@ def _meta_row(api: str, rounds: int, phrase_count: int) -> dict[str, object]:
         "api_host_kind": _api_host_kind(api),
         "rounds": rounds,
         "phrase_count": phrase_count,
+        "cookie_name": cookie_name,
     }
 
 
@@ -694,7 +699,7 @@ async def _run_probe(
         print(f"{out} already exists; refusing to overwrite", file=sys.stderr)
         return 2
     with sink:
-        sink.write(_meta_row(api, rounds, len(phrases)))
+        sink.write(_meta_row(api, rounds, len(phrases), cookie_name))
         print(
             "warning: memory and settings phrases change that identity's data",
             file=sys.stderr,
@@ -782,7 +787,7 @@ def _print_side_by_side(summaries: Sequence[Mapping[str, Mapping[str, object]]],
         print(_table_line(category, cells, widths * len(summaries)))
 
 
-_META_KEYS = ("rounds", "phrase_count", "api_host_kind")
+_META_KEYS = ("rounds", "phrase_count", "api_host_kind", "cookie_name")
 
 
 def _read_meta(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
@@ -791,6 +796,13 @@ def _read_meta(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
 
 def _meta_mismatch(first: Mapping[str, Any], second: Mapping[str, Any]) -> list[str]:
     return [key for key in _META_KEYS if first.get(key) != second.get(key)]
+
+
+def _missing_phrases(rows: Sequence[Mapping[str, Any]]) -> int:
+    meta = _read_meta(rows)
+    return int(meta.get("rounds", 0)) * int(meta.get("phrase_count", 0)) - sum(
+        row.get("type") == "phrase" for row in rows
+    )
 
 
 def _print_meta(labels: Sequence[str], metas: Sequence[Mapping[str, Any]]) -> None:
@@ -814,6 +826,9 @@ def report(paths: Sequence[Path]) -> int:
         return 2
     files = [_read_rows(path) for path in paths]
     summaries = [summarize(rows) for rows in files]
+    incomplete = [path for path, rows in zip(paths, files, strict=True) if _missing_phrases(rows)]
+    for path in incomplete:
+        print(f"{path} is not a complete run", file=sys.stderr)
     if len(summaries) == 1:
         _print_single(summaries[0])
         _print_connect("connect", connect_summary(files[0]))
@@ -824,6 +839,8 @@ def report(paths: Sequence[Path]) -> int:
     differing = _meta_mismatch(metas[0], metas[1])
     if differing:
         print(f"meta rows differ in: {', '.join(differing)}", file=sys.stderr)
+        return 2
+    if incomplete:
         return 2
     _print_side_by_side(summaries, labels)
     for label, rows in zip(labels, files, strict=True):
