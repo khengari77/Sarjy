@@ -16,9 +16,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 @pytest.fixture(autouse=True)
 def _reset_title_attempts():
-    titles._ATTEMPTED.clear()
+    titles._STATE.clear()
+    titles._IN_FLIGHT.clear()
     yield
-    titles._ATTEMPTED.clear()
+    titles._STATE.clear()
+    titles._IN_FLIGHT.clear()
 
 
 def _seed(
@@ -411,38 +413,60 @@ def test_deepseek_provider_uses_deepseek_path(tmp_path):
     assert _reserved(file, "openai") == 0
 
 
-def test_failed_attempt_is_not_retried_in_this_process(tmp_path):
+def test_a_failing_conversation_stops_after_the_failure_bound(tmp_path):
     file, engine, sessions = _seed(tmp_path)
     calls: list[dict] = []
     transport = _recording_transport("", calls)
 
+    async def attempt():
+        return await titles.generate_conversation_title(sessions, "chat", api_key="test-key", transport=transport)
+
     try:
-        first = asyncio.run(
-            titles.generate_conversation_title(
-                sessions,
-                "chat",
-                api_key="test-key",
-                transport=transport,
+        results = [asyncio.run(attempt()) for _ in range(titles.MAX_FAILED_ATTEMPTS + 3)]
+        reserved = _reserved(file, "deepseek")
+    finally:
+        asyncio.run(engine.dispose())
+
+    assert results == [None] * len(results)
+    assert len(calls) == titles.MAX_FAILED_ATTEMPTS  # later turns make no request, reservation or read
+    assert reserved == titles.MAX_FAILED_ATTEMPTS * 7_000
+    assert _stored_title(file) == titles.SENTINEL_TITLE
+
+
+def test_concurrent_finalizes_make_one_provider_call(tmp_path):
+    file, engine, sessions = _seed(tmp_path)
+    calls: list[dict] = []
+    transport = _recording_transport("Paris Trip Planning", calls)
+
+    async def both():
+        return await asyncio.gather(
+            *(
+                titles.generate_conversation_title(sessions, "chat", api_key="test-key", transport=transport)
+                for _ in range(2)
             )
         )
-        reserved = _reserved(file, "deepseek")
-        second = asyncio.run(
+
+    try:
+        results = asyncio.run(both())
+    finally:
+        asyncio.run(engine.dispose())
+
+    assert sorted(results, key=lambda value: value is None) == ["Paris Trip Planning", None]
+    assert len(calls) == 1
+
+
+def test_an_unknown_provider_never_receives_the_key(tmp_path):
+    file, engine, sessions = _seed(tmp_path)
+    calls: list[dict] = []
+    try:
+        result = asyncio.run(
             titles.generate_conversation_title(
-                sessions,
-                "chat",
-                api_key="test-key",
-                transport=transport,
+                sessions, "chat", api_key="test-key", provider="azure", transport=_recording_transport("T", calls)
             )
         )
     finally:
         asyncio.run(engine.dispose())
-
-    assert first is None
-    assert second is None
-    assert len(calls) == 1
-    assert reserved > 0
-    assert _reserved(file, "deepseek") == reserved
-    assert _stored_title(file) == titles.SENTINEL_TITLE
+    assert result is None and calls == []
 
 
 def test_conversation_without_assistant_turn_is_not_marked_attempted(tmp_path):

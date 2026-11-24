@@ -35,11 +35,15 @@ OPENAI_TITLE_URL: Final = "https://api.openai.com/v1/chat/completions"
 MAX_SOURCE_CHARS: Final = 600
 MAX_TITLE_CHARS: Final = 60
 TITLE_TIMEOUT_SECONDS: Final = 4.0
-MAX_ATTEMPTED_CONVERSATIONS: Final = 1000
+MAX_TRACKED_CONVERSATIONS: Final = 1000
+MAX_FAILED_ATTEMPTS: Final = 2
+_SETTLED: Final = -1
 
-# Conversation ids already settled in this process: titled, renamed, or their one
-# generation attempt made. Bounded so a long-lived worker cannot grow without limit.
-_ATTEMPTED: Final[OrderedDict[str, None]] = OrderedDict()
+# Per-process memory, bounded: conversation id -> failed attempts so far, or _SETTLED once titled or renamed.
+# A failed attempt costs a budget reservation and a provider call, so each conversation gets a few tries
+# rather than one per turn. _IN_FLIGHT makes the claim before any await, so concurrent finalizes cannot both go.
+_STATE: Final[OrderedDict[str, int]] = OrderedDict()
+_IN_FLIGHT: Final[set[str]] = set()
 
 _MARKDOWN = re.compile(r"[*_#~`]+")
 _EDGE_QUOTES = "\"'“”‘’`«»"
@@ -53,15 +57,17 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _already_attempted(conversation_id: str) -> bool:
-    return conversation_id in _ATTEMPTED
+def _remember(conversation_id: str, value: int) -> None:
+    _STATE[conversation_id] = value
+    _STATE.move_to_end(conversation_id)
+    while len(_STATE) > MAX_TRACKED_CONVERSATIONS:
+        _STATE.popitem(last=False)
 
 
-def _mark_attempted(conversation_id: str) -> None:
-    _ATTEMPTED[conversation_id] = None
-    _ATTEMPTED.move_to_end(conversation_id)
-    while len(_ATTEMPTED) > MAX_ATTEMPTED_CONVERSATIONS:
-        _ATTEMPTED.popitem(last=False)
+def _record_failure(conversation_id: str) -> None:
+    failures = _STATE.get(conversation_id, 0)
+    if failures != _SETTLED:
+        _remember(conversation_id, failures + 1)
 
 
 def _language_for(user_text: str) -> str:
@@ -124,8 +130,8 @@ async def fetch_title(
     timeout: float = TITLE_TIMEOUT_SECONDS,
 ) -> str | None:
     """Ask the configured provider once; any failure is an ordinary ``None``."""
-    if not api_key.strip():
-        return None
+    if not api_key.strip() or provider not in {OPENAI_PROVIDER, DEEPSEEK_PROVIDER}:
+        return None  # never send a key to a provider it does not belong to
     messages = build_title_messages(user_text, assistant_text)
     if provider == OPENAI_PROVIDER:
         url = OPENAI_TITLE_URL
@@ -188,7 +194,7 @@ async def _title_sources(
         return user_turn.text, assistant_turn.text
 
 
-async def generate_conversation_title(
+async def _generate_title(
     sessions: async_sessionmaker[AsyncSession],
     conversation_id: str,
     *,
@@ -204,17 +210,11 @@ async def generate_conversation_title(
     try:
         if not api_key.strip():
             return None
-        # A failed attempt is not retried for the life of this process.  This is
-        # checked before touching the database, the budget ledger or the network.
-        if _already_attempted(conversation_id):
-            return None
         sources = await _title_sources(sessions, conversation_id)
         if sources is None:
             return None
-        # Either the first exchange is about to be sent, or the title is already settled (generated or
-        # renamed): in both cases no later turn needs to read the database for this conversation again.
-        _mark_attempted(conversation_id)
-        if sources is False:
+        if sources is False:  # titled or renamed: no later turn needs to read the database for it again
+            _remember(conversation_id, _SETTLED)
             return None
 
         async def request() -> str | None:
@@ -232,6 +232,7 @@ async def generate_conversation_title(
             try:
                 title = await guarded_openai_request(sessions, request)
             except ValueError:
+                _record_failure(conversation_id)
                 return None
         else:
             if reserve_budget:
@@ -239,9 +240,11 @@ async def generate_conversation_title(
                     async with sessions() as db:
                         await reserve(db, "deepseek", units=budget_units, limit=budget_limit)
                 except ValueError:
+                    _record_failure(conversation_id)
                     return None
             title = await request()
         if title is None:
+            _record_failure(conversation_id)
             return None
         # No connection is held across the provider call; the sentinel predicate
         # is the final authority against a rename that landed meanwhile.
@@ -252,6 +255,28 @@ async def generate_conversation_title(
                 .values(title=title)
             )
             await db.commit()
-            return title if changed.rowcount == 1 else None
+            if changed.rowcount == 1:
+                _remember(conversation_id, _SETTLED)
+                return title
+            return None
     except Exception:  # noqa: BLE001 - fire-and-forget boundary must never escape
+        _record_failure(conversation_id)
         return None
+
+
+async def generate_conversation_title(
+    sessions: async_sessionmaker[AsyncSession], conversation_id: str, **options
+) -> str | None:
+    """Generate and store one title, never raising at the background boundary.
+
+    Settled conversations, ones that failed ``MAX_FAILED_ATTEMPTS`` times and ones already being
+    generated return before any database, budget or network work.
+    """
+    state = _STATE.get(conversation_id, 0)
+    if state == _SETTLED or state >= MAX_FAILED_ATTEMPTS or conversation_id in _IN_FLIGHT:
+        return None
+    _IN_FLIGHT.add(conversation_id)
+    try:
+        return await _generate_title(sessions, conversation_id, **options)
+    finally:
+        _IN_FLIGHT.discard(conversation_id)
