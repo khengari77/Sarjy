@@ -1,6 +1,7 @@
 """Cover the pure test-selection rules used by the pre-push hook."""
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -40,11 +41,29 @@ def test_changed_test_selects_itself(tmp_path):
 
 
 @pytest.mark.parametrize("path", ["tests/conftest.py", "pyproject.toml", "uv.lock"])
-def test_config_changes_select_only_the_always_tests(tmp_path, path):
-    _write(tmp_path, "tests/test_architecture.py")
-    _write(tmp_path, "tests/test_test_configuration.py")
-    _write(tmp_path, "tests/test_alpha.py")
-    assert _tests(tmp_path, path) == ("tests/test_architecture.py", "tests/test_test_configuration.py")
+def test_config_changes_select_every_non_excluded_test(tmp_path, path):
+    for test in (
+        "tests/test_architecture.py",
+        "tests/test_test_configuration.py",
+        "tests/test_alpha.py",
+        "tests/test_memory_postgres.py",
+        "tests/test_web_access.py",
+        "tests/test_web_accounts.py",
+    ):
+        _write(tmp_path, test)
+    _write(tmp_path, "tests/helper.py")
+    assert _tests(tmp_path, path) == (
+        "tests/test_alpha.py",
+        "tests/test_architecture.py",
+        "tests/test_test_configuration.py",
+    )
+
+
+def test_alembic_config_selects_the_migration_tests(tmp_path):
+    _write(tmp_path, "tests/test_migrations.py")
+    _write(tmp_path, "tests/test_wordle_migrations.py")
+    _write(tmp_path, "tests/test_unrelated.py")
+    assert _tests(tmp_path, "alembic.ini") == ("tests/test_migrations.py",)
 
 
 def test_imports_inside_functions_and_one_hop_are_selected(tmp_path):
@@ -130,9 +149,11 @@ def test_external_service_tests_are_never_selected(tmp_path):
     _write(tmp_path, "tests/test_test_configuration.py")
     _write(tmp_path, "tests/test_memory_postgres.py")
     _write(tmp_path, "tests/test_web_access.py")
+    _write(tmp_path, "tests/test_web_accounts.py")
     expected = ("tests/test_architecture.py", "tests/test_test_configuration.py")
     assert _tests(tmp_path, "tests/test_memory_postgres.py") == expected
     assert _tests(tmp_path, "tests/test_web_access.py") == expected
+    assert _tests(tmp_path, "tests/test_web_accounts.py") == expected
 
 
 def test_docs_only_selects_nothing(tmp_path):
@@ -168,6 +189,25 @@ def test_importers_are_followed_transitively_through_module_trees(tmp_path):
     assert _tests(tmp_path, "apps/api/app/services/base.py") == (
         "tests/test_middle.py",
         "tests/test_top.py",
+    )
+
+
+def test_route_needles_come_from_route_modules_in_the_importer_closure(tmp_path):
+    _write(tmp_path, "apps/api/app/services/base.py")
+    _write(tmp_path, "apps/api/app/services/middle.py", "from app.services.base import run\n")
+    _write(tmp_path, "apps/api/app/routes/thing.py", "from app.services.middle import run\nROUTE = '/v1/things'\n")
+    _write(tmp_path, "tests/test_route.py", "from app.main import app\nROUTE = '/v1/things'\n")
+    _write(tmp_path, "tests/test_unrelated.py", "from app.main import app\nROUTE = '/v1/other'\n")
+    assert _tests(tmp_path, "apps/api/app/services/base.py") == ("tests/test_route.py",)
+
+
+def test_tests_importing_selected_tests_are_selected_transitively(tmp_path):
+    _write(tmp_path, "apps/api/app/services/base.py")
+    _write(tmp_path, "tests/test_base.py", "from app.services.base import run\n")
+    _write(tmp_path, "tests/test_follow.py", "from test_base import run\n")
+    assert _tests(tmp_path, "apps/api/app/services/base.py") == (
+        "tests/test_base.py",
+        "tests/test_follow.py",
     )
 
 
@@ -221,6 +261,11 @@ def test_real_wordle_tools_selects_the_wordle_tool_route_tests():
     assert "tests/test_wordle_tool_routes.py" in selected
 
 
+def test_real_authorization_selects_memory_route_tests():
+    selected = _tests(ROOT, "apps/api/app/services/authorization.py")
+    assert "tests/test_memory_routes.py" in selected
+
+
 def test_changed_test_helpers_select_their_importers_transitively(tmp_path):
     _write(tmp_path, "tests/helper.py")
     _write(tmp_path, "tests/sub/helper2.py")
@@ -258,6 +303,15 @@ def test_non_utf8_and_unparsable_files_never_crash(tmp_path):
     assert "tests/test_bad_module.py" in _tests(tmp_path, "apps/api/app/services/bad.py")
 
 
+def test_non_utf8_selected_paths_are_printed_as_bytes(tmp_path, capsysbinary):
+    name = os.fsdecode(b"test_\xff.py")
+    target = tmp_path / "tests" / name
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"")
+    assert select_tests.main(["--root", str(tmp_path), f"tests/{name}"]) == 0
+    assert capsysbinary.readouterr().out == os.fsencode(f"tests/{name}") + b"\n"
+
+
 def test_web_sources_are_reported_separately(tmp_path):
     _write(tmp_path, "apps/web/src/lib/api.ts")
     _write(tmp_path, "apps/web/src/routes/+page.svelte")
@@ -290,8 +344,13 @@ def test_real_selection_never_contains_external_service_tests():
         "scripts/check_openai.py",
         "tests/test_memory_postgres.py",
         "tests/test_web_access.py",
+        "tests/test_web_accounts.py",
     )
-    assert not [path for path in selected if path.endswith("_postgres.py") or path == "tests/test_web_access.py"]
+    assert not [
+        path
+        for path in selected
+        if path.endswith("_postgres.py") or path in ("tests/test_web_access.py", "tests/test_web_accounts.py")
+    ]
 
 
 MODULE_PATHS = tuple(

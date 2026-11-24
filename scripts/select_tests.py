@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import os
+import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cache
@@ -16,8 +18,9 @@ from pathlib import Path, PurePosixPath
 
 ALWAYS_TESTS = ("tests/test_architecture.py", "tests/test_test_configuration.py")
 CONFIG_ONLY_PATHS = frozenset({"tests/conftest.py", "pyproject.toml", "uv.lock"})
+ALEMBIC_CONFIG = "alembic.ini"
 MODULE_TREES = ("apps/api/app", "services/voice-agent", "scripts")
-EXCLUDED_TESTS = frozenset({"tests/test_web_access.py"})
+EXCLUDED_TESTS = frozenset({"tests/test_web_access.py", "tests/test_web_accounts.py"})
 EXCLUDED_TEST_SUFFIX = "_postgres.py"
 SPECIAL_IMPORTERS = frozenset({"app.main", "main"})
 WEB_UNIT_FILES = frozenset({"apps/web/package.json", "apps/web/pnpm-lock.yaml"})
@@ -101,6 +104,10 @@ class _TestIndex:
                         seen.add(name)
                         queue.append(name)
         return selected
+
+    def importing_selected(self, selected: set[str]) -> set[str]:
+        modules = frozenset(name for path in selected if path in self.files for name in self.files[path].module_names)
+        return self.importing_test_modules(modules)
 
     def mentioning(self, needles: set[str]) -> set[str]:
         return {path for path in self.test_paths if any(needle in self.files[path].text for needle in needles)}
@@ -253,7 +260,7 @@ def _route_needles(source: str) -> set[str]:
 
 def _route_tests(name: str, index: _TestIndex, importers: dict[str, set[str]], modules: dict[str, _Module]) -> set[str]:
     needles: set[str] = set()
-    for importer in importers.get(name, ()):
+    for importer in _importer_closure(name, importers):
         module = modules.get(importer)
         if module is not None and module.path.startswith("apps/api/app/routes/"):
             needles |= {needle for needle in _route_needles(module.text) if needle != "/"}
@@ -349,10 +356,19 @@ def _module_tests(
     return selected
 
 
+def _config_tests(path: str, index: _TestIndex) -> set[str]:
+    if path in CONFIG_ONLY_PATHS:
+        return set(index.test_paths)
+    if path == ALEMBIC_CONFIG:
+        return {"tests/test_migrations.py"}
+    return set()
+
+
 def _path_tests(path: str, index: _TestIndex, importers: dict[str, set[str]], modules: dict[str, _Module]) -> set[str]:
     selected: set[str] = set()
-    if path in CONFIG_ONLY_PATHS:
-        return selected
+    config_tests = _config_tests(path, index)
+    if config_tests:
+        return config_tests
     if path.startswith("tests/"):
         if path.endswith(".py"):
             test = index.files.get(path)
@@ -401,6 +417,8 @@ def select_tests(changed_paths: Iterable[str], root: Path) -> Selection:
     selected: set[str] = set()
     for path in changed:
         selected |= _path_tests(path, index, importers, modules)
+    if selected:
+        selected |= index.importing_selected(selected)
     if selected or any(_is_python_or_config(path) for path in changed):
         selected.update(ALWAYS_TESTS)
     tests = tuple(sorted(test for test in selected if test in index.files and test in index.test_paths))
@@ -420,7 +438,7 @@ def main(argv: list[str] | None = None) -> int:
             print("1")
         return 0
     for path in selection.web_files if args.web else selection.tests:
-        print(path)
+        sys.stdout.buffer.write(os.fsencode(path) + b"\n")
     return 0
 
 

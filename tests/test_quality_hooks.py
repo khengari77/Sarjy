@@ -117,8 +117,14 @@ def _environment(binary: Path, **values: str) -> dict[str, str]:
     return environment
 
 
-def _run_pre_push(repo: Path, environment: dict[str, str], local_sha: str, remote_sha: str = ZERO_SHA):
-    stdin = f"refs/heads/feature {local_sha} refs/heads/feature {remote_sha}\n"
+def _run_pre_push(
+    repo: Path,
+    environment: dict[str, str],
+    local_sha: str,
+    remote_sha: str = ZERO_SHA,
+    local_ref: str = "refs/heads/feature",
+):
+    stdin = f"{local_ref} {local_sha} {local_ref} {remote_sha}\n"
     return subprocess.run(
         ["bash", ".githooks/pre-push"],
         cwd=repo,
@@ -250,14 +256,15 @@ def test_pre_push_reports_deleted_tests_without_failing(tmp_path):
     assert not any(line.startswith("pytest") for line in log.read_text().splitlines())
 
 
-def test_pre_push_accepts_a_tag_that_resolves_to_head(tmp_path):
-    repo, _, second = _push_repo(tmp_path)
-    subprocess.run(["git", "tag", "-a", "v1", "-m", "tag", second], cwd=repo, check=True)
+def test_pre_push_skips_tags_without_refusing_or_running_tests(tmp_path):
+    repo, first, _ = _push_repo(tmp_path)
+    subprocess.run(["git", "tag", "-a", "v1", "-m", "tag", first], cwd=repo, check=True)
     log = tmp_path / "uv.log"
     environment = _environment(_fake_uv(tmp_path), FAKE_UV_LOG=str(log))
-    result = _run_pre_push(repo, environment, "v1")
+    result = _run_pre_push(repo, environment, first, local_ref="refs/tags/v1")
     assert result.returncode == 0
-    assert "Selected 1 test file(s)." in result.stdout
+    assert "only HEAD" not in result.stderr
+    assert "pytest" not in log.read_text()
 
 
 def test_pre_push_clears_pytest_environment(tmp_path):
@@ -333,6 +340,19 @@ def test_pre_push_runs_the_related_vitest_files_once(tmp_path):
     assert result.returncode == 0
     runs = [line for line in log.read_text().splitlines() if "vitest related" in line]
     assert len(runs) == 1 and runs[0].endswith("--run --passWithNoTests src/lib/api.ts")
+
+
+def test_pre_push_passes_changed_web_test_files_to_the_single_vitest_run(tmp_path):
+    repo, second = _web_repo(tmp_path, "apps/web/src/lib/api.test.ts")
+    (repo / "apps" / "web" / "node_modules").mkdir()
+    binary = _fake_uv(tmp_path)
+    _fake_pnpm(binary)
+    log = tmp_path / "pnpm.log"
+    environment = _environment(binary, FAKE_UV_LOG=str(tmp_path / "uv.log"), FAKE_PNPM_LOG=str(log))
+    result = _run_pre_push(repo, environment, second)
+    assert result.returncode == 0
+    runs = [line for line in log.read_text().splitlines() if "vitest related" in line]
+    assert len(runs) == 1 and runs[0].endswith("--run --passWithNoTests src/lib/api.test.ts")
 
 
 def test_pre_push_does_not_run_vitest_for_deleted_web_files(tmp_path):

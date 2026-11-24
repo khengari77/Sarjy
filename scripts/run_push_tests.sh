@@ -12,6 +12,9 @@ root=$(pwd)
 entries=()
 while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
   [[ -n "${local_ref:-}" ]] || continue
+  if [[ "$local_ref" == refs/tags/* ]]; then
+    continue
+  fi
   if [[ "$local_sha" =~ ^0+$ ]]; then
     continue
   fi
