@@ -65,7 +65,7 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
 
     original = httpx.AsyncClient
     monkeypatch.setattr(
-        worker.httpx, "AsyncClient", lambda **kwargs: original(**kwargs, transport=httpx.MockTransport(upstream))
+        worker.httpx, "AsyncClient", lambda **kwargs: original(**{**kwargs, "transport": httpx.MockTransport(upstream)})
     )
     monkeypatch.setattr(worker, "AgentSession", Session)
     monkeypatch.setattr(worker, "build_providers", lambda config, credentials: {})

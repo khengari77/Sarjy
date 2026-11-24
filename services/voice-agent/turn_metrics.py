@@ -13,8 +13,12 @@ STAGE_FIELDS = (
     "tts_reserve_ms",
     "turn_start_server_ms",
     "turn_start_db_ms",
+    "api_connect_ms",
+    "api_headers_ms",
+    "api_body_ms",
     "command_server_ms",
     "command_db_ms",
+    "command_api_headers_ms",
     "model_first_chunk_ms",
     "release_wait_ms",
     "prompt_cache_hit_tokens",
@@ -34,8 +38,12 @@ class TurnStages(TypedDict, total=False):
     tts_reserve_ms: int | None
     turn_start_server_ms: int | None
     turn_start_db_ms: int | None
+    api_connect_ms: int | None
+    api_headers_ms: int | None
+    api_body_ms: int | None
     command_server_ms: int | None
     command_db_ms: int | None
+    command_api_headers_ms: int | None
     model_first_chunk_ms: int | None
     release_wait_ms: int | None
     prompt_cache_hit_tokens: int | None
