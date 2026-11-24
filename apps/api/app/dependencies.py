@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.infrastructure.database import Identity
+from app.services.accounts import AccountSessionRequired, authorize_account
 from app.services.authorization import owned_conversation
 from app.services.reviewer_access import (
     ReviewerAccessDenied,
@@ -19,6 +20,7 @@ from app.services.reviewer_access import (
 )
 
 COOKIE = "sarjy_demo"
+ACCOUNT_COOKIE = "sarjy_account"
 
 
 async def _reviewer_user(db: AsyncSession, token: str, now, *, cleanup: bool) -> Identity:
@@ -32,6 +34,15 @@ async def _reviewer_user(db: AsyncSession, token: str, now, *, cleanup: bool) ->
         raise HTTPException(403, detail={"code": "REVIEWER_ACCESS_DENIED"}) from None
     except SQLAlchemyError:
         raise HTTPException(503, detail={"code": "REVIEWER_UNAVAILABLE"}) from None
+
+
+async def _account_user(db: AsyncSession, token: str, now) -> Identity:
+    try:
+        return await authorize_account(db, token, now)
+    except AccountSessionRequired:
+        raise HTTPException(401, detail={"code": "ACCOUNT_SESSION_REQUIRED"}) from None
+    except SQLAlchemyError:
+        raise HTTPException(503, detail={"code": "ACCOUNT_SERVICE_UNAVAILABLE"}) from None
 
 
 async def _demo_user(db: AsyncSession, token: str) -> Identity:
@@ -51,6 +62,8 @@ def _database_dependency(sessions):
 
 def _identity_dependency(settings: Settings, clock, database):
     async def identity(request: Request, db: AsyncSession = Depends(database)):
+        if settings.account_access_enabled:
+            return await _account_user(db, request.cookies.get(ACCOUNT_COOKIE, ""), clock())
         token = request.cookies.get(COOKIE, "")
         if settings.reviewer_access_enabled:
             return await _reviewer_user(db, token, clock(), cleanup=False)
@@ -61,6 +74,8 @@ def _identity_dependency(settings: Settings, clock, database):
 
 def _cleanup_dependency(settings: Settings, clock, database):
     async def cleanup_user(request: Request, db: AsyncSession = Depends(database)):
+        if settings.account_access_enabled:
+            return await _account_user(db, request.cookies.get(ACCOUNT_COOKIE, ""), clock())
         token = request.cookies.get(COOKIE, "")
         if settings.reviewer_access_enabled:
             return await _reviewer_user(db, token, clock(), cleanup=True)

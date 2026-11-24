@@ -567,3 +567,50 @@ def test_flag_and_credential_gating(tmp_path):
     assert state() is None
     assert state(jev_api_key="k", jev_commands_enabled=False) is None
     assert isinstance(state(jev_api_key="k"), JevUiClient)
+
+
+def test_client_reuses_one_connection_and_closes_it():
+    class Transport(httpx.AsyncBaseTransport):
+        closed = 0
+
+        async def handle_async_request(self, request):
+            return httpx.Response(200, json=payload(family="theme", theme="dark"), request=request)
+
+        async def aclose(self):
+            Transport.closed += 1
+
+    async def run():
+        client = JevUiClient("k", allow, transport=Transport())
+        for _ in range(3):
+            assert await client.classify(request_id="r", instruction="go dark") is not None
+        assert Transport.closed == 0
+        await client.aclose()
+        assert Transport.closed == 1
+
+    asyncio.run(run())
+
+
+def test_a_stale_connection_is_retried_once_and_is_not_a_provider_failure():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            raise httpx.RemoteProtocolError("closed")
+        return httpx.Response(200, json=payload(family="theme", theme="dark"))
+
+    client = client_for(handler)
+    assert asyncio.run(client.classify(request_id="r", instruction="go dark")) is not None
+    assert len(calls) == 2 and not client.circuit.is_open()
+
+
+def test_a_closed_client_can_be_used_by_the_next_lifespan():
+    client = client_for(lambda request: httpx.Response(200, json=payload(family="theme", theme="dark")))
+
+    async def once():
+        result = await client.classify(request_id="r", instruction="go dark")
+        await client.aclose()
+        return result
+
+    assert asyncio.run(once()) is not None
+    assert asyncio.run(once()) is not None

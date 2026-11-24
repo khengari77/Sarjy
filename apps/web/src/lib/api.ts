@@ -44,6 +44,8 @@ export async function request<T>(path: string, body?: unknown, method?: 'DELETE'
   }
   if (!response.ok) {
     const code = data?.detail?.code;
+    // The session ended elsewhere or expired: the page cannot work until the person signs in.
+    if (code === 'ACCOUNT_SESSION_REQUIRED') globalThis.location?.assign('/sign-in');
     throw new Error(typeof code === 'string' && code ? code : `HTTP_${response.status}`);
   }
   return data;

@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions } from './$types';
-import { accessFailures, issueSession, protectedMode, redeem } from '../lib/auth/guard.server';
+import { accessFailures, accountMode, issueSession, protectedMode, redeem } from '../lib/auth/guard.server';
 import { tokenKey } from '../lib/auth/access-state';
 import { failureKey } from '../lib/auth/rate-limit';
 import { safeNextPath } from '../lib/auth/redirect';
@@ -10,9 +10,8 @@ import { safeNextPath } from '../lib/auth/redirect';
  * path; this action keeps the page working with JavaScript disabled.
  */
 export const actions: Actions = {
-  default: async ({ request, cookies, url, getClientAddress, setHeaders }) => {
-    setHeaders({ 'cache-control': 'no-store' });
-    if (!protectedMode) throw redirect(303, '/');
+  default: async ({ request, cookies, url, getClientAddress }) => {
+    if (!protectedMode || accountMode) throw redirect(303, '/');
 
     const form = await request.formData();
     const submitted = form.get('token');

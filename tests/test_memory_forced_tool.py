@@ -154,7 +154,7 @@ def _drive(agent, tools_names):
 
     seen = []
 
-    async def stream(request, tools, tool_choice):
+    async def stream(request, tools, tool_choice, report=None):
         seen.append(tool_choice)
         yield llm.ChatChunk(id="r", delta=llm.ChoiceDelta(content=""))
 
@@ -181,7 +181,8 @@ def _tools(agent):
 def test_tool_is_forced_on_first_inference_only(monkeypatch, op, tool):
     agent, client = _agent_and_chat(monkeypatch, {"choice": op, "probability": 0.93})
     seen = _drive(agent, _tools(agent))
-    assert seen == [{"type": "function", "function": {"name": tool}}, None]
+    # An unforced reply may have been started, and dropped, before the answer arrived.
+    assert seen[-2:] == [{"type": "function", "function": {"name": tool}}, None] and seen[:-2] in ([], [None])
     asyncio.run(client.aclose())
 
 
@@ -219,7 +220,11 @@ def test_forced_inference_emits_no_prose_before_the_tool_call(monkeypatch):
     agent, client = _agent_and_chat(monkeypatch, {"choice": "remember", "probability": 0.95})
     emitted = []
 
-    async def stream(request, tools, tool_choice):
+    async def stream(request, tools, tool_choice, report=None):
+        if tool_choice is None:
+            # The reply started before the answer was known; it must not be heard.
+            yield llm.ChatChunk(id="early", delta=llm.ChoiceDelta(content="I will remember that."))
+            return
         assert tool_choice == {"type": "function", "function": {"name": "propose_memory"}}
         yield llm.ChatChunk(
             id="r",

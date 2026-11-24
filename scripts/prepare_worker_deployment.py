@@ -24,6 +24,8 @@ def _populate(root: Path, staging: Path) -> None:
     for name in ("pyproject.toml", "uv.lock"):
         _copy_file(root / name, staging / name)
     _copy_file(root / "infra/agent.Dockerfile", staging / "Dockerfile")
+    for relative in CONTRACT_FILES:
+        _copy_file(root / relative, staging / relative)
     for directory in ("services/voice-agent", "apps/api/app/domain"):
         sources = tuple(
             source

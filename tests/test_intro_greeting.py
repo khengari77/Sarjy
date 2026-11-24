@@ -207,7 +207,7 @@ def test_entrypoint_starts_the_greeting_after_the_session_runs(monkeypatch):
         worker.httpx, "AsyncClient", lambda **kw: original(**kw, transport=httpx.MockTransport(upstream))
     )
     monkeypatch.setattr(worker, "build_providers", lambda config, credentials: {})
-    monkeypatch.setattr(worker.silero.VAD, "load", lambda: None)
+    ctx.proc = SimpleNamespace(userdata={"vad": object()})
     monkeypatch.setattr(
         worker,
         "read_worker_environment",

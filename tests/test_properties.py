@@ -37,9 +37,14 @@ def test_budget_preserves_protected_rules_and_newest_fitting_input(texts, budget
 
 @given(st.tuples(st.text(), st.text()), st.text())
 def test_full_call_capacity_always_rejects(active, owner):
-    assert admission_error(active, owner, 0, 0) == "CALL_LIMIT_REACHED"
+    assert admission_error(active, owner) == "CALL_LIMIT_REACHED"
 
 
-@given(st.integers(min_value=80), st.integers(min_value=0))
-def test_exhausted_month_budget_cannot_start_a_call(month_calls, identity_calls):
-    assert admission_error((), "owner", month_calls, identity_calls) == "DEMO_BUDGET_REACHED"
+def test_admission_allows_a_new_owner_when_capacity_is_free():
+    assert admission_error((), "owner") is None
+    assert admission_error(("other",), "owner") is None
+
+
+def test_admission_rejects_an_owner_who_already_has_a_call():
+    assert admission_error(("owner",), "owner") == "CALL_LIMIT_REACHED"
+    assert admission_error(("owner", "other"), "owner") == "CALL_LIMIT_REACHED"

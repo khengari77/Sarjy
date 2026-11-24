@@ -30,6 +30,8 @@ _ESTIMATED_INPUT_TOKENS: Final = 900
 
 # Seven questions per request run slower than the routing call (live p90 ~700-830 ms, outliers 2-3 s).
 UI_DEADLINE_SECONDS: Final = 1.2
+# Turns in a conversation are seconds apart; the library's default drops an idle connection after five.
+KEEP_ALIVE: Final = httpx.Limits(max_connections=20, max_keepalive_connections=4, keepalive_expiry=60)
 
 
 class UiClassifier(Protocol):
@@ -58,6 +60,7 @@ class JevUiClient:
         self._deadline = deadline_seconds
         self._circuit = circuit or JevCircuitBreaker(clock=clock)
         self._endpoint = endpoint
+        self._client: httpx.AsyncClient | None = None
 
     @property
     def circuit(self) -> JevCircuitBreaker:
@@ -111,15 +114,28 @@ class JevUiClient:
         return result
 
     async def _post(self, instruction: str) -> httpx.Response:
-        transport = self._transport if self._transport is not None else httpx.AsyncHTTPTransport()
-        async with httpx.AsyncClient(
-            transport=transport, timeout=httpx.Timeout(self._deadline), follow_redirects=False
-        ) as client:
-            return await client.post(
-                self._endpoint,
-                headers={"Authorization": "Bearer " + self._api_key, "Content-Type": "application/json"},
-                json=build_ui_request(instruction),
+        headers = {"Authorization": "Bearer " + self._api_key, "Content-Type": "application/json"}
+        body = build_ui_request(instruction)
+        try:
+            return await self._connection().post(self._endpoint, headers=headers, json=body)
+        except httpx.RemoteProtocolError:
+            # The server had closed the idle connection; that says nothing about the provider. Same deadline.
+            return await self._connection().post(self._endpoint, headers=headers, json=body)
+
+    def _connection(self) -> httpx.AsyncClient:
+        """One client for the process: a new TLS connection would cost every turn part of the deadline."""
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                transport=self._transport or httpx.AsyncHTTPTransport(limits=KEEP_ALIVE),
+                timeout=httpx.Timeout(self._deadline),
+                follow_redirects=False,
             )
+        return self._client
+
+    async def aclose(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            await client.aclose()
 
 
 __all__ = ["UI_DEADLINE_SECONDS", "JevUiClient", "UiClassifier"]
