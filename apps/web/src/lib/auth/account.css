@@ -1,0 +1,20 @@
+.account-title {
+  margin: 0 0 var(--space-lg);
+  font-size: 1.4rem;
+  color: var(--text-primary);
+}
+
+.account-hint,
+.account-switch {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.account-switch {
+  margin-top: var(--space-lg);
+}
+
+.account-switch a {
+  color: var(--text-primary);
+}
