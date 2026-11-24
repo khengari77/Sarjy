@@ -19,6 +19,7 @@ from app.domain.tool_operations import operation_key
 from app.domain.ui_routing import CONFIDENCE_THRESHOLD, FORCED_MEMORY_TOOLS
 from config import (
     first_event_seconds,
+    preemptive_generation,
     provider_credentials,
     read_worker_environment,
     reassurance_seconds,
@@ -46,6 +47,7 @@ from livekit.agents import (
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from loop_lag import LoopLagMonitor
+from preempt import EarlyTurn, RecentFinals, transcripts_equivalent
 from prefix_stability import canonical_prompt, predicted_prefix_hit_pct
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from reassurance import PHRASES, ReassuranceTimer, with_reassurance
@@ -300,12 +302,16 @@ class SarjyAgent(WordleTools, Agent):
         publish_wordle=None,
         wordle_active=None,
         reassurance_seconds: float = 1.6,
+        preemptive: bool = False,
     ):
         super().__init__(instructions=instructions)
         self.publish_wordle = publish_wordle
         self.wordle_active = wordle_active or (lambda: False)
         self.reassurance = ReassuranceTimer(reassurance_seconds)
         self.reassurance_fillers: dict[str, str] = {}
+        self.preemptive = preemptive
+        self.preempt: EarlyTurn | None = None
+        self.recent_finals = RecentFinals()
         self.wordle_spoken: dict[str, list[str]] = {}
         self.wordle_touched = False
         self.wordle_calls: set[str] = set()
@@ -740,8 +746,66 @@ class SarjyAgent(WordleTools, Agent):
         async for frame in Agent.default.tts_node(self, budgeted_text(), model_settings):
             yield frame
 
+    def note_transcript(self, event) -> None:
+        if self.preemptive and getattr(event, "is_final", False):
+            self.recent_finals.add(getattr(event, "transcript", "") or "")
+
+    def _cancel_preemption(self) -> None:
+        """Tell the SDK not to adopt its early reply (it then answers the finalized turn afresh)."""
+        try:
+            activity = getattr(self.session, "_activity", None)
+        except RuntimeError:  # not running inside a session
+            return
+        cancel = getattr(activity, "_cancel_preemptive_generation", None)
+        if callable(cancel):
+            cancel()
+
+    def _retire_preempt(self) -> None:
+        """Drop an early turn nobody adopted: close it as failed so no later prompt can read it."""
+        entry, self.preempt = self.preempt, None
+        if entry is None or entry.adopted or entry.retired:
+            return
+        entry.retired = True
+        turn_id = entry.turn_id
+        self.prepared.pop(entry.message_id, None)
+        self.commands.pop(entry.message_id, None)
+        if turn_id is None:
+            return
+        self.turn_stages.pop(turn_id, None)
+        self.turn_anchor.pop(turn_id, None)
+        self.reassurance.finish(turn_id)
+        task = asyncio.create_task(self._finalize_turn(turn_id, "", "failed"))
+        self.pending.add(task)
+        task.add_done_callback(self.pending.discard)
+
+    async def _adopt_preempt(self, text: str) -> bool:
+        """Let the finalized turn take over the early reply, which already opened its turn."""
+        entry = self.preempt
+        if (
+            entry is None
+            or entry.mode != "early"
+            or self.is_command(text)
+            or not transcripts_equivalent(entry.text, text)
+        ):
+            return False
+        try:
+            await asyncio.wait_for(asyncio.shield(entry.ready), timeout=3.0)
+        except Exception:
+            return False
+        if entry.turn_id is None:
+            return False
+        entry.adopted = True
+        self.preempt = None
+        return True
+
     async def on_user_turn_completed(self, turn_ctx, new_message):
         started = time.perf_counter()
+        self.recent_finals.clear()
+        if self.preempt is not None:
+            if await self._adopt_preempt(new_message.text_content or ""):
+                return
+            self._cancel_preemption()
+            self._retire_preempt()
         if self.is_command(new_message.text_content or ""):
             self.suppressed.add(new_message.id)
             return
@@ -829,13 +893,62 @@ class SarjyAgent(WordleTools, Agent):
         self.command_resync_required = False
 
     async def llm_node(self, chat_ctx, tools, model_settings):
-        # Also covers typed input and repeated inference after tool calls.
+        # Also covers typed input, repeated inference after tool calls and early (preemptive) replies.
         user = _user_message(chat_ctx)
         if user is None:
             return
         if user.id in self.suppressed:
             self.suppressed.discard(user.id)
             return
+        early_turn = None
+        if self.preemptive and user.id not in self.prepared and self.recent_finals.covers(user.text_content or ""):
+            early_turn = await self._open_early_turn(user)
+            if early_turn.mode == "wait":
+                return
+        try:
+            served = self._serve(user, chat_ctx, tools, model_settings, filler=early_turn is None)
+            async with aclosing(served):
+                async for chunk in served:
+                    yield chunk
+        finally:
+            if early_turn is not None and not early_turn.adopted:
+                self._retire_preempt_entry(early_turn)
+
+    async def _open_early_turn(self, user) -> EarlyTurn:
+        """Open the turn for an early reply, unless state the real turn would change is in play."""
+        self._retire_preempt()
+        text = user.text_content or ""
+        entry = EarlyTurn(user.id, text, asyncio.get_running_loop().create_future())
+        self.preempt = entry
+        if (
+            self.memory_proposal is not None
+            or self._question_due()
+            or self.wordle_active()
+            or self.is_command(text)
+            or self.forced_speech is not None
+            or self.memory_outcome is not None
+        ):
+            # The turn hook must run first; it cancels this reply and the SDK answers afresh.
+            entry.mode = "wait"
+            return entry
+        try:
+            await self.compile(user)
+        except BaseException as error:
+            if not entry.ready.done():
+                entry.ready.set_exception(error)
+                entry.ready.exception()  # consumed: nobody may be waiting on it
+            self._retire_preempt_entry(entry)
+            raise
+        entry.turn_id = self.prepared[user.id]["turn_id"]
+        entry.ready.set_result(True)
+        return entry
+
+    def _retire_preempt_entry(self, entry: EarlyTurn) -> None:
+        if not entry.retired and not entry.adopted:
+            self.preempt = entry
+            self._retire_preempt()
+
+    async def _serve(self, user, chat_ctx, tools, model_settings, *, filler: bool):
         snapshot = await self.compile(user)
         turn_id = self.prepared[user.id]["turn_id"]
         self.reassurance.begin_if_missing(turn_id, time.perf_counter())
@@ -867,7 +980,7 @@ class SarjyAgent(WordleTools, Agent):
                 reply,
                 self.reassurance,
                 turn_id,
-                allowed=self._reassurance_allowed(user, command, turn_id),
+                allowed=filler and self._reassurance_allowed(user, command, turn_id),
                 on_filler=on_filler,
                 on_answer=on_answer,
             )
@@ -1587,6 +1700,7 @@ async def entrypoint(ctx: JobContext):
             wordle_active=lambda: reveal.active,
             is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending, wordle_active=reveal.active),
             reassurance_seconds=reassurance_seconds(values),
+            preemptive=preemptive_generation(values),
         )
         agent.loop_lag.start()
         session = AgentSession(
@@ -1599,6 +1713,7 @@ async def entrypoint(ctx: JobContext):
         )
         await ctx.connect()
 
+        session.on("user_input_transcribed", agent.note_transcript)
         session.on("user_state_changed", warmup.user_state_changed)
 
         @ctx.room.local_participant.register_rpc_method("sarjy.interrupt")

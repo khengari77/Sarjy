@@ -44,7 +44,7 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
             pass
 
         def on(self, event, callback=None):
-            assert event == "user_state_changed"
+            assert event in {"user_state_changed", "user_input_transcribed"}
             return callback
 
         async def start(self, agent, **kwargs):
