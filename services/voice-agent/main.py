@@ -1184,9 +1184,11 @@ async def entrypoint(ctx: JobContext):
                 monitor.cancel()
                 await asyncio.gather(monitor, return_exceptions=True)
         finally:
-            await session.aclose()
-            greeting.cancel()
-            await agent.stop_speech_refills()
+            try:
+                await session.aclose()
+            finally:
+                greeting.cancel()
+                await agent.stop_speech_refills()
             if agent.pending:
                 await asyncio.gather(*agent.pending, return_exceptions=True)
             if fallback_llm is not None and hasattr(fallback_llm, "aclose"):

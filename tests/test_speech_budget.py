@@ -103,7 +103,7 @@ def test_short_text_is_forwarded_before_the_reply_ends(monkeypatch):
             yield " there"
 
         frames = agent.tts_node(text(), None)
-        assert await anext(frames) == "audio"
+        assert await asyncio.wait_for(anext(frames), 1) == "audio"
         assert sent == ["Hi"]
         release.set()
         assert [frame async for frame in frames] == ["audio"]
