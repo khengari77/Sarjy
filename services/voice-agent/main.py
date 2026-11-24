@@ -270,7 +270,8 @@ class SarjyAgent(WordleTools, Agent):
         self.speech_stopped = False
         self.speech_refills: set[asyncio.Task] = set()
         # The next model call's budget reservation, started with the turn rather than after it.
-        self.prepaid_generation: tuple[str, asyncio.Task[None]] | None = None
+        self.prepaid_generation: tuple[str, str, asyncio.Task[None]] | None = None
+        self.prepayments: set[asyncio.Task[None]] = set()
         self.speech_budget = SpeechBudget(self._reserve_speech, self._report_reservation, self._spawn_refill)
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
@@ -322,6 +323,8 @@ class SarjyAgent(WordleTools, Agent):
             turn_id = self.prepared[message.id]["turn_id"]
             self.turn_stages[turn_id] = {}
             self._record_stage(turn_id, "turn_start_ms", started)
+        # Typed input never ran the turn hook: an earlier turn's prepayment is not this one's.
+        self._discard_prepaid(keep=message.id)
         result = self.prepared[message.id]
         self.current_turn = result["turn_id"]
         self.current_text = message.text_content or ""
@@ -494,22 +497,41 @@ class SarjyAgent(WordleTools, Agent):
         response.raise_for_status()
 
     def _take_prepaid(self, provider: str) -> asyncio.Task[None] | None:
-        """The reservation already started for this turn's first model call, once."""
-        prepaid, self.prepaid_generation = self.prepaid_generation, None
-        return prepaid[1] if prepaid is not None and prepaid[0] == provider else None
+        """The reservation started for this turn's first model call; once, and only for that provider."""
+        prepaid = self.prepaid_generation
+        if prepaid is None or prepaid[0] != provider:
+            return None
+        self.prepaid_generation = None
+        return prepaid[2]
 
-    def _prepay_generation(self) -> None:
+    def _prepay_generation(self, message_id: str) -> None:
         """Start the model reservation now; it does not depend on the turn's context.
 
-        A turn that never reaches the model leaves this one request charged, like a dropped early reply.
+        A turn that ends without a model call (a memory question, an interruption) leaves this one request
+        charged; the daily cap counts it, as it counts a dropped early reply.
         """
         provider = {"openai_direct": "openai", "deepseek_direct": "deepseek"}.get(self.pipeline["llm"]["provider"])
         if provider is None or self.speech_stopped:
             return
+        self._discard_prepaid()
         task = asyncio.create_task(self._send_reservation(provider, 0))
-        # A refusal matters only if the model call takes this reservation.
-        task.add_done_callback(lambda done: done.cancelled() or done.exception())
-        self.prepaid_generation = (provider, task)
+        self.prepayments.add(task)
+
+        def settled(done: asyncio.Task[None]) -> None:
+            self.prepayments.discard(done)
+            # A refusal matters only if the model call takes this reservation.
+            if not done.cancelled():
+                done.exception()
+
+        task.add_done_callback(settled)
+        self.prepaid_generation = (provider, message_id, task)
+
+    def _discard_prepaid(self, keep: str | None = None) -> None:
+        """Drop a prepayment that belongs to another turn."""
+        prepaid = self.prepaid_generation
+        if prepaid is not None and prepaid[1] != keep:
+            self.prepaid_generation = None
+            prepaid[2].cancel()
 
     async def _report_reservation(self, exc: httpx.HTTPStatusError) -> None:
         if self.notify:
@@ -539,9 +561,10 @@ class SarjyAgent(WordleTools, Agent):
     async def stop_speech_refills(self) -> None:
         self.speech_stopped = True
         refills = list(self.speech_refills)
-        if self.prepaid_generation is not None:
-            refills.append(self.prepaid_generation[1])
-            self.prepaid_generation = None
+        self.prepaid_generation = None
+        refills.extend(self.prepayments)
+        for prepayment in self.prepayments:
+            prepayment.cancel()
         for refill in refills:
             refill.cancel()
         await asyncio.gather(*refills, return_exceptions=True)
@@ -571,7 +594,7 @@ class SarjyAgent(WordleTools, Agent):
         if self.is_command(new_message.text_content or ""):
             self.suppressed.add(new_message.id)
             return
-        self._prepay_generation()
+        self._prepay_generation(new_message.id)
         await self.compile(new_message)
 
     async def command_for(self, message) -> dict | None:
