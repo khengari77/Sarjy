@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import math
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -109,8 +110,12 @@ def parse_turn(record: Mapping[str, object]) -> list[Segment]:
 
     chunk = _stage_ms(stage_map, "t_model_first_chunk_ms")
     tts = _stage_ms(stage_map, "t_tts_first_ms")
-    if chunk is not None and tts is not None:
-        segments.append(Segment("tts", base + chunk, base + tts))
+    if chunk is not None and tts is not None and tts > chunk:
+        # The gap between the model's first words and their release to TTS (budget take), not synthesis time.
+        segments.append(Segment("to tts", base + chunk, base + tts))
+    ttfa = _as_int(record.get("ttfa_ms"))
+    if tts is not None and ttfa is not None and base + tts < ttfa:
+        segments.append(Segment("tts to audio", base + tts, ttfa))
 
     candidates = [segment for segment in segments if segment.name in CRITICAL_CANDIDATES]
     if not candidates:
@@ -164,6 +169,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--html", type=Path, help="write a self-contained HTML timeline to this path")
     parser.add_argument("--slowest", type=int, default=3, help="number of slowest turns to print (default 3)")
     args = parser.parse_args(argv)
+    args.slowest = max(args.slowest, 0)
 
     turns = _load_turns(args.file)
     if not turns:
@@ -171,7 +177,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     if args.html is not None:
-        args.html.write_text(render_html(turns), encoding="utf-8")
+        try:
+            args.html.write_text(render_html(turns), encoding="utf-8")
+        except OSError as error:
+            print(f"cannot write {args.html}: {error}", file=sys.stderr)
+            return 2
 
     timed = [turn for turn in turns if turn["ttfa_ms"] is not None]
     if not timed:
@@ -218,7 +228,7 @@ def _stage_ms(stages: Mapping[str, object], key: str) -> int | None:
 
 
 def _as_int(value: object) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         return None
     return int(value)
 

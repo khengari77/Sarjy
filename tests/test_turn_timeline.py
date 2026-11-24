@@ -44,7 +44,7 @@ def test_tts_starts_at_model_first_chunk() -> None:
         ),
     )
 
-    tts = by_name(segments)["tts"]
+    tts = by_name(segments)["to tts"]
     assert (tts.start_ms, tts.end_ms) == (250, 500)
 
 
@@ -108,3 +108,35 @@ def test_html_is_self_contained_and_marks_critical_segments() -> None:
     assert "prefers-color-scheme" in lowered
     assert "critical" in lowered
     assert "turn-1" in document
+
+
+def test_non_finite_and_inverted_values_do_not_crash():
+    parse_turn = timeline.parse_turn
+
+    record = {
+        "turn_id": "t",
+        "eot_ms": 500,
+        "ttfa_ms": 1500,
+        "stages": {
+            "t_model_request_ms": float("inf"),
+            "t_model_first_chunk_ms": float("nan"),
+            "t_tts_first_ms": 100,
+        },
+    }
+    names = [segment.name for segment in parse_turn(record)]
+    assert "model first chunk" not in names and "to tts" not in names
+    assert "tts to audio" in names
+
+
+def test_tts_gap_segments_follow_the_model_first_chunk():
+    parse_turn = timeline.parse_turn
+
+    record = {
+        "turn_id": "t",
+        "eot_ms": 100,
+        "ttfa_ms": 900,
+        "stages": {"t_model_request_ms": 0, "t_model_first_chunk_ms": 200, "t_tts_first_ms": 300},
+    }
+    by_name = {segment.name: segment for segment in parse_turn(record)}
+    assert (by_name["to tts"].start_ms, by_name["to tts"].end_ms) == (300, 400)
+    assert (by_name["tts to audio"].start_ms, by_name["tts to audio"].end_ms) == (400, 900)
