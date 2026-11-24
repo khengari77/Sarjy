@@ -1,0 +1,22 @@
+[
+  {"id": "chat-01", "category": "chat", "text": "What can you help me with?"},
+  {"id": "chat-02", "category": "chat", "text": "Tell me a short story about a desert fox."},
+  {"id": "chat-03", "category": "chat", "text": "Give me one idea for dinner tonight."},
+  {"id": "chat-04", "category": "chat", "text": "What is the capital of Japan?"},
+  {"id": "chat-05", "category": "chat", "text": "Recommend a book about space exploration."},
+  {"id": "chat-06", "category": "chat", "text": "How do I start a new conversation?"},
+  {"id": "chat-07", "category": "chat", "text": "Explain what you do in one sentence."},
+  {"id": "chat-08", "category": "chat", "text": "Who wrote the poem we discussed earlier?"},
+  {"id": "ui-01", "category": "ui_command", "text": "dark mode"},
+  {"id": "ui-02", "category": "ui_command", "text": "light mode"},
+  {"id": "ui-03", "category": "ui_command", "text": "show captions"},
+  {"id": "ui-04", "category": "ui_command", "text": "speak slower"},
+  {"id": "memory-01", "category": "memory", "text": "Remember that I prefer tea."},
+  {"id": "memory-02", "category": "memory", "text": "What do you remember about my drink?"},
+  {"id": "memory-03", "category": "memory", "text": "Forget what I told you about tea."},
+  {"id": "memory-04", "category": "memory", "text": "Undo that."},
+  {"id": "weather-01", "category": "weather", "text": "What is the weather in Riyadh?"},
+  {"id": "weather-02", "category": "weather", "text": "Will it rain in London tomorrow?"},
+  {"id": "negative-01", "category": "negative", "text": "I like dark mode better than light mode"},
+  {"id": "negative-02", "category": "negative", "text": "My sister hates captions"}
+]
