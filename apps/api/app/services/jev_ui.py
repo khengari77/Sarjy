@@ -113,6 +113,19 @@ class JevUiClient:
         self._circuit.record_success()
         return result
 
+    async def warm(self) -> None:
+        """Touch the shared client so the next classification reuses a live connection.
+
+        A HEAD has no body, reserves no budget and never affects the circuit
+        breaker; any failure is ignored because warm-up must not break a turn.
+        """
+        if not self._api_key.strip():
+            return
+        try:
+            await self._connection().head(self._endpoint, headers={"Authorization": "Bearer " + self._api_key})
+        except Exception:
+            logger.debug("jev ui warm failed", exc_info=True)
+
     async def _post(self, instruction: str) -> httpx.Response:
         headers = {"Authorization": "Bearer " + self._api_key, "Content-Type": "application/json"}
         body = build_ui_request(instruction)

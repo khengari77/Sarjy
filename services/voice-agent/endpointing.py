@@ -1,4 +1,9 @@
-"""Build optional turn-endpointing options from worker environment values."""
+"""Build the AgentSession turn-handling options from worker environment values.
+
+Once ``turn_handling`` is passed, livekit-agents 1.8 ignores every legacy keyword argument
+(``preemptive_generation=``, ``min_endpointing_delay=``...). Every turn-handling choice
+therefore lives here, in one mapping; passing a legacy keyword next to it is a silent no-op.
+"""
 
 from collections.abc import Mapping
 from typing import TypedDict
@@ -15,8 +20,13 @@ class EndpointingOptions(TypedDict, total=False):
     max_delay: float
 
 
+class PreemptiveGenerationOptions(TypedDict):
+    enabled: bool
+
+
 class TurnHandlingOptions(TypedDict, total=False):
     endpointing: EndpointingOptions
+    preemptive_generation: PreemptiveGenerationOptions
 
 
 class EndpointingKwargs(TypedDict, total=False):
@@ -24,14 +34,17 @@ class EndpointingKwargs(TypedDict, total=False):
 
 
 def endpointing_kwargs(values: Mapping[str, str]) -> EndpointingKwargs:
-    """Return the AgentSession keyword arguments for configured endpointing delays.
+    """Return the AgentSession ``turn_handling`` keyword argument.
 
-    An empty mapping when both variables are unset preserves the SDK defaults.
+    Preemptive generation is always off: a speculative reply would run the turn hook
+    (``/turn/start``) on an interim transcript and create a second user turn per utterance.
+    Endpointing delays are added only when configured; unset keeps the SDK defaults.
     """
+    turn_handling: TurnHandlingOptions = {"preemptive_generation": {"enabled": False}}
     raw_min = values.get(MIN_DELAY_KEY, "").strip()
     raw_max = values.get(MAX_DELAY_KEY, "").strip()
     if not raw_min and not raw_max:
-        return {}
+        return {"turn_handling": turn_handling}
 
     if not (raw_min and raw_max):
         # The SDK's own defaults depend on the turn detector in use (0.3 / 2.5 with the streaming
@@ -44,7 +57,8 @@ def endpointing_kwargs(values: Mapping[str, str]) -> EndpointingKwargs:
     _require_range(MIN_DELAY_KEY, min_delay)
     _require_range(MAX_DELAY_KEY, max_delay)
 
-    return {"turn_handling": {"endpointing": {"min_delay": min_delay, "max_delay": max_delay}}}
+    turn_handling["endpointing"] = {"min_delay": min_delay, "max_delay": max_delay}
+    return {"turn_handling": turn_handling}
 
 
 def _parse_delay(name: str, raw: str) -> float:

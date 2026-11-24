@@ -6,7 +6,9 @@ import httpx
 import openai as openai_sdk
 from app.domain.deepgram_voices import DEFAULT_DEEPGRAM_VOICE_ID, deepgram_voice
 from livekit.plugins import deepgram, openai
-from stream_completion import KEEPALIVE_LIMITS, ObservedTransport
+from stream_completion import KEEPALIVE_LIMITS, HttpWarmup, ObservedTransport
+
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
 # The contract interval is [0.8 - 1.2]; Deepgram accepts a subset of its own
 # [0.7 - 1.5] range. Keep this worker-side clamp independent of the stored
@@ -118,24 +120,33 @@ def build_llm(config: dict, credentials: dict[str, str], *, client=None):
             prompt_cache_breakpoints=False,
         )
     elif choice["provider"] == "deepseek_direct" and choice["model"] == "deepseek-flash":
-        owns_client = client is None
-        sdk_client = client or openai_sdk.AsyncOpenAI(
-            api_key=credentials["DEEPSEEK_API_KEY"],
-            base_url="https://api.deepseek.com/v1",
-            max_retries=0,
-            http_client=httpx.AsyncClient(
+        http_client = None
+        if client is None:
+            http_client = httpx.AsyncClient(
                 transport=ObservedTransport(httpx.AsyncHTTPTransport(retries=0, limits=KEEPALIVE_LIMITS))
-            ),
-        )
+            )
+            sdk_client = openai_sdk.AsyncOpenAI(
+                api_key=credentials["DEEPSEEK_API_KEY"],
+                base_url=DEEPSEEK_BASE_URL,
+                max_retries=0,
+                http_client=http_client,
+            )
+        else:
+            sdk_client = client
         llm = OwnedDeepSeekLLM(
-            owns_client=owns_client,
+            owns_client=client is None,
             model=choice["model"],
             api_key=credentials["DEEPSEEK_API_KEY"],
-            base_url="https://api.deepseek.com/v1",
+            base_url=DEEPSEEK_BASE_URL,
             client=sdk_client,
             max_retries=0,
             extra_body={"thinking": {"type": "disabled"}},
         )
+        if http_client is not None:
+            # Same pool the SDK uses for completions, so this connection is the one the turn reuses.
+            llm.warm_connection = HttpWarmup(
+                http_client, f"{DEEPSEEK_BASE_URL}/models", credentials["DEEPSEEK_API_KEY"]
+            )
     else:
         raise ValueError("Unsupported LLM configuration")
     return llm

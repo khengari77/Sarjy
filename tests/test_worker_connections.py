@@ -20,7 +20,7 @@ def test_worker_backend_client_keeps_connections_alive():
     async def run():
         client = backend_client("http://api", {"x-agent-secret": "secret"})
         try:
-            assert client._transport._pool._keepalive_expiry == 50
+            assert client._transport.transport._pool._keepalive_expiry == 50
         finally:
             await client.aclose()
 

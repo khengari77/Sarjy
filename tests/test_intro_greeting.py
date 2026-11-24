@@ -176,6 +176,9 @@ def test_entrypoint_starts_the_greeting_after_the_session_runs(monkeypatch):
         def __init__(self, **kwargs):
             super().__init__()
 
+        def on(self, event, callback=None):
+            return callback
+
         async def start(self, agent, **kwargs):
             events.append("session-start")
 
@@ -201,7 +204,7 @@ def test_entrypoint_starts_the_greeting_after_the_session_runs(monkeypatch):
 
     original = httpx.AsyncClient
     monkeypatch.setattr(
-        worker.httpx, "AsyncClient", lambda **kw: original(**kw, transport=httpx.MockTransport(upstream))
+        worker.httpx, "AsyncClient", lambda **kw: original(**{**kw, "transport": httpx.MockTransport(upstream)})
     )
     monkeypatch.setattr(worker, "build_providers", lambda config, credentials: {})
     ctx.proc = SimpleNamespace(userdata={"vad": object()})

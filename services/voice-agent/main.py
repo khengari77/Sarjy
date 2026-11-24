@@ -44,8 +44,9 @@ from prefix_stability import canonical_prompt, predicted_prefix_hit_pct
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
 from speech_budget import SpeechBudget
-from stream_completion import KEEPALIVE_LIMITS
+from stream_completion import KEEPALIVE_LIMITS, CompletionState, TracedTransport, api_phase_state
 from turn_metrics import assistant_metrics, build_payload, elapsed_ms
+from warm import ConnectionWarmup
 from wordle_commands import is_wordle_command, parse_say_payload
 from wordle_tools import (
     WordleTools,
@@ -341,24 +342,37 @@ class SarjyAgent(WordleTools, Agent):
         self.loop_lag.take()  # this turn's window starts here, not at the end of the last reply
         if message.id not in self.prepared:
             started = time.perf_counter()
+            phase = None
             for attempt in range(2):
+                attempt_phase = CompletionState()
+                token = api_phase_state.set(attempt_phase)
                 try:
                     response = await self.backend.post(
                         "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
                     )
                     response.raise_for_status()
-                    break
                 except STALE_CONNECTION_ERRORS:
                     # A reused connection the other end already closed; a timeout is not retried.
                     if attempt == 0:
                         continue
                     raise
+                finally:
+                    api_phase_state.reset(token)
+                phase = attempt_phase
+                break
             self.prepared[message.id] = response.json()
             turn_id = self.prepared[message.id]["turn_id"]
             self.turn_stages[turn_id] = {}
             self._record_stage(turn_id, "turn_start_ms", started)
             _record_value(self, turn_id, "turn_start_server_ms", _header_int(response, "x-server-ms"), first_only=True)
             _record_value(self, turn_id, "turn_start_db_ms", _header_int(response, "x-db-ms"), first_only=True)
+            _record_value(
+                self, turn_id, "api_connect_ms", phase.provider_connect_ms if phase else None, first_only=True
+            )
+            _record_value(
+                self, turn_id, "api_headers_ms", phase.provider_headers_ms if phase else None, first_only=True
+            )
+            _record_value(self, turn_id, "api_body_ms", phase.provider_body_ms if phase else None, first_only=True)
         # Typed input never ran the turn hook: an earlier turn's prepayment is not this one's.
         self._discard_prepaid(keep=message.id)
         self.reserving_message = message.id
@@ -647,6 +661,8 @@ class SarjyAgent(WordleTools, Agent):
             started = time.perf_counter()
             result = None
             for attempt in range(2):
+                phase = CompletionState()
+                token = api_phase_state.set(phase)
                 try:
                     response = await self.backend.post(
                         "/internal/agent/command", json={"turn_id": self.prepared[message.id]["turn_id"]}
@@ -658,6 +674,7 @@ class SarjyAgent(WordleTools, Agent):
                     )
                     _record_value(self, turn_id, "command_db_ms", _header_int(response, "x-db-ms"), first_only=True)
                     body = response.json()
+                    _record_value(self, turn_id, "command_api_headers_ms", phase.provider_headers_ms, first_only=True)
                     result = body.get("command")
                     memory_op = body.get("memory_op")
                     if isinstance(memory_op, dict):
@@ -671,6 +688,8 @@ class SarjyAgent(WordleTools, Agent):
                         continue
                     logging.error("Finalized command resolution failed; continuing conversationally")
                     break
+                finally:
+                    api_phase_state.reset(token)
             self.commands[message.id] = result if isinstance(result, dict) else None
             self._record_stage(self.prepared[message.id]["turn_id"], "command_ms", started, first_only=True)
         return self.commands[message.id]
@@ -754,14 +773,17 @@ class SarjyAgent(WordleTools, Agent):
         return proposal is not None and self.memory_question_key != self._proposal_key(proposal)
 
     def _reply_request(self, user, snapshot, chat_ctx, tools):
-        request = snapshot_request(snapshot, self.current_turn)
+        # The turn this snapshot was compiled for, not the newest turn: a later utterance may
+        # already have moved ``current_turn`` while this reply is still being built.
+        request = snapshot_request(snapshot, self.prepared[user.id]["turn_id"])
         tools = self._wordle_tools(tools)
         schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
         return _with_continuation(request, _continuation(chat_ctx, user), schemas), tools, schemas
 
     async def _reply(self, user, snapshot, chat_ctx, tools, model_settings, command, early):
         reply_started = time.perf_counter()
-        turn_id = self.current_turn
+        # This reply's own turn: a later utterance may already have moved ``current_turn``.
+        turn_id = self.prepared[user.id]["turn_id"]
         if command is not None:
             if early is not None:
                 early.cancel()
@@ -773,7 +795,7 @@ class SarjyAgent(WordleTools, Agent):
             handle = self.session.current_speech
             self._schedule_persistence(user, handle)
             return
-        if self.forced_speech is not None and self.forced_speech[0] == self.current_turn:
+        if self.forced_speech is not None and self.forced_speech[0] == turn_id:
             _, forced = self.forced_speech
             self.forced_speech = None
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
@@ -1336,7 +1358,7 @@ def backend_client(base_url: str, headers: dict[str, str]) -> httpx.AsyncClient:
         base_url=base_url,
         headers=headers,
         timeout=httpx.Timeout(15, connect=5),
-        limits=KEEPALIVE_LIMITS,
+        transport=TracedTransport(httpx.AsyncHTTPTransport(retries=0, limits=KEEPALIVE_LIMITS)),
     )
 
 
@@ -1366,6 +1388,7 @@ async def entrypoint(ctx: JobContext):
 
         providers = build_providers(config, provider_credentials(values, config["llm"]["provider"]))
         fallback_llm = providers.pop("fallback_llm", None)
+        warmup = ConnectionWarmup(backend, providers.get("llm"))
         agent = SarjyAgent(
             backend,
             config,
@@ -1382,12 +1405,13 @@ async def entrypoint(ctx: JobContext):
             **providers,
             **endpointing_kwargs(values),
             vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),
-            preemptive_generation=False,
             conn_options=SessionConnectOptions(
                 llm_conn_options=APIConnectOptions(max_retry=0), tts_conn_options=APIConnectOptions(max_retry=0)
             ),
         )
         await ctx.connect()
+
+        session.on("user_state_changed", warmup.user_state_changed)
 
         @ctx.room.local_participant.register_rpc_method("sarjy.interrupt")
         async def interrupt(data: rtc.RpcInvocationData):
@@ -1448,6 +1472,7 @@ async def entrypoint(ctx: JobContext):
                 greeting.cancel()
                 agent.loop_lag.stop()
                 await agent.stop_speech_refills()
+                await warmup.aclose()
             if agent.pending:
                 await asyncio.gather(*agent.pending, return_exceptions=True)
             if fallback_llm is not None and hasattr(fallback_llm, "aclose"):

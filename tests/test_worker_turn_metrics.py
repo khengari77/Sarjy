@@ -91,8 +91,12 @@ def test_turn_metrics_round_trip_new_measurement_stages(worker):
     stages = {
         "turn_start_server_ms": 5,
         "turn_start_db_ms": 1,
+        "api_connect_ms": 3,
+        "api_headers_ms": 4,
+        "api_body_ms": 5,
         "command_server_ms": 6,
         "command_db_ms": 2,
+        "command_api_headers_ms": 7,
         "model_first_chunk_ms": 7,
         "release_wait_ms": 8,
         "prompt_cache_hit_tokens": 1024,
