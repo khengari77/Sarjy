@@ -6,8 +6,6 @@ from typing import TypedDict
 MIN_DELAY_KEY = "ENDPOINTING_MIN_DELAY_SECONDS"
 MAX_DELAY_KEY = "ENDPOINTING_MAX_DELAY_SECONDS"
 
-DEFAULT_MIN_DELAY_SECONDS = 0.5
-DEFAULT_MAX_DELAY_SECONDS = 3.0
 LOWEST_DELAY_SECONDS = 0.05
 HIGHEST_DELAY_SECONDS = 6.0
 
@@ -35,19 +33,18 @@ def endpointing_kwargs(values: Mapping[str, str]) -> EndpointingKwargs:
     if not raw_min and not raw_max:
         return {}
 
-    min_delay = _parse_delay(MIN_DELAY_KEY, raw_min) if raw_min else DEFAULT_MIN_DELAY_SECONDS
-    max_delay = _parse_delay(MAX_DELAY_KEY, raw_max) if raw_max else DEFAULT_MAX_DELAY_SECONDS
+    if not (raw_min and raw_max):
+        # The SDK's own defaults depend on the turn detector in use (0.3 / 2.5 with the streaming
+        # detector), so a half-set pair cannot be checked against them: require both.
+        raise ValueError(f"Set both {MIN_DELAY_KEY} and {MAX_DELAY_KEY}, or neither")
+    min_delay = _parse_delay(MIN_DELAY_KEY, raw_min)
+    max_delay = _parse_delay(MAX_DELAY_KEY, raw_max)
     if min_delay > max_delay:
         raise ValueError(f"{MIN_DELAY_KEY} ({min_delay}) must not exceed {MAX_DELAY_KEY} ({max_delay})")
     _require_range(MIN_DELAY_KEY, min_delay)
     _require_range(MAX_DELAY_KEY, max_delay)
 
-    endpointing: EndpointingOptions = {}
-    if raw_min:
-        endpointing["min_delay"] = min_delay
-    if raw_max:
-        endpointing["max_delay"] = max_delay
-    return {"turn_handling": {"endpointing": endpointing}}
+    return {"turn_handling": {"endpointing": {"min_delay": min_delay, "max_delay": max_delay}}}
 
 
 def _parse_delay(name: str, raw: str) -> float:

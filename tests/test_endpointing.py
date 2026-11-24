@@ -13,13 +13,11 @@ def test_configured_delays_become_turn_handling_options():
     }
 
 
-def test_one_configured_delay_leaves_the_other_sdk_default():
-    assert endpointing_kwargs({"ENDPOINTING_MAX_DELAY_SECONDS": "2.0"}) == {
-        "turn_handling": {"endpointing": {"max_delay": 2.0}}
-    }
-    assert endpointing_kwargs({"ENDPOINTING_MIN_DELAY_SECONDS": "0.3"}) == {
-        "turn_handling": {"endpointing": {"min_delay": 0.3}}
-    }
+@pytest.mark.parametrize("values", [{"ENDPOINTING_MAX_DELAY_SECONDS": "2.0"}, {"ENDPOINTING_MIN_DELAY_SECONDS": "0.3"}])
+def test_half_a_pair_is_refused(values):
+    # The SDK default for the other half depends on the turn detector, so it cannot be checked.
+    with pytest.raises(ValueError, match="Set both"):
+        endpointing_kwargs(values)
 
 
 def test_minimum_above_maximum_fails_startup():
@@ -30,16 +28,16 @@ def test_minimum_above_maximum_fails_startup():
 @pytest.mark.parametrize(
     "values",
     [
-        {"ENDPOINTING_MIN_DELAY_SECONDS": "0.01"},
-        {"ENDPOINTING_MAX_DELAY_SECONDS": "6.1"},
+        {"ENDPOINTING_MIN_DELAY_SECONDS": "0.01", "ENDPOINTING_MAX_DELAY_SECONDS": "2.0"},
+        {"ENDPOINTING_MIN_DELAY_SECONDS": "0.3", "ENDPOINTING_MAX_DELAY_SECONDS": "6.1"},
         {"ENDPOINTING_MIN_DELAY_SECONDS": "7.0", "ENDPOINTING_MAX_DELAY_SECONDS": "8.0"},
     ],
 )
-def test_delays_outside_the_allowed_range_fail_startup(values):
+def test_delays_outside_the_allowed_range_are_refused(values):
     with pytest.raises(ValueError, match="must be between"):
         endpointing_kwargs(values)
 
 
-def test_non_numeric_delays_fail_startup():
+def test_non_numeric_delays_are_refused():
     with pytest.raises(ValueError, match="must be a number"):
-        endpointing_kwargs({"ENDPOINTING_MIN_DELAY_SECONDS": "fast"})
+        endpointing_kwargs({"ENDPOINTING_MIN_DELAY_SECONDS": "fast", "ENDPOINTING_MAX_DELAY_SECONDS": "2.0"})
