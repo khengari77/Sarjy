@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from collections.abc import Mapping
+from contextlib import aclosing
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any
@@ -20,6 +21,7 @@ from config import provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
 from fallback import fallback_decision, next_attempt
 from generation import GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
+from held_stream import EarlyReply
 from livekit import rtc
 from livekit.agents import (
     Agent,
@@ -450,7 +452,7 @@ class SarjyAgent(WordleTools, Agent):
             self.memory_question_key = None
             self.memory_outcome = "failed"
 
-    async def reserve(self, provider: str, characters: int = 0):
+    async def reserve(self, provider: str, characters: int = 0, report=None):
         if provider in {"elevenlabs", "deepgram_tts"} and characters > 500:
             if self.notify:
                 await self.notify("DAILY_BUDGET_EXHAUSTED")
@@ -458,7 +460,7 @@ class SarjyAgent(WordleTools, Agent):
         try:
             await self._post_reservation(provider, characters)
         except httpx.HTTPStatusError as exc:
-            await self._report_reservation(exc)
+            await (report or self._report_reservation)(exc)
             raise
 
     async def _post_reservation(self, provider: str, characters: int) -> None:
@@ -606,8 +608,51 @@ class SarjyAgent(WordleTools, Agent):
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=direct))
             self._schedule_persistence(user, self.session.current_speech)
             return
-        command = None if self.command_blocked_turn == user.id else await self.command_for(user)
+        early = self._start_reply_early(user, snapshot, chat_ctx, tools, model_settings)
+        try:
+            command = None if self.command_blocked_turn == user.id else await self.command_for(user)
+            reply = self._reply(user, snapshot, chat_ctx, tools, model_settings, command, early)
+            async with aclosing(reply):
+                async for chunk in reply:
+                    yield chunk
+        finally:
+            if early is not None:
+                await early.discard()
+
+    def _start_reply_early(self, user, snapshot, chat_ctx, tools, model_settings) -> EarlyReply | None:
+        """Start the reply this turn gets if it turns out not to be a command.
+
+        Only for a turn whose request the command answer cannot change, except by
+        forcing a memory tool; the reply is then thrown away and asked for again.
+        Nothing it produces, tool calls and failures included, is seen before that.
+        """
+        if (
+            user.id in self.commands
+            or self.command_blocked_turn == user.id
+            or self.memory_outcome is not None
+            or self.forced_speech is not None
+            or self._question_due()
+            or self.wordle_active()
+        ):
+            return None
+        request, tools, _ = self._reply_request(user, snapshot, chat_ctx, tools)
+        choice = model_settings.tool_choice if model_settings else None
+        return EarlyReply(lambda report: self._stream_with_fallback(request, tools, choice, report))
+
+    def _question_due(self) -> bool:
+        proposal = self.memory_proposal
+        return proposal is not None and self.memory_question_key != self._proposal_key(proposal)
+
+    def _reply_request(self, user, snapshot, chat_ctx, tools):
+        request = snapshot_request(snapshot, self.current_turn)
+        tools = self._wordle_tools(tools)
+        schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
+        return _with_continuation(request, _continuation(chat_ctx, user), schemas), tools, schemas
+
+    async def _reply(self, user, snapshot, chat_ctx, tools, model_settings, command, early):
         if command is not None:
+            if early is not None:
+                early.cancel()
             await self._publish_command(command)
             # Exact commands bypass conversational generation entirely; TTS
             # remains budgeted and the deterministic spoken line is the whole
@@ -625,7 +670,7 @@ class SarjyAgent(WordleTools, Agent):
             return
         proposal = self.memory_proposal
         key = self._proposal_key(proposal)
-        if proposal is not None and self.memory_question_key != key:
+        if proposal is not None and self._question_due():
             # Deliver the exact confirmation question deterministically. Merely
             # yielding the text proves nothing: consent is armed only once the
             # resulting speech has fully played out.
@@ -641,10 +686,7 @@ class SarjyAgent(WordleTools, Agent):
             return
         handle = self.session.current_speech
         self._schedule_persistence(user, handle)
-        request = snapshot_request(snapshot, self.current_turn)
-        tools = self._wordle_tools(tools)
-        schemas = [build_legacy_openai_schema(tool)["function"] for tool in tools]
-        request = _with_continuation(request, _continuation(chat_ctx, user), schemas)
+        request, tools, schemas = self._reply_request(user, snapshot, chat_ctx, tools)
         if self.memory_outcome is not None:
             outcome, self.memory_outcome = self.memory_outcome, None
             note = {
@@ -663,8 +705,15 @@ class SarjyAgent(WordleTools, Agent):
         forced = self._forced_memory_choice(user.id, {schema["name"] for schema in schemas})
         if forced is not None:
             tool_choice = forced
-        async for chunk in self._guard_wordle_prose(self._stream_with_fallback(request, tools, tool_choice)):
-            yield chunk
+        if early is not None and forced is None:
+            stream = early.released(self._report_reservation)
+        else:
+            if early is not None:
+                early.cancel()
+            stream = self._stream_with_fallback(request, tools, tool_choice)
+        async with aclosing(stream), aclosing(self._guard_wordle_prose(stream)) as guarded:
+            async for chunk in guarded:
+                yield chunk
 
     async def _guard_wordle_prose(self, stream):
         """While a Wordle game is open, prose may not state marks, attempts or outcomes.
@@ -857,15 +906,16 @@ class SarjyAgent(WordleTools, Agent):
                 )
             ) from exc
 
-    async def _stream_with_fallback(self, request, tools, tool_choice):
+    async def _stream_with_fallback(self, request, tools, tool_choice, report=None):
+        """``report`` replaces the user-visible notice of a refused reservation."""
         primary_kind = self.pipeline["llm"]["provider"]
         emitted = False
         if primary_kind == "openai_direct":
             self._require_openai_bounds(request, tools)
-            await self.reserve("openai")
+            await self.reserve("openai", report=report)
         elif primary_kind == "deepseek_direct":
             self._require_deepseek_bounds(request)
-            await self.reserve("deepseek")
+            await self.reserve("deepseek", report=report)
         else:
             raise ValueError("UNSUPPORTED_GENERATION_PROVIDER")
         try:
@@ -887,7 +937,7 @@ class SarjyAgent(WordleTools, Agent):
             fallback_request = next_attempt(request, str(uuid4()))
             self._require_openai_bounds(fallback_request, tools)
             # Reserve before delivery. A denial forwards nothing.
-            await self.reserve("openai")
+            await self.reserve("openai", report=report)
             async for event in self._stream_attempt(
                 self.fallback_llm, "openai_direct", fallback_request, tools, tool_choice
             ):
