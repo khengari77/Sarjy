@@ -252,9 +252,14 @@ def _eligible(
     return candidate.origin != "tool" or candidate.source in permitted_tools
 
 
-def _chronological_key(candidate: ContextCandidate) -> tuple[str, str]:
-    """Oldest first, newest last; records without a timestamp lead, then ID."""
-    return (candidate.created_at or "", candidate.id)
+def _chronological_key(candidate: ContextCandidate) -> tuple[bool, str, str]:
+    """Oldest first, newest last; records without a timestamp lead, then ID.
+
+    Retractions ("forget this") always come last: their timestamp is the hidden memory's, which can be
+    old, and under budget pressure the tail is what survives, so an old retraction must not be the first
+    thing dropped.
+    """
+    return (candidate.source == "retraction", candidate.created_at or "", candidate.id)
 
 
 def _select_messages(

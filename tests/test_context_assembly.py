@@ -146,6 +146,30 @@ def test_newer_memories_and_tool_results_append_to_their_blocks():
     assert after.messages[:memory_end] == before.messages[:memory_end]
 
 
+def test_a_retraction_stays_last_in_the_memory_block_whatever_its_age():
+    """An old forgotten fact's retraction must be the last thing dropped, not the first."""
+    retraction = ContextCandidate(
+        id="retraction:old",
+        role="memory",
+        text="The user asked to forget an old fact",
+        origin="memory",
+        source="retraction",
+        created_at="2020-01-01T00:00:00+00:00",
+    )
+    recent = ContextCandidate(
+        id="m-new", role="memory", text="Recent memory", origin="memory", created_at="2026-11-12T00:00:03+00:00"
+    )
+    compiled = compile_turn_context(
+        revision=1,
+        instructions="Rules",
+        history=(),
+        memories=(retraction, recent),
+        tool_results=(),
+        current_turn=history("u1", "Question"),
+    )
+    assert compiled.included_ids == ("system", "m-new", "retraction:old", "u1")
+
+
 def test_system_instructions_survive_small_budgets():
     compiled = compile_turn_context(
         revision=0,
