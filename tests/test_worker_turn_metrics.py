@@ -98,7 +98,6 @@ def test_turn_metrics_round_trip_new_measurement_stages(worker):
         "command_db_ms": 2,
         "command_api_headers_ms": 7,
         "model_first_chunk_ms": 7,
-        "model_first_chunk_2_ms": 8,
         "release_wait_ms": 9,
         "prompt_cache_hit_tokens": 1024,
         "prompt_cache_miss_tokens": 2048,

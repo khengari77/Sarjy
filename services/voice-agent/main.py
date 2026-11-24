@@ -245,6 +245,11 @@ def _header_int(response: httpx.Response, name: str) -> int | None:
         return None
 
 
+# Only these tools hand their result back to the model; the others (Wordle, memory proposals) answer with
+# deterministic speech, so a continuation reservation for them would be charged and never used.
+MODEL_CONTINUATION_TOOLS = frozenset({"get_current_weather", "recall"})
+
+
 def _record_value(
     agent,
     turn_id: str | None,
@@ -903,7 +908,6 @@ class SarjyAgent(WordleTools, Agent):
                         "model_first_chunk_ms",
                         model_started,
                         first_only=True,
-                        second_name="model_first_chunk_2_ms",
                     )
                 self._record_early_chunk(turn_id, early, used_early)
                 yield chunk
@@ -917,7 +921,6 @@ class SarjyAgent(WordleTools, Agent):
             "model_first_chunk_ms",
             elapsed_ms(early.started, early.first_item_at),
             first_only=True,
-            second_name="model_first_chunk_2_ms",
         )
 
     async def _guard_wordle_prose(self, stream):
@@ -1108,7 +1111,12 @@ class SarjyAgent(WordleTools, Agent):
                     if event.kind in {"text", "tool"}:
                         emitted = True
                         answering()  # adapters that do not report their first chunk
-                    if event.kind == "tool" and not continuation_prepaid and prepay_continuation is not None:
+                    if (
+                        event.kind == "tool"
+                        and event.name in MODEL_CONTINUATION_TOOLS
+                        and not continuation_prepaid
+                        and prepay_continuation is not None
+                    ):
                         # The next inference is now certain; reserve it while the tool runs.
                         prepay_continuation(provider_kind)
                         continuation_prepaid = True

@@ -20,7 +20,6 @@ STAGE_FIELDS = (
     "command_db_ms",
     "command_api_headers_ms",
     "model_first_chunk_ms",
-    "model_first_chunk_2_ms",
     "release_wait_ms",
     "prompt_cache_hit_tokens",
     "prompt_cache_miss_tokens",
@@ -48,7 +47,6 @@ class TurnStages(TypedDict, total=False):
     command_db_ms: int | None
     command_api_headers_ms: int | None
     model_first_chunk_ms: int | None
-    model_first_chunk_2_ms: int | None
     release_wait_ms: int | None
     prompt_cache_hit_tokens: int | None
     prompt_cache_miss_tokens: int | None
