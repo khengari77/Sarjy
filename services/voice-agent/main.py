@@ -17,11 +17,11 @@ from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolI
 from app.domain.memory_capture import is_referential
 from app.domain.tool_operations import operation_key
 from app.domain.ui_routing import CONFIDENCE_THRESHOLD, FORCED_MEMORY_TOOLS
-from config import provider_credentials, read_worker_environment, require_values
+from config import first_event_seconds, provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
 from endpointing import endpointing_kwargs
 from fallback import fallback_decision, next_attempt
-from generation import GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
+from generation import GenerationCancelled, GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
 from held_stream import EarlyReply
 from livekit import rtc
 from livekit.agents import (
@@ -73,6 +73,7 @@ MAX_CONTEXT_BYTES = 64000
 # The agent defines 9 tools (weather, three memory, five Wordle); raise this with the tool list.
 MAX_TOOLS = 9
 GENERATION_ATTEMPT_SECONDS = 30.0
+FIRST_EVENT_SECONDS = 2.5
 STALE_CONNECTION_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
 DECISION_TURN_NOTE = "The user is answering the previous confirmation; do not propose anything this turn."
 FAILED_NOTE = "The memory tool failed. Nothing was saved, excluded or changed; do not claim otherwise."
@@ -1019,11 +1020,20 @@ class SarjyAgent(WordleTools, Agent):
         adapter = adapter_for(provider, provider_kind)
         buffered_usage = None
         emitted = False
+        overall_deadline = asyncio.get_running_loop().time() + GENERATION_ATTEMPT_SECONDS
+        deadline: asyncio.Timeout | None = None
         try:
-            async with asyncio.timeout(GENERATION_ATTEMPT_SECONDS):
+            async with asyncio.timeout(min(FIRST_EVENT_SECONDS, GENERATION_ATTEMPT_SECONDS)) as deadline:
+
+                def answering() -> None:
+                    # A provider that started answering earns the whole-attempt deadline.
+                    deadline.reschedule(overall_deadline)
+
+                adapter.on_first_chunk = answering
                 async for event in adapter.stream(request, tools, tool_choice):
                     if event.kind in {"text", "tool"}:
                         emitted = True
+                        answering()  # adapters that do not report their first chunk
                     if event.kind == "usage":
                         buffered_usage = event
                         continue
@@ -1037,6 +1047,21 @@ class SarjyAgent(WordleTools, Agent):
                 self, request.turn_id, "prompt_cache_miss_tokens", adapter.prompt_cache_miss_tokens, first_only=True
             )
         except TimeoutError as exc:
+            raise GenerationFailure(
+                GenerationEvent(
+                    "error",
+                    turn_id=request.turn_id,
+                    attempt_id=request.attempt_id,
+                    partial=emitted,
+                    error_code="timeout",
+                )
+            ) from exc
+        except GenerationCancelled as exc:
+            # Python 3.12's asyncio.timeout converts only a bare CancelledError into TimeoutError; the adapter
+            # re-raises our deadline's cancellation as this subclass, which would otherwise end the turn
+            # silently instead of falling back.
+            if deadline is None or not deadline.expired():
+                raise
             raise GenerationFailure(
                 GenerationEvent(
                     "error",
@@ -1301,7 +1326,9 @@ def backend_client(base_url: str, headers: dict[str, str]) -> httpx.AsyncClient:
 
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
+    global FIRST_EVENT_SECONDS
     values = read_worker_environment()
+    FIRST_EVENT_SECONDS = first_event_seconds(values)
     require_values(values, "API_INTERNAL_URL", "AGENT_SERVICE_SECRET")
     session_id = json.loads(ctx.job.metadata)["session_id"]
     headers = {
