@@ -38,6 +38,7 @@ from livekit.agents import (
 )
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
+from loop_lag import LoopLagMonitor
 from prefix_stability import canonical_prompt, predicted_prefix_hit_pct
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
@@ -321,6 +322,7 @@ class SarjyAgent(WordleTools, Agent):
         # Exact Wordle commands are answered by the web client through
         # sarjy.say; the conversational LLM must stay silent for those turns.
         self.suppressed: set[str] = set()
+        self.loop_lag = LoopLagMonitor()
 
     @staticmethod
     def _proposal_key(proposal: Mapping[str, Any] | None) -> tuple[Any, Any]:
@@ -336,6 +338,7 @@ class SarjyAgent(WordleTools, Agent):
         stages[name] = elapsed_ms(started, time.perf_counter())
 
     async def compile(self, message):
+        self.loop_lag.take()  # this turn's window starts here, not at the end of the last reply
         if message.id not in self.prepared:
             started = time.perf_counter()
             for attempt in range(2):
@@ -1018,15 +1021,6 @@ class SarjyAgent(WordleTools, Agent):
         adapter = adapter_for(provider, provider_kind)
         buffered_usage = None
         emitted = False
-        prompt = canonical_prompt(request, request.tools)
-        _record_value(
-            self,
-            request.turn_id,
-            "predicted_prefix_hit_pct",
-            predicted_prefix_hit_pct(self.previous_prompt, prompt),
-            first_only=True,
-        )
-        self.previous_prompt = prompt
         try:
             async with asyncio.timeout(GENERATION_ATTEMPT_SECONDS):
                 async for event in adapter.stream(request, tools, tool_choice):
@@ -1054,6 +1048,38 @@ class SarjyAgent(WordleTools, Agent):
                     error_code="timeout",
                 )
             ) from exc
+        finally:
+            # Also on failure: a timed-out attempt is where these numbers explain the most.
+            _record_value(
+                self,
+                request.turn_id,
+                "provider_connect_ms",
+                getattr(adapter, "provider_connect_ms", None),
+                first_only=True,
+            )
+            _record_value(
+                self,
+                request.turn_id,
+                "provider_headers_ms",
+                getattr(adapter, "provider_headers_ms", None),
+                first_only=True,
+            )
+            lag = getattr(self, "loop_lag", None)
+            _record_value(self, request.turn_id, "loop_lag_ms", lag.worst_ms() if lag else None, first_only=True)
+            # Computed after the attempt, not before it: the prediction must not delay the request.
+            try:
+                prompt = canonical_prompt(request, request.tools)
+            except Exception:  # a metric must never replace the attempt's own outcome
+                logging.debug("prefix prediction skipped", exc_info=True)
+            else:
+                _record_value(
+                    self,
+                    request.turn_id,
+                    "predicted_prefix_hit_pct",
+                    predicted_prefix_hit_pct(getattr(self, "previous_prompt", None), prompt),
+                    first_only=True,
+                )
+                self.previous_prompt = prompt
 
     async def _stream_with_fallback(self, request, tools, tool_choice, report=None):
         """``report`` replaces the user-visible notice of a refused reservation."""
@@ -1329,6 +1355,7 @@ async def entrypoint(ctx: JobContext):
             wordle_active=lambda: reveal.active,
             is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending, wordle_active=reveal.active),
         )
+        agent.loop_lag.start()
         session = AgentSession(
             **providers,
             vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),
@@ -1396,6 +1423,7 @@ async def entrypoint(ctx: JobContext):
                 await session.aclose()
             finally:
                 greeting.cancel()
+                agent.loop_lag.stop()
                 await agent.stop_speech_refills()
             if agent.pending:
                 await asyncio.gather(*agent.pending, return_exceptions=True)
