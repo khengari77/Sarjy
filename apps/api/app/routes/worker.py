@@ -5,7 +5,7 @@ from typing import Literal
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +25,8 @@ from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
-from app.infrastructure.database import Conversation, Memory, Turn, UserSetting, VoiceSession
+from app.infrastructure.database import Conversation, Memory, Turn, TurnMetric, UserSetting, VoiceSession
+from app.infrastructure.upsert import insert_ignore
 from app.routes.wordle_tools import register_wordle_tool_routes
 from app.services.budget import reserve as reserve_development_budget
 from app.services.commands import command_request_id, handle_finalized_utterance
@@ -76,6 +77,27 @@ class WeatherInput(BaseModel):
     request_id: str = Field(min_length=1, max_length=100)
     city: str = Field(min_length=1, max_length=120)
     country: str | None = Field(default=None, max_length=120)
+
+
+class TurnStageMetrics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    turn_start_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    command_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    llm_reserve_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    tts_reserve_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+
+
+class TurnMetricsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    turn_id: str = Field(max_length=36)
+    stt_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    eot_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    llm_ttft_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    tts_ttfb_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    ttfa_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    stages: TurnStageMetrics = Field(default_factory=TurnStageMetrics)
 
 
 class MemoryToolBase(BaseModel):
@@ -327,6 +349,29 @@ def _register_session_routes(app, *, database, guard):
         return {"ok": True}
 
 
+async def _record_turn_metrics(db: AsyncSession, voice: VoiceSession, body: TurnMetricsInput):
+    turn = await db.get(Turn, body.turn_id)
+    if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
+        raise HTTPException(404)
+    inserted = await insert_ignore(
+        db,
+        TurnMetric,
+        {
+            "id": str(uuid4()),
+            "turn_id": turn.id,
+            "stt_ms": body.stt_ms,
+            "eot_ms": body.eot_ms,
+            "llm_ttft_ms": body.llm_ttft_ms,
+            "tts_ttfb_ms": body.tts_ttfb_ms,
+            "ttfa_ms": body.ttfa_ms,
+            "usage": {"stages": body.stages.model_dump(exclude_none=True)},
+        },
+        index_elements=["turn_id"],
+    )
+    await db.commit()
+    return {"recorded": inserted.rowcount == 1}
+
+
 def _compile_turn_context(
     *, revision, instructions, history, memories, tool_results, current_turn, excluded_ids, pipeline
 ):
@@ -538,6 +583,11 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
             budget_limit=config.deepseek_daily_micro_usd,
         )
         return {"id": turn.id}
+
+    @app.post("/internal/agent/turn/metrics")
+    async def turn_metrics(body: TurnMetricsInput, request: Request, db: AsyncSession = Depends(database)):
+        voice = await guard(request, db, allow_ended=True)
+        return await _record_turn_metrics(db, voice, body)
 
 
 def _register_command_routes(app, *, database, guard, catalog, approved_voice_ids=None, secret=""):

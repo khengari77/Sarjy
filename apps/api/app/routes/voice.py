@@ -7,14 +7,14 @@ from uuid import uuid4
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy
 from app.domain.pipeline import PipelineConfig, validate_pipeline
 from app.domain.sessions import admission_error
-from app.infrastructure.database import Identity, ReviewerInvitation, SessionGate, UserSetting, VoiceSession
+from app.infrastructure.database import SessionGate, UserSetting, VoiceSession
 from app.services.actions import clear_saved_voice
 from app.services.pipeline_settings import configured_keys, default_llm, default_tts
 from app.services.session_cleanup import cleanup_room
@@ -37,21 +37,7 @@ class StartVoice(BaseModel):
     response_preference: ResponsePreference = ResponsePreference.AUTOMATIC
 
 
-async def _invitation_calls_exhausted(db: AsyncSession, user) -> bool:
-    """Return whether this reviewer invitation has spent its lifetime calls."""
-    if user.invitation_id is None:
-        return False
-    invitation = await db.get(ReviewerInvitation, user.invitation_id)
-    calls = await db.scalar(
-        select(func.count())
-        .select_from(VoiceSession)
-        .join(Identity, Identity.id == VoiceSession.owner_id)
-        .where(Identity.invitation_id == user.invitation_id)
-    )
-    return invitation is None or calls >= invitation.max_calls
-
-
-async def _admission_rejection(db: AsyncSession, config: Settings, user, now: datetime) -> str | None:
+async def _admission_rejection(db: AsyncSession, user, now: datetime) -> str | None:
     # Serialize reservations across API processes on both SQLite and PostgreSQL.
     await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
     await db.execute(
@@ -60,23 +46,7 @@ async def _admission_rejection(db: AsyncSession, config: Settings, user, now: da
         .values(status="ended")
     )
     active = (await db.scalars(select(VoiceSession).where(VoiceSession.status.in_(["starting", "active"])))).all()
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    month_calls = await db.scalar(
-        select(func.count()).select_from(VoiceSession).where(VoiceSession.expires_at >= month_start)
-    )
-    identity_calls = await db.scalar(
-        select(func.count()).select_from(VoiceSession).where(VoiceSession.owner_id == user.id)
-    )
-    if await _invitation_calls_exhausted(db, user):
-        return "REVIEWER_INVITATION_BUDGET_EXHAUSTED"
-    return admission_error(
-        tuple(v.owner_id for v in active),
-        user.id,
-        month_calls,
-        identity_calls,
-        config.demo_session_budget,
-        config.demo_calls_per_identity,
-    )
+    return admission_error(tuple(v.owner_id for v in active), user.id)
 
 
 def _voice_error(exc: VoiceCatalogError, source: str | None) -> HTTPException:
@@ -156,7 +126,7 @@ def register_voice_routes(
         if saved_voice_unavailable == "removed":
             await clear_saved_voice(db, user.id)
         now = datetime.now(UTC)
-        rejection = await _admission_rejection(db, config, user, now)
+        rejection = await _admission_rejection(db, user, now)
         if rejection:
             raise HTTPException(429, detail={"code": rejection})
         voice = VoiceSession(

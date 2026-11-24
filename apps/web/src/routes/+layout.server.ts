@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
 import {
   accessFailures,
+  accountMode,
   issueSession,
   protectedMode,
   redeem,
@@ -20,8 +21,9 @@ import { isReviewerPublicPath } from '../lib/auth/reviewer';
  * `hooks.server.ts`; this load serves the door and performs the `?token=`
  * exchange server-side, so a valid link lands in the app on the first paint.
  */
-export const load: LayoutServerLoad = async ({ request, url, cookies, getClientAddress, setHeaders }) => {
-  if (!protectedMode) return { entry: false, error: false, blocked: false, next: '/', protectedMode };
+export const load: LayoutServerLoad = async ({ request, url, cookies, getClientAddress }) => {
+  // Accounts are checked in `hooks.server.ts`; their pages are ordinary routes.
+  if (!protectedMode || accountMode) return { entry: false, error: false, blocked: false, next: '/', protectedMode };
 
   // Reviewer mode must render its own landing page and must not hide the app
   // shell from a browser that already holds a reviewer cookie. The API still
@@ -34,7 +36,6 @@ export const load: LayoutServerLoad = async ({ request, url, cookies, getClientA
   const next = safeNextPath(url.searchParams.get('next'));
   const token = url.searchParams.get('token');
   const authenticated = sessionIsValid(cookies);
-  if (token !== null || !authenticated) setHeaders({ 'cache-control': 'no-store' });
 
   if (authenticated) {
     // A valid session opening the link again must not consume a use; the

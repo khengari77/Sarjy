@@ -13,7 +13,7 @@ const proxy: RequestHandler = async ({ request, params, url, getClientAddress })
   target.search = url.search;
   const headers = new Headers();
   if (WEB_SERVICE_SECRET) headers.set('x-web-service-secret', WEB_SERVICE_SECRET);
-  if (target.pathname === '/v1/reviewer/session') {
+  if (target.pathname === '/v1/reviewer/session' || target.pathname.startsWith('/v1/auth/')) {
     // Overwrite (never append to) the client header. The API trusts this only
     // because it arrives with the web-service secret. Behind another proxy,
     // configure adapter-node's ADDRESS_HEADER for the real client address.
