@@ -1,4 +1,6 @@
 /** Account mode policy with no environment or network: paths, messages and cookie parsing. */
+import { SUPPORTED_OAUTH_PROVIDERS } from './oauth';
+
 export const ACCOUNT_COOKIE = 'sarjy_account';
 
 export type AccountAction = 'sign-in' | 'sign-up';
@@ -18,17 +20,33 @@ const MESSAGES: Record<string, string> = {
   ACCOUNT_PASSWORD_WEAK: 'That password is too easy to guess. Choose a longer one.',
   ACCOUNT_INPUT_INVALID: 'Enter a valid email and a password of at least 8 characters.',
   ACCOUNT_ATTEMPT_LIMIT: 'Too many attempts. Wait a few minutes and try again.',
+  ACCOUNT_OAUTH_FAILED: 'Sign-in with that provider did not complete. Try again.',
+  ACCOUNT_OAUTH_EMAIL_TAKEN: 'An account with this email already exists. Sign in with its password.',
 };
 export const ACCOUNT_UNAVAILABLE = 'Sign-in is not available right now. Try again shortly.';
 
+const OAUTH_FAILURES: Record<string, string> = {
+  failed: 'ACCOUNT_OAUTH_FAILED',
+  taken: 'ACCOUNT_OAUTH_EMAIL_TAKEN',
+  unavailable: 'ACCOUNT_SERVICE_UNAVAILABLE',
+  limit: 'ACCOUNT_ATTEMPT_LIMIT',
+};
+
+const OAUTH_PATH = new RegExp(`^/auth/(callback|${SUPPORTED_OAUTH_PROVIDERS.join('|')})$`);
+
 /** Reachable without a session. Everything else that renders a page needs one. */
 export function isAccountPublicPath(pathname: string): boolean {
-  return pathname === '/sign-in' || pathname === '/sign-up';
+  return pathname === '/sign-in' || pathname === '/sign-up' || OAUTH_PATH.test(pathname);
 }
 
 /** Copy for a coded failure; an unknown code never reaches the page. */
 export function accountMessage(code: unknown): string {
   return typeof code === 'string' && Object.hasOwn(MESSAGES, code) ? MESSAGES[code] : ACCOUNT_UNAVAILABLE;
+}
+
+/** Copy for the `?oauth=` outcome codes on the entry pages; anything else is silent. */
+export function oauthMessage(value: unknown): string {
+  return typeof value === 'string' && Object.hasOwn(OAUTH_FAILURES, value) ? accountMessage(OAUTH_FAILURES[value]) : '';
 }
 
 /** The session the API just issued, or `null` when its response did not carry exactly one. */

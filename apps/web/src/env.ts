@@ -11,6 +11,9 @@ export const variables = defineEnvVars({
   REVIEWER_ACCESS_ENABLED: { schema: (value) => value || 'false' },
   // Accounts replace both doors above. Keep in step with the API's setting.
   ACCOUNT_ACCESS_ENABLED: { schema: (value) => value },
+  // OAuth sign-in is enabled per provider; the names are validated in oauth.ts.
+  SUPABASE_URL: { schema: (value) => value || '' },
+  OAUTH_PROVIDERS: { schema: (value) => value || '' },
   REVIEW_ACCESS_TOKEN: { schema: (value) => value || '' },
   REVIEW_ACCESS_MAX_USES: { schema: (value) => value || '20' },
   REVIEW_ACCESS_EXPIRES_AT: { schema: (value) => value || '' },

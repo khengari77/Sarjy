@@ -1,6 +1,7 @@
 """Account sign-up, sign-in, sign-out and session inspection."""
 
 import json
+import re
 from contextlib import contextmanager
 
 from fastapi import Depends, HTTPException, Request
@@ -41,7 +42,10 @@ STATUS = {
     "ACCOUNT_EXISTS": 409,
     "ACCOUNT_PASSWORD_WEAK": 422,
     "ACCOUNT_INPUT_INVALID": 422,
+    "ACCOUNT_OAUTH_FAILED": 400,
+    "ACCOUNT_OAUTH_EMAIL_TAKEN": 409,
 }
+OAUTH_PARAMETER = re.compile(r"[A-Za-z0-9._~-]{16,256}")
 
 
 class Credentials(BaseModel):
@@ -49,6 +53,13 @@ class Credentials(BaseModel):
 
     email: str = Field(max_length=400)
     password: str = Field(max_length=400, repr=False)
+
+
+class OAuthCode(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    code: str = Field(max_length=256)
+    code_verifier: str = Field(max_length=256, repr=False)
 
 
 def _error(status: int, code: str, headers: dict[str, str] | None = None) -> HTTPException:
@@ -70,19 +81,33 @@ def _answers():
 
 async def _credentials(request: Request) -> tuple[str, str]:
     """Parse by hand: the framework's validation errors would echo the submitted password."""
-    raw = bytearray()
-    async for chunk in request.stream():
-        raw.extend(chunk)
-        if len(raw) > MAX_REQUEST_BYTES:
-            raise _error(422, "ACCOUNT_INPUT_INVALID")
     try:
-        body = Credentials.model_validate(json.loads(raw))
+        body = Credentials.model_validate(json.loads(await _body(request)))
     except (ValueError, RecursionError):
         raise _error(422, "ACCOUNT_INPUT_INVALID") from None
     email = normalized_email(body.email)
     if email is None or not acceptable_password(body.password):
         raise _error(422, "ACCOUNT_INPUT_INVALID")
     return email, body.password
+
+
+async def _body(request: Request) -> bytes:
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > MAX_REQUEST_BYTES:
+            raise _error(422, "ACCOUNT_INPUT_INVALID")
+    return bytes(raw)
+
+
+async def _oauth_code(request: Request) -> tuple[str, str]:
+    try:
+        body = OAuthCode.model_validate(json.loads(await _body(request)))
+    except (ValueError, RecursionError):
+        raise _error(422, "ACCOUNT_INPUT_INVALID") from None
+    if not (OAUTH_PARAMETER.fullmatch(body.code) and OAUTH_PARAMETER.fullmatch(body.code_verifier)):
+        raise _error(422, "ACCOUNT_INPUT_INVALID")
+    return body.code, body.code_verifier
 
 
 def _keyed(config: Settings, *attempts: tuple[AttemptLimit, str]) -> list[tuple[str, AttemptLimit]]:
@@ -134,6 +159,20 @@ def register_account_routes(app, *, config: Settings, database, clock, credentia
     @app.post("/v1/auth/sign-in")
     async def sign_in(request: Request, db: AsyncSession = Depends(database)):
         return await enter(request, db, credentials.sign_in, new=False)
+
+    @app.post("/v1/auth/oauth/exchange")
+    async def oauth_exchange(request: Request, db: AsyncSession = Depends(database)):
+        code, verifier = await _oauth_code(request)
+        now, source = clock(), attempt_source(request, config)
+        # A provider sign-up counts against both the source and the sign-up cap;
+        # a success gives back only the source attempt.
+        attempts = _keyed(config, (SOURCE_LIMIT, source))
+        created = _keyed(config, (SIGN_UP_LIMIT, source))
+        with _answers():
+            await record_attempts(db, attempts + created, now)
+            auth_user_id = await credentials.exchange_code(code, verifier)
+            await forgive_attempts(db, attempts, now)
+            return await start(request, db, auth_user_id, now)
 
     @app.post("/v1/auth/sign-out")
     async def sign_out(request: Request, db: AsyncSession = Depends(database)):

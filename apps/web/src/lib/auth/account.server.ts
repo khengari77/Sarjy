@@ -40,23 +40,23 @@ export async function accountSession(cookies: Cookies): Promise<'valid' | 'none'
   }
 }
 
-/** Exchange credentials for a session cookie; returns the failure code, or `null` on success. */
-export async function enterAccount(
-  action: AccountAction,
-  credentials: { email: string; password: string },
+/** POST a JSON body to the API and adopt the session it issues; returns the failure code, or `null`. */
+async function exchange(
+  path: string,
+  body: string,
   context: { cookies: Cookies; source: string },
 ): Promise<string | null> {
   try {
-    const response = await call(`/v1/auth/${action}`, {
+    const response = await call(path, {
       token: sessionToken(context.cookies),
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-reviewer-source': context.source },
-      body: JSON.stringify(credentials),
+      body,
       ms: SUBMIT_TIMEOUT_MS,
     });
     if (!response.ok) {
-      const body = (await response.json()) as { detail?: { code?: unknown } } | null;
-      const code = body?.detail?.code;
+      const failure = (await response.json()) as { detail?: { code?: unknown } } | null;
+      const code = failure?.detail?.code;
       return typeof code === 'string' ? code : 'ACCOUNT_SERVICE_UNAVAILABLE';
     }
     await response.body?.cancel();
@@ -73,6 +73,24 @@ export async function enterAccount(
   } catch {
     return 'ACCOUNT_SERVICE_UNAVAILABLE';
   }
+}
+
+/** Exchange credentials for a session cookie; returns the failure code, or `null` on success. */
+export function enterAccount(
+  action: AccountAction,
+  credentials: { email: string; password: string },
+  context: { cookies: Cookies; source: string },
+): Promise<string | null> {
+  return exchange(`/v1/auth/${action}`, JSON.stringify(credentials), context);
+}
+
+/** Exchange a Supabase OAuth code for a session cookie; returns the failure code, or `null`. */
+export function exchangeOAuthCode(
+  code: string,
+  verifier: string,
+  context: { cookies: Cookies; source: string },
+): Promise<string | null> {
+  return exchange('/v1/auth/oauth/exchange', JSON.stringify({ code, code_verifier: verifier }), context);
 }
 
 /** Revoke the session at the API, then forget it here even when the API could not be reached. */
