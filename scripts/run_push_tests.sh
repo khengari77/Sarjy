@@ -68,6 +68,13 @@ resolve_base() {
   return 1
 }
 
+diff_file=$(mktemp)
+branch_file=$(mktemp)
+tests_file=$(mktemp)
+web_file=$(mktemp)
+web_unit_file=$(mktemp)
+trap 'rm -f "$diff_file" "$branch_file" "$tests_file" "$web_file" "$web_unit_file"' EXIT
+
 changed=()
 declare -A seen=()
 for entry in "${entries[@]}"; do
@@ -76,18 +83,23 @@ for entry in "${entries[@]}"; do
     echo "Cannot determine a base commit for $sha; fetch origin/main and try again." >&2
     exit 1
   fi
-  diff_file=$(mktemp)
   if ! git diff --name-only -z --no-renames "$base" "$sha" >"$diff_file"; then
-    rm -f "$diff_file"
     exit 1
+  fi
+  # A merge of main brings files CI has already tested there: keep only what this branch itself changes.
+  if main_base=$(git merge-base "$sha" origin/main 2>/dev/null); then
+    if ! git diff --name-only -z --no-renames "$main_base" "$sha" >"$branch_file"; then
+      exit 1
+    fi
+  else
+    cp "$diff_file" "$branch_file"
   fi
   while IFS= read -r -d '' path; do
     if [[ -z "${seen[$path]+set}" ]]; then
       seen[$path]=1
       changed+=("$path")
     fi
-  done <"$diff_file"
-  rm -f "$diff_file"
+  done < <(sort -z "$diff_file" "$branch_file" | uniq -zd)
 done
 
 for path in "${changed[@]}"; do
@@ -101,10 +113,6 @@ for name in $(compgen -e | grep '^GIT_' || true) \
   unset "$name"
 done
 
-tests_file=$(mktemp)
-web_file=$(mktemp)
-web_unit_file=$(mktemp)
-trap 'rm -f "$tests_file" "$web_file" "$web_unit_file"' EXIT
 
 uv run --locked python scripts/select_tests.py --root "$root" -- "${changed[@]}" >"$tests_file"
 uv run --locked python scripts/select_tests.py --root "$root" --web -- "${changed[@]}" >"$web_file"

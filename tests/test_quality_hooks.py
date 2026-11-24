@@ -221,6 +221,25 @@ def _web_repo(tmp_path: Path, path: str = "apps/web/src/lib/api.ts", *, delete: 
     return repo, second
 
 
+def test_pre_push_does_not_retest_what_a_merge_of_main_brings(tmp_path):
+    repo, first, tip = _push_repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "other", first)
+    _write(repo / "tests" / "test_from_main.py", "def test_main():\n    assert True\n")
+    main = _commit(repo, "change on main")
+    _git(repo, "update-ref", "refs/remotes/origin/main", main)
+    _git(repo, "checkout", "-q", "-b", "feature", tip)
+    _write(repo / "tests" / "test_mine.py", "def test_mine():\n    assert True\n")
+    _commit(repo, "my change")
+    _git(repo, "merge", "-q", "--no-edit", main)
+    head = _git(repo, "rev-parse", "HEAD")
+    log = tmp_path / "uv.log"
+    environment = _environment(_fake_uv(tmp_path), FAKE_UV_LOG=str(log))
+    assert _run_pre_push(repo, environment, head, tip).returncode == 0
+    selection = next(line for line in log.read_text().splitlines() if "select_tests.py" in line)
+    assert "tests/test_mine.py" in selection
+    assert "test_from_main" not in selection and "test_sample" not in selection
+
+
 def test_pre_push_refuses_untracked_source_files(tmp_path):
     repo, _, second = _push_repo(tmp_path)
     _write(repo / "tests" / "test_untracked.py", "def test_x():\n    assert True\n")
