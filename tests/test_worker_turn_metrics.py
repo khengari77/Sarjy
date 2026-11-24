@@ -98,6 +98,7 @@ def test_turn_metrics_round_trip_new_measurement_stages(worker):
         "prompt_cache_hit_tokens": 1024,
         "prompt_cache_miss_tokens": 2048,
         "request_bytes": 4096,
+        "predicted_prefix_hit_pct": 73,
     }
     response = client.post(METRICS_PATH, headers=headers, json={"turn_id": turn_id, "stages": stages})
     assert response.status_code == 200

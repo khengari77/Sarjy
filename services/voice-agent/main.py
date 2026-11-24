@@ -38,6 +38,7 @@ from livekit.agents import (
 )
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
+from prefix_stability import canonical_prompt, predicted_prefix_hit_pct
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
 from speech_budget import SpeechBudget
@@ -282,6 +283,7 @@ class SarjyAgent(WordleTools, Agent):
         self.memory_forced: set[str] = set()
         self.current_turn: str | None = None
         self.turn_stages: dict[str, dict[str, int | None]] = {}
+        self.previous_prompt: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
         self.speaking_speed_control = speed_controller_for(pipeline)
@@ -1016,6 +1018,15 @@ class SarjyAgent(WordleTools, Agent):
         adapter = adapter_for(provider, provider_kind)
         buffered_usage = None
         emitted = False
+        prompt = canonical_prompt(request, request.tools)
+        _record_value(
+            self,
+            request.turn_id,
+            "predicted_prefix_hit_pct",
+            predicted_prefix_hit_pct(self.previous_prompt, prompt),
+            first_only=True,
+        )
+        self.previous_prompt = prompt
         try:
             async with asyncio.timeout(GENERATION_ATTEMPT_SECONDS):
                 async for event in adapter.stream(request, tools, tool_choice):

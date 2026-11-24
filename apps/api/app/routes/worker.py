@@ -95,6 +95,7 @@ class TurnStageMetrics(BaseModel):
     prompt_cache_hit_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
     prompt_cache_miss_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
     request_bytes: StrictInt | None = Field(default=None, ge=0, le=1_000_000)
+    predicted_prefix_hit_pct: StrictInt | None = Field(default=None, ge=0, le=100)
 
 
 class TurnMetricsInput(BaseModel):

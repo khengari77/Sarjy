@@ -20,6 +20,7 @@ STAGE_FIELDS = (
     "prompt_cache_hit_tokens",
     "prompt_cache_miss_tokens",
     "request_bytes",
+    "predicted_prefix_hit_pct",
 )
 
 
@@ -37,6 +38,7 @@ class TurnStages(TypedDict, total=False):
     prompt_cache_hit_tokens: int | None
     prompt_cache_miss_tokens: int | None
     request_bytes: int | None
+    predicted_prefix_hit_pct: int | None
 
 
 class TurnMetricsPayload(TypedDict):
