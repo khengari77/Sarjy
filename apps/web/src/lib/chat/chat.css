@@ -1,0 +1,549 @@
+.ghost-button,
+.primary-button {
+  font: inherit;
+  border-radius: var(--radius-control);
+  min-height: var(--control-height);
+  padding: 10px 16px;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background var(--transition-quick),
+    border-color var(--transition-quick),
+    opacity var(--transition-quick);
+}
+
+.ghost-button:hover:enabled {
+  background: var(--surface-hover);
+}
+
+.primary-button {
+  background: color-mix(in srgb, var(--orb-idle) 18%, transparent);
+  border-color: color-mix(in srgb, var(--orb-idle) 45%, var(--border-subtle));
+  font-weight: 600;
+}
+
+.primary-button:hover:enabled {
+  background: color-mix(in srgb, var(--orb-idle) 28%, transparent);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 16px;
+  min-height: 100%;
+}
+
+.voice-stage {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* The orb zone is a fixed-size block (orb + one fixed slot below it), so
+     it simply centres: nothing in it can grow, and the stage never scrolls. */
+  justify-content: center;
+  width: 100%;
+  max-width: var(--stage-max-width);
+  margin: 0 auto;
+  /* Kit rhythm: the orb sits a little below the geometric centre. */
+  padding: 46px 20px 0;
+  min-height: 0;
+  overflow: hidden;
+  text-align: center;
+  /* Size container: --orb-size is derived from the stage's own height. */
+  container-type: size;
+  --below-height: 148px;
+  --orb-max: var(--orb-desktop);
+}
+
+.stage-waves {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.stage-waves .wave {
+  fill: none;
+  stroke-width: 1;
+}
+
+.stage-waves .wave-primary {
+  stroke: var(--border-subtle);
+  opacity: 0.32;
+}
+
+.stage-waves .wave-accent {
+  stroke: var(--accent);
+  opacity: 0.14;
+}
+
+.orb-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  /* Kit orbDesktop (290) / orbMobile (220), shrunk when the stage is too short
+     to also fit the fixed block under the orb and a margin (cqh is the content
+     box, so the stage's top padding is already excluded). */
+  --orb-size: clamp(148px, calc(100cqh - var(--below-height) - 24px), var(--orb-max));
+  width: var(--orb-size);
+  height: var(--orb-size);
+}
+
+/* One soft, filled halo disc behind the orb: no outline rings. */
+.orb-glow {
+  position: absolute;
+  width: 117%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--surface-elevated) 46%, transparent) 0%,
+    color-mix(in srgb, var(--surface-elevated) 34%, transparent) 60%,
+    color-mix(in srgb, var(--orb-glow-color) 6%, transparent) 84%,
+    transparent 100%
+  );
+}
+
+.orb-wrap > .orb-button {
+  position: relative;
+  z-index: 1;
+}
+
+.status-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 3px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.status-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.live-phase {
+  font-size: 25px;
+  font-weight: 600;
+  line-height: 32px;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.connected-pill {
+  margin-top: 0;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-success);
+  box-shadow: 0 0 10px currentColor;
+  transition: background-color var(--transition-state);
+}
+
+.status-pill[data-phase='disconnected'] .status-dot,
+.status-pill[data-phase='error'] .status-dot,
+.status-line[data-phase='disconnected'] .status-dot {
+  background: var(--status-error);
+}
+
+.stage-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 14px;
+  margin: 0;
+  max-width: 58ch;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.stage-notice .ghost-button {
+  min-height: 34px;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.orb-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+/* One fixed-height block under the orb. Hero (idle) and live content both
+   fit it, so switching state never moves the orb or the composer. */
+.below {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: var(--below-height);
+  flex: 0 0 auto;
+  padding-top: 24px;
+}
+
+.below[data-hero='true'] {
+  padding-top: 30px;
+}
+
+.below[data-hero='true'] .intro {
+  margin-top: 11px;
+}
+
+.below[data-hero='true'] .idle-pill {
+  margin-top: 20px;
+}
+
+/* Exactly one quoted line lives here, whatever the reply length. */
+.caption-slot {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+  height: 48px;
+  margin-top: 14px;
+}
+
+.stage-notices {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(24px, 3.4vw, 40px);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  max-width: 22ch;
+  line-height: 1.2;
+}
+
+.hero-title {
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 600;
+}
+
+/* Conversation title: floats in the free band above the orb when the stage
+   is tall enough, and stays available to assistive technology otherwise. */
+.stage-heading {
+  position: absolute;
+  inset-block-start: 41px;
+  inset-inline: 20px;
+  margin: 0 auto;
+  font-size: 25px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 36px;
+  max-width: none;
+}
+
+@container (max-height: 553px) {
+  .stage-heading {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+.intro {
+  margin: 0;
+  color: var(--text-muted);
+  max-width: 46ch;
+}
+
+.trace-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.toggle-row input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--orb-idle);
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  padding: 8px 20px;
+  flex-wrap: wrap;
+}
+
+.end-button {
+  font: inherit;
+  border-radius: var(--radius-control);
+  min-height: var(--control-height);
+  padding: 10px 18px;
+  border: 1px solid color-mix(in srgb, var(--orb-error) 70%, transparent);
+  background: color-mix(in srgb, var(--orb-error) 82%, var(--surface-elevated));
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--transition-quick),
+    border-color var(--transition-quick),
+    opacity var(--transition-quick);
+}
+
+.end-button:hover:enabled {
+  background: color-mix(in srgb, var(--orb-error) 92%, var(--surface-elevated));
+}
+
+/* The quoted caption is a round-cornered control that opens the transcript. */
+.caption-bubble {
+  display: block;
+  width: 100%;
+  max-width: 556px;
+  height: 48px;
+  padding: 0 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 15px;
+  line-height: 46px;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background var(--transition-quick),
+    border-color var(--transition-quick);
+}
+
+.caption-bubble:hover {
+  background: var(--surface-hover);
+}
+
+.caption-bubble .caption-text {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.caption-bubble.quiet {
+  width: auto;
+  min-width: 140px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.caption-bubble.provisional .caption-text {
+  opacity: 0.85;
+}
+
+@media (max-width: 767px) {
+  .voice-stage {
+    --orb-max: var(--orb-mobile);
+  }
+
+  .stage-notice .ghost-button {
+    min-height: var(--min-tap-target);
+  }
+
+  .status-pill {
+    min-height: 32px;
+    padding: 5px 16px;
+  }
+}
+
+.composer {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  width: 100%;
+  max-width: var(--stage-max-width);
+  margin: 0 auto;
+  padding: 8px 20px calc(10px + env(safe-area-inset-bottom));
+}
+
+textarea {
+  flex: 1;
+  resize: none;
+  min-height: var(--control-height);
+  max-height: 140px;
+  padding: 12px 14px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.attribution {
+  display: block;
+  text-align: center;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+a {
+  color: inherit;
+}
+
+.panel-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.panel-block:last-child {
+  border-bottom: 0;
+}
+
+.panel-block h2 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.muted-text {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.voice-search {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.voice-search input,
+select {
+  font: inherit;
+  min-height: var(--control-height);
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  max-width: 100%;
+}
+
+.voice-search input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.field-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.voice-error {
+  margin: 0;
+  color: #ffb3bb;
+  font-size: 13px;
+}
+
+@media (max-width: 767px) {
+  .voice-stage {
+    padding: 28px 14px 0;
+  }
+
+  .composer {
+    padding-inline: 14px;
+  }
+}
+
+.confirm-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.confirm-dialog {
+  width: min(420px, 100%);
+  padding: 20px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+}
+
+.confirm-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.confirm-dialog p {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

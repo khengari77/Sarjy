@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+# Avoid approving a staged version that differs from the checked working files.
+if ! git diff --quiet -- '*.py' pyproject.toml uv.lock; then
+  echo 'Stage complete Python/config changes before committing; quality checks must match the staged files.' >&2
+  exit 1
+fi
+bash scripts/check_quality.sh

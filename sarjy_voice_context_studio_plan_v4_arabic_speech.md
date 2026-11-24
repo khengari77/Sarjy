@@ -1,3 +1,5 @@
+> **Operational update:** Release `4a80697` is deployed to both CranL apps; Supabase is at `0004_voice_cleanup`. Historical reconciliation and hosted startup/idempotent end passed. Typed-input weather and real audio playback passed. Human microphone/interruption/reconnect/refresh acceptance remains pending. See [verification evidence](docs/day1-hosted-verification.md). Day 2 migrations remain undeployed.
+
 > **Version 5 policy:** English is the Days 1–2 baseline; Arabic speech remains experimental until Day 3. Development stays password-protected. DeepSeek is the final primary provider, OpenAI the reliability fallback; the temporary OpenAI development default remains until funding confirmation. No public provider/model selector. “Forget” means reversible conversation-scoped exclusion; permanent deletion is deferred.
 >
 > **Progress:** CranL frontend/API and Supabase persistence are verified; the non-root LiveKit worker was deployed and registered. Hosted voice/weather and lifecycle acceptance remain pending. pgvector is not yet installed. Jev has approximately $5 credit reported by the user; key setup and live validation are pending. See the linked execution checklist. Existing application changes are outside this documentation revision.
@@ -178,16 +180,16 @@ The main design goal is **configuration-driven composition**, not a god-class th
 from typing import Literal
 from pydantic import BaseModel, Field
 
-SpeechBackend = Literal[
-    "livekit_inference", "deepgram_direct", "elevenlabs_direct", "browser_local"
-]
+SpeechBackend = Literal["livekit_inference", "deepgram_direct", "elevenlabs_direct", "browser_local"]
 LLMBackend = Literal["deepseek_direct", "openai_direct", "livekit_inference"]
+
 
 class ModelChoice(BaseModel):
     provider: str
     model: str
     voice_id: str | None = None
     language: str = "en"
+
 
 class PipelineConfig(BaseModel):
     runtime: Literal["livekit_remote", "browser_local"] = "livekit_remote"
@@ -410,10 +412,7 @@ class ContextState:
 
 
 def exclude_ids(state: ContextState, ids: frozenset[str]) -> ContextState:
-    allowed = {
-        item.id for item in state.items
-        if item.id in ids and not item.protected
-    }
+    allowed = {item.id for item in state.items if item.id in ids and not item.protected}
     return replace(
         state,
         revision=state.revision + 1,
@@ -1127,3 +1126,8 @@ Retain the shared OpenAI $1/day ceiling for all application/development requests
 Keep CranL web/API, LiveKit eu-central and Supabase London. If CranL blocks progress, use a supported SvelteKit host (Vercel subject to eligibility) and Cloud Run backend container, retaining contracts/database/ledger. Development stays password-protected; reviewer access uses HTTPS and simple credentials without opening anonymous inference. Inspect ignored files and secret scans before releases, preserve root Dockerfile branch overlays, and deploy only CI-tested revisions. Optional local “Hello, Sarjy” wake detection must never stream idle audio to paid models; defer wake words and browser-local inference if mandatory work is at risk.
 
 Presentation: start orb voice chat; teach atomic city/trip/budget facts; recall city in another conversation and fetch weather; speak a speed change and show slider synchronization; inspect provenance; exclude trip except budget; confirm, show revision/diff and actual outgoing input; restore; show controlled failover evidence, property tests and budgets. Label backup recordings explicitly.
+
+
+## Day 2 execution update — 12 November 2026
+
+User authorized local Day 2 work while issue #3 human acceptance remains pending. PRs #23 and #24 are merged; D2.1, D2.2 and D2.9 have local implementation/verification evidence. No hosted Day 2 migration or deployment has occurred. Issues #5 and #7 consume the merged foundation; #8 consumes their interfaces; #6 completes context/weather integration afterward. Issue #4 closes after cross-cutting isolation, budget and property verification across those paths. Noon Africa/Tripoli is the target, not permission to omit acceptance criteria. See docs/day2-coordination.md and issue #20.

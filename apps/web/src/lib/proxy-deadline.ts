@@ -7,5 +7,5 @@ const SESSION_START_PATH = 'v1/voice/sessions';
  * traffic. Everything else keeps the shorter deadline so failures stay visible.
  */
 export function proxyTimeoutMs(path: string, method: string): number {
- return method === 'POST' && path === SESSION_START_PATH ? SESSION_START_TIMEOUT_MS : PROXY_TIMEOUT_MS;
+  return method === 'POST' && path === SESSION_START_PATH ? SESSION_START_TIMEOUT_MS : PROXY_TIMEOUT_MS;
 }

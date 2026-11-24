@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 404)); then
+  echo "Repository Git hooks require bash 4.4 or newer (found $BASH_VERSION)." >&2
+  exit 1
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+bash scripts/check_quality.sh </dev/null
+bash scripts/run_push_tests.sh
