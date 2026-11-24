@@ -411,29 +411,34 @@ class SarjyAgent(WordleTools, Agent):
             return
         _record_value(self, turn_id, name, elapsed_ms(anchor, at), first_only=first_only)
 
-    async def compile(self, message):
+    async def _post_turn_start(self, message):
+        phase = None
+        response = None
+        for attempt in range(2):
+            attempt_phase = CompletionState()
+            token = api_phase_state.set(attempt_phase)
+            try:
+                response = await self.backend.post(
+                    "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
+                )
+                response.raise_for_status()
+            except STALE_CONNECTION_ERRORS:
+                # A reused connection the other end already closed; a timeout is not retried.
+                if attempt == 0:
+                    continue
+                raise
+            finally:
+                api_phase_state.reset(token)
+            phase = attempt_phase
+            break
+        return response, phase
+
+    async def compile(self, message, live=None):
         self.loop_lag.take()  # this turn's window starts here, not at the end of the last reply
         if message.id not in self.prepared:
             started = time.perf_counter()
             turn_start_begin = started
-            phase = None
-            for attempt in range(2):
-                attempt_phase = CompletionState()
-                token = api_phase_state.set(attempt_phase)
-                try:
-                    response = await self.backend.post(
-                        "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
-                    )
-                    response.raise_for_status()
-                except STALE_CONNECTION_ERRORS:
-                    # A reused connection the other end already closed; a timeout is not retried.
-                    if attempt == 0:
-                        continue
-                    raise
-                finally:
-                    api_phase_state.reset(token)
-                phase = attempt_phase
-                break
+            response, phase = await self._post_turn_start(message)
             self.prepared[message.id] = response.json()
             turn_id = self.prepared[message.id]["turn_id"]
             self._bind_turn_anchor(message.id, turn_id)
@@ -450,6 +455,8 @@ class SarjyAgent(WordleTools, Agent):
                 self, turn_id, "api_headers_ms", phase.provider_headers_ms if phase else None, first_only=True
             )
             _record_value(self, turn_id, "api_body_ms", phase.provider_body_ms if phase else None, first_only=True)
+        if live is not None and not live():
+            return None  # an abandoned early turn must not touch the state the live turn owns
         # Typed input never ran the turn hook: an earlier turn's prepayment is not this one's.
         self._discard_prepaid(keep=message.id)
         self.reserving_message = message.id
@@ -783,9 +790,16 @@ class SarjyAgent(WordleTools, Agent):
         if not entry.ready.done():
             entry.ready.set_result(False)
         # Memory state the discarded interim compile armed must not reach the next real turn.
-        if entry.saved and self.memory_message == entry.message_id:
+        if entry.saved and (self.memory_message == entry.message_id or self.current_turn == entry.turn_id):
             for name, value in entry.saved.items():
                 setattr(self, name, value)
+        self._finalize_retired(entry)
+
+    def _close_orphan(self, entry: EarlyTurn, user, task) -> None:
+        """Finalize the turn an abandoned early open created after all."""
+        if task.cancelled() or task.exception() is not None or user.id not in self.prepared:
+            return
+        entry.turn_id = self.prepared[user.id]["turn_id"]
         self._finalize_retired(entry)
 
     def _finalize_retired(self, entry: EarlyTurn) -> None:
@@ -799,7 +813,13 @@ class SarjyAgent(WordleTools, Agent):
         self.reassurance.finish(turn_id)
         task = asyncio.create_task(self._finalize_turn(turn_id, "", "failed"))
         self.pending.add(task)
-        task.add_done_callback(self.pending.discard)
+
+        def settled(done: asyncio.Task) -> None:
+            self.pending.discard(done)
+            if not done.cancelled() and done.exception() is not None:
+                logging.warning("Closing an abandoned early turn failed", exc_info=done.exception())
+
+        task.add_done_callback(settled)
 
     async def _adopt_preempt(self, text: str) -> bool:
         """Let the finalized turn take over the early reply, which already opened its turn."""
@@ -815,6 +835,9 @@ class SarjyAgent(WordleTools, Agent):
             opened = await asyncio.wait_for(asyncio.shield(entry.ready), timeout=3.0)
         except Exception:
             return False
+        except BaseException:
+            self._retire_preempt()  # the hook itself is being cancelled: never leave the gate hanging
+            raise
         if not opened or entry.retired or self.preempt is not entry or entry.turn_id is None:
             return False
         entry.adopted = True
@@ -966,16 +989,25 @@ class SarjyAgent(WordleTools, Agent):
                 "memory_clarify",
                 "memory_outcome",
                 "memory_message",
+                "current_turn",
+                "current_text",
             )
         }
+        opening = asyncio.ensure_future(self.compile(user, live=lambda: not entry.retired))
         try:
-            await self.compile(user)
+            await asyncio.shield(opening)
         except BaseException:
             # Never store the error: a waiting hook would re-raise it (a CancelledError would cancel the hook).
             if not entry.ready.done():
                 entry.ready.set_result(False)
             self._retire_preempt_entry(entry)
+            if not opening.done():  # the backend may still create the turn: close it when it does
+                opening.add_done_callback(lambda task: self._close_orphan(entry, user, task))
+            else:
+                self._close_orphan(entry, user, opening)
             raise
+        if user.id not in self.prepared:
+            return entry
         entry.turn_id = self.prepared[user.id]["turn_id"]
         if entry.retired:  # retired while the turn was still opening: close it now
             self._finalize_retired(entry)
@@ -1004,7 +1036,7 @@ class SarjyAgent(WordleTools, Agent):
             return
         early = self._start_reply_early(user, snapshot, chat_ctx, tools, model_settings)
         try:
-            if gate is not None and not await gate.decided:
+            if gate is not None and not await asyncio.shield(gate.decided):
                 return  # an early reply never acts on a transcript the turn may still replace
             command = None if self.command_blocked_turn == user.id else await self.command_for(user)
 

@@ -213,3 +213,28 @@ def test_a_cancelled_early_open_does_not_cancel_a_hook_waiting_for_it():
         assert await hook is False  # the waiting hook falls back to its own turn, uncancelled
 
     _run(body)
+
+
+def test_a_turn_opened_after_its_open_was_cancelled_is_still_closed_and_leaves_state_alone():
+    async def body(agent):
+        gate = asyncio.Event()
+        original = agent.compile
+
+        async def slow(message, live=None):
+            await gate.wait()
+            return await original(message, live=live)
+
+        agent.compile = slow
+        agent.current_turn = "live-turn"
+        opening = asyncio.create_task(agent._open_early_turn(SimpleNamespace(id="early", text_content="hello")))
+        await asyncio.sleep(0)
+        agent._cancel = opening.cancel()
+        agent._retire_preempt()
+        with __import__("contextlib").suppress(asyncio.CancelledError):
+            await opening
+        gate.set()
+        await asyncio.sleep(0.05)
+        assert agent.current_turn == "live-turn"  # the late compile did not clobber it
+
+    calls = _run(body)
+    assert [p["turn_id"] for path, p in calls if path.endswith("/turn/finalize")] == ["turn-early"]
