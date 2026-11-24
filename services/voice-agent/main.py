@@ -38,6 +38,7 @@ from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
+from speech_budget import SpeechBudget
 from turn_metrics import assistant_metrics, build_payload, elapsed_ms
 from wordle_commands import is_wordle_command, parse_say_payload
 from wordle_tools import (
@@ -253,6 +254,10 @@ class SarjyAgent(WordleTools, Agent):
         self.speeches: set[str] = set()
         self.speaking_speed_control = speed_controller_for(pipeline)
         self.tts_budget_provider = tts_budget_provider(pipeline)
+        # Prepayments in flight. Cancelled at shutdown, after which none may start.
+        self.speech_stopped = False
+        self.speech_refills: set[asyncio.Task] = set()
+        self.speech_budget = SpeechBudget(self._reserve_speech, self._report_reservation, self._spawn_refill)
         self.memory_proposal: dict | None = None
         self.memory_outcome: str | None = None
         self.memory_message: str | None = None
@@ -450,44 +455,70 @@ class SarjyAgent(WordleTools, Agent):
             if self.notify:
                 await self.notify("DAILY_BUDGET_EXHAUSTED")
             raise ValueError("DAILY_BUDGET_EXHAUSTED")
+        try:
+            await self._post_reservation(provider, characters)
+        except httpx.HTTPStatusError as exc:
+            await self._report_reservation(exc)
+            raise
+
+    async def _post_reservation(self, provider: str, characters: int) -> None:
         turn_id, started = self.current_turn, time.perf_counter()
         response = await self.backend.post(
             "/internal/development/reserve", json={"provider": provider, "characters": characters}
         )
         if provider in {"openai", "deepseek"}:
             self._record_stage(turn_id, "llm_reserve_ms", started, first_only=True)
-        if not response.is_success:
-            if self.notify:
-                await self.notify(
-                    "DAILY_BUDGET_EXHAUSTED" if response.status_code == 429 else "BUDGET_SERVICE_UNAVAILABLE"
-                )
-            response.raise_for_status()
+        response.raise_for_status()
+
+    async def _report_reservation(self, exc: httpx.HTTPStatusError) -> None:
+        if self.notify:
+            await self.notify(
+                "DAILY_BUDGET_EXHAUSTED" if exc.response.status_code == 429 else "BUDGET_SERVICE_UNAVAILABLE"
+            )
+
+    async def _reserve_speech(self, characters: int) -> None:
+        await self._post_reservation(self.tts_budget_provider, characters)
+
+    def _spawn_refill(self, refill) -> asyncio.Task[None]:
+        if self.speech_stopped:
+            refill.close()
+            raise RuntimeError("SPEECH_STOPPED")
+        task = asyncio.create_task(refill)
+        self.speech_refills.add(task)
+
+        def settled(done: asyncio.Task[None]) -> None:
+            self.speech_refills.discard(done)
+            if not done.cancelled():
+                # Retrieved here: a refused refill matters only if its text is needed.
+                done.exception()
+
+        task.add_done_callback(settled)
+        return task
+
+    async def stop_speech_refills(self) -> None:
+        self.speech_stopped = True
+        refills = list(self.speech_refills)
+        for refill in refills:
+            refill.cancel()
+        await asyncio.gather(*refills, return_exceptions=True)
 
     async def tts_node(self, text, model_settings):
         turn_id = self.current_turn
-        first_reserve = True
+        first_take = True
 
         async def budgeted_text():
-            nonlocal first_reserve
-            buffer = ""
+            # tts_reserve_ms is how long the first words waited for paid characters.
+            nonlocal first_take
             async for part in text:
-                buffer += part
-                if len(buffer) >= 64:
+                while part:
                     # Charge before forwarding text. Interrupted/failed reservations are retained.
-                    started = time.perf_counter() if first_reserve else None
-                    await self.reserve(self.tts_budget_provider, len(buffer))
-                    if started is not None:
-                        first_reserve = False
+                    started = time.perf_counter()
+                    covered = await self.speech_budget.take(len(part))
+                    if first_take:
+                        first_take = False
                         self._record_stage(turn_id, "tts_reserve_ms", started, first_only=True)
-                    yield buffer
-                    buffer = ""
-            if buffer:
-                started = time.perf_counter() if first_reserve else None
-                await self.reserve(self.tts_budget_provider, len(buffer))
-                if started is not None:
-                    first_reserve = False
-                    self._record_stage(turn_id, "tts_reserve_ms", started, first_only=True)
-                yield buffer
+                    yield part[:covered]
+                    part = part[covered:]
 
         async for frame in Agent.default.tts_node(self, budgeted_text(), model_settings):
             yield frame
@@ -1153,8 +1184,11 @@ async def entrypoint(ctx: JobContext):
                 monitor.cancel()
                 await asyncio.gather(monitor, return_exceptions=True)
         finally:
-            await session.aclose()
-            greeting.cancel()
+            try:
+                await session.aclose()
+            finally:
+                greeting.cancel()
+                await agent.stop_speech_refills()
             if agent.pending:
                 await asyncio.gather(*agent.pending, return_exceptions=True)
             if fallback_llm is not None and hasattr(fallback_llm, "aclose"):

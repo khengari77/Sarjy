@@ -16,10 +16,12 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import Settings
-from app.dependencies import COOKIE, build_dependencies
+from app.dependencies import ACCOUNT_COOKIE, COOKIE, build_dependencies
 from app.domain.context_operations import MemoryCandidate, classify
 from app.domain.secrets import secret_matches
 from app.infrastructure.database import Base, SessionGate
+from app.services.account_auth import CredentialProvider, SupabaseCredentials
+from app.services.accounts import AccountSessionRequired, authorize_account
 from app.services.budget import reserve_jev_request
 from app.services.context_actions import build_context_action_handlers
 from app.services.jev_ui import JevUiClient
@@ -110,6 +112,27 @@ def _reviewer_gate(config: Settings, sessions, now):
     return gate
 
 
+ACCOUNT_PUBLIC_PATHS = {"/v1/auth/sign-up", "/v1/auth/sign-in", "/v1/auth/sign-out"}
+
+
+def _account_gate(config: Settings, sessions, now):
+    async def gate(request, call_next):
+        # Deny by default: a route added without its own dependency is still closed.
+        path = _route_path(request.scope)
+        if not config.account_access_enabled or not path.startswith("/v1/") or path in ACCOUNT_PUBLIC_PATHS:
+            return await call_next(request)
+        try:
+            async with sessions() as db:
+                await authorize_account(db, request.cookies.get(ACCOUNT_COOKIE, ""), now())
+        except AccountSessionRequired:
+            return JSONResponse({"detail": {"code": "ACCOUNT_SESSION_REQUIRED"}}, status_code=401)
+        except Exception:
+            return JSONResponse({"detail": {"code": "ACCOUNT_SERVICE_UNAVAILABLE"}}, status_code=503)
+        return await call_next(request)
+
+    return gate
+
+
 def _web_service_gate(config: Settings):
     async def protect(request, call_next):
         if config.development_protected and _route_path(request.scope).startswith("/v1/"):
@@ -140,6 +163,7 @@ def create_app(
     clock=None,
     wordle_source=None,
     ui_classifier=None,
+    credentials: CredentialProvider | None = None,
 ):
     config = settings or Settings()
     now = clock or (lambda: datetime.now(UTC))
@@ -196,6 +220,7 @@ def create_app(
     # The reviewer gate is added first so the web-service-secret middleware
     # stays outermost and the proxy boundary is checked before admission.
     app.middleware("http")(_reviewer_gate(config, sessions, now))
+    app.middleware("http")(_account_gate(config, sessions, now))
     app.middleware("http")(_web_service_gate(config))
 
     app.state.settings = config
@@ -279,5 +304,15 @@ def create_app(
         from app.routes.reviewer import register_reviewer_routes
 
         register_reviewer_routes(app, config=config, database=database, clock=now)
+    if config.account_access_enabled:
+        from app.routes.accounts import register_account_routes
+
+        register_account_routes(
+            app,
+            config=config,
+            database=database,
+            clock=now,
+            credentials=credentials or SupabaseCredentials(config.supabase_url, config.supabase_publishable_key),
+        )
 
     return app

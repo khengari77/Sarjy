@@ -319,3 +319,29 @@ def test_day2_upgrade_from_cleanup_head_keeps_confirmation(tmp_path):
             db.execute("SELECT room_cleanup_completed_at FROM voice_sessions").fetchone()[0]
             == "2026-11-11T10:00:00+00:00"
         )
+
+
+def test_accounts_migration_is_additive_and_reversible(tmp_path):
+    url = f"sqlite+aiosqlite:///{tmp_path}/accounts.db"
+    alembic(url, "upgrade", "0009_dispatcher_leases")
+    with closing(sqlite3.connect(tmp_path / "accounts.db")) as connection, connection:
+        seed(connection)
+    alembic(url, "upgrade", "0015_intro_seen")
+
+    def content():
+        with closing(sqlite3.connect(tmp_path / "accounts.db")) as connection:
+            names = [
+                row[0]
+                for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                if row[0] != "alembic_version"
+            ]
+            return {name: connection.execute(f'SELECT * FROM "{name}"').fetchall() for name in names}
+
+    before = content()
+    alembic(url, "upgrade", "0016_accounts")
+    after = content()
+    assert set(after) - set(before) == {"accounts", "account_sessions", "account_attempt_windows"}
+    assert {name: after[name] for name in before} == before
+    alembic(url, "check")
+    alembic(url, "downgrade", "0015_intro_seen")
+    assert content() == before
