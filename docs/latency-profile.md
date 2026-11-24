@@ -13,14 +13,14 @@ the phase timers.
 
 | Conversation | handler p50 | response |
 |---|---|---|
-| 20 turns, 20 memories, 10 KB snapshots | 55 ms | 38 KB |
-| 100 turns, 200 memories, 30 KB snapshots | 80-95 ms | 115 KB |
+| 20 turns, 20 memories | 55 ms | 38 KB |
+| 100 turns, 200 memories | 80-95 ms | 115 KB |
 
 For the long conversation (mean ms per turn; phases overlap slightly):
 
 | Phase | ms | Notes |
 |---|---|---|
-| `read_context_inputs` | 38-45 | about 300 ORM objects built (100 turns, 200 memories), recursive exclusion queries, tool join |
+| `read_context_inputs` | 38-45 | about 300 ORM objects built (100 turns, 200 memories), tool join; this run has no exclusion, so the recursive exclusion queries are not included (they only add) |
 | response encoding (`jsonable_encoder`) | 13-14 | FastAPI walks the 115 KB dict recursively (5,000 calls) before `json.dumps`; the stored context carries the prompt three times |
 | `_compile_turn_context` | 5 | |
 | `ModelRequest(...)` validation | 4-6 | pydantic validation of messages/memories |
@@ -36,15 +36,15 @@ request in flight, such as the concurrent budget reservation (see #222).
 | Step | ms |
 |---|---|
 | decode the 115 KB response JSON | 2.5 |
-| `snapshot_request` (validate + hash), run twice per turn | 4.1 each |
+| `snapshot_request` (validate + hash), up to twice per turn (early-reply path) | 4.1 each |
 | serialize the request for the bounds check | 1.5 |
 
-About 10-12 ms per turn in total.
+About 10-12 ms per turn for these steps. This is a lower bound: the worker also dumps and re-validates the request (`_with_continuation`) on every model turn, not measured here.
 
 ## What this says
 
 - Python compute is about 80-95 ms of the 777 ms turn start (10-12%); the rest is database round trips and network.
-  Most of the gain is in the API and database hops, as expected, but about 30 ms of the Python is easy to recover.
+  Most of the gain is in the API and database hops, as expected, but a few tens of ms of the Python are easy to recover (the items below overlap, so do not add them up).
 - Cheap, safe wins (not done here): return the response with a direct `json.dumps` (or `orjson`) instead of FastAPI's
   `jsonable_encoder` (-10 ms); stop echoing the prompt three times in the stored/returned context (-5-10 ms API,
   -2.5 ms worker decode, less on the wire); build the worker's request once per turn instead of twice (-4 ms); load

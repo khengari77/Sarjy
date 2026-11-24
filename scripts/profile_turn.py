@@ -1,7 +1,7 @@
 """CPU profile of POST /internal/agent/turn/start on a realistic conversation.
 
-Seeds a throwaway SQLite database with a long call (turns with large stored contexts, many memories, one
-exclusion) and runs the handler in-process under cProfile, so the report shows the Python work per turn
+Seeds a throwaway SQLite database with a long call (many turns, many memories; no exclusion, so the
+policy-active path with its recursive queries is NOT measured) and runs the handler in-process under cProfile, so the report shows the Python work per turn
 separately from the time a real database round trip costs (measured elsewhere). Nothing leaves the machine.
 
     uv run python scripts/profile_turn.py --turns 100 --memories 200 --runs 30
@@ -32,7 +32,7 @@ HEADERS = {"x-agent-secret": "profile-secret", "x-session-id": "session", "x-roo
 
 
 def big_snapshot(index: int, kilobytes: int) -> dict:
-    """A stored context the size a real turn leaves behind: the prompt appears three times in it."""
+    """A stored context the size a real turn leaves behind (the turn-start query does not load it: kept for realism)."""
     messages = [
         {"role": "user" if n % 2 else "assistant", "content": f"turn {index} message {n} " + "word " * 40}
         for n in range(max(4, kilobytes * 1024 // 3 // 260))
@@ -176,19 +176,23 @@ async def main(args) -> None:
         database_url=f"sqlite+aiosqlite:///{database}",
         agent_service_secret="profile-secret",
         context_proposal_secret="proposal-secret",
+        account_access_enabled=False,
+        reviewer_access_enabled=False,
+        development_protected=False,
         _env_file=None,
     )
     app = create_app(settings)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://api") as client:
-            await client.post("/v1/demo-session")
+            assert (await client.post("/v1/demo-session")).status_code < 300, "demo session refused"
             chat = (await client.post("/v1/conversations")).json()["id"]
             seed(database, chat, turns=args.turns, memories=args.memories, snapshot_kb=args.snapshot_kb)
             for warm in range(2):  # imports, caches
                 await client.post(
                     "/internal/agent/turn/start", headers=HEADERS, json={"request_id": f"w{warm}", "text": "hi"}
                 )
+            PHASES.clear()  # warm-up calls do not count
             profile, wall = cProfile.Profile(), []
             for run in range(args.runs):
                 started = time.perf_counter()
@@ -230,8 +234,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--turns", type=int, default=100)
     parser.add_argument("--memories", type=int, default=200)
-    parser.add_argument("--snapshot-kb", type=int, default=30)
+    parser.add_argument("--snapshot-kb", type=int, default=30, help="size of stored snapshots; not read by turn start")
     parser.add_argument("--runs", type=int, default=30)
     parser.add_argument("--top", type=int, default=25)
     parser.add_argument("--no-profile", dest="profile", action="store_false", help="timings only, no profiler")
-    asyncio.run(main(parser.parse_args()))
+    arguments = parser.parse_args()
+    if arguments.runs < 1:
+        parser.error("--runs must be at least 1")
+    asyncio.run(main(arguments))
