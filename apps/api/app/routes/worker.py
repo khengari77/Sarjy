@@ -553,7 +553,9 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
             # With the model classifier available, regexes only keep the exact "remember that ..." fast path.
             strict_capture=getattr(app.state, "ui_classifier", None) is not None,
         )
-        inputs = await read_context_inputs(db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id)
+        inputs = await read_context_inputs(
+            db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id, combined_read=True
+        )
         compiled = _compile_turn_context(
             revision=conversation.revision,
             instructions=instructions,
