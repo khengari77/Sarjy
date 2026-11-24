@@ -226,11 +226,33 @@ def test_stage_fields_match_the_api_schema_and_a_failing_trace_hook_is_harmless(
     assert {
         "prompt_cache_hit_tokens_2",
         "prompt_cache_miss_tokens_2",
+        "t_turn_start_begin_ms",
+        "t_turn_start_end_ms",
+        "t_command_begin_ms",
+        "t_command_end_ms",
+        "t_model_request_ms",
+        "t_model_first_chunk_ms",
+        "t_tool_start_ms",
+        "t_tool_end_ms",
+        "t_tts_first_ms",
     } <= set(STAGE_FIELDS)
 
     trace = _PhaseTrace(CompletionState())
     trace._observe = lambda event: 1 / 0  # type: ignore[method-assign]
     asyncio.run(trace("connection.connect_tcp.started", {}))  # must not raise
+
+
+def test_timeline_stages_are_offsets_from_the_turn_hook_anchor_and_recorded_once():
+    agent = _agent(None)
+    agent.turn_anchor["t"] = 100.0
+    agent.turn_stages["t"] = {}
+
+    agent._record_offset("t", "t_command_begin_ms", 100.25, first_only=True)
+    agent._record_offset("t", "t_command_begin_ms", 100.75, first_only=True)
+    agent._record_offset("t", "t_command_end_ms", 101.0, first_only=True)
+    agent._record_offset("no-anchor", "t_tool_start_ms", 100.5, first_only=True)
+
+    assert agent.turn_stages["t"] == {"t_command_begin_ms": 250, "t_command_end_ms": 1000}
 
 
 def test_only_tools_that_return_to_the_model_prepay_a_continuation():

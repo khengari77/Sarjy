@@ -23,6 +23,15 @@ STAGE_FIELDS = (
     "release_wait_ms",
     "reassurance_ms",
     "first_answer_ms",
+    "t_turn_start_begin_ms",
+    "t_turn_start_end_ms",
+    "t_command_begin_ms",
+    "t_command_end_ms",
+    "t_model_request_ms",
+    "t_model_first_chunk_ms",
+    "t_tool_start_ms",
+    "t_tool_end_ms",
+    "t_tts_first_ms",
     "prompt_cache_hit_tokens",
     "prompt_cache_miss_tokens",
     "prompt_cache_hit_tokens_2",
@@ -52,6 +61,15 @@ class TurnStages(TypedDict, total=False):
     release_wait_ms: int | None
     reassurance_ms: int | None
     first_answer_ms: int | None
+    t_turn_start_begin_ms: int | None
+    t_turn_start_end_ms: int | None
+    t_command_begin_ms: int | None
+    t_command_end_ms: int | None
+    t_model_request_ms: int | None
+    t_model_first_chunk_ms: int | None
+    t_tool_start_ms: int | None
+    t_tool_end_ms: int | None
+    t_tts_first_ms: int | None
     prompt_cache_hit_tokens: int | None
     prompt_cache_miss_tokens: int | None
     prompt_cache_hit_tokens_2: int | None
