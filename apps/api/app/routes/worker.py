@@ -95,6 +95,9 @@ class TurnStageMetrics(BaseModel):
     prompt_cache_hit_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
     prompt_cache_miss_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
     request_bytes: StrictInt | None = Field(default=None, ge=0, le=1_000_000)
+    provider_connect_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    provider_headers_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    loop_lag_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
 
 
 class TurnMetricsInput(BaseModel):
@@ -137,20 +140,24 @@ class CommandResponse(BaseModel):
     memory_op: MemoryOpAnswer | None = None
 
 
+def _session_is_active(voice: VoiceSession | None, room_name: str | None, *, allow_ended: bool) -> bool:
+    statuses = {"starting", "active", "ended"} if allow_ended else {"starting", "active"}
+    cutoff = datetime.now(UTC) - timedelta(seconds=60 if allow_ended else 0)
+    return (
+        voice is not None
+        and voice.room_name == room_name
+        and voice.status in statuses
+        and voice.expires_at > cutoff.isoformat()
+    )
+
+
 def _session_guard(config: Settings):
     async def worker_session(request: Request, db: AsyncSession, allow_ended: bool = False):
         secret = request.headers.get("x-agent-secret", "")
         if not secret_matches(secret, config.agent_service_secret):
             raise HTTPException(401, detail={"code": "WORKER_AUTH_REQUIRED"})
         voice = await db.get(VoiceSession, request.headers.get("x-session-id", ""))
-        statuses = {"starting", "active", "ended"} if allow_ended else {"starting", "active"}
-        cutoff = datetime.now(UTC) - timedelta(seconds=60 if allow_ended else 0)
-        if (
-            not voice
-            or voice.room_name != request.headers.get("x-room-name")
-            or voice.status not in statuses
-            or voice.expires_at <= cutoff.isoformat()
-        ):
+        if not _session_is_active(voice, request.headers.get("x-room-name"), allow_ended=allow_ended):
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
         return voice
 
@@ -172,6 +179,7 @@ def register_worker_routes(
     _register_turn_routes(app, config=config, database=database, guard=guard, sessions=sessions)
     _register_command_routes(
         app,
+        config=config,
         database=database,
         guard=guard,
         catalog=catalog,
@@ -618,7 +626,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
         return await _record_turn_metrics(db, voice, body)
 
 
-def _register_command_routes(app, *, database, guard, catalog, approved_voice_ids=None, secret=""):
+def _register_command_routes(app, *, config, database, guard, catalog, approved_voice_ids=None, secret=""):
     @app.post("/internal/agent/command", response_model=CommandResponse)
     async def finalized_command(body: CommandInput, request: Request, db: AsyncSession = Depends(database)):
         """The one worker entry for a finalized user utterance.
@@ -627,13 +635,31 @@ def _register_command_routes(app, *, database, guard, catalog, approved_voice_id
         never accepts a client-supplied revision or transcript.  Returns
         ``{"command": null}`` when the utterance is ordinary conversation.
         """
-        voice = await guard(request, db)
-        turn = await db.get(Turn, body.turn_id)
-        if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
-            raise HTTPException(404)
-        conversation = await db.get(Conversation, turn.conversation_id)
-        if conversation is None:
-            raise HTTPException(404)
+        # The common case is one joined read instead of the guard, turn and conversation reads.
+        row = (
+            await db.execute(
+                select(VoiceSession, Turn, Conversation)
+                .join(Turn, Turn.conversation_id == VoiceSession.conversation_id)
+                .join(Conversation, Conversation.id == Turn.conversation_id)
+                .where(VoiceSession.id == request.headers.get("x-session-id", ""), Turn.id == body.turn_id)
+            )
+        ).first()
+        if (
+            row is None
+            or not _session_is_active(row[0], request.headers.get("x-room-name"), allow_ended=False)
+            or row[1].role != "user"
+            or not secret_matches(request.headers.get("x-agent-secret", ""), config.agent_service_secret)
+        ):
+            # Fall back to the shared guard so 401/403/404 stay exactly as before.
+            voice = await guard(request, db)
+            turn = await db.get(Turn, body.turn_id)
+            if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
+                raise HTTPException(404)
+            conversation = await db.get(Conversation, turn.conversation_id)
+            if conversation is None:
+                raise HTTPException(404)
+        else:
+            _, turn, conversation = row
         snapshot = turn.snapshot or {}
         expected_revision = snapshot.get("revision")
         if not isinstance(expected_revision, int):

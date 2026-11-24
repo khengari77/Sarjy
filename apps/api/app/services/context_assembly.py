@@ -18,7 +18,7 @@ from sqlalchemy.orm import load_only
 from app.domain.context import ContextCandidate, canonical_json
 from app.domain.weather_permissions import LocationEvidence
 from app.infrastructure.database import Memory, ToolCall, Turn
-from app.services.memory_eligibility import blocked_memory_ids, blocked_source_turn_ids
+from app.services.memory_eligibility import blocked_memory_rows
 
 HISTORY_LIMIT = 20
 # The model still receives at most ``HISTORY_LIMIT`` turns, but retrieval reads
@@ -119,8 +119,9 @@ async def orm_memory_candidates(
     owner-memory scan.  Inactive rows play no part in this revision and are not
     loaded.
     """
-    excluded_ids = await blocked_memory_ids(db, owner_id, conversation_id)
-    sources = await blocked_source_turn_ids(db, owner_id, conversation_id)
+    blocked_rows = await blocked_memory_rows(db, owner_id, conversation_id)
+    excluded_ids = frozenset(row.id for row in blocked_rows)
+    sources = frozenset(row.source_turn_id for row in blocked_rows if row.source_turn_id is not None)
     rows = (
         await db.scalars(
             select(Memory)
@@ -130,7 +131,7 @@ async def orm_memory_candidates(
         )
     ).all()
     active_by_id = {row.id: row for row in rows}
-    denied_by_id = {row.id: row for row in await _memory_rows_for_ids(db, owner_id, excluded_ids - set(active_by_id))}
+    denied_by_id = {row.id: row for row in blocked_rows}
     included: list[ContextCandidate] = [
         ContextCandidate(
             id=row.id,
