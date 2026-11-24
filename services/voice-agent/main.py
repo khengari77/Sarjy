@@ -586,10 +586,17 @@ class SarjyAgent(WordleTools, Agent):
             self.speech_refills.discard(done)
             if not done.cancelled():
                 # Retrieved here: a refused refill matters only if its text is needed.
-                done.exception()
+                error = done.exception()
+                if error is not None:
+                    logging.warning("Speech reservation failed; text is reserved on demand", exc_info=error)
 
         task.add_done_callback(settled)
         return task
+
+    def prefill_speech(self) -> None:
+        """Reserve the next speech block ahead of the reply that will spend it."""
+        if not self.speech_stopped:
+            self.speech_budget.prefill()
 
     async def stop_speech_refills(self) -> None:
         self.speech_stopped = True
@@ -622,6 +629,9 @@ class SarjyAgent(WordleTools, Agent):
 
         async for frame in Agent.default.tts_node(self, budgeted_text(), model_settings):
             yield frame
+        # The next reply should not wait for the ledger when this one spent the last block.
+        if not first_take:
+            self.prefill_speech()
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
         if self.is_command(new_message.text_content or ""):
@@ -1318,6 +1328,8 @@ async def entrypoint(ctx: JobContext):
             wordle_active=lambda: reveal.active,
             is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending, wordle_active=reveal.active),
         )
+        # Reserve the first speech block now, so the opening reply does not wait on the ledger.
+        agent.prefill_speech()
         session = AgentSession(
             **providers,
             vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),

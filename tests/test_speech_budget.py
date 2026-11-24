@@ -270,6 +270,36 @@ def test_exhausted_allowance_gives_up_after_a_bounded_number_of_requests(monkeyp
     assert len(ledger.requests) <= 8
 
 
+def test_failed_prefill_leaves_the_on_demand_reserve(monkeypatch):
+    ledger = Ledger()
+    ledger.status = 503
+
+    async def scenario(agent, say, sent, codes):
+        agent.prefill_speech()
+        await asyncio.gather(*agent.speech_refills, return_exceptions=True)
+        assert ledger.requests == [BLOCK]
+        ledger.status = None
+        await say("hello")
+        assert ledger.requests == [BLOCK, BLOCK]
+        assert sent == ["hello"] and codes == []
+
+    speak(monkeypatch, ledger, scenario)
+
+
+def test_prefill_reserves_the_first_block_before_the_first_reply(monkeypatch):
+    ledger = Ledger()
+
+    async def scenario(agent, say, sent, codes):
+        agent.prefill_speech()
+        await asyncio.gather(*agent.speech_refills, return_exceptions=True)
+        assert ledger.requests == [BLOCK]
+        await say("hello")
+        assert ledger.requests == [BLOCK]
+        assert sent == ["hello"]
+
+    speak(monkeypatch, ledger, scenario)
+
+
 def test_shutdown_cancels_a_hung_refill_and_the_waiting_reply_fails_clearly(monkeypatch):
     ledger = Ledger()
 

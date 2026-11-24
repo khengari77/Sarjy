@@ -68,6 +68,21 @@ class SpeechBudget:
             self._start_refill(BLOCK)
         return spent
 
+    def prefill(self) -> None:
+        """Reserve one block before the next reply needs it.
+
+        A no-op while characters remain, while a refill is in flight, or after a refusal: a
+        refused block is retried only when text actually needs it.
+        """
+        if self._available or not self._block:
+            return
+        if self._refill is not None:
+            if not self._refill.done():
+                return
+            if self._refill.cancelled() or self._refill.exception() is not None:
+                return
+        self._start_refill(self._block)
+
     def _start_refill(self, size: int) -> asyncio.Task[None]:
         if self._refill is None or self._refill.done():
             self._refill = self._spawn(self._grant(size))
