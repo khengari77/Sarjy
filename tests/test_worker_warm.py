@@ -139,3 +139,28 @@ def test_warm_failures_never_raise():
         assert llm.calls == 1
 
     asyncio.run(run())
+
+
+def test_provider_warmup_never_writes_into_a_live_completion_state():
+    import asyncio
+
+    import httpx
+    from stream_completion import CompletionState, HttpWarmup, ObservedTransport, completion_state
+
+    def handler(request):
+        return httpx.Response(200, json={"data": []})
+
+    async def run():
+        client = httpx.AsyncClient(transport=ObservedTransport(httpx.MockTransport(handler)))
+        live = CompletionState()
+        token = completion_state.set(live)
+        try:
+            await HttpWarmup(client, "https://example.test/models", "key")()
+            assert completion_state.get() is live  # restored
+        finally:
+            completion_state.reset(token)
+            await client.aclose()
+        return live
+
+    live = asyncio.run(run())
+    assert live == CompletionState()  # untouched

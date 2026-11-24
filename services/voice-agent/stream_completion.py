@@ -131,11 +131,15 @@ class HttpWarmup:
         self._api_key = api_key
 
     async def __call__(self) -> None:
+        # The task may have inherited a live turn's CompletionState; this request must never write into it.
+        token = completion_state.set(None)
         try:
             response = await self._client.get(self._url, headers={"Authorization": "Bearer " + self._api_key})
             await response.aclose()
         except Exception:
             logging.getLogger(__name__).debug("provider connection warm-up failed", exc_info=True)
+        finally:
+            completion_state.reset(token)
 
 
 class _PhaseTrace:

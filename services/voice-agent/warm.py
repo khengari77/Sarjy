@@ -38,7 +38,8 @@ class ConnectionWarmup:
 
     def user_state_changed(self, event: Any) -> None:
         """LiveKit session hook: a user who starts speaking is about to need the turn path."""
-        if getattr(event, "new_state", None) == "speaking":
+        state = getattr(event, "new_state", None)
+        if getattr(state, "value", state) == "speaking":
             self.warm_if_due()
 
     def warm_if_due(self) -> None:
