@@ -19,6 +19,7 @@ from app.domain.tool_operations import operation_key
 from app.domain.ui_routing import CONFIDENCE_THRESHOLD, FORCED_MEMORY_TOOLS
 from config import first_event_seconds, provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
+from endpointing import endpointing_kwargs
 from fallback import fallback_decision, next_attempt
 from generation import GenerationCancelled, GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
 from held_stream import EarlyReply
@@ -1369,6 +1370,7 @@ async def entrypoint(ctx: JobContext):
         agent.loop_lag.start()
         session = AgentSession(
             **providers,
+            **endpointing_kwargs(values),
             vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),
             preemptive_generation=False,
             conn_options=SessionConnectOptions(
