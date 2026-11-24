@@ -336,7 +336,6 @@ class SarjyAgent(WordleTools, Agent):
         stages[name] = elapsed_ms(started, time.perf_counter())
 
     async def compile(self, message):
-        self.loop_lag.start()
         if message.id not in self.prepared:
             started = time.perf_counter()
             for attempt in range(2):
@@ -1324,6 +1323,7 @@ async def entrypoint(ctx: JobContext):
             wordle_active=lambda: reveal.active,
             is_command=lambda text: is_wordle_command(text, reveal_pending=reveal.pending, wordle_active=reveal.active),
         )
+        agent.loop_lag.start()
         session = AgentSession(
             **providers,
             vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),
@@ -1391,6 +1391,7 @@ async def entrypoint(ctx: JobContext):
                 await session.aclose()
             finally:
                 greeting.cancel()
+                agent.loop_lag.stop()
                 await agent.stop_speech_refills()
             if agent.pending:
                 await asyncio.gather(*agent.pending, return_exceptions=True)
