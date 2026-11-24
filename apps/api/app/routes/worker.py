@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
-from sqlalchemy import select, update
+from sqlalchemy import and_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -392,17 +392,45 @@ def _compile_turn_context(
         raise
 
 
+async def _model_request_memories(db: AsyncSession, owner_id: str, included_ids, candidates) -> list[Memory]:
+    """The memory rows behind the compiled prompt: those the candidate read loaded, plus any it did not supply."""
+    rows = [candidates.rows[memory_id] for memory_id in included_ids if memory_id in candidates.rows]
+    unread = [
+        candidate.id
+        for candidate in candidates.included
+        if candidate.origin == "memory" and candidate.id in included_ids and candidate.id not in candidates.rows
+    ]
+    if unread:
+        rows += (
+            await db.scalars(
+                select(Memory).where(Memory.owner_id == owner_id, Memory.id.in_(unread), Memory.status == "active")
+            )
+        ).all()
+    return rows
+
+
+async def _locked_turn_context(db: AsyncSession, conversation_id: str, request_id: str):
+    """The conversation (row-locked), this request's existing turn and the owner's settings, in one statement."""
+    locked = (
+        await db.execute(
+            select(Conversation, Turn, UserSetting)
+            .outerjoin(Turn, and_(Turn.conversation_id == Conversation.id, Turn.request_id == request_id))
+            .outerjoin(UserSetting, UserSetting.owner_id == Conversation.owner_id)
+            .where(Conversation.id == conversation_id)
+            .with_for_update(of=Conversation)
+        )
+    ).one_or_none()
+    if locked is None:
+        raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
+    return locked
+
+
 def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
     @app.post("/internal/agent/turn/start")
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db)
         # Serializes worker retries and preserves the conversation's authoritative order.
-        conversation = await db.scalar(
-            select(Conversation).where(Conversation.id == voice.conversation_id).with_for_update()
-        )
-        existing = await db.scalar(
-            select(Turn).where(Turn.conversation_id == voice.conversation_id, Turn.request_id == body.request_id)
-        )
+        conversation, existing, settings_row = await _locked_turn_context(db, voice.conversation_id, body.request_id)
         if existing:
             return await _replayed_turn_response(
                 db,
@@ -454,7 +482,6 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
                 else None
             ),
         }
-        settings_row = await db.get(UserSetting, conversation.owner_id)
         settings_value = (
             UserSettings()
             if settings_row is None
@@ -466,15 +493,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
                 revision=settings_row.revision,
             )
         )
-        memory_rows = (
-            await db.scalars(
-                select(Memory).where(
-                    Memory.owner_id == conversation.owner_id,
-                    Memory.id.in_(compiled.included_ids),
-                    Memory.status == "active",
-                )
-            )
-        ).all()
+        memory_rows = await _model_request_memories(db, conversation.owner_id, compiled.included_ids, inputs.memories)
         model_request = ModelRequest(
             turn_id=turn.id,
             attempt_id=str(uuid4()),

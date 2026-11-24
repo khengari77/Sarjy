@@ -7,12 +7,13 @@ and alternate memory services can supply the same shapes through
 ``read_context_inputs``/``MemoryCandidates``.
 """
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.domain.context import ContextCandidate, canonical_json
 from app.domain.weather_permissions import LocationEvidence
@@ -49,6 +50,7 @@ class MemoryCandidates:
     denied: tuple[ContextCandidate, ...] = ()
     inactive: tuple[ContextCandidate, ...] = ()
     blocked_sources: frozenset[str] = frozenset()
+    rows: Mapping[str, Memory] = field(default_factory=dict)
 
     @property
     def excluded_ids(self) -> frozenset[str]:
@@ -156,7 +158,7 @@ async def orm_memory_candidates(
                 status="superseded",
             )
         )
-    return MemoryCandidates(tuple(included), tuple(denied), (), sources)
+    return MemoryCandidates(tuple(included), tuple(denied), (), sources, active_by_id)
 
 
 async def _memory_rows_for_ids(db: AsyncSession, owner_id: str, ids) -> list[Memory]:
@@ -177,12 +179,21 @@ async def _memory_rows_for_ids(db: AsyncSession, owner_id: str, ids) -> list[Mem
     return rows
 
 
-def _dependency_ids(turn: Turn) -> set[str]:
+def snapshot_of(turn: Turn, snapshots: Mapping[str, dict] | None = None) -> dict:
+    """Read a turn snapshot without triggering a deferred-column load."""
+    if snapshots is not None and turn.id in snapshots:
+        return snapshots[turn.id] or {}
+    if "snapshot" in inspect(turn).unloaded:
+        return {}
+    return turn.snapshot or {}
+
+
+def _dependency_ids(turn: Turn, snapshots: Mapping[str, dict] | None = None) -> set[str]:
     """Record ids one turn can inherit dependencies from."""
     references: set[str] = set()
     if turn.request_id.startswith("reply:"):
         references.add(turn.request_id.removeprefix("reply:"))
-    snapshot = turn.snapshot or {}
+    snapshot = snapshot_of(turn, snapshots)
     derivation = snapshot.get("derivation")
     values = derivation.get("record_ids") if isinstance(derivation, dict) else snapshot.get("included_record_ids")
     if isinstance(values, list):
@@ -332,6 +343,7 @@ async def _closure_page(
     frontier: set[str],
     budget: int,
     fetched: int,
+    snapshots: Mapping[str, dict] | None = None,
 ) -> tuple[bool, int]:
     """Resolve one id chunk of turns, tool provenance and memory references.
 
@@ -385,7 +397,9 @@ async def _closure_page(
             return True, fetched
         for row in rows:
             loaded[row.id] = row
-            frontier.update(_dependency_ids(row))
+            if snapshots is not None and "snapshot" not in inspect(row).unloaded:
+                snapshots.setdefault(row.id, row.snapshot or {})
+            frontier.update(_dependency_ids(row, snapshots))
 
     if admitted_tools:
         call_rows = (
@@ -410,6 +424,7 @@ async def _dependency_closure(
     conversation_id: str,
     loaded: dict[str, Turn],
     budget: int = DEPENDENCY_CLOSURE_LIMIT,
+    snapshots: Mapping[str, dict] | None = None,
 ) -> tuple[bool, dict[str, tuple[ToolCall, Turn]]]:
     """Load referenced turns and tool provenance needed to propagate exclusions.
 
@@ -422,7 +437,7 @@ async def _dependency_closure(
     tools: dict[str, tuple[ToolCall, Turn]] = {}
     frontier: set[str] = set()
     for turn in loaded.values():
-        frontier.update(_dependency_ids(turn))
+        frontier.update(_dependency_ids(turn, snapshots))
     fetched = 0
     while True:
         missing = sorted(frontier - attempted)
@@ -441,6 +456,7 @@ async def _dependency_closure(
                 frontier=frontier,
                 budget=budget,
                 fetched=fetched,
+                snapshots=snapshots,
             )
             if exceeded:
                 return True, tools
@@ -451,6 +467,17 @@ async def _recent_turns(db: AsyncSession, conversation_id: str, *, limit: int) -
     rows = (
         await db.scalars(
             select(Turn)
+            .options(
+                load_only(
+                    Turn.id,
+                    Turn.conversation_id,
+                    Turn.request_id,
+                    Turn.role,
+                    Turn.text,
+                    Turn.status,
+                    Turn.created_at,
+                )
+            )
             .where(Turn.conversation_id == conversation_id, Turn.status == "completed")
             .order_by(Turn.created_at.desc(), Turn.id.desc())
             .limit(limit)
@@ -459,8 +486,8 @@ async def _recent_turns(db: AsyncSession, conversation_id: str, *, limit: int) -
     return list(reversed(rows))
 
 
-def _known_tool_dependencies(turn: Turn) -> bool:
-    values = (turn.snapshot or {}).get("included_record_ids")
+def _known_tool_dependencies(turn: Turn, snapshots: Mapping[str, dict] | None = None) -> bool:
+    values = snapshot_of(turn, snapshots).get("included_record_ids")
     return isinstance(values, list) and all(isinstance(value, str) for value in values)
 
 
@@ -480,6 +507,17 @@ async def read_context_inputs(
         await db.execute(
             select(ToolCall, Turn)
             .join(Turn, ToolCall.turn_id == Turn.id)
+            .options(
+                load_only(
+                    Turn.id,
+                    Turn.conversation_id,
+                    Turn.request_id,
+                    Turn.role,
+                    Turn.text,
+                    Turn.status,
+                    Turn.created_at,
+                )
+            )
             .where(
                 Turn.conversation_id == conversation_id,
                 Turn.status == "completed",
@@ -493,25 +531,27 @@ async def read_context_inputs(
     by_id = {turn.id: turn for turn in window}
     closure_exceeded = False
     closure_tools: dict[str, tuple[ToolCall, Turn]] = {}
+    snapshots: dict[str, dict] = {}
     if policy_active:
         # Tool rows are bounded by the tool-result limit, not the history window.
         # Their parents must join the evaluated set so an exclusion can propagate
         # through older derivations; no traversal happens with no active policy.
         for _, parent in tool_rows:
             by_id.setdefault(parent.id, parent)
+        snapshots = dict((await db.execute(select(Turn.id, Turn.snapshot).where(Turn.id.in_(list(by_id))))).all())
         closure_exceeded, closure_tools = await _dependency_closure(
-            db, owner_id=owner_id, conversation_id=conversation_id, loaded=by_id
+            db, owner_id=owner_id, conversation_id=conversation_id, loaded=by_id, snapshots=snapshots
         )
     blocked = set(memories.excluded_ids | memories.blocked_sources)
 
     def dependencies(turn):
-        snapshot = turn.snapshot or {}
+        snapshot = snapshot_of(turn, snapshots)
         derivation = snapshot.get("derivation")
         if isinstance(derivation, dict):
             values = derivation.get("record_ids")
         else:
             parent = by_id.get(turn.request_id.removeprefix("reply:")) if turn.request_id.startswith("reply:") else None
-            values = (parent.snapshot or {}).get("included_record_ids") if parent else None
+            values = snapshot_of(parent, snapshots).get("included_record_ids") if parent else None
         if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
             return None
         return frozenset(values)
@@ -526,7 +566,7 @@ async def read_context_inputs(
     window_tool_ids = {call.id for call, _ in tool_rows}
     all_tools = list(tool_rows) + [pair for tool_id, pair in closure_tools.items() if tool_id not in window_tool_ids]
     for call, turn in all_tools:
-        values = (turn.snapshot or {}).get("included_record_ids")
+        values = snapshot_of(turn, snapshots).get("included_record_ids")
         known = isinstance(values, list) and all(isinstance(value, str) for value in values)
         tool_dependencies[call.id] = frozenset(values) if known else frozenset()
     # Assistant replies and tool results must reach one joint fixpoint: blocking a
@@ -552,7 +592,7 @@ async def read_context_inputs(
                 or (policy_active and turn.id not in by_id)
                 or turn.id in active
                 or tool_dependencies[call.id] & active
-                or (policy_active and not _known_tool_dependencies(turn))
+                or (policy_active and not _known_tool_dependencies(turn, snapshots))
             )
         }
         if more <= blocked and more_tools <= blocked_tools:
