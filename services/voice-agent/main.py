@@ -1037,7 +1037,8 @@ class SarjyAgent(WordleTools, Agent):
             )
             _record_value(self, request.turn_id, "provider_connect_ms", adapter.provider_connect_ms, first_only=True)
             _record_value(self, request.turn_id, "provider_headers_ms", adapter.provider_headers_ms, first_only=True)
-            _record_value(self, request.turn_id, "loop_lag_ms", self.loop_lag.take(), first_only=True)
+            lag = getattr(self, "loop_lag", None)
+            _record_value(self, request.turn_id, "loop_lag_ms", lag.take() if lag else None, first_only=True)
         except TimeoutError as exc:
             raise GenerationFailure(
                 GenerationEvent(
