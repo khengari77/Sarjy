@@ -98,6 +98,7 @@ class TurnStageMetrics(BaseModel):
     provider_connect_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     provider_headers_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     loop_lag_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    predicted_prefix_hit_pct: StrictInt | None = Field(default=None, ge=0, le=100)
 
 
 class TurnMetricsInput(BaseModel):

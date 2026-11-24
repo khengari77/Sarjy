@@ -17,11 +17,11 @@ from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolI
 from app.domain.memory_capture import is_referential
 from app.domain.tool_operations import operation_key
 from app.domain.ui_routing import CONFIDENCE_THRESHOLD, FORCED_MEMORY_TOOLS
-from config import provider_credentials, read_worker_environment, require_values
+from config import first_event_seconds, provider_credentials, read_worker_environment, require_values
 from dotenv import load_dotenv
 from endpointing import endpointing_kwargs
 from fallback import fallback_decision, next_attempt
-from generation import GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
+from generation import GenerationCancelled, GenerationEvent, GenerationFailure, adapter_for, livekit_chunk
 from held_stream import EarlyReply
 from livekit import rtc
 from livekit.agents import (
@@ -40,6 +40,7 @@ from livekit.agents import (
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from loop_lag import LoopLagMonitor
+from prefix_stability import canonical_prompt, predicted_prefix_hit_pct
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
 from speech_budget import SpeechBudget
@@ -50,7 +51,6 @@ from wordle_tools import (
     WordleTools,
     claims_game_state,
     extract_guess,
-    has_guess_candidate,
     is_close_request,
     publish_wordle,
 )
@@ -74,6 +74,7 @@ MAX_CONTEXT_BYTES = 64000
 # The agent defines 9 tools (weather, three memory, five Wordle); raise this with the tool list.
 MAX_TOOLS = 9
 GENERATION_ATTEMPT_SECONDS = 30.0
+FIRST_EVENT_SECONDS = 2.5
 STALE_CONNECTION_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
 DECISION_TURN_NOTE = "The user is answering the previous confirmation; do not propose anything this turn."
 FAILED_NOTE = "The memory tool failed. Nothing was saved, excluded or changed; do not claim otherwise."
@@ -217,12 +218,11 @@ def _with_memory_note(request: ModelRequest, note: str) -> ModelRequest:
 
     ``instructions`` mirrors ``messages[0]``; adapters build the provider
     request from ``messages``. Updating only ``instructions`` (and bypassing
-    validation with ``model_copy``) makes the note dead data.
+    validation with ``model_copy``) makes the note dead data. The note is a new
+    trailing system message so the cached start of the prompt stays intact.
     """
     payload = request.model_dump(mode="json")
-    messages = payload["messages"]
-    messages[0]["content"] = f"{messages[0]['content']}\n\n{note}"
-    payload["instructions"] = messages[0]["content"]
+    payload["messages"].append({"role": "system", "content": note})
     return ModelRequest.model_validate(payload)
 
 
@@ -284,6 +284,7 @@ class SarjyAgent(WordleTools, Agent):
         self.memory_forced: set[str] = set()
         self.current_turn: str | None = None
         self.turn_stages: dict[str, dict[str, int | None]] = {}
+        self.previous_prompt: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
         self.speaking_speed_control = speed_controller_for(pipeline)
@@ -890,18 +891,19 @@ class SarjyAgent(WordleTools, Agent):
         return await self._wordle_direct("wordle-guess", word=word)
 
     def _wordle_tools(self, tools):
-        """Offer only the Wordle tools that make sense for this turn.
+        """Offer only the Wordle tools that make sense for the game state.
 
-        play_wordle is withdrawn while a game is open, and submit_wordle_guess is offered only when the
-        utterance holds a five-letter word or spelled letters. A tool already called this turn stays listed
-        so the continuation request remains valid.
+        play_wordle is withdrawn while a game is open and submit_wordle_guess while none is, so the offered
+        list depends only on the game state rather than the utterance and the provider's cached prefix
+        survives. The shared guard still refuses a guess that was not said. A tool already called this turn
+        stays listed so the continuation request remains valid.
         """
         if self.current_turn in self.wordle_calls:
             return tools
         drop = set()
         if self.wordle_active():
             drop.add("play_wordle")
-        if not has_guess_candidate(self.current_text):
+        else:
             drop.add("submit_wordle_guess")
         return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") not in drop]
 
@@ -1020,11 +1022,20 @@ class SarjyAgent(WordleTools, Agent):
         adapter = adapter_for(provider, provider_kind)
         buffered_usage = None
         emitted = False
+        overall_deadline = asyncio.get_running_loop().time() + GENERATION_ATTEMPT_SECONDS
+        deadline: asyncio.Timeout | None = None
         try:
-            async with asyncio.timeout(GENERATION_ATTEMPT_SECONDS):
+            async with asyncio.timeout(min(FIRST_EVENT_SECONDS, GENERATION_ATTEMPT_SECONDS)) as deadline:
+
+                def answering() -> None:
+                    # A provider that started answering earns the whole-attempt deadline.
+                    deadline.reschedule(overall_deadline)
+
+                adapter.on_first_chunk = answering
                 async for event in adapter.stream(request, tools, tool_choice):
                     if event.kind in {"text", "tool"}:
                         emitted = True
+                        answering()  # adapters that do not report their first chunk
                     if event.kind == "usage":
                         buffered_usage = event
                         continue
@@ -1038,6 +1049,21 @@ class SarjyAgent(WordleTools, Agent):
                 self, request.turn_id, "prompt_cache_miss_tokens", adapter.prompt_cache_miss_tokens, first_only=True
             )
         except TimeoutError as exc:
+            raise GenerationFailure(
+                GenerationEvent(
+                    "error",
+                    turn_id=request.turn_id,
+                    attempt_id=request.attempt_id,
+                    partial=emitted,
+                    error_code="timeout",
+                )
+            ) from exc
+        except GenerationCancelled as exc:
+            # Python 3.12's asyncio.timeout converts only a bare CancelledError into TimeoutError; the adapter
+            # re-raises our deadline's cancellation as this subclass, which would otherwise end the turn
+            # silently instead of falling back.
+            if deadline is None or not deadline.expired():
+                raise
             raise GenerationFailure(
                 GenerationEvent(
                     "error",
@@ -1065,6 +1091,20 @@ class SarjyAgent(WordleTools, Agent):
             )
             lag = getattr(self, "loop_lag", None)
             _record_value(self, request.turn_id, "loop_lag_ms", lag.worst_ms() if lag else None, first_only=True)
+            # Computed after the attempt, not before it: the prediction must not delay the request.
+            try:
+                prompt = canonical_prompt(request, request.tools)
+            except Exception:  # a metric must never replace the attempt's own outcome
+                logging.debug("prefix prediction skipped", exc_info=True)
+            else:
+                _record_value(
+                    self,
+                    request.turn_id,
+                    "predicted_prefix_hit_pct",
+                    predicted_prefix_hit_pct(getattr(self, "previous_prompt", None), prompt),
+                    first_only=True,
+                )
+                self.previous_prompt = prompt
 
     async def _stream_with_fallback(self, request, tools, tool_choice, report=None):
         """``report`` replaces the user-visible notice of a refused reservation."""
@@ -1302,7 +1342,9 @@ def backend_client(base_url: str, headers: dict[str, str]) -> httpx.AsyncClient:
 
 @server.rtc_session(agent_name="sarjy")
 async def entrypoint(ctx: JobContext):
+    global FIRST_EVENT_SECONDS
     values = read_worker_environment()
+    FIRST_EVENT_SECONDS = first_event_seconds(values)
     require_values(values, "API_INTERNAL_URL", "AGENT_SERVICE_SECRET")
     session_id = json.loads(ctx.job.metadata)["session_id"]
     headers = {

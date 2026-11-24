@@ -101,7 +101,15 @@ class WordleTools:
         if not self.current_turn:
             raise ValueError("TOOL_TURN_REQUIRED")
         word = arguments.get("word")
-        if path == "wordle-guess" and word is not None and not said_word(self.current_text, word):
+        if (
+            path == "wordle-guess"
+            and word is not None
+            and (
+                not has_guess_candidate(self.current_text)
+                or not said_word(self.current_text, word)
+                or str(word).strip().lower() in NOT_GUESSES  # an everyday word is not a guess
+            )
+        ):
             return NOT_SAID
         call_id = getattr(ctx.function_call, "call_id", "")
         self.wordle_calls.add(self.current_turn)
