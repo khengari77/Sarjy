@@ -6,7 +6,21 @@ from typing import TypedDict
 
 MAX_METRIC_MS = 120_000
 
-STAGE_FIELDS = ("turn_start_ms", "command_ms", "llm_reserve_ms", "tts_reserve_ms")
+STAGE_FIELDS = (
+    "turn_start_ms",
+    "command_ms",
+    "llm_reserve_ms",
+    "tts_reserve_ms",
+    "turn_start_server_ms",
+    "turn_start_db_ms",
+    "command_server_ms",
+    "command_db_ms",
+    "model_first_chunk_ms",
+    "release_wait_ms",
+    "prompt_cache_hit_tokens",
+    "prompt_cache_miss_tokens",
+    "request_bytes",
+)
 
 
 class TurnStages(TypedDict, total=False):
@@ -14,6 +28,15 @@ class TurnStages(TypedDict, total=False):
     command_ms: int | None
     llm_reserve_ms: int | None
     tts_reserve_ms: int | None
+    turn_start_server_ms: int | None
+    turn_start_db_ms: int | None
+    command_server_ms: int | None
+    command_db_ms: int | None
+    model_first_chunk_ms: int | None
+    release_wait_ms: int | None
+    prompt_cache_hit_tokens: int | None
+    prompt_cache_miss_tokens: int | None
+    request_bytes: int | None
 
 
 class TurnMetricsPayload(TypedDict):

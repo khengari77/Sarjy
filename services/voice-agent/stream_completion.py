@@ -13,6 +13,17 @@ import httpx
 class CompletionState:
     reason: str | None = None
     done: bool = False
+    prompt_cache_hit_tokens: int | None = None
+    prompt_cache_miss_tokens: int | None = None
+
+
+def _usage_int(usage: object, name: str) -> int | None:
+    if not isinstance(usage, dict):
+        return None
+    value = usage.get(name)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
 
 
 completion_state: ContextVar[CompletionState | None] = ContextVar("completion_state", default=None)
@@ -23,6 +34,14 @@ class ObservedStream(httpx.AsyncByteStream):
         self.stream, self.state = stream, state
         self.buffer: bytes = b""
         self.data: list[bytes] = []
+
+    @property
+    def prompt_cache_hit_tokens(self) -> int | None:
+        return self.state.prompt_cache_hit_tokens
+
+    @property
+    def prompt_cache_miss_tokens(self) -> int | None:
+        return self.state.prompt_cache_miss_tokens
 
     def event(self) -> None:
         if not self.data:
@@ -39,6 +58,10 @@ class ObservedStream(httpx.AsyncByteStream):
             for choice in payload.get("choices", []):
                 if choice.get("index", 0) == 0 and choice.get("finish_reason") and self.state.reason is None:
                     self.state.reason = choice["finish_reason"]
+            usage = payload.get("usage")
+            if isinstance(usage, dict):
+                self.state.prompt_cache_hit_tokens = _usage_int(usage, "prompt_cache_hit_tokens")
+                self.state.prompt_cache_miss_tokens = _usage_int(usage, "prompt_cache_miss_tokens")
         except (ValueError, TypeError, AttributeError):
             pass  # Native SDK owns payload validation.
 

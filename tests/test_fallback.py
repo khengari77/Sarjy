@@ -80,6 +80,8 @@ def test_next_attempt_changes_only_the_attempt_identity():
 class FakeAdapter:
     def __init__(self, events):
         self.events = events
+        self.prompt_cache_hit_tokens = None
+        self.prompt_cache_miss_tokens = None
 
     async def stream(self, request, tools, tool_choice=None):
         for event in self.events:

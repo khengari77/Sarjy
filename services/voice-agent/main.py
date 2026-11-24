@@ -229,6 +229,23 @@ async def _playout_result(handle) -> tuple[str, str]:
     return text, status
 
 
+def _header_int(response: httpx.Response, name: str) -> int | None:
+    value = response.headers.get(name)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _record_value(agent, turn_id: str | None, name: str, value: int | None, *, first_only: bool = False) -> None:
+    stages = getattr(agent, "turn_stages", {}).get(turn_id) if turn_id is not None else None
+    if stages is None or value is None or (first_only and name in stages):
+        return
+    stages[name] = value
+
+
 class SarjyAgent(WordleTools, Agent):
     def __init__(
         self,
@@ -324,6 +341,8 @@ class SarjyAgent(WordleTools, Agent):
             turn_id = self.prepared[message.id]["turn_id"]
             self.turn_stages[turn_id] = {}
             self._record_stage(turn_id, "turn_start_ms", started)
+            _record_value(self, turn_id, "turn_start_server_ms", _header_int(response, "x-server-ms"), first_only=True)
+            _record_value(self, turn_id, "turn_start_db_ms", _header_int(response, "x-db-ms"), first_only=True)
         # Typed input never ran the turn hook: an earlier turn's prepayment is not this one's.
         self._discard_prepaid(keep=message.id)
         self.reserving_message = message.id
@@ -617,6 +636,11 @@ class SarjyAgent(WordleTools, Agent):
                         "/internal/agent/command", json={"turn_id": self.prepared[message.id]["turn_id"]}
                     )
                     response.raise_for_status()
+                    turn_id = self.prepared[message.id]["turn_id"]
+                    _record_value(
+                        self, turn_id, "command_server_ms", _header_int(response, "x-server-ms"), first_only=True
+                    )
+                    _record_value(self, turn_id, "command_db_ms", _header_int(response, "x-db-ms"), first_only=True)
                     body = response.json()
                     result = body.get("command")
                     memory_op = body.get("memory_op")
@@ -720,12 +744,15 @@ class SarjyAgent(WordleTools, Agent):
         return _with_continuation(request, _continuation(chat_ctx, user), schemas), tools, schemas
 
     async def _reply(self, user, snapshot, chat_ctx, tools, model_settings, command, early):
+        reply_started = time.perf_counter()
+        turn_id = self.current_turn
         if command is not None:
             if early is not None:
                 early.cancel()
             await self._publish_command(command)
             # Nothing the model says is heard on a command turn; TTS remains budgeted
             # and the deterministic spoken line is the whole assistant turn.
+            self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=command["spoken"]))
             handle = self.session.current_speech
             self._schedule_persistence(user, handle)
@@ -733,6 +760,7 @@ class SarjyAgent(WordleTools, Agent):
         if self.forced_speech is not None and self.forced_speech[0] == self.current_turn:
             _, forced = self.forced_speech
             self.forced_speech = None
+            self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=forced))
             handle = self.session.current_speech
             self._schedule_persistence(user, handle)
@@ -745,6 +773,7 @@ class SarjyAgent(WordleTools, Agent):
             # resulting speech has fully played out.
             question = proposal.get("question") or f"Should I remember this: {proposal.get('text', '')}?"
             self.memory_question_key = key
+            self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=question))
             handle = self.session.current_speech
             if handle is not None:
@@ -776,7 +805,8 @@ class SarjyAgent(WordleTools, Agent):
         forced = self._forced_memory_choice(user.id, {schema["name"] for schema in schemas})
         if forced is not None:
             tool_choice = forced
-        if early is not None and usable and forced is None:
+        used_early = early is not None and usable and forced is None
+        if used_early:
             stream = early.released(self._report_reservation)
         else:
             if early is not None:
@@ -784,7 +814,20 @@ class SarjyAgent(WordleTools, Agent):
             stream = self._stream_with_fallback(request, tools, tool_choice)
         async with aclosing(stream), aclosing(self._guard_wordle_prose(stream)) as guarded:
             async for chunk in guarded:
+                self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
+                self._record_early_chunk(turn_id, early, used_early)
                 yield chunk
+
+    def _record_early_chunk(self, turn_id: str | None, early, used_early: bool) -> None:
+        if not used_early or early.first_item_at is None:
+            return
+        _record_value(
+            self,
+            turn_id,
+            "model_first_chunk_ms",
+            elapsed_ms(early.started, early.first_item_at),
+            first_only=True,
+        )
 
     async def _guard_wordle_prose(self, stream):
         """While a Wordle game is open, prose may not state marks, attempts or outcomes.
@@ -935,6 +978,7 @@ class SarjyAgent(WordleTools, Agent):
             },
             ensure_ascii=False,
         ).encode()
+        _record_value(self, request.turn_id, "request_bytes", len(serialized), first_only=True)
         if not deepseek_request_within_bounds(serialized):
             raise ValueError("DEEPSEEK_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS")
 
@@ -947,6 +991,7 @@ class SarjyAgent(WordleTools, Agent):
             },
             ensure_ascii=False,
         ).encode()
+        _record_value(self, request.turn_id, "request_bytes", len(serialized), first_only=True)
         if not openai_request_within_bounds(serialized, tools, request.response_policy.max_output_tokens):
             raise ValueError("OPENAI_REQUEST_EXCEEDS_DEVELOPMENT_BOUNDS")
 
@@ -966,6 +1011,12 @@ class SarjyAgent(WordleTools, Agent):
                     if event.kind == "completed" and buffered_usage is not None:
                         yield buffered_usage
                     yield event
+            _record_value(
+                self, request.turn_id, "prompt_cache_hit_tokens", adapter.prompt_cache_hit_tokens, first_only=True
+            )
+            _record_value(
+                self, request.turn_id, "prompt_cache_miss_tokens", adapter.prompt_cache_miss_tokens, first_only=True
+            )
         except TimeoutError as exc:
             raise GenerationFailure(
                 GenerationEvent(
