@@ -1,6 +1,7 @@
 """Observe terminal SSE metadata without replacing native provider parsing."""
 
 import json
+import logging
 import re
 import time
 from collections.abc import AsyncIterator
@@ -114,6 +115,9 @@ class DecodedResponseStream(httpx.AsyncByteStream):
 KEEPALIVE_LIMITS = httpx.Limits(max_keepalive_connections=8, keepalive_expiry=50)
 
 
+MAX_PHASE_MS = 120_000  # the metrics API rejects larger values
+
+
 class _PhaseTrace:
     """httpcore trace hook: how long the connection setup and the wait for response headers took."""
 
@@ -123,17 +127,23 @@ class _PhaseTrace:
         self.connect_started: float | None = None
 
     async def __call__(self, event: str, info: object) -> None:
+        try:  # a metrics hook must never break the request it observes
+            self._observe(event)
+        except Exception:
+            logging.getLogger(__name__).debug("trace hook failed", exc_info=True)
+
+    def _observe(self, event: str) -> None:
         now = time.perf_counter()
         if event.endswith(".connect_tcp.started"):
             self.connect_started = now
         elif event.endswith((".connect_tcp.complete", ".start_tls.complete")) and self.connect_started is not None:
-            self.state.provider_connect_ms = round((now - self.connect_started) * 1000)
+            self.state.provider_connect_ms = min(round((now - self.connect_started) * 1000), MAX_PHASE_MS)
         elif event.endswith(".send_request_headers.started"):
             self.headers_started = now
             if self.state.provider_connect_ms is None:
                 self.state.provider_connect_ms = 0
         elif event.endswith(".receive_response_headers.complete") and self.headers_started is not None:
-            self.state.provider_headers_ms = round((now - self.headers_started) * 1000)
+            self.state.provider_headers_ms = min(round((now - self.headers_started) * 1000), MAX_PHASE_MS)
 
 
 class ObservedTransport(httpx.AsyncBaseTransport):

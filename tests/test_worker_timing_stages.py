@@ -109,3 +109,15 @@ def test_loop_lag_monitor_sees_a_blocked_loop_and_resets():
     first, second = asyncio.run(run())
     assert first >= 80
     assert second < first
+
+
+def test_stage_fields_match_the_api_schema_and_a_failing_trace_hook_is_harmless():
+    from app.routes.worker import TurnStageMetrics
+    from stream_completion import CompletionState, _PhaseTrace
+    from turn_metrics import STAGE_FIELDS, TurnStages
+
+    assert set(STAGE_FIELDS) == set(TurnStageMetrics.model_fields) == set(TurnStages.__annotations__)
+
+    trace = _PhaseTrace(CompletionState())
+    trace._observe = lambda event: 1 / 0  # type: ignore[method-assign]
+    asyncio.run(trace("connection.connect_tcp.started", {}))  # must not raise

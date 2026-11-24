@@ -336,6 +336,7 @@ class SarjyAgent(WordleTools, Agent):
         stages[name] = elapsed_ms(started, time.perf_counter())
 
     async def compile(self, message):
+        self.loop_lag.take()  # this turn's window starts here, not at the end of the last reply
         if message.id not in self.prepared:
             started = time.perf_counter()
             for attempt in range(2):
@@ -1035,10 +1036,6 @@ class SarjyAgent(WordleTools, Agent):
             _record_value(
                 self, request.turn_id, "prompt_cache_miss_tokens", adapter.prompt_cache_miss_tokens, first_only=True
             )
-            _record_value(self, request.turn_id, "provider_connect_ms", adapter.provider_connect_ms, first_only=True)
-            _record_value(self, request.turn_id, "provider_headers_ms", adapter.provider_headers_ms, first_only=True)
-            lag = getattr(self, "loop_lag", None)
-            _record_value(self, request.turn_id, "loop_lag_ms", lag.take() if lag else None, first_only=True)
         except TimeoutError as exc:
             raise GenerationFailure(
                 GenerationEvent(
@@ -1049,6 +1046,24 @@ class SarjyAgent(WordleTools, Agent):
                     error_code="timeout",
                 )
             ) from exc
+        finally:
+            # Also on failure: a timed-out attempt is where these numbers explain the most.
+            _record_value(
+                self,
+                request.turn_id,
+                "provider_connect_ms",
+                getattr(adapter, "provider_connect_ms", None),
+                first_only=True,
+            )
+            _record_value(
+                self,
+                request.turn_id,
+                "provider_headers_ms",
+                getattr(adapter, "provider_headers_ms", None),
+                first_only=True,
+            )
+            lag = getattr(self, "loop_lag", None)
+            _record_value(self, request.turn_id, "loop_lag_ms", lag.worst_ms() if lag else None, first_only=True)
 
     async def _stream_with_fallback(self, request, tools, tool_choice, report=None):
         """``report`` replaces the user-visible notice of a refused reservation."""
