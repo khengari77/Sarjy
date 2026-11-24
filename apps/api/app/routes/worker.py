@@ -97,6 +97,8 @@ class TurnStageMetrics(BaseModel):
     command_api_headers_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     model_first_chunk_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     release_wait_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    reassurance_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    first_answer_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     prompt_cache_hit_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
     prompt_cache_miss_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
     prompt_cache_hit_tokens_2: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
