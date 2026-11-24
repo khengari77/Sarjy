@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Final
+from collections import OrderedDict
+from typing import Final, Literal
 
 import httpx
 from sqlalchemy import select, update
@@ -34,6 +35,11 @@ OPENAI_TITLE_URL: Final = "https://api.openai.com/v1/chat/completions"
 MAX_SOURCE_CHARS: Final = 600
 MAX_TITLE_CHARS: Final = 60
 TITLE_TIMEOUT_SECONDS: Final = 4.0
+MAX_ATTEMPTED_CONVERSATIONS: Final = 1000
+
+# Conversation ids already settled in this process: titled, renamed, or their one
+# generation attempt made. Bounded so a long-lived worker cannot grow without limit.
+_ATTEMPTED: Final[OrderedDict[str, None]] = OrderedDict()
 
 _MARKDOWN = re.compile(r"[*_#~`]+")
 _EDGE_QUOTES = "\"'“”‘’`«»"
@@ -45,6 +51,17 @@ _SYSTEM_PROMPT = (
     "Write a conversation title of 3 to 6 words in {language}. "
     "Return only the title, without quotes, markdown or a trailing period."
 )
+
+
+def _already_attempted(conversation_id: str) -> bool:
+    return conversation_id in _ATTEMPTED
+
+
+def _mark_attempted(conversation_id: str) -> None:
+    _ATTEMPTED[conversation_id] = None
+    _ATTEMPTED.move_to_end(conversation_id)
+    while len(_ATTEMPTED) > MAX_ATTEMPTED_CONVERSATIONS:
+        _ATTEMPTED.popitem(last=False)
 
 
 def _language_for(user_text: str) -> str:
@@ -126,6 +143,7 @@ async def fetch_title(
             "messages": messages,
             "temperature": 0,
             "max_tokens": 24,
+            "thinking": {"type": "disabled"},
             "stream": False,
         }
     try:
@@ -152,13 +170,17 @@ async def _first_turn(db: AsyncSession, conversation_id: str, role: str) -> Turn
     )
 
 
-async def _title_sources(sessions: async_sessionmaker[AsyncSession], conversation_id: str) -> tuple[str, str] | None:
-    """The first exchange's text, or ``None`` when it is not ready or not ours."""
+async def _title_sources(
+    sessions: async_sessionmaker[AsyncSession], conversation_id: str
+) -> tuple[str, str] | Literal[False] | None:
+    """The first exchange's text; ``None`` when it is not ready yet; ``False`` when the title is settled."""
     async with sessions() as db:
         conversation = await db.get(Conversation, conversation_id)
         # A user rename is authoritative forever: no provider call, no write.
-        if conversation is None or conversation.title != SENTINEL_TITLE:
+        if conversation is None:
             return None
+        if conversation.title != SENTINEL_TITLE:
+            return False
         user_turn = await _first_turn(db, conversation_id, "user")
         assistant_turn = await _first_turn(db, conversation_id, "assistant")
         if user_turn is None or assistant_turn is None:
@@ -182,8 +204,17 @@ async def generate_conversation_title(
     try:
         if not api_key.strip():
             return None
+        # A failed attempt is not retried for the life of this process.  This is
+        # checked before touching the database, the budget ledger or the network.
+        if _already_attempted(conversation_id):
+            return None
         sources = await _title_sources(sessions, conversation_id)
         if sources is None:
+            return None
+        # Either the first exchange is about to be sent, or the title is already settled (generated or
+        # renamed): in both cases no later turn needs to read the database for this conversation again.
+        _mark_attempted(conversation_id)
+        if sources is False:
             return None
 
         async def request() -> str | None:
