@@ -264,6 +264,7 @@ def test_an_api_outage_keeps_the_cookie_and_never_opens_the_app(tmp_path):
         {"WEB_SERVICE_SECRET": ""},
         {"REVIEWER_ACCESS_ENABLED": "true"},
         {"ADDRESS_HEADER": ""},
+        {"OAUTH_PROVIDERS": "google,twiter"},
     ],
 )
 def test_an_unsafe_account_configuration_does_not_serve_the_app(overrides):
@@ -329,6 +330,7 @@ def test_a_provider_sign_in_round_trip_opens_the_app(site):
     [
         (f"/auth/callback?code={OAUTH_CODE}", "", "/sign-in?oauth=failed"),
         (f"/auth/callback?code={OAUTH_CODE}", "sarjy_oauth=google.short", "/sign-in?oauth=failed"),
+        (f"/auth/callback?code={OAUTH_CODE}", "sarjy_oauth=azure." + "v" * 43, "/sign-in?oauth=failed"),
         (f"/auth/callback?code={'x' * 36}", "sarjy_oauth=google." + "v" * 43, "/sign-in?oauth=failed"),
         ("/auth/callback?error=access_denied", "sarjy_oauth=google." + "v" * 43, "/sign-in?oauth=failed"),
         ("/auth/callback", "sarjy_oauth=google." + "v" * 43, "/sign-in?oauth=failed"),
@@ -341,3 +343,39 @@ def test_a_provider_return_without_a_matching_start_signs_nobody_in(site, path, 
     assert not browser.cookie
     page = browser.send("GET", location)
     assert "did not complete" in page.text
+
+
+def test_a_failed_callback_keeps_the_destination(site):
+    browser = Browser(site)
+    _, cookies = _started(browser, "google", next_path="/?panel=memory")
+    jar = "; ".join(f"{name}={value}" for name, value in cookies.items())
+    response = browser.send("GET", "/auth/callback?error=access_denied", headers=HTML | {"cookie": jar})
+    assert (response.status_code, response.headers["location"]) == (
+        303,
+        "/sign-in?oauth=failed&next=%2F%3Fpanel%3Dmemory",
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/auth/callback?error=access_denied",
+        "/auth/callback",
+        f"/auth/callback?code={'x' * 36}",
+    ],
+)
+def test_a_failed_callback_expires_both_pkce_cookies(site, path):
+    jar = f"sarjy_oauth=google.{'v' * 43}; sarjy_oauth_next=/?panel=memory"
+    response = Browser(site).send("GET", path, headers=HTML | {"cookie": jar})
+    assert response.status_code == 303
+    assert (
+        sum("Max-Age=0" in v or "expires=Thu, 01 Jan 1970" in v for v in response.headers.get_list("set-cookie")) == 2
+    )
+
+
+def test_a_protocol_relative_next_starts_over_at_the_root_after_success(site):
+    browser = Browser(site)
+    _, cookies = _started(browser, "google", next_path="//evil.test")
+    jar = "; ".join(f"{name}={value}" for name, value in cookies.items())
+    arrived = browser.send("GET", f"/auth/callback?code={OAUTH_CODE}", headers=HTML | {"cookie": jar})
+    assert (arrived.status_code, arrived.headers["location"]) == (303, "/")

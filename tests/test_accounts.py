@@ -102,10 +102,10 @@ def settings(tmp_path, **overrides):
 
 
 class World:
-    def __init__(self, tmp_path, **overrides):
+    def __init__(self, tmp_path, credentials=None, **overrides):
         self.path = tmp_path / "accounts.db"
         self.clock = Clock()
-        self.credentials = FakeCredentials()
+        self.credentials = credentials or FakeCredentials()
         self.app = create_app(settings(tmp_path, **overrides), clock=self.clock, credentials=self.credentials)
 
     def browser(self):
@@ -518,6 +518,49 @@ def test_a_wrong_code_is_refused_without_a_session_and_counts_against_the_source
     for _ in range(SOURCE_LIMIT.attempts - 1):
         exchange(client, verifier="w" * 43)
     assert exchange(client).status_code == 429
+
+
+def supabase_provider(identities):
+    def handler(request):
+        return httpx.Response(200, json={"access_token": "t", "user": {"id": "user-1", "identities": identities}})
+
+    return SupabaseCredentials("https://project.supabase.test", "sb_key", transport=httpx.MockTransport(handler))
+
+
+def test_an_email_account_is_refused_through_a_provider_and_opens_no_session(tmp_path):
+    world = World(tmp_path, credentials=supabase_provider([{"provider": "email"}, {"provider": "google"}]))
+    with world.browser() as client:
+        refused = exchange(client)
+        assert refused.status_code == 409 and code(refused) == "ACCOUNT_OAUTH_EMAIL_TAKEN"
+        assert "set-cookie" not in refused.headers
+        assert client.get("/v1/auth/session").status_code == 401
+
+
+def test_a_provider_only_identity_opens_a_session(tmp_path):
+    world = World(tmp_path, credentials=supabase_provider([{"provider": "google"}]))
+    with world.browser() as client:
+        entered = exchange(client)
+        assert entered.status_code == 200
+        assert client.get("/v1/auth/session").json() == entered.json()
+
+
+def test_a_successful_exchange_gives_the_source_attempt_back(world):
+    client = world.browser()
+    for _ in range(SOURCE_LIMIT.attempts - 1):
+        assert exchange(client, verifier="w" * 43).status_code == 400
+    assert exchange(client).status_code == 200
+    # The success did not use up the address: another failure still reaches the provider.
+    assert exchange(client, verifier="w" * 43).status_code == 400
+
+
+def test_provider_sign_ups_share_the_sign_up_limit(world):
+    client = world.browser()
+    for _ in range(SIGN_UP_LIMIT.attempts):
+        assert exchange(client).status_code == 200
+    calls = world.credentials.calls
+    refused = exchange(client)
+    assert refused.status_code == 429 and code(refused) == "ACCOUNT_ATTEMPT_LIMIT"
+    assert world.credentials.calls == calls
 
 
 @pytest.mark.parametrize(

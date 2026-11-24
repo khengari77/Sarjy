@@ -1,12 +1,12 @@
 import { error, fail, redirect, type RequestEvent } from '@sveltejs/kit';
-import { OAUTH_PROVIDERS } from '$app/env/private';
+import { OAUTH_PROVIDERS, SUPABASE_URL } from '$app/env/private';
 import { accountMessage, oauthMessage, type AccountAction } from './account';
 import { accountSession, enterAccount } from './account.server';
 import { accountMode } from './guard.server';
 import { parseOAuthProviders } from './oauth';
 import { safeNextPath } from './redirect';
 
-const providers = parseOAuthProviders(OAUTH_PROVIDERS);
+const providers = SUPABASE_URL ? parseOAuthProviders(OAUTH_PROVIDERS) : [];
 
 /** The load and form action shared by the sign-in and sign-up pages. */
 export function accountEntry(action: AccountAction) {

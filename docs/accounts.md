@@ -13,7 +13,7 @@ mutually exclusive: either process refuses to start with `REVIEWER_ACCESS_ENABLE
 | Web app | The `/sign-in` and `/sign-up` pages, the page check, the cookie. Works without JavaScript. |
 
 The browser holds only `sarjy_account`: a random, `HttpOnly`, `Secure`, `SameSite=Lax` token whose SHA-256 is
-stored. Every `/v1/*` route except sign-up, sign-in and sign-out is refused without a live session, by a
+stored. Every `/v1/*` route except sign-up, sign-in, sign-out and the OAuth code exchange (`/v1/auth/oauth/exchange`) is refused without a live session, by a
 gate that denies by default and again by the route's own dependency. Signing out revokes the session on the
 server; if the API cannot be reached then, the browser forgets the cookie and the session ends at its expiry.
 Ended sessions are deleted at the account's next sign-in. A page request whose session cannot be checked answers 503; it never opens the app and never
@@ -24,7 +24,8 @@ Old identities and their data are untouched. Nothing signs anyone in to them; ne
 ## Limits
 
 Attempts, not calls: failures per network address, failures per email and address, and sign-ups per address
-(see `app/domain/accounts.py`). A success is given back. There is no limit per email alone, because it would
+(see `app/domain/accounts.py`). A success is given back. Provider sign-ups share the sign-up allowance: 60 per
+source address per hour, not given back on success. There is no limit per email alone, because it would
 let a stranger lock its owner out; guessing from many addresses is bounded by Supabase's own limits. Addresses and emails are stored only as keyed digests and pruned after a day. The
 web app takes the visitor's address from `ADDRESS_HEADER` and refuses to start without it. Supabase applies its own limits to the API's address; when it throttles, sign-in answers "not
 available right now".
@@ -50,7 +51,9 @@ Buttons appear on the sign-in and sign-up pages for each name in the web app's `
 Supabase does the handshake with the provider; the web app starts it with PKCE and keeps the verifier in a
 10-minute `sarjy_oauth` cookie, and the API trades the returned code for the same revocable session a password
 sign-in gets (`POST /v1/auth/oauth/exchange`). Supabase links a provider sign-in to an existing account with the
-same verified email.
+same verified email. A password account is never entered that way: if Supabase reports both an `email` identity
+and a provider identity, the exchange is refused and the visitor signs in with the password instead. The web app
+sends them back to `/sign-in?oauth=taken` with that instruction.
 
 Per provider, you do these steps once (they need your own console logins; nothing here can be done from code):
 
@@ -67,7 +70,9 @@ Per provider, you do these steps once (they need your own console logins; nothin
      secret that Apple limits to 6 months, so it must be regenerated twice a year.
 4. Set `OAUTH_PROVIDERS` and `SUPABASE_URL` on the web app, restart it, and sign in once with each button.
 
-A provider that is not listed in `OAUTH_PROVIDERS` has no route (404). Turn one off by removing it from the list.
+A provider that is not listed in `OAUTH_PROVIDERS` redirects to `/sign-in` rather than opening a handshake. Turn
+one off by removing it from the list. When at least one provider is listed, `SUPABASE_URL` must be `https://`
+(except `http://localhost` or `http://127.0.0.1` for local development), and the web app refuses to boot otherwise.
 
 ## Known trade-off
 

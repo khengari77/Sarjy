@@ -43,6 +43,7 @@ STATUS = {
     "ACCOUNT_PASSWORD_WEAK": 422,
     "ACCOUNT_INPUT_INVALID": 422,
     "ACCOUNT_OAUTH_FAILED": 400,
+    "ACCOUNT_OAUTH_EMAIL_TAKEN": 409,
 }
 OAUTH_PARAMETER = re.compile(r"[A-Za-z0-9._~-]{16,256}")
 
@@ -163,10 +164,12 @@ def register_account_routes(app, *, config: Settings, database, clock, credentia
     async def oauth_exchange(request: Request, db: AsyncSession = Depends(database)):
         code, verifier = await _oauth_code(request)
         now, source = clock(), attempt_source(request, config)
-        # The provider already vetted the identity, so only the source is counted; a failure keeps its count.
+        # A provider sign-up counts against both the source and the sign-up cap;
+        # a success gives back only the source attempt.
         attempts = _keyed(config, (SOURCE_LIMIT, source))
+        created = _keyed(config, (SIGN_UP_LIMIT, source))
         with _answers():
-            await record_attempts(db, attempts, now)
+            await record_attempts(db, attempts + created, now)
             auth_user_id = await credentials.exchange_code(code, verifier)
             await forgive_attempts(db, attempts, now)
             return await start(request, db, auth_user_id, now)

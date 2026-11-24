@@ -1,4 +1,6 @@
 /** Account mode policy with no environment or network: paths, messages and cookie parsing. */
+import { SUPPORTED_OAUTH_PROVIDERS } from './oauth';
+
 export const ACCOUNT_COOKIE = 'sarjy_account';
 
 export type AccountAction = 'sign-in' | 'sign-up';
@@ -19,16 +21,18 @@ const MESSAGES: Record<string, string> = {
   ACCOUNT_INPUT_INVALID: 'Enter a valid email and a password of at least 8 characters.',
   ACCOUNT_ATTEMPT_LIMIT: 'Too many attempts. Wait a few minutes and try again.',
   ACCOUNT_OAUTH_FAILED: 'Sign-in with that provider did not complete. Try again.',
+  ACCOUNT_OAUTH_EMAIL_TAKEN: 'An account with this email already exists. Sign in with its password.',
 };
 export const ACCOUNT_UNAVAILABLE = 'Sign-in is not available right now. Try again shortly.';
 
 const OAUTH_FAILURES: Record<string, string> = {
   failed: 'ACCOUNT_OAUTH_FAILED',
+  taken: 'ACCOUNT_OAUTH_EMAIL_TAKEN',
   unavailable: 'ACCOUNT_SERVICE_UNAVAILABLE',
   limit: 'ACCOUNT_ATTEMPT_LIMIT',
 };
 
-const OAUTH_PATH = /^\/auth\/(callback|google|apple|github|azure|facebook)$/;
+const OAUTH_PATH = new RegExp(`^/auth/(callback|${SUPPORTED_OAUTH_PROVIDERS.join('|')})$`);
 
 /** Reachable without a session. Everything else that renders a page needs one. */
 export function isAccountPublicPath(pathname: string): boolean {

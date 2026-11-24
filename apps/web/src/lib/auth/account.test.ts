@@ -44,6 +44,7 @@ describe('account policy', () => {
 
   it('maps OAuth outcomes to entry-page copy', () => {
     expect(oauthMessage('failed')).toBe(accountMessage('ACCOUNT_OAUTH_FAILED'));
+    expect(oauthMessage('taken')).toBe(accountMessage('ACCOUNT_OAUTH_EMAIL_TAKEN'));
     expect(oauthMessage('unavailable')).toBe(ACCOUNT_UNAVAILABLE);
     expect(oauthMessage('limit')).toContain('Too many attempts');
     for (const value of ['', 'boom', 'toString', '__proto__', undefined, 7]) {

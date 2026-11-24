@@ -77,7 +77,12 @@ class SupabaseCredentials:
     async def exchange_code(self, code: str, verifier: str) -> str:
         """Trade a PKCE authorization code from a sign-in with a provider for the account's id."""
         body = {"auth_code": code, "code_verifier": verifier}
-        return _user_id(await self._send("/auth/v1/token?grant_type=pkce", body, OAUTH_CODES))
+        user = await self._send("/auth/v1/token?grant_type=pkce", body, OAUTH_CODES)
+        # Supabase auto-links a provider identity to a user with the same email.
+        # An account that also registered a password must use that password.
+        if _linked_email_and_provider(user):
+            raise CredentialsRejected("ACCOUNT_OAUTH_EMAIL_TAKEN")
+        return _user_id(user)
 
     async def _post(self, path: str, email: str, password: str, codes: dict[str, str]) -> dict[str, Any]:
         return await self._send(path, {"email": email, "password": password}, codes)
@@ -110,6 +115,19 @@ def _object(response: httpx.Response) -> dict[str, Any] | None:
     except ValueError:
         return None
     return body if isinstance(body, dict) else None
+
+
+def _linked_email_and_provider(body: dict[str, Any]) -> bool:
+    user = body.get("user")
+    identities = user.get("identities") if isinstance(user, dict) else None
+    if not isinstance(identities, list):
+        return False
+    providers = {
+        identity["provider"]
+        for identity in identities
+        if isinstance(identity, dict) and isinstance(identity.get("provider"), str)
+    }
+    return "email" in providers and len(providers) > 1
 
 
 def _user_id(body: dict[str, Any]) -> str:

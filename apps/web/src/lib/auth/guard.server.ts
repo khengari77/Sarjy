@@ -4,18 +4,21 @@ import { join, resolve } from 'node:path';
 import {
   ACCOUNT_ACCESS_ENABLED,
   DEVELOPMENT_PROTECTED,
+  OAUTH_PROVIDERS,
   REVIEW_ACCESS_EXPIRES_AT,
   REVIEW_ACCESS_MAX_USES,
   REVIEW_ACCESS_STATE_PATH,
   REVIEW_ACCESS_TOKEN,
   REVIEWER_ACCESS_ENABLED,
   SESSION_SECRET,
+  SUPABASE_URL,
   WEB_SERVICE_SECRET,
 } from '$app/env/private';
 import { createAccessStateStore } from './access-state';
 import { redeemAccessToken, type AccessResult } from './access';
 import { isLocalOrigin, parseAccountMode, parseProtectedMode } from './config';
 import { resolveAccessExpiry } from './expiry';
+import { parseOAuthProviders } from './oauth';
 import { createFailureTrackers } from './rate-limit';
 import { isReviewerMode, REVIEWER_COOKIE } from './reviewer';
 import { SESSION_COOKIE, signSession, tokenFingerprint, verifySession } from './session';
@@ -54,11 +57,25 @@ export const accessFailures = createFailureTrackers({ addressLimit: 100, tokenLi
 
 const fingerprint = sessionSecret ? tokenFingerprint(accessToken, sessionSecret) : '';
 
+function isSafeSupabaseUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const local = url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
+    return url.protocol === 'https:' || local;
+  } catch {
+    return false;
+  }
+}
+
 export function assertAccessConfigured(): void {
   if (accountMode) {
     if (!protectedMode || reviewerMode || !WEB_SERVICE_SECRET) throw new Error('ACCOUNT_ACCESS_CONFIGURATION_INVALID');
     // Without it every visitor is the proxy, and anyone could use up the attempts of all.
     if (!process.env.ADDRESS_HEADER) throw new Error('ACCOUNT_ACCESS_REQUIRES_ADDRESS_HEADER');
+    const providers = parseOAuthProviders(OAUTH_PROVIDERS);
+    if (providers.length > 0 && !isSafeSupabaseUrl(SUPABASE_URL)) {
+      throw new Error('ACCOUNT_OAUTH_REQUIRES_HTTPS');
+    }
     return;
   }
   if (!protectedMode) return;
