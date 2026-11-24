@@ -50,7 +50,6 @@ from wordle_tools import (
     WordleTools,
     claims_game_state,
     extract_guess,
-    has_guess_candidate,
     is_close_request,
     publish_wordle,
 )
@@ -217,12 +216,11 @@ def _with_memory_note(request: ModelRequest, note: str) -> ModelRequest:
 
     ``instructions`` mirrors ``messages[0]``; adapters build the provider
     request from ``messages``. Updating only ``instructions`` (and bypassing
-    validation with ``model_copy``) makes the note dead data.
+    validation with ``model_copy``) makes the note dead data. The note is a new
+    trailing system message so the cached start of the prompt stays intact.
     """
     payload = request.model_dump(mode="json")
-    messages = payload["messages"]
-    messages[0]["content"] = f"{messages[0]['content']}\n\n{note}"
-    payload["instructions"] = messages[0]["content"]
+    payload["messages"].append({"role": "system", "content": note})
     return ModelRequest.model_validate(payload)
 
 
@@ -890,18 +888,19 @@ class SarjyAgent(WordleTools, Agent):
         return await self._wordle_direct("wordle-guess", word=word)
 
     def _wordle_tools(self, tools):
-        """Offer only the Wordle tools that make sense for this turn.
+        """Offer only the Wordle tools that make sense for the game state.
 
-        play_wordle is withdrawn while a game is open, and submit_wordle_guess is offered only when the
-        utterance holds a five-letter word or spelled letters. A tool already called this turn stays listed
-        so the continuation request remains valid.
+        play_wordle is withdrawn while a game is open and submit_wordle_guess while none is, so the offered
+        list depends only on the game state rather than the utterance and the provider's cached prefix
+        survives. The shared guard still refuses a guess that was not said. A tool already called this turn
+        stays listed so the continuation request remains valid.
         """
         if self.current_turn in self.wordle_calls:
             return tools
         drop = set()
         if self.wordle_active():
             drop.add("play_wordle")
-        if not has_guess_candidate(self.current_text):
+        else:
             drop.add("submit_wordle_guess")
         return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") not in drop]
 
