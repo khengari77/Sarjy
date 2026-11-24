@@ -1,3 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-bash "$(git rev-parse --show-toplevel)/scripts/check_quality.sh"
+
+if ((BASH_VERSINFO[0] < 4)); then
+  echo "Repository Git hooks require bash 4 or newer (found $BASH_VERSION)." >&2
+  exit 1
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+bash scripts/check_quality.sh </dev/null
+bash scripts/run_push_tests.sh
