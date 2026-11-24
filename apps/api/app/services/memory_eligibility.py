@@ -52,3 +52,12 @@ async def blocked_source_turn_ids(db: AsyncSession, owner_id: str, conversation_
             )
         )
     )
+
+
+async def blocked_memory_rows(db: AsyncSession, owner_id: str, conversation_id: str) -> list[Memory]:
+    """The blocked memories themselves, in one statement: ids, source turns and policy evidence together."""
+    return list(
+        await db.scalars(
+            select(Memory).where(Memory.owner_id == owner_id, Memory.id.in_(_blocked_query(owner_id, conversation_id)))
+        )
+    )
