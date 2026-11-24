@@ -11,10 +11,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
-# Measured on the same fixture: the pre-#224 path issued 12 statements and the
-# three collapses in this change leave 9.
+# Measured on the same fixture: the pre-#224 path issued 12 statements, the
+# three #224 collapses left 9, the blocked-memory collapse left 8, and folding
+# the session guard and retractions into reads that already run leaves 6.
 STATEMENTS_BEFORE = 12
-STATEMENTS_AFTER = 8
+STATEMENTS_AFTER = 6
 START = "/internal/agent/turn/start"
 
 
@@ -99,7 +100,7 @@ def start_turn(client, headers):
     return response.json()["context"]
 
 
-def test_turn_start_uses_three_fewer_statements(tmp_path):
+def test_turn_start_statement_budget(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         client.post("/v1/demo-session")
@@ -110,6 +111,13 @@ def test_turn_start_uses_three_fewer_statements(tmp_path):
         after = len(statements)
         assert after == STATEMENTS_AFTER
         assert after <= STATEMENTS_BEFORE - 3
+        # The session row rides the locked conversation read and the retraction
+        # blocks come from the blocked-memory read, so neither read is repeated.
+        session_reads = [statement for statement in statements if "voice_sessions" in statement]
+        assert len(session_reads) == 1
+        assert "JOIN voice_sessions" in session_reads[0]
+        assert "LEFT OUTER JOIN turns" in session_reads[0]
+        assert not [statement for statement in statements if "memories.source_conversation_id = ?" in statement]
 
 
 def test_window_and_tool_reads_do_not_select_the_snapshot_column(tmp_path):
