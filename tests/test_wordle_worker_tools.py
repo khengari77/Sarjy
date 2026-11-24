@@ -215,10 +215,21 @@ def test_submit_tool_is_offered_for_every_turn_while_a_game_is_open():
 
 
 def test_submit_without_a_guess_in_the_utterance_is_refused():
-    _, agent = build(lambda request: httpx.Response(200, json={}), [], active=True)
+    """A refused submit touches nothing: no backend call, no popup, no attempt, and the turn is not marked called."""
+    paths: list[str] = []
+    published: list[str] = []
+
+    def handler(request):
+        paths.append(request.url.path)
+        return httpx.Response(200, json={})
+
+    _, agent = build(handler, published, active=True)
     agent.current_turn = "t1"
-    agent.current_text = "Tell me a joke."
-    assert "did not say" in asyncio.run(agent.submit_wordle_guess._func(agent, ctx(), word="joke"))
+    for text, word in (("Tell me a joke.", "joke"), ("I will close this later", "close"), ("Tell me a joke.", "crane")):
+        agent.current_text = text
+        assert "did not say" in asyncio.run(agent.submit_wordle_guess._func(agent, ctx(), word=word))
+    assert paths == [] and published == []
+    assert "t1" not in agent.wordle_calls
 
 
 def _guard(active: bool, reply: str, touched: bool = True):
