@@ -106,9 +106,14 @@ class DecodedResponseStream(httpx.AsyncByteStream):
         await self.response.aclose()
 
 
+# Idle connections are kept for 50 s, not httpx's five: longer than a gap between turns, shorter than the 60-65 s
+# at which servers and proxies close an idle one (a socket the other end already closed is a failed request).
+KEEPALIVE_LIMITS = httpx.Limits(max_keepalive_connections=8, keepalive_expiry=50)
+
+
 class ObservedTransport(httpx.AsyncBaseTransport):
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
-        self.transport = transport or httpx.AsyncHTTPTransport(retries=0)
+        self.transport = transport or httpx.AsyncHTTPTransport(retries=0, limits=KEEPALIVE_LIMITS)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         response = await self.transport.handle_async_request(request)

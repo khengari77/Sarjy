@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 import openai as openai_sdk
 from livekit.plugins import deepgram, elevenlabs, openai
-from stream_completion import ObservedTransport
+from stream_completion import KEEPALIVE_LIMITS, ObservedTransport
 
 # ElevenLabs exposes pace as a voice setting, not a synthesis parameter. The
 # installed plugin (livekit-plugins-elevenlabs 1.8.11, VoiceSettings.speed)
@@ -169,7 +169,9 @@ def build_llm(config: dict, credentials: dict[str, str], *, client=None):
             api_key=credentials["DEEPSEEK_API_KEY"],
             base_url="https://api.deepseek.com/v1",
             max_retries=0,
-            http_client=httpx.AsyncClient(transport=ObservedTransport()),
+            http_client=httpx.AsyncClient(
+                transport=ObservedTransport(httpx.AsyncHTTPTransport(retries=0, limits=KEEPALIVE_LIMITS))
+            ),
         )
         llm = OwnedDeepSeekLLM(
             owns_client=owns_client,
