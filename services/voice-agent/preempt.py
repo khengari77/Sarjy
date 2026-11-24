@@ -1,5 +1,6 @@
 """Whether an early reply's interim transcript still matches the finalized one."""
 
+import asyncio
 import re
 
 _PUNCTUATION = re.compile(r"[^\w\s]", re.UNICODE)
@@ -15,8 +16,6 @@ def transcripts_equivalent(first: str, second: str) -> bool:
 
     Mirrors the SDK's adoption rule: an exact match, or the same non-empty words.
     """
-    if first == second:
-        return True
     left = _normalized(first)
     return bool(left) and left == _normalized(second)
 
@@ -57,3 +56,5 @@ class EarlyTurn:
         self.turn_id: str | None = None
         self.adopted = False
         self.retired = False
+        self.decided = asyncio.get_running_loop().create_future()  # True once adopted, False once retired
+        self.saved: dict = {}  # memory state before the early compile, restored if it is retired

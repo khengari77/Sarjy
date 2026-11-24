@@ -146,3 +146,50 @@ def test_an_early_turn_whose_playout_already_started_is_left_to_that_playout():
         agent._retire_preempt()
 
     assert not [1 for path, _ in _run(body) if path.endswith("/turn/finalize")]
+
+
+def test_an_early_turn_retired_while_it_is_still_opening_is_finalized_once_it_opens():
+    async def body(agent):
+        opening = asyncio.create_task(agent._open_early_turn(SimpleNamespace(id="early", text_content="hello")))
+        await asyncio.sleep(0)
+        agent._retire_preempt()  # the entry is not even registered with a turn id yet
+        await opening
+
+    calls = _run(body)
+    assert [p["turn_id"] for path, p in calls if path.endswith("/turn/finalize")] == ["turn-early"]
+
+
+def test_a_retired_early_turn_restores_the_memory_state_its_compile_armed():
+    async def body(agent):
+        assert agent.memory_proposal is None
+        entry = await agent._open_early_turn(SimpleNamespace(id="early", text_content="I live in Benghazi"))
+        agent.memory_proposal = {"token": "interim", "text": "lives in Benghazi"}  # what compile would arm
+        agent.memory_outcome = "not_saved"
+        agent._retire_preempt()
+        assert agent.memory_proposal is None and agent.memory_outcome is None and entry.retired
+
+    _run(body)
+
+
+def test_an_early_reply_waits_to_be_adopted_before_it_may_run_a_command():
+    async def body(agent):
+        entry = await agent._open_early_turn(SimpleNamespace(id="early", text_content="slow down"))
+        assert not entry.decided.done()
+        assert await agent._adopt_preempt("slow down") is True and entry.decided.result() is True
+
+    _run(body)
+
+
+def test_a_retired_entry_is_never_adopted_and_its_gate_closes():
+    async def body(agent):
+        entry = await agent._open_early_turn(SimpleNamespace(id="early", text_content="hello"))
+        agent._retire_preempt()
+        assert entry.decided.result() is False
+        agent.preempt = entry
+        assert await agent._adopt_preempt("hello") is False
+
+    _run(body)
+
+
+def test_empty_transcripts_are_never_equivalent():
+    assert not transcripts_equivalent("", "")

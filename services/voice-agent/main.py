@@ -778,9 +778,20 @@ class SarjyAgent(WordleTools, Agent):
         if entry is None or entry.adopted or entry.retired:
             return
         entry.retired = True
+        if not entry.decided.done():
+            entry.decided.set_result(False)
+        if not entry.ready.done():
+            entry.ready.set_result(False)
+        # Memory state the discarded interim compile armed must not reach the next real turn.
+        if entry.saved and self.memory_message == entry.message_id:
+            for name, value in entry.saved.items():
+                setattr(self, name, value)
+        self._finalize_retired(entry)
+
+    def _finalize_retired(self, entry: EarlyTurn) -> None:
         turn_id = entry.turn_id
         # ``prepared`` keeps the entry: the cancelled reply may still be unwinding and reads it.
-        if turn_id is None or turn_id in self.persisting:
+        if turn_id is None or turn_id in self.persisting or turn_id in self.retired_turns:
             return  # a started playout finalizes the turn (interrupted) by itself
         self.retired_turns.add(turn_id)
         self.turn_stages.pop(turn_id, None)
@@ -801,13 +812,15 @@ class SarjyAgent(WordleTools, Agent):
         ):
             return False
         try:
-            await asyncio.wait_for(asyncio.shield(entry.ready), timeout=3.0)
+            opened = await asyncio.wait_for(asyncio.shield(entry.ready), timeout=3.0)
         except Exception:
             return False
-        if entry.turn_id is None:
+        if not opened or entry.retired or self.preempt is not entry or entry.turn_id is None:
             return False
         entry.adopted = True
         self.preempt = None
+        if not entry.decided.done():
+            entry.decided.set_result(True)
         return True
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
@@ -915,10 +928,10 @@ class SarjyAgent(WordleTools, Agent):
         early_turn = None
         if self.preemptive and user.id not in self.prepared and self.recent_finals.covers(user.text_content or ""):
             early_turn = await self._open_early_turn(user)
-            if early_turn.mode == "wait":
+            if early_turn.mode == "wait" or early_turn.retired:
                 return
         try:
-            served = self._serve(user, chat_ctx, tools, model_settings, filler=early_turn is None)
+            served = self._serve(user, chat_ctx, tools, model_settings, filler=early_turn is None, gate=early_turn)
             async with aclosing(served):
                 async for chunk in served:
                     yield chunk
@@ -943,6 +956,18 @@ class SarjyAgent(WordleTools, Agent):
             # The turn hook must run first; it cancels this reply and the SDK answers afresh.
             entry.mode = "wait"
             return entry
+        entry.saved = {
+            name: getattr(self, name)
+            for name in (
+                "memory_proposal",
+                "memory_question_turn",
+                "memory_prompted_key",
+                "memory_question_key",
+                "memory_clarify",
+                "memory_outcome",
+                "memory_message",
+            )
+        }
         try:
             await self.compile(user)
         except BaseException as error:
@@ -952,7 +977,10 @@ class SarjyAgent(WordleTools, Agent):
             self._retire_preempt_entry(entry)
             raise
         entry.turn_id = self.prepared[user.id]["turn_id"]
-        entry.ready.set_result(True)
+        if entry.retired:  # retired while the turn was still opening: close it now
+            self._finalize_retired(entry)
+        elif not entry.ready.done():
+            entry.ready.set_result(True)
         return entry
 
     def _retire_preempt_entry(self, entry: EarlyTurn) -> None:
@@ -960,7 +988,7 @@ class SarjyAgent(WordleTools, Agent):
             self.preempt = entry
             self._retire_preempt()
 
-    async def _serve(self, user, chat_ctx, tools, model_settings, *, filler: bool):
+    async def _serve(self, user, chat_ctx, tools, model_settings, *, filler: bool, gate=None):
         snapshot = await self.compile(user)
         turn_id = self.prepared[user.id]["turn_id"]
         self.reassurance.begin_if_missing(turn_id, time.perf_counter())
@@ -976,6 +1004,8 @@ class SarjyAgent(WordleTools, Agent):
             return
         early = self._start_reply_early(user, snapshot, chat_ctx, tools, model_settings)
         try:
+            if gate is not None and not await gate.decided:
+                return  # an early reply never acts on a transcript the turn may still replace
             command = None if self.command_blocked_turn == user.id else await self.command_for(user)
 
             def on_filler(phrase: str) -> None:
