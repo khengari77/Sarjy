@@ -152,6 +152,35 @@ class _PhaseTrace:
             self.state.provider_body_ms = min(round((now - self.body_started) * 1000), MAX_PHASE_MS)
 
 
+# Phases of the worker->API calls. A separate variable from ``completion_state`` so a backend call can never be
+# traced into a model completion's state (or the reverse), whatever the task ordering.
+api_phase_state: ContextVar[CompletionState | None] = ContextVar("api_phase_state", default=None)
+
+
+class TracedTransport(httpx.AsyncBaseTransport):
+    """Phase timing only: the response is passed through untouched (no body rewrite, no SSE parsing)."""
+
+    def __init__(self, transport: httpx.AsyncBaseTransport) -> None:
+        self.transport = transport
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        state = api_phase_state.get()
+        if state is not None:
+            previous = request.extensions.get("trace")
+            phase = _PhaseTrace(state)
+
+            async def trace(event: str, info: object) -> None:
+                await phase(event, info)
+                if previous is not None:
+                    await previous(event, info)
+
+            request.extensions = {**request.extensions, "trace": trace}
+        return await self.transport.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self.transport.aclose()
+
+
 class ObservedTransport(httpx.AsyncBaseTransport):
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.transport = transport or httpx.AsyncHTTPTransport(retries=0, limits=KEEPALIVE_LIMITS)

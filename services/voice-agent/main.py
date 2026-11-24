@@ -44,7 +44,7 @@ from prefix_stability import canonical_prompt, predicted_prefix_hit_pct
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
 from speech_budget import SpeechBudget
-from stream_completion import KEEPALIVE_LIMITS, CompletionState, ObservedTransport, completion_state
+from stream_completion import KEEPALIVE_LIMITS, CompletionState, TracedTransport, api_phase_state
 from turn_metrics import assistant_metrics, build_payload, elapsed_ms
 from wordle_commands import is_wordle_command, parse_say_payload
 from wordle_tools import (
@@ -344,7 +344,7 @@ class SarjyAgent(WordleTools, Agent):
             phase = None
             for attempt in range(2):
                 attempt_phase = CompletionState()
-                token = completion_state.set(attempt_phase)
+                token = api_phase_state.set(attempt_phase)
                 try:
                     response = await self.backend.post(
                         "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
@@ -356,7 +356,7 @@ class SarjyAgent(WordleTools, Agent):
                         continue
                     raise
                 finally:
-                    completion_state.reset(token)
+                    api_phase_state.reset(token)
                 phase = attempt_phase
                 break
             self.prepared[message.id] = response.json()
@@ -661,7 +661,7 @@ class SarjyAgent(WordleTools, Agent):
             result = None
             for attempt in range(2):
                 phase = CompletionState()
-                token = completion_state.set(phase)
+                token = api_phase_state.set(phase)
                 try:
                     response = await self.backend.post(
                         "/internal/agent/command", json={"turn_id": self.prepared[message.id]["turn_id"]}
@@ -672,8 +672,8 @@ class SarjyAgent(WordleTools, Agent):
                         self, turn_id, "command_server_ms", _header_int(response, "x-server-ms"), first_only=True
                     )
                     _record_value(self, turn_id, "command_db_ms", _header_int(response, "x-db-ms"), first_only=True)
-                    _record_value(self, turn_id, "command_api_headers_ms", phase.provider_headers_ms, first_only=True)
                     body = response.json()
+                    _record_value(self, turn_id, "command_api_headers_ms", phase.provider_headers_ms, first_only=True)
                     result = body.get("command")
                     memory_op = body.get("memory_op")
                     if isinstance(memory_op, dict):
@@ -688,7 +688,7 @@ class SarjyAgent(WordleTools, Agent):
                     logging.error("Finalized command resolution failed; continuing conversationally")
                     break
                 finally:
-                    completion_state.reset(token)
+                    api_phase_state.reset(token)
             self.commands[message.id] = result if isinstance(result, dict) else None
             self._record_stage(self.prepared[message.id]["turn_id"], "command_ms", started, first_only=True)
         return self.commands[message.id]
@@ -1354,7 +1354,7 @@ def backend_client(base_url: str, headers: dict[str, str]) -> httpx.AsyncClient:
         base_url=base_url,
         headers=headers,
         timeout=httpx.Timeout(15, connect=5),
-        transport=ObservedTransport(httpx.AsyncHTTPTransport(retries=0, limits=KEEPALIVE_LIMITS)),
+        transport=TracedTransport(httpx.AsyncHTTPTransport(retries=0, limits=KEEPALIVE_LIMITS)),
     )
 
 
