@@ -106,3 +106,31 @@ def test_command_with_a_pending_proposal_supersedes_it(tmp_path):
     with closing(sqlite3.connect(file)) as db, db:
         outcome = db.execute("SELECT outcome FROM context_operations WHERE id='op-pending'").fetchone()[0]
     assert outcome == "superseded"
+
+
+def test_the_joined_read_keeps_every_rejection_of_the_guard(tmp_path):
+    """The fast path must never accept what the guard rejects, and must keep its status codes."""
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = seed(file, chat)
+        turn_id = start_turn(client, headers)
+
+        def command(changed_headers=None, turn=turn_id):
+            return client.post(COMMAND, headers={**headers, **(changed_headers or {})}, json={"turn_id": turn})
+
+        assert command({"x-agent-secret": "wrong"}).status_code == 401
+        assert command({"x-room-name": "other-room"}).status_code == 403
+        assert command({"x-session-id": "missing"}).status_code == 403
+        assert command(turn="no-such-turn").status_code == 404
+        with closing(sqlite3.connect(file)) as db, db:
+            assistant = db.execute(
+                "SELECT id FROM turns WHERE conversation_id=? AND role='assistant' LIMIT 1", (chat,)
+            ).fetchone()
+            db.execute("UPDATE voice_sessions SET status='ended' WHERE id='session'")
+        assert command().status_code == 403
+        if assistant is not None:
+            with closing(sqlite3.connect(file)) as db, db:
+                db.execute("UPDATE voice_sessions SET status='active' WHERE id='session'")
+            assert command(turn=assistant[0]).status_code == 404
