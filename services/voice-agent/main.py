@@ -68,7 +68,8 @@ server = AgentServer(setup_fnc=prewarm)
 # if a stale or tampered backend payload asks for it.
 MAX_TIER_OUTPUT_TOKENS = 1024
 MAX_CONTEXT_BYTES = 64000
-MAX_TOOLS = 4
+# The agent defines 9 tools (weather, three memory, five Wordle); raise this with the tool list.
+MAX_TOOLS = 9
 GENERATION_ATTEMPT_SECONDS = 30.0
 DECISION_TURN_NOTE = "The user is answering the previous confirmation; do not propose anything this turn."
 FAILED_NOTE = "The memory tool failed. Nothing was saved, excluded or changed; do not claim otherwise."
