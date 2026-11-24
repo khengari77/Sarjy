@@ -1,6 +1,5 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from app.domain.budget import (
@@ -14,7 +13,7 @@ from app.domain.budget import (
     budget_day,
 )
 from app.infrastructure.database import DevelopmentBudget
-from app.infrastructure.upsert import insert_ignore
+from app.infrastructure.upsert import insert_or_increment
 
 REQUEST_UNITS = {"openai": OPENAI_REQUEST_MICRO_USD, "deepseek": DEEPSEEK_REQUEST_MICRO_USD, "jev": 1}
 DAILY_LIMITS = {
@@ -46,23 +45,17 @@ async def reserve_in_transaction(
     if units <= 0 or units > limit:
         raise ValueError("DAILY_BUDGET_EXHAUSTED")
     day = budget_day(now or datetime.now(UTC))
-    await insert_ignore(db, DevelopmentBudget, {"day": day, "provider": provider, "reserved_units": 0})
-    changed = await db.execute(
-        update(DevelopmentBudget)
-        .where(
-            DevelopmentBudget.day == day,
-            DevelopmentBudget.provider == provider,
-            DevelopmentBudget.reserved_units <= limit - units,
-        )
-        .values(reserved_units=DevelopmentBudget.reserved_units + units)
+    total = await insert_or_increment(
+        db,
+        DevelopmentBudget,
+        {"day": day, "provider": provider, "reserved_units": units},
+        index_elements=["day", "provider"],
+        column="reserved_units",
+        amount=units,
+        limit=limit,
     )
-    if changed.rowcount != 1:
+    if total is None:
         raise ValueError("DAILY_BUDGET_EXHAUSTED")
-    total = await db.scalar(
-        select(DevelopmentBudget.reserved_units).where(
-            DevelopmentBudget.day == day, DevelopmentBudget.provider == provider
-        )
-    )
     return {
         "day": day,
         "provider": provider,
