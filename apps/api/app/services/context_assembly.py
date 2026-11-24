@@ -215,11 +215,14 @@ def _dependency_ids(turn: Turn, snapshots: Mapping[str, dict] | None = None) -> 
 
 
 def _retraction_candidates_from_rows(rows: Sequence[Memory], *, conversation_id: str) -> tuple[ContextCandidate, ...]:
-    """Bounded retraction blocks from already-loaded blocked rows.
+    """Bounded retraction blocks from already-loaded memory rows.
 
-    The SQL read applies the same predicate, ordering and limit; deriving from
-    every blocked row of the owner yields the identical five rows because hidden
-    memories from the conversation are always inside that blocked set.
+    Applies the same predicate (hidden, from this conversation), order (newest
+    ``updated_at`` then id) and limit as ``retraction_candidates``' SQL. The turn
+    start passes the owner's blocked rows, which is correct only because
+    ``blocked_memory_rows`` seeds every hidden memory of the owner: if that read is
+    ever bounded or scoped, retraction blocks would silently change.
+    ``test_retractions_from_blocked_rows_match_the_query`` pins that dependency.
     """
     hidden = [row for row in rows if row.status == "hidden" and row.source_conversation_id == conversation_id]
     newest = sorted(hidden, key=lambda row: (row.updated_at, row.id), reverse=True)[:RETRACTION_LIMIT]

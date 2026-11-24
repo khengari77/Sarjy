@@ -375,3 +375,51 @@ def test_turn_start_maps_budget_failure_to_typed_413(tmp_path, monkeypatch):
         with closing(sqlite3.connect(file)) as db, db:
             assert db.execute("SELECT COUNT(*) FROM turns").fetchone()[0] == 0
             assert db.execute("SELECT COUNT(*) FROM context_snapshots").fetchone()[0] == 0
+
+
+def test_retractions_from_blocked_rows_match_the_query(tmp_path):
+    """Turn start derives retraction blocks from the blocked rows; they must equal the dedicated query."""
+    import asyncio
+
+    from app.services.context_assembly import orm_memory_candidates, retraction_candidates
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        other = client.post("/v1/conversations").json()["id"]
+    with closing(sqlite3.connect(file)) as db, db:
+        owner = db.execute("SELECT owner_id FROM conversations WHERE id=?", (chat,)).fetchone()[0]
+        rows = [
+            (f"hidden-{n}", f"Hidden fact {n}", "hidden", chat, f"2026-11-12T00:00:{n:02d}+00:00") for n in range(7)
+        ]
+        rows += [
+            ("hidden-elsewhere", "From another conversation", "hidden", other, "2026-11-12T00:01:00+00:00"),
+            ("deleted-1", "", "deleted", chat, "2026-11-12T00:02:00+00:00"),
+            ("active-1", "Still active", "active", chat, "2026-11-12T00:03:00+00:00"),
+        ]
+        for record_id, content, status, source, stamp in rows:
+            db.execute(
+                "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,"
+                "created_at,updated_at) VALUES (?,?,?,'text-embedding-3-small',?,1,?,?,?)",
+                (record_id, owner, content, source, status, stamp, stamp),
+            )
+        db.commit()
+
+    async def compare():
+        engine = create_async_engine(settings.database_url)
+        try:
+            async with AsyncSession(engine) as session:
+                expected = await retraction_candidates(session, owner_id=owner, conversation_id=chat)
+                derived = (await orm_memory_candidates(session, owner_id=owner, conversation_id=chat)).retractions
+                return expected, derived
+        finally:
+            await engine.dispose()
+
+    expected, derived = asyncio.run(compare())
+    assert derived == expected
+    assert len(derived) == 5  # newest five hidden memories of this conversation only
+    newest = {f"hidden-{n}" for n in range(2, 7)}
+    assert {next(name for name in newest if candidate.id.endswith(name)) for candidate in derived} == newest
+    assert all("hidden-elsewhere" not in candidate.id and "deleted" not in candidate.id for candidate in derived)
