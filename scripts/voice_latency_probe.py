@@ -7,6 +7,9 @@ Two live subcommands exist:
 
 Neither touches the network or the provider key without ``--live``. ``report``
 is always offline and reads only the JSONL rows.
+
+Onsets are stamped when agent audio arrives at the probe, so every reported
+latency includes the downlink delay.
 """
 
 from __future__ import annotations
@@ -38,10 +41,10 @@ try:
         SILENCE_WINDOW_S,
         AudioOnset,
         PhraseTurn,
-        answered_counts,
         connect_summary,
         speech_end_index,
         summarize,
+        turn_counts,
     )
 except ModuleNotFoundError:  # Imported as scripts.voice_latency_probe from the repo root.
     from scripts.voice_latency_stats import (
@@ -51,10 +54,10 @@ except ModuleNotFoundError:  # Imported as scripts.voice_latency_probe from the 
         SILENCE_WINDOW_S,
         AudioOnset,
         PhraseTurn,
-        answered_counts,
         connect_summary,
         speech_end_index,
         summarize,
+        turn_counts,
     )
 
 SAMPLE_RATE = 16_000
@@ -69,6 +72,8 @@ DEFAULT_AUDIO_DIR = Path("artifacts/voice-probe")
 DEFAULT_REPORT = Path("artifacts/voice-latency.jsonl")
 GREETING_SILENCE_S = 1.5
 AGENT_JOIN_TIMEOUT_S = 20.0
+ROOM_CONNECT_TIMEOUT_S = 20.0
+MICROPHONE_STALL_MARGIN_S = 10.0
 # The API gives sessions 10 minutes; stop comfortably before that expiry.
 SESSION_LIMIT_S = 480.0
 MAX_SESSIONS_PER_ROUND = 3
@@ -177,32 +182,37 @@ class JsonlSink:
 
 
 class AgentMonitor:
-    """Track confirmed agent speech, greeting state and the first turn onset."""
+    """Merge one speech detector per agent audio track."""
 
     def __init__(self) -> None:
-        self._detector = AudioOnset(threshold=DEFAULT_THRESHOLD, sample_rate=SAMPLE_RATE)
+        self._detectors: dict[str, AudioOnset] = {}
         self.greeting_started = False
         self.onset_s: float | None = None
         self.onset = asyncio.Event()
 
     @property
     def active(self) -> bool:
-        return self._detector.active
+        return any(detector.active for detector in self._detectors.values())
 
     @property
     def last_active_s(self) -> float | None:
-        return self._detector.last_active_s
+        values = [item for detector in self._detectors.values() if (item := detector.last_active_s) is not None]
+        return max(values) if values else None
 
     def reset_turn(self) -> None:
-        self._detector.reset()
+        for detector in self._detectors.values():
+            detector.reset()
         self.onset_s = None
         self.onset.clear()
 
-    def feed(self, timestamp_s: float, samples: np.ndarray) -> None:
-        onset = self._detector.fed(timestamp_s, samples)
-        if self._detector.active:
+    def feed(self, track_id: str, timestamp_s: float, samples: np.ndarray) -> None:
+        detector = self._detectors.setdefault(
+            track_id, AudioOnset(threshold=DEFAULT_THRESHOLD, sample_rate=SAMPLE_RATE)
+        )
+        onset = detector.fed(timestamp_s, samples)
+        if detector.active:
             self.greeting_started = True
-        if onset is not None:
+        if onset is not None and (self.onset_s is None or onset < self.onset_s):
             self.onset_s = onset
             self.onset.set()
 
@@ -226,7 +236,7 @@ class AgentAudio:
                 frame = event.frame
                 samples = np.frombuffer(frame.data, dtype=np.int16)
                 timestamp = time.monotonic() - samples.size / SAMPLE_RATE
-                self._monitor.feed(timestamp, samples)
+                self._monitor.feed(track.sid, timestamp, samples)
         finally:
             with contextlib.suppress(Exception):
                 await stream.aclose()
@@ -261,10 +271,13 @@ class Microphone:
         self._queue.put_nowait((samples, done))
         if self._task is None:
             raise RuntimeError("microphone is not running")
+        deadline = samples.size / SAMPLE_RATE + MICROPHONE_STALL_MARGIN_S
         finished = asyncio.create_task(done.wait())
         try:
             # A dead microphone never finishes a phrase; do not wait for it.
-            await asyncio.wait({finished, self._task}, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait_for(asyncio.wait({finished, self._task}, return_when=asyncio.FIRST_COMPLETED), deadline)
+        except TimeoutError:
+            raise RuntimeError("microphone stalled") from None
         finally:
             finished.cancel()
         if not done.is_set():
@@ -374,30 +387,40 @@ async def _start_session(client: httpx.AsyncClient, api: str, conversation_id: s
 
 
 async def _end_session(client: httpx.AsyncClient, api: str, session_id: str) -> bool:
-    try:
-        await _json_request(client, "POST", _api_url(api, f"voice/sessions/{session_id}/end"))
-    except httpx.HTTPStatusError as exc:
-        print(f"end session failed: {exc.response.status_code}", file=sys.stderr)
-        return False
-    except Exception as exc:
-        print(f"end session failed: {type(exc).__name__}", file=sys.stderr)
-        return False
-    return True
+    for attempt in range(2):
+        try:
+            await _json_request(client, "POST", _api_url(api, f"voice/sessions/{session_id}/end"))
+            return True
+        except httpx.HTTPStatusError as exc:
+            print(f"end session failed: {exc.response.status_code}", file=sys.stderr)
+        except Exception as exc:
+            print(f"end session failed: {type(exc).__name__}", file=sys.stderr)
+        if attempt == 0:
+            await asyncio.sleep(1.0)
+    return False
+
+
+def _is_agent_audio(track: rtc.Track, participant: rtc.RemoteParticipant) -> bool:
+    return track.kind == rtc.TrackKind.KIND_AUDIO and participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+
+
+def _is_authentication_error(exc: BaseException) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {401, 403}
 
 
 def _bind_room(room: rtc.Room, monitor: AgentMonitor) -> AgentAudio:
     audio = AgentAudio(monitor)
     room.on(
         "track_subscribed",
-        lambda track, _publication, _participant: (
-            audio.attach(track) if track.kind == rtc.TrackKind.KIND_AUDIO else None
-        ),
+        lambda track, _publication, participant: audio.attach(track) if _is_agent_audio(track, participant) else None,
     )
     return audio
 
 
 def _attach_existing_audio(room: rtc.Room, audio: AgentAudio) -> None:
     for participant in room.remote_participants.values():
+        if participant.kind != rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+            continue
         for publication in participant.track_publications.values():
             if publication.kind == rtc.TrackKind.KIND_AUDIO and publication.track is not None:
                 audio.attach(publication.track)
@@ -449,6 +472,10 @@ def _write_incomplete(
     if error is not None:
         row["error"] = error
     sink.write(row)
+
+
+def _write_session_failed(sink: JsonlSink, round_number: int, error: str) -> None:
+    sink.write({"type": "session_failed", "round": round_number, "error": error})
 
 
 async def _wait_turn_start(turn: PhraseTurn, monitor: AgentMonitor) -> bool:
@@ -521,13 +548,8 @@ async def _run_session(
     phrases: Sequence[Phrase],
     audio: Mapping[str, np.ndarray],
     sink: JsonlSink,
-) -> tuple[list[Phrase], bool] | None:
-    """Run one session.
-
-    Return ``(phrases_left, recorded_incomplete)`` so the caller knows whether
-    the failed session already wrote its own ``incomplete`` row, or ``None``
-    when the agent did not join and the round must stop.
-    """
+) -> list[Phrase]:
+    """Run one session and return the phrases it left for the next one."""
     session: Any = None
     room: rtc.Room | None = None
     agent_audio: AgentAudio | None = None
@@ -545,7 +567,7 @@ async def _run_session(
                 ),
             )
             agent_audio = _bind_room(room, monitor)
-            await room.connect(str(session["url"]), str(session["token"]))
+            await asyncio.wait_for(room.connect(str(session["url"]), str(session["token"])), ROOM_CONNECT_TIMEOUT_S)
             for participant in room.remote_participants.values():
                 if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
                     joined.set()
@@ -559,13 +581,13 @@ async def _run_session(
             await microphone.start()
         except Exception as exc:
             # Only the class name: exception text may contain session tokens.
-            _write_incomplete(sink, round_number, phrases, error=type(exc).__name__)
-            return list(phrases), True
+            _write_session_failed(sink, round_number, type(exc).__name__)
+            return list(phrases)
         try:
             await _wait_agent(joined)
         except RuntimeError as exc:
-            sink.write({"type": "connect_failed", "round": round_number, "error": type(exc).__name__})
-            return None
+            _write_session_failed(sink, round_number, type(exc).__name__)
+            return list(phrases)
         sink.write(
             {
                 "type": "connect",
@@ -583,9 +605,9 @@ async def _run_session(
                 await _play_phrase(monitor, microphone, sink, phrase, round_number, audio[phrase.id])
             except Exception as exc:
                 remaining = list(phrases[index:])
-                _write_incomplete(sink, round_number, remaining, error=type(exc).__name__)
-                return remaining, True
-        return remaining, False
+                _write_session_failed(sink, round_number, type(exc).__name__)
+                return remaining
+        return remaining
     finally:
         if microphone is not None:
             await microphone.stop()
@@ -605,20 +627,23 @@ async def _run_round(
     phrases: Sequence[Phrase],
     audio: Mapping[str, np.ndarray],
     sink: JsonlSink,
-) -> None:
-    conversation_id = await _new_conversation(client, api)
+) -> int:
+    try:
+        conversation_id = await _new_conversation(client, api)
+    except Exception as exc:
+        if _is_authentication_error(exc):
+            print(type(exc).__name__, file=sys.stderr)
+            return 2
+        _write_incomplete(sink, round_number, phrases, error=type(exc).__name__)
+        return 0
     remaining = list(phrases)
     sessions = 0
-    recorded = False
     while remaining and sessions < MAX_SESSIONS_PER_ROUND:
         sessions += 1
-        outcome = await _run_session(client, api, conversation_id, round_number, remaining, audio, sink)
-        if outcome is None:
-            _write_incomplete(sink, round_number, remaining)
-            return
-        remaining, recorded = outcome
-    if remaining and not recorded:
+        remaining = await _run_session(client, api, conversation_id, round_number, remaining, audio, sink)
+    if remaining:
         _write_incomplete(sink, round_number, remaining)
+    return 0
 
 
 def _git_head() -> str:
@@ -675,18 +700,32 @@ async def _run_probe(
             file=sys.stderr,
         )
         async with httpx.AsyncClient(timeout=30.0, headers={"origin": _origin(api)}) as client:
-            await _authenticate(client, api, cookie_env, cookie_name)
+            try:
+                await _authenticate(client, api, cookie_env, cookie_name)
+            except Exception as exc:
+                if not _is_authentication_error(exc):
+                    raise
+                print(type(exc).__name__, file=sys.stderr)
+                return 2
             for round_number in range(1, rounds + 1):
-                await _run_round(client, api, round_number, phrases, audio, sink)
+                if await _run_round(client, api, round_number, phrases, audio, sink) == 2:
+                    return 2
     return 0
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    skipped = 0
     with path.open(encoding="utf-8") as source:
         for line in source:
-            if line.strip():
+            if not line.strip():
+                continue
+            try:
                 rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                skipped += 1
+    if skipped:
+        print(f"skipped {skipped} unparsable lines in {path}", file=sys.stderr)
     return rows
 
 
@@ -695,13 +734,14 @@ def _fmt(value: float | None) -> str:
 
 
 def _cells(bucket: Mapping[str, object]) -> list[str]:
+    p95 = bucket["p95_ms"]
     return [
         str(bucket["n"]),
         str(bucket["answered"]),
         str(bucket["timeouts"]),
         str(bucket["invalid"]),
         _fmt(bucket["p50_ms"]) if isinstance(bucket["p50_ms"], float) else "-",
-        _fmt(bucket["p95_ms"]) if isinstance(bucket["p95_ms"], float) else "-",
+        _fmt(p95) if isinstance(p95, float) else "n<20",
         _fmt(bucket["max_ms"]) if isinstance(bucket["max_ms"], float) else "-",
     ]
 
@@ -742,6 +782,32 @@ def _print_side_by_side(summaries: Sequence[Mapping[str, Mapping[str, object]]],
         print(_table_line(category, cells, widths * len(summaries)))
 
 
+_META_KEYS = ("rounds", "phrase_count", "api_host_kind")
+
+
+def _read_meta(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
+    return next((row for row in rows if row.get("type") == "meta"), {})
+
+
+def _meta_mismatch(first: Mapping[str, Any], second: Mapping[str, Any]) -> list[str]:
+    return [key for key in _META_KEYS if first.get(key) != second.get(key)]
+
+
+def _print_meta(labels: Sequence[str], metas: Sequence[Mapping[str, Any]]) -> None:
+    for label, meta in zip(labels, metas, strict=True):
+        print(f"git_head {label}: {meta.get('git_head', 'unknown')}")
+
+
+def _warn_count_difference(first_rows: Sequence[Mapping[str, Any]], second_rows: Sequence[Mapping[str, Any]]) -> None:
+    first = turn_counts(first_rows)
+    second = turn_counts(second_rows)
+    differing = sorted(
+        identifier for identifier in {*first, *second} if first.get(identifier) != second.get(identifier)
+    )
+    if differing:
+        print(f"warning: answered/timeout counts differ for ids: {', '.join(differing)}", file=sys.stderr)
+
+
 def report(paths: Sequence[Path]) -> int:
     if not paths or len(paths) > 2:
         print("report takes one or two JSONL files", file=sys.stderr)
@@ -752,16 +818,17 @@ def report(paths: Sequence[Path]) -> int:
         _print_single(summaries[0])
         _print_connect("connect", connect_summary(files[0]))
         return 0
-    _print_side_by_side(summaries, ["before", "after"])
-    for label, rows in zip(("connect before", "connect after"), files, strict=True):
-        _print_connect(label, connect_summary(rows))
-    before = answered_counts(files[0])
-    after = answered_counts(files[1])
-    if before != after:
-        differing = sorted(
-            identifier for identifier in {*before, *after} if before.get(identifier, 0) != after.get(identifier, 0)
-        )
-        print(f"warning: answered counts differ for ids: {', '.join(differing)}", file=sys.stderr)
+    labels = [str(path) for path in paths]
+    metas = [_read_meta(rows) for rows in files]
+    _print_meta(labels, metas)
+    differing = _meta_mismatch(metas[0], metas[1])
+    if differing:
+        print(f"meta rows differ in: {', '.join(differing)}", file=sys.stderr)
+        return 2
+    _print_side_by_side(summaries, labels)
+    for label, rows in zip(labels, files, strict=True):
+        _print_connect(f"connect {label}", connect_summary(rows))
+    _warn_count_difference(files[0], files[1])
     return 0
 
 

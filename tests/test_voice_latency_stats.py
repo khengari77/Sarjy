@@ -9,6 +9,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import httpx
 import numpy as np
 import pytest
 from hypothesis import given
@@ -28,11 +29,11 @@ from voice_latency_stats import (  # noqa: E402
     TIMEOUT,
     AudioOnset,
     PhraseTurn,
-    answered_counts,
     connect_summary,
     percentile,
     speech_end_index,
     summarize,
+    turn_counts,
 )
 
 PHRASES = ROOT / "scripts" / "voice_latency_phrases.json"
@@ -123,16 +124,21 @@ def test_summarize_p95_requires_twenty_answers():
     assert summarize(twenty)["chat"]["p95_ms"] == pytest.approx(percentile(list(range(20)), 95))
 
 
-def test_connect_summary_and_answered_counts():
+def test_connect_summary_and_turn_counts():
     rows = [
         {"type": "connect", "round": 1, "connect_ms": 40.0},
         {"type": "connect", "round": 2, "connect_ms": 60.0},
         _row("chat", ANSWERED, 100.0, "chat-01"),
         _row("chat", ANSWERED, 120.0, "chat-01"),
         _row("chat", TIMEOUT, identifier="chat-02"),
+        _row("chat", BARGE_IN, identifier="chat-03"),
     ]
     assert connect_summary(rows) == {"n": 2, "p50_ms": 50.0, "max_ms": 60.0}
-    assert answered_counts(rows) == {"chat-01": 2}
+    assert turn_counts(rows) == {
+        "chat-01": {"answered": 2, "timeouts": 0},
+        "chat-02": {"answered": 0, "timeouts": 1},
+        "chat-03": {"answered": 0, "timeouts": 0},
+    }
 
 
 def _window(amplitude: int) -> np.ndarray:
@@ -174,27 +180,39 @@ def test_audio_onset_single_loud_window_does_not_fire_or_activate():
     assert detector.onset_s is None
 
 
-def test_audio_onset_two_windows_activate_and_silence_deactivates():
+def test_audio_onset_two_windows_activate_but_do_not_confirm_an_onset():
     detector = AudioOnset()
     assert detector.fed(0.0, _window(1000)) is None
-    assert detector.fed(0.02, _window(1000)) == pytest.approx(0.0)
+    assert detector.fed(0.02, _window(1000)) is None
     assert detector.active
     assert detector.last_active_s == pytest.approx(0.04)
+    assert detector.onset_s is None
     assert detector.fed(0.04, np.zeros(320, dtype=np.int16)) is None
     assert not detector.active
     assert detector.last_active_s == pytest.approx(0.04)
     assert detector.fed(0.06, _window(1000)) is None
     assert not detector.active
+    assert detector.onset_s is None
+
+
+def test_audio_onset_needs_eight_loud_windows_and_reports_the_first():
+    detector = AudioOnset()
+    for index in range(7):
+        assert detector.fed(index * 0.02, _window(1000)) is None
+    assert detector.active
+    assert detector.onset_s is None
+    assert detector.fed(0.14, _window(1000)) == pytest.approx(0.0)
+    assert detector.onset_s == pytest.approx(0.0)
 
 
 def test_audio_onset_inside_a_single_frame():
     detector = AudioOnset()
-    samples = np.concatenate((np.zeros(8000, dtype=np.int16), np.full(1600, 1000, dtype=np.int16)))
+    samples = np.concatenate((np.zeros(8000, dtype=np.int16), np.full(2560, 1000, dtype=np.int16)))
     assert detector.fed(0.0, samples) == pytest.approx(0.5, abs=1 / 16000)
 
 
 def test_audio_onset_arbitrary_frame_sizes_match_one_big_frame():
-    samples = np.concatenate((np.zeros(8000, dtype=np.int16), np.full(1600, 1000, dtype=np.int16)))
+    samples = np.concatenate((np.zeros(8000, dtype=np.int16), np.full(2560, 1000, dtype=np.int16)))
     whole = AudioOnset()
     assert whole.fed(0.0, samples) == pytest.approx(0.5, abs=1 / 16000)
 
@@ -208,8 +226,9 @@ def test_audio_onset_arbitrary_frame_sizes_match_one_big_frame():
 
 def test_audio_onset_reset():
     detector = AudioOnset()
-    assert detector.fed(0.0, _window(1000)) is None
-    assert detector.fed(0.02, _window(1000)) == pytest.approx(0.0)
+    for index in range(8):
+        detector.fed(index * 0.02, _window(1000))
+    assert detector.onset_s == pytest.approx(0.0)
     detector.reset()
     assert detector.onset_s is None
     assert not detector.active
@@ -220,10 +239,10 @@ def test_audio_onset_reset():
 
 def test_audio_onset_threshold_is_exclusive():
     detector = AudioOnset(threshold=DEFAULT_THRESHOLD)
-    at_threshold = np.full(640, DEFAULT_THRESHOLD, dtype=np.int16)
+    at_threshold = np.full(3200, DEFAULT_THRESHOLD, dtype=np.int16)
     assert detector.fed(0.0, at_threshold) is None
     detector.reset()
-    above = np.full(640, DEFAULT_THRESHOLD + 1, dtype=np.int16)
+    above = np.full(3200, DEFAULT_THRESHOLD + 1, dtype=np.int16)
     assert detector.fed(0.0, above) == pytest.approx(0.0)
 
 
@@ -394,24 +413,121 @@ def _phrases(*identifiers: str) -> list[probe.Phrase]:
     return [probe.Phrase(identifier, "chat", identifier) for identifier in identifiers]
 
 
-def test_join_failure_writes_incomplete_for_every_remaining_phrase(monkeypatch):
+class _FakeRoom:
+    def __init__(self) -> None:
+        self.remote_participants: dict[str, object] = {}
+        self.local_participant = _FakeLocalParticipant()
+        self.handlers: dict[str, object] = {}
+
+    def on(self, name, callback):
+        self.handlers[name] = callback
+
+    async def connect(self, url, token):
+        return None
+
+    async def disconnect(self):
+        return None
+
+
+class _FakeLocalParticipant:
+    async def publish_track(self, track, options):
+        return None
+
+
+class _FakeLocalAudioTrack:
+    @staticmethod
+    def create_audio_track(name, source):
+        return object()
+
+
+class _FakeMicrophone:
+    def __init__(self, source) -> None:
+        self.source = source
+
+    async def start(self):
+        return None
+
+    async def stop(self):
+        return None
+
+
+def _stub_rtc(monkeypatch, room) -> None:
+    async def fake_start(client, api, conversation_id):
+        return {"url": "wss://room", "token": "token", "id": "session"}, 0.0
+
+    async def fake_end(client, api, session_id):
+        return True
+
+    monkeypatch.setattr(probe, "_start_session", fake_start)
+    monkeypatch.setattr(probe, "_end_session", fake_end)
+    monkeypatch.setattr(probe, "_wait_greeting", lambda monitor: asyncio.sleep(0))
+    monkeypatch.setattr(probe.rtc, "Room", lambda: room)
+    monkeypatch.setattr(probe.rtc, "AudioSource", lambda *args, **kwargs: object())
+    monkeypatch.setattr(probe.rtc, "LocalAudioTrack", _FakeLocalAudioTrack)
+    monkeypatch.setattr(probe, "Microphone", _FakeMicrophone)
+
+
+def _status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "http://127.0.0.1:9/api/v1/conversations")
+    return httpx.HTTPStatusError("failed", request=request, response=httpx.Response(status, request=request))
+
+
+def test_failed_sessions_retry_then_write_one_incomplete(monkeypatch):
     sink = _RecordingSink()
     phrases = _phrases("chat-01", "chat-02")
+    attempts = 0
 
     async def fake_new_conversation(client, api):
         return "conversation"
 
     async def fake_run_session(client, api, conversation_id, round_number, remaining, audio, sink):
-        return None
+        nonlocal attempts
+        attempts += 1
+        probe._write_session_failed(sink, round_number, "RuntimeError")
+        return list(remaining)
 
     monkeypatch.setattr(probe, "_new_conversation", fake_new_conversation)
     monkeypatch.setattr(probe, "_run_session", fake_run_session)
     asyncio.run(probe._run_round(None, "http://127.0.0.1:9", 2, phrases, {}, sink))
-    incomplete = [row for row in sink.rows if row["type"] == "incomplete"]
-    assert incomplete == [{"type": "incomplete", "round": 2, "remaining": ["chat-01", "chat-02"]}]
+    assert attempts == probe.MAX_SESSIONS_PER_ROUND
+    assert [row for row in sink.rows if row["type"] == "session_failed"] == [
+        {"type": "session_failed", "round": 2, "error": "RuntimeError"}
+    ] * probe.MAX_SESSIONS_PER_ROUND
+    assert [row for row in sink.rows if row["type"] == "incomplete"] == [
+        {"type": "incomplete", "round": 2, "remaining": ["chat-01", "chat-02"]}
+    ]
 
 
-def test_session_start_error_is_incomplete_and_the_next_session_runs(monkeypatch):
+def test_a_failed_join_is_a_failed_session(monkeypatch):
+    sink = _RecordingSink()
+    phrases = _phrases("chat-01")
+    _stub_rtc(monkeypatch, _FakeRoom())
+
+    async def failing_wait(joined):
+        raise RuntimeError("agent participant did not join")
+
+    monkeypatch.setattr(probe, "_wait_agent", failing_wait)
+    remaining = asyncio.run(probe._run_session(None, "http://127.0.0.1:9", "conversation", 1, phrases, {}, sink))
+    assert remaining == phrases
+    assert sink.rows == [{"type": "session_failed", "round": 1, "error": "RuntimeError"}]
+
+
+def test_a_hanging_room_connect_times_out(monkeypatch):
+    sink = _RecordingSink()
+    phrases = _phrases("chat-01")
+
+    class HangingRoom(_FakeRoom):
+        async def connect(self, url, token):
+            await asyncio.sleep(60)
+
+    monkeypatch.setattr(probe, "ROOM_CONNECT_TIMEOUT_S", 0.01)
+    _stub_rtc(monkeypatch, HangingRoom())
+    remaining = asyncio.run(probe._run_session(None, "http://127.0.0.1:9", "conversation", 1, phrases, {}, sink))
+    assert remaining == phrases
+    assert sink.rows == [{"type": "session_failed", "round": 1, "error": "TimeoutError"}]
+
+
+def test_session_start_error_is_a_failed_session_and_the_next_session_runs(monkeypatch):
     sink = _RecordingSink()
     phrases = _phrases("chat-01")
     attempts = 0
@@ -427,12 +543,45 @@ def test_session_start_error_is_incomplete_and_the_next_session_runs(monkeypatch
     monkeypatch.setattr(probe, "_new_conversation", fake_new_conversation)
     monkeypatch.setattr(probe, "_start_session", failing_start)
     asyncio.run(probe._run_round(None, "http://127.0.0.1:9", 1, phrases, {}, sink))
-    incomplete = [row for row in sink.rows if row["type"] == "incomplete"]
+    failed = [row for row in sink.rows if row["type"] == "session_failed"]
     assert attempts == probe.MAX_SESSIONS_PER_ROUND
-    assert len(incomplete) == probe.MAX_SESSIONS_PER_ROUND
-    assert all(row["error"] == "RuntimeError" for row in incomplete)
-    assert all(row["remaining"] == ["chat-01"] for row in incomplete)
+    assert len(failed) == probe.MAX_SESSIONS_PER_ROUND
+    assert all(row["error"] == "RuntimeError" for row in failed)
+    assert [row for row in sink.rows if row["type"] == "incomplete"] == [
+        {"type": "incomplete", "round": 1, "remaining": ["chat-01"]}
+    ]
     assert "super-secret" not in json.dumps(sink.rows)
+
+
+def test_conversation_error_writes_one_incomplete_and_returns_zero(monkeypatch):
+    sink = _RecordingSink()
+    phrases = _phrases("chat-01", "chat-02")
+
+    async def failing_new_conversation(client, api):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(probe, "_new_conversation", failing_new_conversation)
+    assert asyncio.run(probe._run_round(None, "http://127.0.0.1:9", 1, phrases, {}, sink)) == 0
+    assert sink.rows == [
+        {
+            "type": "incomplete",
+            "round": 1,
+            "remaining": ["chat-01", "chat-02"],
+            "error": "RuntimeError",
+        }
+    ]
+
+
+def test_authentication_error_prints_the_class_and_returns_two(monkeypatch, capsys):
+    sink = _RecordingSink()
+
+    async def failing_new_conversation(client, api):
+        raise _status_error(401)
+
+    monkeypatch.setattr(probe, "_new_conversation", failing_new_conversation)
+    assert asyncio.run(probe._run_round(None, "http://127.0.0.1:9", 1, _phrases("chat-01"), {}, sink)) == 2
+    assert sink.rows == []
+    assert capsys.readouterr().err.strip() == "HTTPStatusError"
 
 
 def test_git_head_runs_from_the_script_directory(monkeypatch, tmp_path):
@@ -448,27 +597,27 @@ def test_git_head_runs_from_the_script_directory(monkeypatch, tmp_path):
     assert Path(seen_cwd[0]).resolve() == Path(probe.__file__).resolve().parent
 
 
-def test_report_prints_invalid_and_connect_and_warns_on_count_difference(tmp_path, capsys):
+def test_report_prints_paths_invalid_connect_and_warns_on_count_difference(tmp_path, capsys):
     before = tmp_path / "before.jsonl"
     after = tmp_path / "after.jsonl"
     before.write_text(
         "\n".join(
             json.dumps(row)
             for row in (
-                {"type": "meta", "rounds": 1, "phrase_count": 2},
+                {"type": "meta", "rounds": 1, "phrase_count": 2, "api_host_kind": "local", "git_head": "aaa"},
                 {"type": "connect", "round": 1, "connect_ms": 40.0},
                 _row("chat", ANSWERED, 100.0, "chat-01"),
                 _row("chat", TIMEOUT, identifier="chat-02"),
             )
         )
-        + "\n",
+        + "\n{not json\n",
         encoding="utf-8",
     )
     after.write_text(
         "\n".join(
             json.dumps(row)
             for row in (
-                {"type": "meta", "rounds": 1, "phrase_count": 2},
+                {"type": "meta", "rounds": 1, "phrase_count": 2, "api_host_kind": "local", "git_head": "bbb"},
                 {"type": "connect", "round": 1, "connect_ms": 60.0},
                 _row("chat", ANSWERED, 120.0, "chat-01"),
                 _row("chat", BARGE_IN, identifier="chat-02"),
@@ -481,8 +630,38 @@ def test_report_prints_invalid_and_connect_and_warns_on_count_difference(tmp_pat
     assert report([before, after]) == 0
     captured = capsys.readouterr()
     assert "invalid" in captured.out
-    assert "connect before" in captured.out
-    assert "warning: answered counts differ for ids: chat-02" in captured.err
+    assert "n<20" in captured.out
+    assert str(before) in captured.out
+    assert str(after) in captured.out
+    assert f"connect {before}" in captured.out
+    assert "git_head" in captured.out
+    assert "aaa" in captured.out
+    assert "bbb" in captured.out
+    assert "skipped 1 unparsable lines" in captured.err
+    assert "warning: answered/timeout counts differ for ids: chat-02" in captured.err
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("rounds", 2),
+        ("phrase_count", 3),
+        ("api_host_kind", "remote"),
+    ],
+)
+def test_report_exits_two_when_meta_differs_but_prints_both_heads(tmp_path, capsys, key, value):
+    first = tmp_path / "first.jsonl"
+    second = tmp_path / "second.jsonl"
+    base = {"type": "meta", "rounds": 1, "phrase_count": 2, "api_host_kind": "local"}
+    first.write_text(json.dumps({**base, "git_head": "head-a"}) + "\n", encoding="utf-8")
+    second.write_text(json.dumps({**base, "git_head": "head-b", key: value}) + "\n", encoding="utf-8")
+    assert report([first, second]) == 2
+    captured = capsys.readouterr()
+    assert str(first) in captured.out
+    assert str(second) in captured.out
+    assert "head-a" in captured.out
+    assert "head-b" in captured.out
+    assert f"meta rows differ in: {key}" in captured.err
 
 
 @pytest.mark.parametrize(
@@ -519,8 +698,123 @@ def test_a_dead_microphone_fails_the_phrase_instead_of_hanging():
         asyncio.run(run())
 
 
+def test_a_stalled_microphone_raises_instead_of_hanging(monkeypatch):
+    monkeypatch.setattr(probe, "MICROPHONE_STALL_MARGIN_S", 0.01)
+
+    class StalledSource:
+        async def capture_frame(self, frame):
+            await asyncio.sleep(60)
+
+    async def run():
+        microphone = probe.Microphone(StalledSource())
+        await microphone.start()
+        try:
+            await asyncio.wait_for(microphone.play(np.zeros(160, dtype=np.int16)), 1)
+        finally:
+            await microphone.stop()
+
+    with pytest.raises(RuntimeError, match="microphone stalled"):
+        asyncio.run(run())
+
+
+def test_agent_monitor_merges_one_detector_per_track():
+    monitor = probe.AgentMonitor()
+    for index in range(8):
+        monitor.feed("track-a", 1.0 + index * 0.02, _window(1000))
+    assert monitor.onset_s == pytest.approx(1.0)
+    for index in range(8):
+        monitor.feed("track-b", 0.5 + index * 0.02, _window(1000))
+    assert monitor.onset_s == pytest.approx(0.5)
+    assert monitor.active
+    assert monitor.last_active_s == pytest.approx(1.16)
+
+
+class _FakeTrack:
+    def __init__(self, sid, kind) -> None:
+        self.sid = sid
+        self.kind = kind
+
+
+class _FakePublication:
+    def __init__(self, kind, track) -> None:
+        self.kind = kind
+        self.track = track
+
+
+class _FakeParticipant:
+    def __init__(self, kind, publications=None) -> None:
+        self.kind = kind
+        self.track_publications = publications or {}
+
+
+class _RecordingAudio:
+    def __init__(self, monitor) -> None:
+        self.attached: list[str] = []
+
+    def attach(self, track) -> None:
+        self.attached.append(track.sid)
+
+
+def test_only_agent_audio_tracks_are_attached(monkeypatch):
+    monkeypatch.setattr(probe, "AgentAudio", _RecordingAudio)
+    agent = _FakeParticipant(probe.rtc.ParticipantKind.PARTICIPANT_KIND_AGENT)
+    viewer = _FakeParticipant(probe.rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD)
+    audio_kind = probe.rtc.TrackKind.KIND_AUDIO
+
+    subscribed = _FakeRoom()
+    audio = probe._bind_room(subscribed, probe.AgentMonitor())
+    subscribed.handlers["track_subscribed"](_FakeTrack("agent-subscribed", audio_kind), None, agent)
+    subscribed.handlers["track_subscribed"](_FakeTrack("viewer-subscribed", audio_kind), None, viewer)
+    subscribed.handlers["track_subscribed"](_FakeTrack("agent-video", probe.rtc.TrackKind.KIND_VIDEO), None, agent)
+    assert audio.attached == ["agent-subscribed"]
+
+    existing = _FakeRoom()
+    existing.remote_participants = {
+        "agent": _FakeParticipant(
+            probe.rtc.ParticipantKind.PARTICIPANT_KIND_AGENT,
+            {"audio": _FakePublication(audio_kind, _FakeTrack("agent-existing", audio_kind))},
+        ),
+        "viewer": _FakeParticipant(
+            probe.rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD,
+            {"audio": _FakePublication(audio_kind, _FakeTrack("viewer-existing", audio_kind))},
+        ),
+    }
+    existing_audio = _RecordingAudio(None)
+    probe._attach_existing_audio(existing, existing_audio)
+    assert existing_audio.attached == ["agent-existing"]
+
+
+def test_end_session_retries_once_after_one_second(monkeypatch):
+    sleeps: list[float] = []
+
+    class FlakyClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def request(self, method, url):
+            self.calls += 1
+            if self.calls == 1:
+                raise httpx.ConnectError("first attempt fails")
+            return httpx.Response(200, request=httpx.Request(method, url))
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(probe.asyncio, "sleep", fake_sleep)
+    client = FlakyClient()
+    assert asyncio.run(probe._end_session(client, "http://127.0.0.1:9", "session")) is True
+    assert client.calls == 2
+    assert sleeps == [1.0]
+
+
 def test_the_probe_names_the_proxy_origin():
     from voice_latency_probe import _origin
 
     assert _origin("https://sarjy.example/api/v1") == "https://sarjy.example"
     assert _origin("http://127.0.0.1:8000") == "http://127.0.0.1:8000"
+
+
+def test_run_and_report_agree_on_the_meta_row():
+    written = probe._meta_row("http://127.0.0.1:8000", 2, 20)
+    assert probe._read_meta([{"type": "connect"}, written]) == written
+    assert (written["rounds"], written["phrase_count"], written["api_host_kind"]) == (2, 20, "local")

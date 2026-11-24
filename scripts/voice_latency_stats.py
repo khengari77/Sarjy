@@ -16,6 +16,7 @@ import numpy as np
 DEFAULT_THRESHOLD = 200.0
 SPEECH_THRESHOLD = 300.0
 WINDOW_SECONDS = 0.020
+ONSET_WINDOWS = 8
 MIN_P95_ANSWERS = 20
 
 TURN_SILENCE_S = 1.0
@@ -48,6 +49,11 @@ class ConnectBucket(TypedDict):
     n: int
     p50_ms: float | None
     max_ms: float | None
+
+
+class IdCounts(TypedDict):
+    answered: int
+    timeouts: int
 
 
 def percentile(values: Sequence[float], q: float) -> float:
@@ -154,15 +160,20 @@ def connect_summary(rows: Iterable[Mapping[str, object]]) -> ConnectBucket:
     }
 
 
-def answered_counts(rows: Iterable[Mapping[str, object]]) -> dict[str, int]:
-    """Count answered rows per phrase id for before/after comparisons."""
-    counts: dict[str, int] = {}
+def turn_counts(rows: Iterable[Mapping[str, object]]) -> dict[str, IdCounts]:
+    """Count answered and timeout rows per phrase id for before/after comparisons."""
+    counts: dict[str, IdCounts] = {}
     for row in rows:
-        if row.get("type") != "phrase" or row.get("outcome") != ANSWERED:
+        if row.get("type") != "phrase":
             continue
         identifier = row.get("id")
-        if isinstance(identifier, str):
-            counts[identifier] = counts.get(identifier, 0) + 1
+        if not isinstance(identifier, str):
+            continue
+        bucket = counts.setdefault(identifier, {"answered": 0, "timeouts": 0})
+        if row.get("outcome") == ANSWERED:
+            bucket["answered"] += 1
+        elif row.get("outcome") == TIMEOUT:
+            bucket["timeouts"] += 1
     return counts
 
 
@@ -327,11 +338,10 @@ class AudioOnset:
     """Find confirmed speech runs in a stream of int16 samples.
 
     Samples may arrive in chunks of any size.  A window is loud when its RMS
-    exceeds ``threshold``; a run becomes active after two consecutive loud
-    windows and ``onset_s`` reports the start of the first one.  ``active`` and
-    ``last_active_s`` follow the same two-window rule, so an isolated loud
-    window never counts as agent speech.  Timestamps are the time of the first
-    sample in a chunk, in seconds.
+    exceeds ``threshold``; ``active`` and ``last_active_s`` follow a two-window
+    rule, while an onset is credited only once eight consecutive loud windows
+    (160 ms) have arrived.  The onset still reports the start of the first one.
+    Timestamps are the time of the first sample in a chunk, in seconds.
     """
 
     def __init__(self, threshold: float = DEFAULT_THRESHOLD, sample_rate: int = 16_000) -> None:
@@ -399,9 +409,9 @@ class AudioOnset:
                 if self._consecutive >= 2:
                     self._active = True
                     self._last_active_s = started_s + WINDOW_SECONDS
-                    if self._onset_s is None:
-                        self._onset_s = self._first_loud_s
-                        onset = self._onset_s
+                if self._consecutive >= ONSET_WINDOWS and self._onset_s is None:
+                    self._onset_s = self._first_loud_s
+                    onset = self._onset_s
             else:
                 self._consecutive = 0
                 self._first_loud_s = None
