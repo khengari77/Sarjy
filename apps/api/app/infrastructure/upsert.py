@@ -1,4 +1,4 @@
-"""Dialect-aware ``INSERT ... ON CONFLICT DO NOTHING`` boundary."""
+"""Dialect-aware ``INSERT ... ON CONFLICT`` boundary."""
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,3 +22,33 @@ async def insert_ignore(db: AsyncSession, model, values: dict, *, index_elements
     else:
         statement = statement.on_conflict_do_nothing(index_elements=index_elements)
     return await db.execute(statement)
+
+
+async def insert_or_increment(
+    db: AsyncSession,
+    model,
+    values: dict,
+    *,
+    index_elements: list[str],
+    column: str,
+    amount: int,
+    limit: int,
+):
+    """Insert one row or add ``amount`` to ``column`` while staying within ``limit``.
+
+    The insert and the conditional increment are one statement, so a concurrent
+    writer can neither lose an increment nor push the total past the limit.
+    Returns the new column value, or ``None`` when the increment was refused.
+    """
+    target = getattr(model, column)
+    statement = (
+        _insert_for(db)(model)
+        .values(**values)
+        .on_conflict_do_update(
+            index_elements=index_elements,
+            set_={column: target + amount},
+            where=target <= limit - amount,
+        )
+        .returning(target)
+    )
+    return await db.scalar(statement)
