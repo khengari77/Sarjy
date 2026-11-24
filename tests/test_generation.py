@@ -380,6 +380,30 @@ def test_fragmented_crlf_terminal_frames_are_observed():
     asyncio.run(run())
 
 
+def test_terminal_observer_captures_prompt_cache_usage():
+    from stream_completion import CompletionState, ObservedStream
+
+    async def run():
+        state = CompletionState()
+        payload = (
+            b'data: {"choices":[],"usage":{"prompt_cache_hit_tokens":12,"prompt_cache_miss_tokens":3}}\n\n'
+            b"data: [DONE]\n\n"
+        )
+
+        class Bytes(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield payload
+
+        stream = ObservedStream(Bytes(), state)
+        [part async for part in stream]
+        assert state.prompt_cache_hit_tokens == 12
+        assert state.prompt_cache_miss_tokens == 3
+        assert stream.prompt_cache_hit_tokens == 12
+        assert stream.prompt_cache_miss_tokens == 3
+
+    asyncio.run(run())
+
+
 def test_incomplete_stream_does_not_emit_buffered_tool_calls():
     from contextlib import asynccontextmanager
 

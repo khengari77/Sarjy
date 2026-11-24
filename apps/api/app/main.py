@@ -7,6 +7,7 @@ persistence, providers and middleware together.
 import asyncio
 import logging
 import re
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -20,6 +21,7 @@ from app.dependencies import ACCOUNT_COOKIE, COOKIE, build_dependencies
 from app.domain.context_operations import MemoryCandidate, classify
 from app.domain.secrets import secret_matches
 from app.infrastructure.database import Base, SessionGate
+from app.infrastructure.timing import StatementTiming, current_statement_timing, install_statement_timing
 from app.services.account_auth import CredentialProvider, SupabaseCredentials
 from app.services.accounts import AccountSessionRequired, authorize_account
 from app.services.budget import reserve_jev_request
@@ -92,6 +94,39 @@ def _route_path(scope) -> str:
     if root_path and path.startswith(root_path):
         return path[len(root_path) :] or "/"
     return path
+
+
+class InternalTimingMiddleware:
+    """Add request and database timings to internal worker responses."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or not _route_path(scope).startswith("/internal/"):
+            await self.app(scope, receive, send)
+            return
+        started = time.perf_counter()
+        timing = StatementTiming()
+        token = current_statement_timing.set(timing)
+
+        async def send_with_timing(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.extend(
+                    [
+                        (b"x-server-ms", str(int((time.perf_counter() - started) * 1000)).encode()),
+                        (b"x-db-ms", str(int(timing.ms)).encode()),
+                        (b"x-db-statements", str(timing.count).encode()),
+                    ]
+                )
+                message = {**message, "headers": headers}
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_timing)
+        finally:
+            current_statement_timing.reset(token)
 
 
 def _reviewer_gate(config: Settings, sessions, now):
@@ -208,6 +243,7 @@ def create_app(
     )
     source = wordle_source or HttpWordleSource(config.wordle_source_url)
     engine = create_async_engine(config.database_url, **engine_options(config.database_url))
+    install_statement_timing(engine.sync_engine)
     if config.database_url.startswith("sqlite"):
 
         @event.listens_for(engine.sync_engine, "connect")
@@ -251,6 +287,8 @@ def create_app(
 
     # The reviewer gate is added first so the web-service-secret middleware
     # stays outermost and the proxy boundary is checked before admission.
+    # Registered first, so it sits inside the gates: the web-service gate stays outermost.
+    app.add_middleware(InternalTimingMiddleware)
     app.middleware("http")(_reviewer_gate(config, sessions, now))
     app.middleware("http")(_account_gate(config, sessions, now))
     app.middleware("http")(_web_service_gate(config))

@@ -86,6 +86,15 @@ class TurnStageMetrics(BaseModel):
     command_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     llm_reserve_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     tts_reserve_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    turn_start_server_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    turn_start_db_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    command_server_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    command_db_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    model_first_chunk_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    release_wait_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    prompt_cache_hit_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
+    prompt_cache_miss_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
+    request_bytes: StrictInt | None = Field(default=None, ge=0, le=1_000_000)
 
 
 class TurnMetricsInput(BaseModel):
