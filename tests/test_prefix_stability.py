@@ -2,7 +2,6 @@
 
 import json
 import time
-from types import SimpleNamespace
 
 from prefix_stability import canonical_prompt, common_prefix_chars, predicted_prefix_hit_pct
 
@@ -48,16 +47,31 @@ def test_a_large_prompt_is_compared_without_a_character_loop():
 
 
 def test_canonical_prompt_serializes_tools_and_messages_in_order():
-    request = SimpleNamespace(
-        model_dump=lambda mode: {
-            "messages": [{"role": "system", "content": "Rules"}, {"role": "user", "content": "Hi"}]
-        }
+    """Uses a real ModelRequest: only its messages, not selection or memories, enter the canonical string."""
+    from app.domain.context import ContextCandidate, compile_turn_context
+    from app.domain.contracts import ModelRequest, ResponsePolicy
+
+    context = compile_turn_context(
+        revision=1,
+        instructions="Rules",
+        history=(),
+        memories=(ContextCandidate(id="m1", role="memory", text="A fact", origin="memory"),),
+        tool_results=(),
+        current_turn=ContextCandidate(id="u1", role="user", text="Hi", origin="history"),
+    )
+    request = ModelRequest(
+        turn_id="turn",
+        attempt_id="attempt",
+        instructions="Rules",
+        selection=context.selection,
+        messages=context.messages,
+        response_policy=ResponsePolicy.for_tier(2),
+        settings=None,
+        settings_revision=None,
+        language="en",
     )
     tools = [{"name": "weather", "description": "Look up weather", "parameters": {"type": "object"}}]
-    assert canonical_prompt(request, tools) == json.dumps(
-        {
-            "tools": [{"name": "weather", "description": "Look up weather", "parameters": {"type": "object"}}],
-            "messages": [{"role": "system", "content": "Rules"}, {"role": "user", "content": "Hi"}],
-        },
-        ensure_ascii=False,
-    )
+    canonical = canonical_prompt(request, tools)
+    assert json.loads(canonical) == {"tools": tools, "messages": request.model_dump(mode="json")["messages"]}
+    assert list(json.loads(canonical)) == ["tools", "messages"]
+    assert "selection" not in canonical

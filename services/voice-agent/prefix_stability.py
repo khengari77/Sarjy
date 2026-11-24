@@ -45,11 +45,16 @@ def predicted_prefix_hit_pct(previous: str | None, current: str) -> int | None:
 
 
 def canonical_prompt(request: Any, tools: Iterable[Any]) -> str:
-    """Serialize the parts of a model request that determine a cached prefix."""
+    """Serialize the tools and messages that determine a cached prefix.
+
+    It measures the prompt a turn STARTS with: ``tool_history`` (the call/result rounds appended within a
+    turn) is left out on purpose, and the prediction is recorded for the turn's first attempt only.
+    """
     return json.dumps(
         {
             "tools": [_tool_document(tool) for tool in tools],
-            "messages": request.model_dump(mode="json")["messages"],
+            # Only the messages: the rest of the request (selection, memories with embeddings) is large.
+            "messages": request.model_dump(mode="json", include={"messages"})["messages"],
         },
         sort_keys=False,
         ensure_ascii=False,
