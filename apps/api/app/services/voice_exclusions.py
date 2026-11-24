@@ -143,6 +143,18 @@ def _ambiguity_spoken(candidates) -> str:
 
 async def _supersede_pending(db: AsyncSession, owner_id: str, conversation_id: str) -> bool:
     """Retire any pending proposal; report whether one existed."""
+    pending_id = await db.scalar(
+        select(ContextOperation.id)
+        .where(
+            ContextOperation.owner_id == owner_id,
+            ContextOperation.conversation_id == conversation_id,
+            ContextOperation.command_type.in_(PROPOSAL_TYPES),
+            ContextOperation.outcome == PENDING,
+        )
+        .limit(1)
+    )
+    if pending_id is None:
+        return False
     result = await db.execute(
         update(ContextOperation)
         .where(
@@ -158,9 +170,9 @@ async def _supersede_pending(db: AsyncSession, owner_id: str, conversation_id: s
 
 async def discard_pending(db: AsyncSession, *, owner_id: str, conversation_id: str) -> None:
     """Disarm the pending proposal when the user moves to another memory request."""
-    await _supersede_pending(db, owner_id, conversation_id)
-    # Always end the transaction the UPDATE began, even when nothing was pending.
-    await db.commit()
+    # Every utterance checks this: only write and commit when a proposal is armed.
+    if await _supersede_pending(db, owner_id, conversation_id):
+        await db.commit()
 
 
 async def _record_pending(
