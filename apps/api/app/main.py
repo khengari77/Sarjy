@@ -60,12 +60,16 @@ async def _stop_refresh_task(task) -> None:
         logging.getLogger(__name__).exception("wordle refresh task failed")
 
 
-async def _shutdown(refresh_task, engine) -> None:
-    """Always dispose the engine, whatever the refresh task did."""
+async def _shutdown(refresh_task, engine, classifier: JevUiClient | None = None) -> None:
+    """Always dispose the engine, whatever the refresh task or the classifier did."""
     try:
         await _stop_refresh_task(refresh_task)
     finally:
-        await engine.dispose()
+        try:
+            if classifier is not None:
+                await classifier.aclose()
+        finally:
+            await engine.dispose()
 
 
 REVIEWER_CLEANUP_PATH = re.compile(r"^/v1/voice/sessions/[^/]+/end$")
@@ -190,7 +194,7 @@ def create_app(
 
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
-    classifier = None if ui_classifier else _jev_ui_classifier(config, sessions)
+    classifier = _jev_ui_classifier(config, sessions)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -208,11 +212,7 @@ def create_app(
                         await db.commit()
             yield
         finally:
-            try:
-                if classifier is not None:
-                    await classifier.aclose()
-            finally:
-                await _shutdown(refresh_task, engine)
+            await _shutdown(refresh_task, engine, classifier)
 
     app = FastAPI(
         title="Sarjy API",
