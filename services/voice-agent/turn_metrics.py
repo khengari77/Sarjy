@@ -23,6 +23,7 @@ STAGE_FIELDS = (
     "provider_connect_ms",
     "provider_headers_ms",
     "loop_lag_ms",
+    "predicted_prefix_hit_pct",
 )
 
 
@@ -43,6 +44,7 @@ class TurnStages(TypedDict, total=False):
     provider_connect_ms: int | None
     provider_headers_ms: int | None
     loop_lag_ms: int | None
+    predicted_prefix_hit_pct: int | None
 
 
 class TurnMetricsPayload(TypedDict):

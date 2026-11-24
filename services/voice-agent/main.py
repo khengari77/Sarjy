@@ -40,6 +40,7 @@ from livekit.agents import (
 from livekit.agents.llm.utils import build_legacy_openai_schema
 from livekit.plugins import silero
 from loop_lag import LoopLagMonitor
+from prefix_stability import canonical_prompt, predicted_prefix_hit_pct
 from provider_factory import build_providers, speed_controller_for, tts_budget_provider
 from snapshot_request import snapshot_request
 from speech_budget import SpeechBudget
@@ -283,6 +284,7 @@ class SarjyAgent(WordleTools, Agent):
         self.memory_forced: set[str] = set()
         self.current_turn: str | None = None
         self.turn_stages: dict[str, dict[str, int | None]] = {}
+        self.previous_prompt: str | None = None
         self.pending: set[asyncio.Task] = set()
         self.speeches: set[str] = set()
         self.speaking_speed_control = speed_controller_for(pipeline)
@@ -1089,6 +1091,20 @@ class SarjyAgent(WordleTools, Agent):
             )
             lag = getattr(self, "loop_lag", None)
             _record_value(self, request.turn_id, "loop_lag_ms", lag.worst_ms() if lag else None, first_only=True)
+            # Computed after the attempt, not before it: the prediction must not delay the request.
+            try:
+                prompt = canonical_prompt(request, request.tools)
+            except Exception:  # a metric must never replace the attempt's own outcome
+                logging.debug("prefix prediction skipped", exc_info=True)
+            else:
+                _record_value(
+                    self,
+                    request.turn_id,
+                    "predicted_prefix_hit_pct",
+                    predicted_prefix_hit_pct(getattr(self, "previous_prompt", None), prompt),
+                    first_only=True,
+                )
+                self.previous_prompt = prompt
 
     async def _stream_with_fallback(self, request, tools, tool_choice, report=None):
         """``report`` replaces the user-visible notice of a refused reservation."""
