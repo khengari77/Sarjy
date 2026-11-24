@@ -52,8 +52,10 @@ def _agent(command, provider, published, paths, monkeypatch):
         SarjyAgent, "session", property(lambda self: SimpleNamespace(current_speech=None, llm=provider))
     )
 
-    def backend(http_request):
+    async def backend(http_request):
         paths.append(http_request.url.path)
+        # A real round trip lets other tasks run.
+        await asyncio.sleep(0.005)
         if http_request.url.path.endswith("/turn/start"):
             return httpx.Response(200, json=_snapshot())
         if http_request.url.path.endswith("/internal/agent/command"):
@@ -108,12 +110,15 @@ def _command(kind, action, spoken):
         ),
     ],
 )
-def test_exact_and_unsupported_commands_skip_generation_and_publish_once(command, spoken, monkeypatch):
+def test_commands_speak_only_their_own_line_and_publish_once(command, spoken, monkeypatch):
     published, paths = [], []
-    chunks = _agent(command, ExplodingProvider(), published, paths, monkeypatch)
+    chunks = _agent(command, ChattyProvider(), published, paths, monkeypatch)
     assert [chunk.delta.content for chunk in chunks] == [spoken]
     assert published == [command]
-    assert paths == ["/internal/agent/turn/start", "/internal/agent/command"]
+    assert paths[0] == "/internal/agent/turn/start"
+    assert paths.count("/internal/agent/command") == 1
+    # The reply started meanwhile was reserved once, and dropped.
+    assert paths.count("/internal/development/reserve") == 1
 
 
 def test_ordinary_conversation_still_generates(monkeypatch):
@@ -122,7 +127,7 @@ def test_ordinary_conversation_still_generates(monkeypatch):
     chunks = _agent(None, provider, [], paths, monkeypatch)
     assert [chunk.delta.content for chunk in chunks] == ["conversational output"]
     assert provider.calls == 1
-    assert paths[0].endswith("/turn/start") and paths[1].endswith("/internal/agent/command")
+    assert paths[0].endswith("/turn/start") and paths[1:].count("/internal/agent/command") == 1
 
 
 def test_a_failed_command_lookup_degrades_to_conversation_without_claiming_success(monkeypatch):

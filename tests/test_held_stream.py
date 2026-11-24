@@ -111,3 +111,26 @@ def test_cancelling_the_consumer_stops_the_stream():
         assert source.closed
 
     run(scenario)
+
+
+def test_a_stream_that_will_not_close_does_not_hold_up_its_owner(monkeypatch):
+    monkeypatch.setattr("held_stream.DISCARD_SECONDS", 0.01)
+
+    async def run():
+        release = asyncio.Event()
+
+        async def stubborn():
+            try:
+                yield 1
+                await asyncio.Event().wait()
+            finally:
+                await release.wait()
+
+        held = HeldStream(stubborn())
+        await asyncio.sleep(0)
+        await asyncio.wait_for(held.discard(), 1)
+        assert not held.task.done()
+        release.set()
+        await asyncio.wait({held.task})
+
+    asyncio.run(run())

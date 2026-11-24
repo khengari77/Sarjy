@@ -8,6 +8,7 @@ including its failure, stays here until ``released``; ``discard`` drops it unsee
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
 from typing import Any, Final
@@ -17,6 +18,7 @@ import httpx
 Report = Callable[[httpx.HTTPStatusError], Awaitable[None]]
 
 _END: Final = object()
+DISCARD_SECONDS: Final = 0.5
 
 
 class HeldStream[T]:
@@ -24,6 +26,17 @@ class HeldStream[T]:
         self._stream = stream
         self._items: asyncio.Queue[T | object] = asyncio.Queue()
         self._task = asyncio.create_task(self._run())
+        self._task.add_done_callback(self._retrieve)
+
+    @property
+    def task(self) -> asyncio.Task[None]:
+        return self._task
+
+    @staticmethod
+    def _retrieve(task: asyncio.Task[None]) -> None:
+        # A failure nobody follows is not a warning; ``released`` still raises it.
+        if not task.cancelled():
+            task.exception()
 
     async def _run(self) -> None:
         try:
@@ -49,11 +62,14 @@ class HeldStream[T]:
         self._task.cancel()
 
     async def discard(self) -> None:
-        """Stop the stream and wait until it is closed. Never raises the stream's own failure."""
+        """Stop the stream and give it a moment to close. Never raises the stream's own failure."""
+        if self._task.done():
+            return
         self.cancel()
-        await asyncio.wait({self._task})
-        if not self._task.cancelled():
-            self._task.exception()
+        # A provider that will not close must not hold up the next turn.
+        _, open_still = await asyncio.wait({self._task}, timeout=DISCARD_SECONDS)
+        if open_still:
+            logging.warning("A dropped model reply has not closed yet")
 
 
 class EarlyReply:
@@ -63,6 +79,7 @@ class EarlyReply:
         self._refusals: list[httpx.HTTPStatusError] = []
         self._announce: Report | None = None
         self._held: HeldStream[Any] = HeldStream(start(self._report))
+        self.task = self._held.task
 
     async def _report(self, refusal: httpx.HTTPStatusError) -> None:
         if self._announce is None:

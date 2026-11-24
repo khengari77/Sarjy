@@ -630,14 +630,17 @@ class SarjyAgent(WordleTools, Agent):
             user.id in self.commands
             or self.command_blocked_turn == user.id
             or self.memory_outcome is not None
-            or self.forced_speech is not None
+            or (self.forced_speech is not None and self.forced_speech[0] == self.current_turn)
             or self._question_due()
             or self.wordle_active()
         ):
             return None
         request, tools, _ = self._reply_request(user, snapshot, chat_ctx, tools)
         choice = model_settings.tool_choice if model_settings else None
-        return EarlyReply(lambda report: self._stream_with_fallback(request, tools, choice, report))
+        early = EarlyReply(lambda report: self._stream_with_fallback(request, tools, choice, report))
+        self.pending.add(early.task)
+        early.task.add_done_callback(self.pending.discard)
+        return early
 
     def _question_due(self) -> bool:
         proposal = self.memory_proposal
@@ -654,9 +657,8 @@ class SarjyAgent(WordleTools, Agent):
             if early is not None:
                 early.cancel()
             await self._publish_command(command)
-            # Exact commands bypass conversational generation entirely; TTS
-            # remains budgeted and the deterministic spoken line is the whole
-            # assistant turn.
+            # Nothing the model says is heard on a command turn; TTS remains budgeted
+            # and the deterministic spoken line is the whole assistant turn.
             yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=command["spoken"]))
             handle = self.session.current_speech
             self._schedule_persistence(user, handle)
@@ -687,6 +689,8 @@ class SarjyAgent(WordleTools, Agent):
         handle = self.session.current_speech
         self._schedule_persistence(user, handle)
         request, tools, schemas = self._reply_request(user, snapshot, chat_ctx, tools)
+        # The held reply was asked for before these could be known.
+        usable = self.memory_outcome is None and not self.wordle_active()
         if self.memory_outcome is not None:
             outcome, self.memory_outcome = self.memory_outcome, None
             note = {
@@ -705,7 +709,7 @@ class SarjyAgent(WordleTools, Agent):
         forced = self._forced_memory_choice(user.id, {schema["name"] for schema in schemas})
         if forced is not None:
             tool_choice = forced
-        if early is not None and forced is None:
+        if early is not None and usable and forced is None:
             stream = early.released(self._report_reservation)
         else:
             if early is not None:

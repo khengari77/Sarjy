@@ -202,3 +202,50 @@ def test_turns_the_answer_or_application_owns_do_not_start_early(monkeypatch, re
         await worker.run(scenario)
 
     asyncio.run(main())
+
+
+def test_a_held_tool_call_is_not_handed_over_on_a_command_turn(monkeypatch):
+    call = llm.FunctionToolCall(arguments="{}", name="get_current_weather", call_id="c")
+    monkeypatch.setattr(
+        "main.livekit_chunk", lambda event: llm.ChatChunk(id="r", delta=llm.ChoiceDelta(tool_calls=[call]))
+    )
+
+    async def main():
+        worker = Worker(monkeypatch, {"command": COMMAND})
+
+        async def scenario(agent, context):
+            async def collect():
+                return [chunk async for chunk in agent.llm_node(context, [], None)]
+
+            reply = asyncio.create_task(collect())
+            await worker.model_started.wait()
+            await asyncio.sleep(0.01)
+            worker.gate.set()
+            chunks = await reply
+            assert [chunk.delta.content for chunk in chunks] == ["Captions hidden."]
+            assert not any(chunk.delta.tool_calls for chunk in chunks)
+
+        await worker.run(scenario)
+
+    asyncio.run(main())
+
+
+@pytest.mark.parametrize("change", ["wordle", "outcome"])
+def test_a_reply_asked_for_too_early_is_asked_for_again(monkeypatch, change):
+    async def main():
+        worker = Worker(monkeypatch, {"command": None})
+
+        async def scenario(agent, context):
+            reply = asyncio.create_task(heard(agent, context))
+            await worker.model_started.wait()
+            if change == "wordle":
+                agent.wordle_active = lambda: True
+            else:
+                agent.memory_outcome = "save"
+            worker.gate.set()
+            assert await reply == ["hello", "world"]
+            assert len(worker.choices) == 2 and worker.closed == 2
+
+        await worker.run(scenario)
+
+    asyncio.run(main())
