@@ -12,9 +12,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.dependencies import COOKIE
+from app.dependencies import ACCOUNT_COOKIE, COOKIE
 from app.domain.pipeline import KEYS, PRESET, PipelineConfig, validate_pipeline
 from app.infrastructure.database import Conversation, Identity, ToolCall, Turn
+from app.services.accounts import AccountSessionRequired, authorize_account
 from app.services.pipeline_settings import configured_keys, default_llm, default_tts, tts_credential_key
 from app.services.reviewer_access import ReviewerAccessDenied, ReviewerSessionRequired, authorize
 from app.services.voices import VoiceCatalog, VoiceCatalogError, VoiceProvider
@@ -35,6 +36,13 @@ def _register_identity_routes(app, *, config: Settings, database, clock):
     @app.post("/v1/demo-session")
     async def demo(request: Request, response: Response, db: AsyncSession = Depends(database)):
         token = request.cookies.get(COOKIE, "")
+        if config.account_access_enabled:
+            # Compatibility initialization: echo the signed-in identity, never create one.
+            try:
+                user = await authorize_account(db, request.cookies.get(ACCOUNT_COOKIE, ""), clock())
+            except AccountSessionRequired:
+                raise HTTPException(401, detail={"code": "ACCOUNT_SESSION_REQUIRED"}) from None
+            return JSONResponse({"id": user.id}, headers={"Cache-Control": "no-store"})
         if config.reviewer_access_enabled:
             # Compatibility initialization may echo an existing reviewer
             # identity but never creates or renews one.

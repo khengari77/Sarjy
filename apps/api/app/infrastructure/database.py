@@ -49,6 +49,7 @@ class ReviewerInvitation(Base):
     revoked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     max_identities: Mapped[int] = mapped_column(Integer, default=8)
     identities_created: Mapped[int] = mapped_column(Integer, default=0)
+    # Default retained only to satisfy the NOT NULL column; admission no longer enforces a call cap (#208).
     max_calls: Mapped[int] = mapped_column(Integer, default=24)
 
 
@@ -84,6 +85,35 @@ class Identity(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     expires_at: Mapped[str] = mapped_column(String(40))
     invitation_id: Mapped[str | None] = mapped_column(ForeignKey("reviewer_invitations.id"), nullable=True, index=True)
+
+
+class Account(Base):
+    """One durable person: a provider user id mapped to exactly one identity."""
+
+    __tablename__ = "accounts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    auth_user_id: Mapped[str] = mapped_column(String(64), unique=True)
+    identity_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), unique=True)
+    created_at: Mapped[str] = mapped_column(String(40))
+    disabled_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class AccountSession(Base):
+    __tablename__ = "account_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"), index=True)
+    created_at: Mapped[str] = mapped_column(String(40))
+    expires_at: Mapped[str] = mapped_column(String(40))
+    revoked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class AccountAttemptWindow(Base):
+    """Attempts per keyed digest (never a raw address or email) and fixed window."""
+
+    __tablename__ = "account_attempt_windows"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window: Mapped[str] = mapped_column(String(40), primary_key=True, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Conversation(Base):
@@ -163,7 +193,8 @@ class Memory(Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
     subject: Mapped[str | None] = mapped_column(String(120), nullable=True)
     content: Mapped[str] = mapped_column(Text)
-    embedding: Mapped[list | None] = mapped_column(EMBEDDING_TYPE, nullable=True)
+    # About 1,500 numbers per row that only semantic search reads (#81); ``undefer`` it there.
+    embedding: Mapped[list | None] = mapped_column(EMBEDDING_TYPE, nullable=True, deferred=True)
     embedding_model: Mapped[str] = mapped_column(String(60), default="text-embedding-3-small")
     source_turn_id: Mapped[str | None] = mapped_column(ForeignKey("turns.id"), index=True, nullable=True)
     source_conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)

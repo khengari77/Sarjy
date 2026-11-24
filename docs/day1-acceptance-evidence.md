@@ -1,5 +1,8 @@
 # Day 1 human acceptance record
 
+> **Superseded in part (2026-11-24).** Call allowances were removed in #208; the allowance fields below are historical and
+> need no value. Record only active sessions.
+
 Status: **pending**. This file is a scaffold, not evidence. Fill it only while performing
 [the runbook](day1-acceptance-runbook.md) with a real microphone and a real browser. Never pre-fill it with
 typed-input, synthetic-audio, fake-microphone or expected results, and never commit raw audio, recordings,

@@ -1,5 +1,9 @@
+import { redirect } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit/hooks';
+import { isAccountPublicPath } from './lib/auth/account';
+import { accountSession } from './lib/auth/account.server';
 import {
+  accountMode,
   assertAccessConfigured,
   protectedMode,
   reviewerMode,
@@ -43,7 +47,12 @@ function secure(response: Response): Response {
   const type = response.headers.get('content-type') ?? '';
   const html = type.includes('text/html');
   response.headers.set('referrer-policy', html ? 'same-origin' : 'no-referrer');
-  if (html) response.headers.set('cache-control', 'no-store');
+  // The only owner of no-store for pages, redirects and anything issuing a session:
+  // a load that also set it would collide with the form action and answer 500.
+  const redirect = response.status >= 300 && response.status < 400 && response.headers.has('location');
+  // SvelteKit has already attached cookies when `resolve` returns.
+  const issuesCookie = response.headers.has('set-cookie');
+  if (html || redirect || issuesCookie) response.headers.set('cache-control', 'no-store');
   return response;
 }
 
@@ -55,9 +64,39 @@ function nextPath(pathname: string, search: string): string {
   return query ? `${pathname}?${query}` : pathname;
 }
 
+const refused = (status: number, message: string) =>
+  new Response(message, { status, headers: { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' } });
+
+const redirected = (location: string) =>
+  new Response(null, {
+    status: 303,
+    headers: { location, 'referrer-policy': 'no-referrer', 'cache-control': 'no-store' },
+  });
+
+/**
+ * Accounts: the API authorises every `/v1/*` call itself and denies by default,
+ * so only pages are checked here, against the session the API holds.
+ */
+const accountGate: Handle = async ({ event, resolve }) => {
+  const { pathname, search } = event.url;
+  if (isPublic(pathname) || isAccountPublicPath(pathname) || pathname.startsWith('/api/')) {
+    return secure(await resolve(event));
+  }
+  const session = await accountSession(event.cookies);
+  if (session === 'valid') return secure(await resolve(event));
+  // Not knowing is not the same as signed out: keep the cookie and say so.
+  if (session === 'unavailable') return refused(503, 'Sarjy is not available right now. Try again shortly.');
+  const next = nextPath(pathname, search);
+  const door = next === '/' ? '/sign-in' : `/sign-in?next=${encodeURIComponent(next)}`;
+  // A navigation inside the app: SvelteKit turns this into one its router follows.
+  if (event.isDataRequest) throw redirect(303, door);
+  return isPageRequest(event.request) ? redirected(door) : refused(401, 'Authentication required');
+};
+
 export const handle: Handle = async ({ event, resolve }) => {
   // Unprotected development is unchanged: no gate, no redirects, no headers.
   if (!protectedMode) return resolve(event);
+  if (accountMode) return accountGate({ event, resolve });
 
   const { pathname, search } = event.url;
   if (isPublic(pathname)) return secure(await resolve(event));
@@ -86,18 +125,8 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   if (isPageRequest(event.request)) {
-    return new Response(null, {
-      status: 303,
-      headers: {
-        location: `/?next=${encodeURIComponent(nextPath(pathname, search))}`,
-        'referrer-policy': 'no-referrer',
-        'cache-control': 'no-store',
-      },
-    });
+    return redirected(`/?next=${encodeURIComponent(nextPath(pathname, search))}`);
   }
 
-  return new Response('Authentication required', {
-    status: 401,
-    headers: { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' },
-  });
+  return refused(401, 'Authentication required');
 };

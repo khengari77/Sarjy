@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import undefer
 from sqlalchemy.pool import StaticPool
 
 from app.domain.context_operations import classify as _classify
@@ -625,7 +626,11 @@ class MemoryService:
                     await db.execute(statement.add_columns(distance).order_by(distance, Memory.id).limit(limit))
                 ).all()
                 return tuple(memory_result(row, float(score)) for row, score in rows)
-            rows = (await db.scalars(statement.order_by(Memory.id).limit(SEARCH_CANDIDATE_LIMIT))).all()
+            rows = (
+                await db.scalars(
+                    statement.options(undefer(Memory.embedding)).order_by(Memory.id).limit(SEARCH_CANDIDATE_LIMIT)
+                )
+            ).all()
             ranked = sorted(
                 ((cosine_distance(vector, validate_embedding(row.embedding)), row) for row in rows),
                 key=lambda pair: (pair[0], pair[1].id),

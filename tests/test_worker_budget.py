@@ -106,7 +106,7 @@ def test_oversized_deepseek_continuation_stops_before_reservation_or_provider():
 
     calls = []
 
-    async def reserve(provider):
+    async def reserve(provider, report=None):
         calls.append("reserve")
 
     async def stream(*args):
