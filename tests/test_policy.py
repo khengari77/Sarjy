@@ -53,7 +53,7 @@ def config(**overrides):
     values = {
         "stt": {"provider": "deepgram_direct", "model": "nova-3", "language": "en"},
         "llm": {"provider": "openai_direct", "model": "gpt-6-luna", "language": "en"},
-        "tts": {"provider": "elevenlabs_direct", "model": "eleven_flash_v2_5", "voice_id": "voice", "language": "en"},
+        "tts": {"provider": "deepgram_direct", "model": "aura-2", "voice_id": "voice", "language": "en"},
     }
     values.update(overrides)
     return PipelineConfig(**values)

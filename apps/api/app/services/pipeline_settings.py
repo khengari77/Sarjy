@@ -1,7 +1,7 @@
 """Read provider configuration without leaking Settings into the domain."""
 
 from app.config import Settings
-from app.domain.pipeline import DEEPGRAM_TTS, KEYS, PRESET, TTS_KEYS
+from app.domain.pipeline import DEEPGRAM_TTS, KEYS, TTS_KEYS
 
 
 def configured_keys(config: Settings) -> set[str]:
@@ -9,7 +9,7 @@ def configured_keys(config: Settings) -> set[str]:
 
 
 def default_tts(config: Settings) -> tuple[str, str]:
-    return DEEPGRAM_TTS if config.tts_provider == "deepgram" else PRESET["tts"]
+    return DEEPGRAM_TTS
 
 
 def tts_credential_key(config: Settings) -> str:

@@ -85,7 +85,7 @@ def register_voice_routes(
     @app.post("/v1/voice/sessions", status_code=201)
     async def start_voice(body: StartVoice, user=Depends(identity), db: AsyncSession = Depends(database)):
         await owned(body.conversation_id, user, db)
-        if config.tts_provider == "deepgram" and body.language != "en":
+        if body.language != "en":
             # Aura-2 has no Arabic; never fall back to an English voice silently.
             raise HTTPException(422, detail={"code": "TTS_LANGUAGE_UNSUPPORTED"})
         required = ["livekit_url", "livekit_api_key", "livekit_api_secret", "agent_service_secret"]

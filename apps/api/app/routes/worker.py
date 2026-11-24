@@ -52,7 +52,7 @@ from app.services.weather import WeatherError, get_current_weather
 
 
 class BudgetReservation(BaseModel):
-    provider: Literal["openai", "elevenlabs", "deepgram_tts", "deepseek"]
+    provider: Literal["openai", "deepgram_tts", "deepseek"]
     characters: int = Field(default=0, ge=0, le=500)
 
 
@@ -317,8 +317,6 @@ def _register_budget_routes(app, *, config: Settings, database):
         overrides = (
             {"units": config.deepseek_request_micro_usd, "limit": config.deepseek_daily_micro_usd}
             if body.provider == "deepseek"
-            else {"limit": config.elevenlabs_daily_characters}
-            if body.provider == "elevenlabs"
             else {"limit": config.deepgram_daily_characters}
             if body.provider == "deepgram_tts"
             else {}

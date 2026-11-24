@@ -20,7 +20,6 @@ export default defineConfig({
         DATABASE_URL: 'sqlite+aiosqlite:///./browser-video.db',
         COOKIE_SECURE: 'false',
         OPENAI_API_KEY: '',
-        ELEVEN_API_KEY: '',
         DEEPGRAM_API_KEY: '',
         DEEPSEEK_API_KEY: '',
         LIVEKIT_API_KEY: '',

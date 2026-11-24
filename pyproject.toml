@@ -12,7 +12,7 @@ dependencies = [
     "alembic>=1.14",
     "aiosqlite>=0.22.1",
     "livekit-api>=1",
-    "livekit-agents[deepgram,elevenlabs,openai,silero]~=1.8",
+    "livekit-agents[deepgram,openai,silero]~=1.8",
     "pgvector>=0.3",
     "tzdata>=2026.6",
 ]

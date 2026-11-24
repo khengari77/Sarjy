@@ -57,7 +57,6 @@ def settings(tmp_path, name="reviewer.db", **overrides):
         "openai_api_key": "",
         "deepseek_api_key": "",
         "deepgram_api_key": "",
-        "eleven_api_key": "",
         "_env_file": None,
     }
     values.update(overrides)
@@ -580,7 +579,6 @@ def test_stored_invitation_call_cap_is_not_enforced(tmp_path, monkeypatch):
         openai_api_key="test-openai",
         deepseek_api_key="test-deepseek",
         deepgram_api_key="test-deepgram",
-        eleven_api_key="test-eleven",
         default_llm_provider="openai_direct",
         livekit_url="https://fake.livekit",
         livekit_api_key="key" * 8,
@@ -630,7 +628,9 @@ def test_stored_invitation_call_cap_is_not_enforced(tmp_path, monkeypatch):
                     clock.value.isoformat(),
                 ),
             )
-        started = client.post("/v1/voice/sessions", json={"conversation_id": conversation, "voice_id": "test-voice"})
+        started = client.post(
+            "/v1/voice/sessions", json={"conversation_id": conversation, "voice_id": "aura-2-thalia-en"}
+        )
         assert started.status_code == 201
 
 

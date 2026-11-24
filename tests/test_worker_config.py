@@ -40,7 +40,6 @@ def test_injected_environment_takes_precedence_and_missing_values_fail_closed(tm
 def test_deepseek_primary_keeps_optional_openai_fallback_key():
     values = {
         "DEEPGRAM_API_KEY": "deepgram",
-        "ELEVEN_API_KEY": "eleven",
         "DEEPSEEK_API_KEY": "deepseek",
         "OPENAI_API_KEY": "openai",
     }
@@ -52,7 +51,6 @@ def test_deepseek_primary_keeps_optional_openai_fallback_key():
 def test_deepseek_primary_without_openai_key_remains_primary_only():
     values = {
         "DEEPGRAM_API_KEY": "deepgram",
-        "ELEVEN_API_KEY": "eleven",
         "DEEPSEEK_API_KEY": "deepseek",
     }
     credentials = provider_credentials(values, "deepseek_direct")
@@ -62,7 +60,6 @@ def test_deepseek_primary_without_openai_key_remains_primary_only():
 def test_openai_primary_does_not_require_deepseek_or_build_fallback_credentials():
     values = {
         "DEEPGRAM_API_KEY": "deepgram",
-        "ELEVEN_API_KEY": "eleven",
         "OPENAI_API_KEY": "openai",
     }
     credentials = provider_credentials(values, "openai_direct")

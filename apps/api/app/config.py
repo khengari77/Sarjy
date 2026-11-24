@@ -5,7 +5,7 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.domain.budget import DEEPSEEK_MINIMUM_REQUEST_MICRO_USD
-from app.domain.deepgram_voices import DEFAULT_DEEPGRAM_VOICE_ID
+from app.domain.deepgram_voices import DEFAULT_DEEPGRAM_VOICE_ID, deepgram_voice
 from app.domain.voices import parse_voice_ids
 
 
@@ -23,13 +23,8 @@ class Settings(BaseSettings):
     default_llm_provider: Literal["openai_direct", "deepseek_direct"] = "deepseek_direct"
     deepseek_budget_enabled: bool = True
     deepseek_daily_micro_usd: int = 250_000
-    # Shared daily ElevenLabs character reservation. Application guard, not a provider quota (#151).
-    elevenlabs_daily_characters: int = Field(default=2500, ge=1)
     deepseek_request_micro_usd: int = 7_000
-    eleven_api_key: str = ""
-    # Text-to-speech provider (#175). Deepgram Aura-2 has no Arabic; ElevenLabs stays available.
-    tts_provider: Literal["deepgram", "elevenlabs"] = "deepgram"
-    # Shared daily Deepgram TTS character reservation. Application guard, not a provider quota.
+    # Shared daily Deepgram Aura-2 character reservation. Application guard, not a provider quota.
     deepgram_daily_characters: int = Field(default=50_000, ge=1)
     # Jev UI-command classifier (#168). An empty key or a false flag disables the feature.
     jev_api_key: str = ""
@@ -69,8 +64,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def default_deepgram_voice(self):
-        # Deepgram's voice id is a model string, so an ElevenLabs id can never be a default.
-        if self.tts_provider == "deepgram" and not self.default_voice_id:
+        # Deepgram Aura-2 is the only TTS, so its model string is the only valid
+        # default; an empty or previously saved ElevenLabs id falls back to it.
+        if deepgram_voice(self.default_voice_id) is None:
             self.default_voice_id = DEFAULT_DEEPGRAM_VOICE_ID
         return self
 

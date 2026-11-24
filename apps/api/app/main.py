@@ -33,7 +33,7 @@ from app.services.reviewer_access import (
     ReviewerSessionRequired,
     authorize,
 )
-from app.services.voices import DeepgramVoices, ElevenLabsVoices, VoiceProvider, approved_voice_ids
+from app.services.voices import DeepgramVoices, VoiceProvider, approved_voice_ids
 from app.services.wordle import HttpWordleSource, wordle_refresh_loop
 
 
@@ -238,9 +238,7 @@ def create_app(
         config.cookie_secure and config.development_protected and config.web_service_secret
     ):
         raise ValueError("REVIEWER_ACCESS_CONFIGURATION_INVALID")
-    catalog = voice_catalog or (
-        DeepgramVoices() if config.tts_provider == "deepgram" else ElevenLabsVoices(config.eleven_api_key)
-    )
+    catalog = voice_catalog or DeepgramVoices()
     source = wordle_source or HttpWordleSource(config.wordle_source_url)
     engine = create_async_engine(config.database_url, **engine_options(config.database_url))
     install_statement_timing(engine.sync_engine)

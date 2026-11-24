@@ -888,6 +888,23 @@
         }
       }
     },
+    "/internal/agent/intro-played": {
+      "post": {
+        "summary": "Intro Played",
+        "description": "Worker confirmation that the full introduction played to the end. Idempotent.",
+        "operationId": "intro_played_internal_agent_intro_played_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/agent/turn/start": {
       "post": {
         "summary": "Turn Start",
@@ -933,6 +950,42 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AgentOutput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/agent/turn/metrics": {
+      "post": {
+        "summary": "Turn Metrics",
+        "operationId": "turn_metrics_internal_agent_turn_metrics_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TurnMetricsInput"
               }
             }
           },
@@ -1152,6 +1205,186 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/MemoryConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/agent/tool/wordle-play": {
+      "post": {
+        "summary": "Agent Play Wordle",
+        "operationId": "agent_play_wordle_internal_agent_tool_wordle_play_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WordleToolInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/agent/tool/wordle-guess": {
+      "post": {
+        "summary": "Agent Guess Wordle",
+        "operationId": "agent_guess_wordle_internal_agent_tool_wordle_guess_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WordleToolInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/agent/tool/wordle-status": {
+      "post": {
+        "summary": "Agent Status Wordle",
+        "operationId": "agent_status_wordle_internal_agent_tool_wordle_status_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WordleToolInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/agent/tool/wordle-close": {
+      "post": {
+        "summary": "Agent Close Wordle",
+        "operationId": "agent_close_wordle_internal_agent_tool_wordle_close_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WordleToolInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/agent/tool/wordle-reset": {
+      "post": {
+        "summary": "Agent Reset Wordle",
+        "operationId": "agent_reset_wordle_internal_agent_tool_wordle_reset_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WordleToolInput"
               }
             }
           },
@@ -1515,6 +1748,23 @@
         }
       }
     },
+    "/v1/wordle/reset": {
+      "post": {
+        "summary": "Reset",
+        "description": "Delete today's game for the owner (same puzzle, replayable) and return the fresh empty game.",
+        "operationId": "reset_v1_wordle_reset_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/wordle/today": {
       "get": {
         "summary": "Today",
@@ -1793,7 +2043,6 @@
             "type": "string",
             "enum": [
               "openai",
-              "elevenlabs",
               "deepgram_tts",
               "deepseek"
             ],
@@ -3650,6 +3899,317 @@
         ],
         "title": "StartVoice"
       },
+      "TurnMetricsInput": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "maxLength": 36,
+            "title": "Turn Id"
+          },
+          "stt_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stt Ms"
+          },
+          "eot_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eot Ms"
+          },
+          "llm_ttft_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Ttft Ms"
+          },
+          "tts_ttfb_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tts Ttfb Ms"
+          },
+          "ttfa_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttfa Ms"
+          },
+          "stages": {
+            "$ref": "#/components/schemas/TurnStageMetrics"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "turn_id"
+        ],
+        "title": "TurnMetricsInput"
+      },
+      "TurnStageMetrics": {
+        "properties": {
+          "turn_start_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Start Ms"
+          },
+          "command_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Ms"
+          },
+          "llm_reserve_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Reserve Ms"
+          },
+          "tts_reserve_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tts Reserve Ms"
+          },
+          "turn_start_server_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Start Server Ms"
+          },
+          "turn_start_db_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Start Db Ms"
+          },
+          "command_server_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Server Ms"
+          },
+          "command_db_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Db Ms"
+          },
+          "model_first_chunk_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model First Chunk Ms"
+          },
+          "release_wait_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Wait Ms"
+          },
+          "prompt_cache_hit_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Cache Hit Tokens"
+          },
+          "prompt_cache_miss_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Cache Miss Tokens"
+          },
+          "request_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Bytes"
+          },
+          "provider_connect_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Connect Ms"
+          },
+          "provider_headers_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Headers Ms"
+          },
+          "loop_lag_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loop Lag Ms"
+          },
+          "predicted_prefix_hit_pct": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Prefix Hit Pct"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TurnStageMetrics"
+      },
       "UnhandledAction": {
         "properties": {
           "handled": {
@@ -3881,6 +4441,40 @@
           "city"
         ],
         "title": "WeatherInput"
+      },
+      "WordleToolInput": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Turn Id"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "word": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Word"
+          }
+        },
+        "type": "object",
+        "required": [
+          "turn_id",
+          "request_id"
+        ],
+        "title": "WordleToolInput"
       },
       "ResponsePolicy": {
         "additionalProperties": false,
