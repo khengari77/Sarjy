@@ -763,7 +763,8 @@ class SarjyAgent(WordleTools, Agent):
 
     async def _reply(self, user, snapshot, chat_ctx, tools, model_settings, command, early):
         reply_started = time.perf_counter()
-        turn_id = self.current_turn
+        # This reply's own turn: a later utterance may already have moved ``current_turn``.
+        turn_id = self.prepared[user.id]["turn_id"]
         if command is not None:
             if early is not None:
                 early.cancel()
@@ -775,7 +776,7 @@ class SarjyAgent(WordleTools, Agent):
             handle = self.session.current_speech
             self._schedule_persistence(user, handle)
             return
-        if self.forced_speech is not None and self.forced_speech[0] == self.current_turn:
+        if self.forced_speech is not None and self.forced_speech[0] == turn_id:
             _, forced = self.forced_speech
             self.forced_speech = None
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)

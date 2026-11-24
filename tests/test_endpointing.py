@@ -65,3 +65,38 @@ def test_delays_outside_the_allowed_range_are_refused(values):
 def test_non_numeric_delays_are_refused():
     with pytest.raises(ValueError, match="must be a number"):
         endpointing_kwargs({"ENDPOINTING_MIN_DELAY_SECONDS": "fast", "ENDPOINTING_MAX_DELAY_SECONDS": "2.0"})
+
+
+LEGACY_SESSION_KEYWORDS = frozenset(
+    {
+        "min_endpointing_delay",
+        "max_endpointing_delay",
+        "false_interruption_timeout",
+        "agent_false_interruption_timeout",
+        "resume_false_interruption",
+        "allow_interruptions",
+        "discard_audio_if_uninterruptible",
+        "min_interruption_duration",
+        "min_interruption_words",
+        "preemptive_generation",
+        "turn_detection",
+    }
+)
+
+
+def test_the_production_session_call_passes_no_legacy_turn_keyword():
+    """Passing turn_handling makes the SDK drop these silently, so none may sit next to it in main.py."""
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "services/voice-agent/main.py"
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source.read_text()))
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "AgentSession"
+    ]
+    assert calls, "main.py no longer builds an AgentSession"
+    for call in calls:
+        names = {keyword.arg for keyword in call.keywords if keyword.arg}
+        assert not names & LEGACY_SESSION_KEYWORDS, names & LEGACY_SESSION_KEYWORDS
+        assert any(keyword.arg is None for keyword in call.keywords), "endpointing_kwargs(...) must be splatted in"
