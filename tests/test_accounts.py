@@ -70,6 +70,18 @@ class FakeCredentials:
             raise CredentialsRejected("ACCOUNT_CREDENTIALS_INVALID")
         return user[0]
 
+    async def exchange_code(self, code, verifier):
+        self.calls += 1
+        if self.fail:
+            raise self.fail
+        if code != CODE or verifier != VERIFIER:
+            raise CredentialsRejected("ACCOUNT_OAUTH_FAILED")
+        return self.users.setdefault("via-provider", ("auth-provider", None))[0]
+
+
+CODE = "c" * 36
+VERIFIER = "v" * 43
+
 
 def settings(tmp_path, **overrides):
     values = {
@@ -481,3 +493,78 @@ def test_windows_contain_their_instant(naive, seconds):
     start = window_start(now, window)
     assert start <= now < start + window
     assert 1 <= retry_after_seconds(now, window) <= seconds + 1
+
+
+def exchange(client, code=CODE, verifier=VERIFIER):
+    return client.post("/v1/auth/oauth/exchange", json={"code": code, "code_verifier": verifier})
+
+
+def test_a_provider_sign_in_opens_the_same_kind_of_session(world):
+    client = world.browser()
+    entered = exchange(client)
+    assert entered.status_code == 200 and entered.headers["cache-control"] == "no-store"
+    assert all(flag in entered.headers["set-cookie"] for flag in ("HttpOnly", "Secure", "SameSite=lax"))
+    assert client.get("/v1/auth/session").json() == entered.json()
+    assert exchange(world.browser()).json() == entered.json()
+    assert client.post("/v1/auth/sign-out").status_code == 200
+    assert client.get("/v1/auth/session").status_code == 401
+
+
+def test_a_wrong_code_is_refused_without_a_session_and_counts_against_the_source(world):
+    client = world.browser()
+    refused = exchange(client, verifier="w" * 43)
+    assert refused.status_code == 400 and code(refused) == "ACCOUNT_OAUTH_FAILED"
+    assert "set-cookie" not in refused.headers
+    for _ in range(SOURCE_LIMIT.attempts - 1):
+        exchange(client, verifier="w" * 43)
+    assert exchange(client).status_code == 429
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"code": "short", "code_verifier": VERIFIER},
+        {"code": CODE, "code_verifier": "bad verifier with spaces!!"},
+        {"code": CODE, "code_verifier": VERIFIER, "extra": 1},
+        {"code": "x" * 300, "code_verifier": VERIFIER},
+    ],
+)
+def test_malformed_exchanges_are_refused_before_the_provider_is_called(world, body):
+    calls = world.credentials.calls
+    refused = world.browser().post("/v1/auth/oauth/exchange", json=body)
+    assert refused.status_code == 422 and code(refused) == "ACCOUNT_INPUT_INVALID"
+    assert world.credentials.calls == calls and VERIFIER not in refused.text
+
+
+def test_a_provider_outage_during_the_exchange_is_retryable(world):
+    world.credentials.fail = CredentialServiceUnavailable()
+    outage = exchange(world.browser())
+    assert outage.status_code == 503 and code(outage) == "ACCOUNT_SERVICE_UNAVAILABLE"
+
+
+def test_the_exchange_is_closed_to_callers_without_the_web_secret(world):
+    assert TestClient(world.app, base_url="https://testserver").post(
+        "/v1/auth/oauth/exchange", json={"code": CODE, "code_verifier": VERIFIER}
+    ).status_code in {401, 403}
+
+
+def test_the_code_exchange_request_is_exact_and_refusals_map_to_our_code():
+    seen = []
+
+    def handler(request):
+        seen.append((str(request.url), json.loads(request.content)))
+        return httpx.Response(200, json={"access_token": "t", "user": {"id": "user-9"}})
+
+    assert asyncio.run(provider(handler).exchange_code(CODE, VERIFIER)) == "user-9"
+    assert seen == [
+        ("https://project.supabase.test/auth/v1/token?grant_type=pkce", {"auth_code": CODE, "code_verifier": VERIFIER})
+    ]
+    for error in ("bad_code_verifier", "flow_state_not_found", "flow_state_expired"):
+        with pytest.raises(CredentialsRejected) as caught:
+            asyncio.run(
+                provider(
+                    lambda r, e=error: httpx.Response(400, json={"error_code": e, "msg": "private"})
+                ).exchange_code(CODE, VERIFIER)
+            )
+        assert caught.value.code == "ACCOUNT_OAUTH_FAILED" and "private" not in str(caught.value)

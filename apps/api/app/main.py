@@ -116,7 +116,7 @@ def _reviewer_gate(config: Settings, sessions, now):
     return gate
 
 
-ACCOUNT_PUBLIC_PATHS = {"/v1/auth/sign-up", "/v1/auth/sign-in", "/v1/auth/sign-out"}
+ACCOUNT_PUBLIC_PATHS = {"/v1/auth/sign-up", "/v1/auth/sign-in", "/v1/auth/sign-out", "/v1/auth/oauth/exchange"}
 
 
 def _account_gate(config: Settings, sessions, now):

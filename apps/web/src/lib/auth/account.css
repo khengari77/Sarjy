@@ -11,10 +11,61 @@
   color: var(--text-muted);
 }
 
+.account-providers {
+  margin-top: var(--space-lg);
+}
+
+.account-divider {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-caption);
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.account-provider-list {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.account-provider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-height);
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  text-align: center;
+  text-decoration: none;
+  transition: border-color var(--transition-quick);
+}
+
+.account-provider:hover {
+  border-color: var(--accent);
+}
+
+.account-provider:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .account-switch {
   margin-top: var(--space-lg);
 }
 
 .account-switch a {
   color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-provider {
+    transition: none;
+  }
 }

@@ -43,6 +43,32 @@ available right now".
 **Going back:** set the switch to `false` on both. The tables stay. Do not downgrade the migration while
 accounts exist: it drops them.
 
+## Sign in with Google, Apple and others
+
+Buttons appear on the sign-in and sign-up pages for each name in the web app's `OAUTH_PROVIDERS`
+(any of `google,apple,github,azure,facebook`; `azure` is Microsoft). The web app also needs `SUPABASE_URL`.
+Supabase does the handshake with the provider; the web app starts it with PKCE and keeps the verifier in a
+10-minute `sarjy_oauth` cookie, and the API trades the returned code for the same revocable session a password
+sign-in gets (`POST /v1/auth/oauth/exchange`). Supabase links a provider sign-in to an existing account with the
+same verified email.
+
+Per provider, you do these steps once (they need your own console logins; nothing here can be done from code):
+
+1. In Supabase: Authentication → URL Configuration. Add `https://<web host>/auth/callback` to Redirect URLs
+   (and `http://localhost:5173/auth/callback` for local work).
+2. In Supabase: Authentication → Sign In / Providers → the provider → paste its client id and secret → Save.
+   The provider page shows the callback URL (`https://<project>.supabase.co/auth/v1/callback`) to register.
+3. In the provider's console, register that Supabase callback URL:
+   - **Google**: Google Cloud → APIs & Services → Credentials → OAuth client ID (Web application). Free.
+   - **GitHub**: Settings → Developer settings → OAuth Apps. Free.
+   - **Microsoft** (`azure`): Entra ID → App registrations; pick "personal accounts and organisations". Free.
+   - **Facebook**: Meta for Developers → create an app with Facebook Login. Free, but needs app review to go public.
+   - **Apple**: Apple Developer Program (paid, 99 USD a year) → Services ID, a Sign in with Apple key, and a client
+     secret that Apple limits to 6 months, so it must be regenerated twice a year.
+4. Set `OAUTH_PROVIDERS` and `SUPABASE_URL` on the web app, restart it, and sign in once with each button.
+
+A provider that is not listed in `OAUTH_PROVIDERS` has no route (404). Turn one off by removing it from the list.
+
 ## Known trade-off
 
 Sign-up says when an email already has an account, so it can be used to test addresses (60 an hour from one

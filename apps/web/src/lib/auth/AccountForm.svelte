@@ -1,6 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import type { AccountAction } from './account';
+  import { OAUTH_PROVIDER_LABELS, type OAuthProvider } from './oauth';
   import './entry.css';
   import './account.css';
 
@@ -9,9 +10,10 @@
     next: string;
     email: string;
     message: string;
+    providers: OAuthProvider[];
   }
 
-  let { action, next, email, message }: Props = $props();
+  let { action, next, email, message, providers }: Props = $props();
   const signUp = $derived(action === 'sign-up');
   const title = $derived(signUp ? 'Create your account' : 'Sign in');
   const query = $derived(`next=${encodeURIComponent(next)}`);
@@ -59,6 +61,20 @@
       <p id="account-error" class="entry-error" role="alert">{message}</p>
       <button type="submit">{title}</button>
     </form>
+    {#if providers.length > 0}
+      <div class="account-providers">
+        <p class="account-divider">or</p>
+        <ul class="account-provider-list">
+          {#each providers as provider (provider)}
+            <li>
+              <a class="account-provider" href={resolve(`/auth/[provider]?${query}`, { provider })}>
+                Continue with {OAUTH_PROVIDER_LABELS[provider]}
+              </a>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
     <p class="account-switch">
       {#if signUp}
         Already have an account? <a href={resolve(`/sign-in?${query}`)}>Sign in</a>
