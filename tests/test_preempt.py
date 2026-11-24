@@ -193,3 +193,23 @@ def test_a_retired_entry_is_never_adopted_and_its_gate_closes():
 
 def test_empty_transcripts_are_never_equivalent():
     assert not transcripts_equivalent("", "")
+
+
+def test_a_cancelled_early_open_does_not_cancel_a_hook_waiting_for_it():
+    async def body(agent):
+        gate = asyncio.Event()
+        original = agent.compile
+
+        async def slow(message):
+            await gate.wait()
+            return await original(message)
+
+        agent.compile = slow
+        opening = asyncio.create_task(agent._open_early_turn(SimpleNamespace(id="early", text_content="hello")))
+        await asyncio.sleep(0)
+        hook = asyncio.create_task(agent._adopt_preempt("hello"))
+        await asyncio.sleep(0)
+        opening.cancel()
+        assert await hook is False  # the waiting hook falls back to its own turn, uncancelled
+
+    _run(body)

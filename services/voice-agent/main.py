@@ -970,10 +970,10 @@ class SarjyAgent(WordleTools, Agent):
         }
         try:
             await self.compile(user)
-        except BaseException as error:
+        except BaseException:
+            # Never store the error: a waiting hook would re-raise it (a CancelledError would cancel the hook).
             if not entry.ready.done():
-                entry.ready.set_exception(error)
-                entry.ready.exception()  # consumed: nobody may be waiting on it
+                entry.ready.set_result(False)
             self._retire_preempt_entry(entry)
             raise
         entry.turn_id = self.prepared[user.id]["turn_id"]
