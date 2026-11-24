@@ -7,7 +7,6 @@ CREDENTIALS = {
     "OPENAI_API_KEY": "openai-test",
     "DEEPSEEK_API_KEY": "deepseek-test",
     "DEEPGRAM_API_KEY": "deepgram-test",
-    "ELEVEN_API_KEY": "eleven-test",
 }
 
 
@@ -26,7 +25,7 @@ def providers(monkeypatch):
     monkeypatch.setattr(provider_factory, "OwnedOpenAIResponsesLLM", Captured)
     monkeypatch.setattr(provider_factory.openai_sdk, "AsyncOpenAI", lambda **kwargs: ("client", kwargs))
     monkeypatch.setattr(provider_factory.deepgram, "STT", lambda **kwargs: ("stt", kwargs))
-    monkeypatch.setattr(provider_factory.elevenlabs, "TTS", lambda **kwargs: ("tts", kwargs))
+    monkeypatch.setattr(provider_factory.deepgram, "TTS", lambda **kwargs: ("tts", kwargs))
     return provider_factory.build_providers
 
 
@@ -34,7 +33,7 @@ def pipeline(provider, model, max_output_tokens, **extra):
     return {
         "stt": {"model": "nova-3", "language": "en"},
         "llm": {"provider": provider, "model": model, "language": "en"},
-        "tts": {"model": "eleven_flash_v2_5", "voice_id": "voice", "language": "en"},
+        "tts": {"provider": "deepgram_direct", "model": "aura-2", "voice_id": "aura-2-thalia-en", "language": "en"},
         "max_output_tokens": max_output_tokens,
         **extra,
     }

@@ -11,7 +11,6 @@ def test_identity_isolation_and_durable_history(tmp_path):
         openai_api_key="",
         deepseek_api_key="",
         deepgram_api_key="",
-        eleven_api_key="",
         _env_file=None,
     )
     application = create_app(settings)
@@ -34,7 +33,6 @@ def test_unconfigured_voice_and_worker_spoofing(tmp_path):
         openai_api_key="",
         deepseek_api_key="",
         deepgram_api_key="",
-        eleven_api_key="",
         _env_file=None,
     )
     with TestClient(create_app(settings)) as client:

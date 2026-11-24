@@ -14,6 +14,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
+@pytest.fixture(autouse=True)
+def _reset_title_attempts():
+    titles._STATE.clear()
+    titles._IN_FLIGHT.clear()
+    yield
+    titles._STATE.clear()
+    titles._IN_FLIGHT.clear()
+
+
 def _seed(
     tmp_path, *, title=titles.SENTINEL_TITLE, turns=(("user", "Plan a trip to Paris"), ("assistant", "Four days"))
 ):
@@ -92,6 +101,7 @@ def test_generated_title_is_persisted_once(tmp_path):
     assert calls[0]["model"] == "deepseek-flash"
     assert calls[0]["temperature"] == 0
     assert calls[0]["max_tokens"] == 24
+    assert calls[0]["thinking"] == {"type": "disabled"}
 
 
 def test_renamed_conversation_is_never_overwritten(tmp_path):
@@ -375,6 +385,7 @@ def test_openai_provider_uses_guarded_openai_and_never_deepseek(tmp_path):
     assert calls[0]["model"] == "gpt-6-luna"
     assert calls[0]["reasoning_effort"] == "none"
     assert calls[0]["max_completion_tokens"] == 24
+    assert "thinking" not in calls[0]
     assert _reserved(file, "openai") > 0
     assert _reserved(file, "deepseek") == 0
 
@@ -400,6 +411,111 @@ def test_deepseek_provider_uses_deepseek_path(tmp_path):
     assert hosts == ["api.deepseek.com"]
     assert _reserved(file, "deepseek") > 0
     assert _reserved(file, "openai") == 0
+
+
+def test_a_failing_conversation_stops_after_the_failure_bound(tmp_path):
+    file, engine, sessions = _seed(tmp_path)
+    calls: list[dict] = []
+    transport = _recording_transport("", calls)
+
+    async def attempt():
+        return await titles.generate_conversation_title(sessions, "chat", api_key="test-key", transport=transport)
+
+    try:
+        results = [asyncio.run(attempt()) for _ in range(titles.MAX_FAILED_ATTEMPTS + 3)]
+        reserved = _reserved(file, "deepseek")
+    finally:
+        asyncio.run(engine.dispose())
+
+    assert results == [None] * len(results)
+    assert len(calls) == titles.MAX_FAILED_ATTEMPTS  # later turns make no request, reservation or read
+    assert reserved == titles.MAX_FAILED_ATTEMPTS * 7_000
+    assert _stored_title(file) == titles.SENTINEL_TITLE
+
+
+def test_concurrent_finalizes_make_one_provider_call(tmp_path):
+    file, engine, sessions = _seed(tmp_path)
+    calls: list[dict] = []
+    transport = _recording_transport("Paris Trip Planning", calls)
+
+    async def both():
+        return await asyncio.gather(
+            *(
+                titles.generate_conversation_title(sessions, "chat", api_key="test-key", transport=transport)
+                for _ in range(2)
+            )
+        )
+
+    try:
+        results = asyncio.run(both())
+    finally:
+        asyncio.run(engine.dispose())
+
+    assert sorted(results, key=lambda value: value is None) == ["Paris Trip Planning", None]
+    assert len(calls) == 1
+
+
+def test_an_unknown_provider_never_receives_the_key(tmp_path):
+    file, engine, sessions = _seed(tmp_path)
+    calls: list[dict] = []
+    try:
+        result = asyncio.run(
+            titles.generate_conversation_title(
+                sessions, "chat", api_key="test-key", provider="azure", transport=_recording_transport("T", calls)
+            )
+        )
+    finally:
+        asyncio.run(engine.dispose())
+    assert result is None and calls == []
+
+
+def test_conversation_without_assistant_turn_is_not_marked_attempted(tmp_path):
+    file, engine, sessions = _seed(tmp_path, turns=(("user", "Plan a trip to Paris"),))
+    calls: list[dict] = []
+    transport = _recording_transport("Paris Trip Planning", calls)
+
+    async def add_assistant_turn():
+        async with sessions() as db:
+            db.add(
+                Turn(
+                    id="assistant-turn",
+                    conversation_id="chat",
+                    request_id="assistant-request",
+                    role="assistant",
+                    text="Four days",
+                    status="completed",
+                    created_at="2026-01-01T00:00:05+00:00",
+                )
+            )
+            await db.commit()
+
+    try:
+        first = asyncio.run(
+            titles.generate_conversation_title(
+                sessions,
+                "chat",
+                api_key="test-key",
+                transport=transport,
+                reserve_budget=False,
+            )
+        )
+        asyncio.run(add_assistant_turn())
+        second = asyncio.run(
+            titles.generate_conversation_title(
+                sessions,
+                "chat",
+                api_key="test-key",
+                transport=transport,
+                reserve_budget=False,
+            )
+        )
+    finally:
+        asyncio.run(engine.dispose())
+
+    assert first is None
+    assert second == "Paris Trip Planning"
+    assert len(calls) == 1
+    assert _stored_title(file) == "Paris Trip Planning"
 
 
 def test_denied_openai_reservation_makes_no_request(tmp_path, monkeypatch):
@@ -498,3 +614,21 @@ def test_finalize_passes_the_active_provider_and_its_key(tmp_path, monkeypatch):
 
     assert calls[0]["provider"] == "openai_direct"
     assert calls[0]["api_key"] == "openai-key"
+
+
+def test_a_settled_title_is_not_read_again_on_later_turns(tmp_path):
+    """After the title is generated (or renamed) no later turn may touch the database for it."""
+    file, engine, sessions = _seed(tmp_path, title="My own name")
+    opened = 0
+
+    def counting():
+        nonlocal opened
+        opened += 1
+        return sessions()
+
+    try:
+        for _ in range(3):
+            assert asyncio.run(titles.generate_conversation_title(counting, "chat", api_key="test-key")) is None
+    finally:
+        asyncio.run(engine.dispose())
+    assert opened == 1

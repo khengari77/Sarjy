@@ -138,7 +138,7 @@ Read-only before and after the pass. Values are reserved units, not vendor invoi
 | Provider | Before | After | Delta |
 |---|---|---|---|
 | openai | `<units>` | `<units>` | `<delta>` |
-| elevenlabs | `<characters>` | `<characters>` | `<delta>` |
+| deepgram_tts | `<characters>` | `<characters>` | `<delta>` |
 
 Command used (hosted `DATABASE_URL` injected; no writes):
 

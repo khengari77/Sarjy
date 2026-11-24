@@ -19,6 +19,7 @@ class CompletionState:
     prompt_cache_miss_tokens: int | None = None
     provider_connect_ms: int | None = None  # TCP+TLS for this request; 0 when a kept-alive socket was reused
     provider_headers_ms: int | None = None  # request headers sent -> response headers received
+    provider_body_ms: int | None = None  # response headers -> response body complete
 
 
 def _usage_int(usage: object, name: str) -> int | None:
@@ -118,13 +119,38 @@ KEEPALIVE_LIMITS = httpx.Limits(max_keepalive_connections=8, keepalive_expiry=50
 MAX_PHASE_MS = 120_000  # the metrics API rejects larger values
 
 
+class HttpWarmup:
+    """One cheap request on an owned client so the next call reuses a live TLS connection.
+
+    /models returns immediately and spends no tokens; every failure is ignored
+    because a warm-up is never a reason to fail a turn.
+    """
+
+    def __init__(self, client: httpx.AsyncClient, url: str, api_key: str) -> None:
+        self._client = client
+        self._url = url
+        self._api_key = api_key
+
+    async def __call__(self) -> None:
+        # The task may have inherited a live turn's CompletionState; this request must never write into it.
+        token = completion_state.set(None)
+        try:
+            response = await self._client.get(self._url, headers={"Authorization": "Bearer " + self._api_key})
+            await response.aclose()
+        except Exception:
+            logging.getLogger(__name__).debug("provider connection warm-up failed", exc_info=True)
+        finally:
+            completion_state.reset(token)
+
+
 class _PhaseTrace:
-    """httpcore trace hook: how long the connection setup and the wait for response headers took."""
+    """httpcore trace hook: connection setup, wait for response headers, and body transfer."""
 
     def __init__(self, state: CompletionState) -> None:
         self.state = state
         self.headers_started: float | None = None
         self.connect_started: float | None = None
+        self.body_started: float | None = None
 
     async def __call__(self, event: str, info: object) -> None:
         try:  # a metrics hook must never break the request it observes
@@ -144,6 +170,39 @@ class _PhaseTrace:
                 self.state.provider_connect_ms = 0
         elif event.endswith(".receive_response_headers.complete") and self.headers_started is not None:
             self.state.provider_headers_ms = min(round((now - self.headers_started) * 1000), MAX_PHASE_MS)
+        elif event.endswith(".receive_response_body.started"):
+            self.body_started = now
+        elif event.endswith(".receive_response_body.complete") and self.body_started is not None:
+            self.state.provider_body_ms = min(round((now - self.body_started) * 1000), MAX_PHASE_MS)
+
+
+# Phases of the worker->API calls. A separate variable from ``completion_state`` so a backend call can never be
+# traced into a model completion's state (or the reverse), whatever the task ordering.
+api_phase_state: ContextVar[CompletionState | None] = ContextVar("api_phase_state", default=None)
+
+
+class TracedTransport(httpx.AsyncBaseTransport):
+    """Phase timing only: the response is passed through untouched (no body rewrite, no SSE parsing)."""
+
+    def __init__(self, transport: httpx.AsyncBaseTransport) -> None:
+        self.transport = transport
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        state = api_phase_state.get()
+        if state is not None:
+            previous = request.extensions.get("trace")
+            phase = _PhaseTrace(state)
+
+            async def trace(event: str, info: object) -> None:
+                await phase(event, info)
+                if previous is not None:
+                    await previous(event, info)
+
+            request.extensions = {**request.extensions, "trace": trace}
+        return await self.transport.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self.transport.aclose()
 
 
 class ObservedTransport(httpx.AsyncBaseTransport):

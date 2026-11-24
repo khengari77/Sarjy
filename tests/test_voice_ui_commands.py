@@ -22,7 +22,7 @@ from app.domain.contracts import (
     SetTheme,
 )
 from app.main import create_app
-from app.services.voices import ElevenLabsVoices, VoiceOption, public_catalog
+from app.services.voices import VoiceOption
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -380,48 +380,6 @@ def test_gender_voice_phrases(text, gender):
 )
 def test_gender_near_misses_return_none(text):
     assert parse_voice_gender(text) is None
-
-
-def test_public_catalog_reads_gender_label():
-    payload = {
-        "voices": [
-            {"voice_id": "a", "name": "A", "labels": {"gender": "Female"}},
-            {"voice_id": "b", "name": "B", "labels": {"gender": "male"}},
-            {"voice_id": "c", "name": "C", "labels": {"gender": "neutral"}},
-            {"voice_id": "d", "name": "D"},
-        ]
-    }
-    assert [v.gender for v in public_catalog(payload).voices] == ["female", "male", "neutral", None]
-
-
-def test_public_catalog_exposes_optional_traits():
-    payload = {
-        "voices": [
-            {
-                "voice_id": "a",
-                "name": "A",
-                "labels": {"accent": "British", "age": "Young", "description": "Warm ", "gender": 3},
-            }
-        ]
-    }
-    voice = public_catalog(payload).voices[0]
-    assert (voice.accent, voice.age, voice.description, voice.gender) == ("british", "young", "warm", None)
-
-
-def test_find_by_gender_only_returns_approved_labelled_voices():
-    import asyncio
-
-    class Fake(ElevenLabsVoices):
-        async def require(self, voice_id):
-            return {
-                "z": VoiceOption(id="z", name="Z", gender="male"),
-                "m": VoiceOption(id="m", name="M", gender="male"),
-                "w": VoiceOption(id="w", name="W", gender="female"),
-            }[voice_id]
-
-    fake = Fake("key")
-    assert asyncio.run(fake.find_by_trait("gender", "male", frozenset({"z", "m", "w"}))).id == "m"
-    assert asyncio.run(fake.find_by_trait("gender", "female", frozenset({"m"}))) is None
 
 
 def test_gender_voice_command_selects_an_approved_voice_and_replays(tmp_path):

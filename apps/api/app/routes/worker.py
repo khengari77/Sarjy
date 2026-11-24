@@ -1,12 +1,13 @@
 """Worker-only endpoints for bootstrap, turns, weather and budget reservations."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,7 +53,7 @@ from app.services.weather import WeatherError, get_current_weather
 
 
 class BudgetReservation(BaseModel):
-    provider: Literal["openai", "elevenlabs", "deepgram_tts", "deepseek"]
+    provider: Literal["openai", "deepgram_tts", "deepseek"]
     characters: int = Field(default=0, ge=0, le=500)
 
 
@@ -88,16 +89,34 @@ class TurnStageMetrics(BaseModel):
     tts_reserve_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     turn_start_server_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     turn_start_db_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    api_connect_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    api_headers_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    api_body_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     command_server_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     command_db_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    command_api_headers_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     model_first_chunk_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     release_wait_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    reassurance_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    first_answer_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    t_turn_start_begin_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    t_turn_start_end_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    t_command_begin_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    t_command_end_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    t_model_request_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    t_model_first_chunk_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    t_tool_start_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    t_tool_end_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    t_tts_first_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     prompt_cache_hit_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
     prompt_cache_miss_tokens: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
+    prompt_cache_hit_tokens_2: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
+    prompt_cache_miss_tokens_2: StrictInt | None = Field(default=None, ge=0, le=2_000_000)
     request_bytes: StrictInt | None = Field(default=None, ge=0, le=1_000_000)
     provider_connect_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     provider_headers_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
     loop_lag_ms: StrictInt | None = Field(default=None, ge=0, le=120000)
+    predicted_prefix_hit_pct: StrictInt | None = Field(default=None, ge=0, le=100)
 
 
 class TurnMetricsInput(BaseModel):
@@ -140,20 +159,30 @@ class CommandResponse(BaseModel):
     memory_op: MemoryOpAnswer | None = None
 
 
+def _require_agent_secret(request: Request, config: Settings) -> None:
+    secret = request.headers.get("x-agent-secret", "")
+    if not secret_matches(secret, config.agent_service_secret):
+        raise HTTPException(401, detail={"code": "WORKER_AUTH_REQUIRED"})
+
+
+def _session_window(allow_ended: bool) -> tuple[tuple[str, ...], str]:
+    statuses = ("starting", "active", "ended") if allow_ended else ("starting", "active")
+    cutoff = datetime.now(UTC) - timedelta(seconds=60 if allow_ended else 0)
+    return statuses, cutoff.isoformat()
+
+
+def _session_is_active(voice: VoiceSession | None, room_name: str | None, *, allow_ended: bool) -> bool:
+    if voice is None:
+        return False
+    statuses, cutoff = _session_window(allow_ended)
+    return voice.room_name == room_name and voice.status in statuses and voice.expires_at > cutoff
+
+
 def _session_guard(config: Settings):
     async def worker_session(request: Request, db: AsyncSession, allow_ended: bool = False):
-        secret = request.headers.get("x-agent-secret", "")
-        if not secret_matches(secret, config.agent_service_secret):
-            raise HTTPException(401, detail={"code": "WORKER_AUTH_REQUIRED"})
+        _require_agent_secret(request, config)
         voice = await db.get(VoiceSession, request.headers.get("x-session-id", ""))
-        statuses = {"starting", "active", "ended"} if allow_ended else {"starting", "active"}
-        cutoff = datetime.now(UTC) - timedelta(seconds=60 if allow_ended else 0)
-        if (
-            not voice
-            or voice.room_name != request.headers.get("x-room-name")
-            or voice.status not in statuses
-            or voice.expires_at <= cutoff.isoformat()
-        ):
+        if not _session_is_active(voice, request.headers.get("x-room-name"), allow_ended=allow_ended):
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
         return voice
 
@@ -171,17 +200,19 @@ def register_worker_routes(
 ):
     guard = _session_guard(config)
     _register_budget_routes(app, config=config, database=database)
+    _register_warm_route(app, config=config, database=database)
     _register_session_routes(app, database=database, guard=guard)
     _register_turn_routes(app, config=config, database=database, guard=guard, sessions=sessions)
     _register_command_routes(
         app,
+        config=config,
         database=database,
         guard=guard,
         catalog=catalog,
         approved_voice_ids=approved_voice_ids,
         secret=_memory_secret(config),
     )
-    _register_tool_routes(app, database=database, guard=guard)
+    _register_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
     if wordle_source is not None:
@@ -289,6 +320,26 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
             ) from exc
 
 
+def _register_warm_route(app, *, config: Settings, database):
+    @app.post("/internal/agent/warm")
+    async def warm(request: Request, background: BackgroundTasks, db: AsyncSession = Depends(database)):
+        """Best-effort latency warm-up; no turn, budget reservation or session state is involved."""
+        _require_agent_secret(request, config)
+        await db.execute(text("SELECT 1"))
+        classifier = getattr(app.state, "ui_classifier", None)
+        warm_jev = getattr(classifier, "warm", None)
+        if callable(warm_jev):
+            background.add_task(_warm_jev, warm_jev)
+        return {"ok": True}
+
+
+async def _warm_jev(warm) -> None:
+    try:
+        await warm()
+    except Exception:
+        logging.getLogger(__name__).debug("jev warm-up failed", exc_info=True)
+
+
 def _register_budget_routes(app, *, config: Settings, database):
     @app.post("/internal/development/reserve")
     async def development_reservation(body: BudgetReservation, request: Request, db: AsyncSession = Depends(database)):
@@ -305,8 +356,6 @@ def _register_budget_routes(app, *, config: Settings, database):
         overrides = (
             {"units": config.deepseek_request_micro_usd, "limit": config.deepseek_daily_micro_usd}
             if body.provider == "deepseek"
-            else {"limit": config.elevenlabs_daily_characters}
-            if body.provider == "elevenlabs"
             else {"limit": config.deepgram_daily_characters}
             if body.provider == "deepgram_tts"
             else {}
@@ -437,12 +486,57 @@ async def _locked_turn_context(db: AsyncSession, conversation_id: str, request_i
     return locked
 
 
+async def _locked_turn_context_for_session(
+    db: AsyncSession, session_id: str, request_id: str, *, room_name: str | None
+):
+    """The locked context plus the active session, in one statement; None when any precondition fails.
+
+    The lock target stays the conversation only, and the session preconditions are
+    part of the query so an inactive session never takes the conversation lock.
+    """
+    statuses, cutoff = _session_window(False)
+    return (
+        await db.execute(
+            select(Conversation, Turn, UserSetting, VoiceSession)
+            .join(VoiceSession, VoiceSession.conversation_id == Conversation.id)
+            .outerjoin(Turn, and_(Turn.conversation_id == Conversation.id, Turn.request_id == request_id))
+            .outerjoin(UserSetting, UserSetting.owner_id == Conversation.owner_id)
+            .where(
+                VoiceSession.id == session_id,
+                VoiceSession.room_name == room_name,
+                VoiceSession.status.in_(statuses),
+                VoiceSession.expires_at > cutoff,
+            )
+            .with_for_update(of=Conversation)
+        )
+    ).one_or_none()
+
+
+async def _turn_start_context(db: AsyncSession, request: Request, request_id: str, *, guard, config: Settings):
+    """Resolve the locked turn context and its session in one statement when the session is live.
+
+    A missing or inactive session falls back to the guard so its 401/403 codes and
+    the conversation-not-found 404 are unchanged.
+    """
+    _require_agent_secret(request, config)
+    room_name = request.headers.get("x-room-name")
+    locked = await _locked_turn_context_for_session(
+        db, request.headers.get("x-session-id", ""), request_id, room_name=room_name
+    )
+    if locked is not None and _session_is_active(locked[3], room_name, allow_ended=False):
+        return locked
+    voice = await guard(request, db)
+    conversation, existing, settings_row = await _locked_turn_context(db, voice.conversation_id, request_id)
+    return conversation, existing, settings_row, voice
+
+
 def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
     @app.post("/internal/agent/turn/start")
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
-        voice = await guard(request, db)
         # Serializes worker retries and preserves the conversation's authoritative order.
-        conversation, existing, settings_row = await _locked_turn_context(db, voice.conversation_id, body.request_id)
+        conversation, existing, settings_row, voice = await _turn_start_context(
+            db, request, body.request_id, guard=guard, config=config
+        )
         if existing:
             return await _replayed_turn_response(
                 db,
@@ -468,7 +562,9 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
             # With the model classifier available, regexes only keep the exact "remember that ..." fast path.
             strict_capture=getattr(app.state, "ui_classifier", None) is not None,
         )
-        inputs = await read_context_inputs(db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id)
+        inputs = await read_context_inputs(
+            db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id, combined_read=True
+        )
         compiled = _compile_turn_context(
             revision=conversation.revision,
             instructions=instructions,
@@ -621,7 +717,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
         return await _record_turn_metrics(db, voice, body)
 
 
-def _register_command_routes(app, *, database, guard, catalog, approved_voice_ids=None, secret=""):
+def _register_command_routes(app, *, config, database, guard, catalog, approved_voice_ids=None, secret=""):
     @app.post("/internal/agent/command", response_model=CommandResponse)
     async def finalized_command(body: CommandInput, request: Request, db: AsyncSession = Depends(database)):
         """The one worker entry for a finalized user utterance.
@@ -630,13 +726,31 @@ def _register_command_routes(app, *, database, guard, catalog, approved_voice_id
         never accepts a client-supplied revision or transcript.  Returns
         ``{"command": null}`` when the utterance is ordinary conversation.
         """
-        voice = await guard(request, db)
-        turn = await db.get(Turn, body.turn_id)
-        if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
-            raise HTTPException(404)
-        conversation = await db.get(Conversation, turn.conversation_id)
-        if conversation is None:
-            raise HTTPException(404)
+        # The common case is one joined read instead of the guard, turn and conversation reads.
+        row = (
+            await db.execute(
+                select(VoiceSession, Turn, Conversation)
+                .join(Turn, Turn.conversation_id == VoiceSession.conversation_id)
+                .join(Conversation, Conversation.id == Turn.conversation_id)
+                .where(VoiceSession.id == request.headers.get("x-session-id", ""), Turn.id == body.turn_id)
+            )
+        ).first()
+        if (
+            row is None
+            or not _session_is_active(row[0], request.headers.get("x-room-name"), allow_ended=False)
+            or row[1].role != "user"
+            or not secret_matches(request.headers.get("x-agent-secret", ""), config.agent_service_secret)
+        ):
+            # Fall back to the shared guard so 401/403/404 stay exactly as before.
+            voice = await guard(request, db)
+            turn = await db.get(Turn, body.turn_id)
+            if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
+                raise HTTPException(404)
+            conversation = await db.get(Conversation, turn.conversation_id)
+            if conversation is None:
+                raise HTTPException(404)
+        else:
+            _, turn, conversation = row
         snapshot = turn.snapshot or {}
         expected_revision = snapshot.get("revision")
         if not isinstance(expected_revision, int):
@@ -698,13 +812,29 @@ def _claim_replay(claim):
     return None
 
 
-def _register_tool_routes(app, *, database, guard):
+def _register_tool_routes(app, *, config, database, guard):
     @app.post("/internal/agent/tool/weather")
     async def agent_weather(body: WeatherInput, request: Request, db: AsyncSession = Depends(database)):
-        voice = await guard(request, db)
-        turn = await db.get(Turn, body.turn_id)
-        if not turn or turn.conversation_id != voice.conversation_id:
-            raise HTTPException(404)
+        # The common case is one joined read instead of the guard and turn reads.
+        row = (
+            await db.execute(
+                select(VoiceSession, Turn)
+                .join(Turn, Turn.conversation_id == VoiceSession.conversation_id)
+                .where(VoiceSession.id == request.headers.get("x-session-id", ""), Turn.id == body.turn_id)
+            )
+        ).first()
+        if (
+            row is None
+            or not _session_is_active(row[0], request.headers.get("x-room-name"), allow_ended=False)
+            or not secret_matches(request.headers.get("x-agent-secret", ""), config.agent_service_secret)
+        ):
+            # Fall back to the shared guard so 401/403/404 stay exactly as before.
+            voice = await guard(request, db)
+            turn = await db.get(Turn, body.turn_id)
+            if not turn or turn.conversation_id != voice.conversation_id:
+                raise HTTPException(404)
+        else:
+            _, turn = row
         policy = (turn.snapshot or {}).get("weather_policy") or {}
         decision = decide_weather_request(
             city=body.city,

@@ -13,16 +13,34 @@ STAGE_FIELDS = (
     "tts_reserve_ms",
     "turn_start_server_ms",
     "turn_start_db_ms",
+    "api_connect_ms",
+    "api_headers_ms",
+    "api_body_ms",
     "command_server_ms",
     "command_db_ms",
+    "command_api_headers_ms",
     "model_first_chunk_ms",
     "release_wait_ms",
+    "reassurance_ms",
+    "first_answer_ms",
+    "t_turn_start_begin_ms",
+    "t_turn_start_end_ms",
+    "t_command_begin_ms",
+    "t_command_end_ms",
+    "t_model_request_ms",
+    "t_model_first_chunk_ms",
+    "t_tool_start_ms",
+    "t_tool_end_ms",
+    "t_tts_first_ms",
     "prompt_cache_hit_tokens",
     "prompt_cache_miss_tokens",
+    "prompt_cache_hit_tokens_2",
+    "prompt_cache_miss_tokens_2",
     "request_bytes",
     "provider_connect_ms",
     "provider_headers_ms",
     "loop_lag_ms",
+    "predicted_prefix_hit_pct",
 )
 
 
@@ -33,16 +51,34 @@ class TurnStages(TypedDict, total=False):
     tts_reserve_ms: int | None
     turn_start_server_ms: int | None
     turn_start_db_ms: int | None
+    api_connect_ms: int | None
+    api_headers_ms: int | None
+    api_body_ms: int | None
     command_server_ms: int | None
     command_db_ms: int | None
+    command_api_headers_ms: int | None
     model_first_chunk_ms: int | None
     release_wait_ms: int | None
+    reassurance_ms: int | None
+    first_answer_ms: int | None
+    t_turn_start_begin_ms: int | None
+    t_turn_start_end_ms: int | None
+    t_command_begin_ms: int | None
+    t_command_end_ms: int | None
+    t_model_request_ms: int | None
+    t_model_first_chunk_ms: int | None
+    t_tool_start_ms: int | None
+    t_tool_end_ms: int | None
+    t_tts_first_ms: int | None
     prompt_cache_hit_tokens: int | None
     prompt_cache_miss_tokens: int | None
+    prompt_cache_hit_tokens_2: int | None
+    prompt_cache_miss_tokens_2: int | None
     request_bytes: int | None
     provider_connect_ms: int | None
     provider_headers_ms: int | None
     loop_lag_ms: int | None
+    predicted_prefix_hit_pct: int | None
 
 
 class TurnMetricsPayload(TypedDict):

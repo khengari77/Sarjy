@@ -12,7 +12,7 @@ from app.services.voices import DeepgramVoices, VoiceCatalogError, approved_voic
 from config import provider_credentials
 from fastapi.testclient import TestClient
 
-CREDENTIALS = {"DEEPGRAM_API_KEY": "dg-test", "ELEVEN_API_KEY": "el-test", "DEEPSEEK_API_KEY": "ds-test"}
+CREDENTIALS = {"DEEPGRAM_API_KEY": "dg-test", "DEEPSEEK_API_KEY": "ds-test"}
 
 
 def worker_pipeline(tts):
@@ -27,7 +27,6 @@ def worker_pipeline(tts):
 def captured(monkeypatch):
     calls = {}
     monkeypatch.setattr(provider_factory.deepgram, "TTS", lambda **kw: calls.setdefault("deepgram", kw) or kw)
-    monkeypatch.setattr(provider_factory.elevenlabs, "TTS", lambda **kw: calls.setdefault("elevenlabs", kw) or kw)
     return calls
 
 
@@ -44,19 +43,17 @@ def test_factory_builds_deepgram_with_voice_as_model(captured):
         "sample_rate": 24000,
         "api_key": "dg-test",
     }
-    assert "elevenlabs" not in captured
 
 
-def test_factory_keeps_elevenlabs_path(captured):
+def test_factory_falls_back_for_a_previously_saved_elevenlabs_path(captured):
     provider_factory.build_tts(
         worker_pipeline(
-            {"provider": "elevenlabs_direct", "model": "eleven_flash_v2_5", "voice_id": "v", "language": "ar"}
+            {"provider": "elevenlabs_direct", "model": "eleven_flash_v2_5", "voice_id": "v", "language": "en"}
         ),
         CREDENTIALS,
     )
-    assert captured["elevenlabs"]["voice_id"] == "v"
-    assert captured["elevenlabs"]["api_key"] == "el-test"
-    assert "deepgram" not in captured
+    assert captured["deepgram"]["model"] == DEFAULT_DEEPGRAM_VOICE_ID
+    assert captured["deepgram"]["api_key"] == "dg-test"
 
 
 def test_factory_refuses_arabic_under_deepgram(captured):
@@ -70,16 +67,19 @@ def test_factory_refuses_arabic_under_deepgram(captured):
     assert captured == {}
 
 
-def test_budget_provider_follows_active_tts_provider():
-    assert provider_factory.tts_budget_provider({"tts": {"provider": "deepgram_direct"}}) == "deepgram_tts"
-    assert provider_factory.tts_budget_provider({"tts": {"provider": "elevenlabs_direct"}}) == "elevenlabs"
+def test_budget_provider_is_deepgram_tts():
+    assert provider_factory.tts_budget_provider({}) == "deepgram_tts"
+    assert provider_factory.tts_budget_provider({"tts": {"provider": "elevenlabs_direct"}}) == "deepgram_tts"
 
 
-def test_deepgram_needs_no_elevenlabs_credential():
+def test_worker_credentials_require_deepgram_tts_only():
     values = {"DEEPGRAM_API_KEY": "d", "DEEPSEEK_API_KEY": "s"}
-    assert "ELEVEN_API_KEY" not in provider_credentials(values, "deepseek_direct", "deepgram_direct")
-    with pytest.raises(ValueError, match="ELEVEN_API_KEY"):
-        provider_credentials(values, "deepseek_direct", "elevenlabs_direct")
+    assert provider_credentials(values, "deepseek_direct") == {
+        "DEEPGRAM_API_KEY": "d",
+        "DEEPSEEK_API_KEY": "s",
+    }
+    with pytest.raises(ValueError, match="DEEPGRAM_API_KEY"):
+        provider_credentials({"DEEPSEEK_API_KEY": "s"}, "deepseek_direct")
 
 
 class RecordingTTS:
@@ -113,7 +113,7 @@ def test_speed_controller_selection():
         provider_factory.speed_controller_for({"tts": {"provider": "deepgram_direct", "voice_id": "x-en"}}),
         provider_factory.DeepgramSpeedController,
     )
-    assert isinstance(provider_factory.speed_controller_for({}), provider_factory.SpeakingSpeedController)
+    assert isinstance(provider_factory.speed_controller_for({}), provider_factory.DeepgramSpeedController)
 
 
 def test_static_catalogue_is_well_formed():
@@ -142,11 +142,10 @@ def test_catalogue_service_requires_known_ids_and_finds_gender():
 
 def test_config_validation_and_defaults():
     settings = Settings(_env_file=None)
-    assert settings.tts_provider == "deepgram"
     assert settings.default_voice_id == DEFAULT_DEEPGRAM_VOICE_ID
-    assert Settings(tts_provider="elevenlabs", _env_file=None).default_voice_id == ""
-    with pytest.raises(ValueError):
-        Settings(tts_provider="nope", _env_file=None)
+    # A previously saved ElevenLabs voice id cannot be the default any more.
+    stale = Settings(default_voice_id="21m00Tcm4TlvDq8ikWAM", _env_file=None)
+    assert stale.default_voice_id == DEFAULT_DEEPGRAM_VOICE_ID
     with pytest.raises(ValueError):
         Settings(deepgram_daily_characters=0, _env_file=None)
 
@@ -166,7 +165,8 @@ def test_deepgram_budget_is_a_separate_configurable_ledger(tmp_path):
         assert (
             client.post(url, headers=headers, json={"provider": "deepgram_tts", "characters": 201}).status_code == 429
         )
-        assert client.post(url, headers=headers, json={"provider": "elevenlabs", "characters": 500}).status_code == 200
+        # ElevenLabs is no longer a budget provider.
+        assert client.post(url, headers=headers, json={"provider": "elevenlabs", "characters": 500}).status_code == 422
 
 
 def test_pipeline_validation_for_deepgram():

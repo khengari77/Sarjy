@@ -1,19 +1,15 @@
-import copy
 import json
 import sqlite3
 from contextlib import closing
 from types import SimpleNamespace
 
-import httpx
 import pytest
 from app.config import Settings
 from app.domain.voices import parse_voice_ids
 from app.main import create_app
 from app.services.voices import (
-    ElevenLabsVoices,
     VoiceCatalogError,
     VoiceOption,
-    public_catalog,
     saved_voice_outcome,
     spoken_voice_language,
 )
@@ -40,31 +36,8 @@ def test_settings_reject_a_malformed_approved_voice_list():
 
 def test_voice_configuration_is_not_a_boot_requirement():
     # Voice is a per-session user setting (#148): a missing voice fails the session, not startup.
-    assert Settings(eleven_api_key="tts-test", _env_file=None).approved_voice_ids == ""
-    assert Settings(eleven_api_key="tts-test", default_voice_id="voice-1", _env_file=None).default_voice_id == "voice-1"
-
-
-@given(st.lists(st.tuples(st.text(min_size=1), st.text()), max_size=20))
-def test_catalog_projection_is_pure_and_exposes_only_voice_choices(entries):
-    payload = {
-        "voices": [
-            {
-                "voice_id": id,
-                "name": name,
-                "samples": [{"secret": "private recording"}],
-                "settings": {"private": "configuration"},
-            }
-            for id, name in entries
-        ],
-        "has_more": False,
-    }
-    original = copy.deepcopy(payload)
-    result = public_catalog(payload)
-    assert payload == original
-    assert result == public_catalog(payload)
-    assert [(voice.id, voice.name) for voice in result.voices] == entries
-    for voice in result.model_dump()["voices"]:
-        assert set(voice) == {"id", "name", "languages", "gender", "accent", "age", "description"}
+    assert Settings(_env_file=None).approved_voice_ids == ""
+    assert Settings(default_voice_id="aura-2-zeus-en", _env_file=None).default_voice_id == "aura-2-zeus-en"
 
 
 def configured(tmp_path):
@@ -77,73 +50,40 @@ def configured(tmp_path):
         agent_service_secret="worker-secret",
         deepgram_api_key="stt-test",
         openai_api_key="llm-test",
-        eleven_api_key="tts-test",
-        tts_provider="elevenlabs",
-        approved_voice_ids="arabic-voice,other-voice,gone-voice",
+        approved_voice_ids="aura-2-thalia-en,aura-2-apollo-en,aura-2-missing-en",
         _env_file=None,
     )
 
 
-def catalog_transport(request):
-    assert request.headers["xi-api-key"] == "tts-test"
-    assert request.url.params["include_custom_rates"] == "false"
-    voices = [
-        {"voice_id": "arabic-voice", "name": "Arabic voice", "verified_languages": [{"language": "ar"}]},
-        {"voice_id": "other-voice", "name": "Another voice"},
-        # Provider-accessible but not on the server-approved list.
-        {"voice_id": "account-only-voice", "name": "Unapproved account voice"},
-    ]
-    id = request.url.params.get("voice_ids")
-    if id:
-        voices = [voice for voice in voices if voice["voice_id"] == id]
-    return httpx.Response(200, json={"voices": voices, "has_more": False})
-
-
 def test_authenticated_catalog_search_and_safe_response(tmp_path):
-    def handler(request):
-        assert request.url.params["search"] == "Arabic"
-        return httpx.Response(
-            200,
-            json={
-                "voices": [{"voice_id": "arabic-voice", "name": "Arabic voice", "samples": ["do not expose"]}],
-                "has_more": True,
-                "next_page_token": "next",
-            },
-        )
-
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(handler))
-    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+    with TestClient(create_app(configured(tmp_path))) as client:
         assert client.get("/v1/voices").status_code == 401
         client.post("/v1/demo-session")
-        response = client.get("/v1/voices?search=Arabic")
+        response = client.get("/v1/voices?search=Thalia")
         assert response.json() == {
             "voices": [
                 {
-                    "id": "arabic-voice",
-                    "name": "Arabic voice",
-                    "languages": [],
-                    "gender": None,
-                    "accent": None,
-                    "age": None,
-                    "description": None,
+                    "id": "aura-2-thalia-en",
+                    "name": "Thalia",
+                    "languages": ["en"],
+                    "gender": "female",
+                    "accent": "american",
+                    "age": "adult",
+                    "description": "clear, confident, energetic, enthusiastic",
                 }
             ],
-            "next_page_token": "next",
+            "next_page_token": None,
         }
-        assert "do not expose" not in response.text
-        assert "tts-test" not in response.text
 
 
 def test_unavailable_voice_never_reserves_or_dispatches_a_call(tmp_path):
     settings = configured(tmp_path)
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    with TestClient(create_app(settings, voice_catalog=service)) as client:
+    with TestClient(create_app(settings)) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
         for selection, status, code in [
-            (None, 503, "VOICE_DEFAULT_UNCONFIGURED"),
-            ("gone-voice", 422, "VOICE_UNAVAILABLE"),
-            ("account-only-voice", 422, "VOICE_NOT_APPROVED"),
+            ("aura-2-missing-en", 422, "VOICE_UNAVAILABLE"),
+            ("aura-2-zeus-en", 422, "VOICE_NOT_APPROVED"),
         ]:
             response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "voice_id": selection})
             assert response.status_code == status
@@ -155,56 +95,49 @@ def test_unavailable_voice_never_reserves_or_dispatches_a_call(tmp_path):
 def configured_with_default(tmp_path, **overrides):
     return configured(tmp_path).model_copy(
         update={
-            "approved_voice_ids": "other-voice",
-            "default_voice_id": "arabic-voice",
-            "default_voice_language": "ar",
+            "approved_voice_ids": "aura-2-apollo-en",
+            "default_voice_id": "aura-2-thalia-en",
+            "default_voice_language": "en",
             **overrides,
         }
     )
 
 
-def session_count(tmp_path):
-    with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
-        return db.execute("SELECT COUNT(*) FROM voice_sessions").fetchone()[0]
-
-
 def test_fresh_browser_starts_with_the_catalog_validated_default(tmp_path, livekit_control_plane):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    with TestClient(create_app(configured_with_default(tmp_path), voice_catalog=service)) as client:
+    with TestClient(create_app(configured_with_default(tmp_path))) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
         response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
         assert response.status_code == 201
         body = response.json()
         assert body["voice"] == {
-            "id": "arabic-voice",
-            "name": "Arabic voice",
-            "languages": ["ar"],
-            "gender": None,
-            "accent": None,
-            "age": None,
-            "description": None,
+            "id": "aura-2-thalia-en",
+            "name": "Thalia",
+            "languages": ["en"],
+            "gender": "female",
+            "accent": "american",
+            "age": "adult",
+            "description": "clear, confident, energetic, enthusiastic",
         }
-        assert (body["voice_source"], body["voice_language"]) == ("default", "ar")
+        assert (body["voice_source"], body["voice_language"]) == ("default", "en")
         with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
             pipeline = json.loads(
                 db.execute("SELECT pipeline FROM voice_sessions WHERE id=?", (body["id"],)).fetchone()[0]
             )
         assert pipeline["tts"] == {
-            "provider": "elevenlabs_direct",
-            "model": "eleven_flash_v2_5",
-            "voice_id": "arabic-voice",
-            "language": "ar",
+            "provider": "deepgram_direct",
+            "model": "aura-2",
+            "voice_id": "aura-2-thalia-en",
+            "language": "en",
         }
         assert pipeline["stt"]["language"] == "en"
 
 
 def test_saved_server_setting_outranks_the_default_and_is_catalog_validated(tmp_path, livekit_control_plane):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
     settings = configured_with_default(
-        tmp_path, approved_voice_ids="other-voice,arabic-voice", default_voice_id="other-voice"
+        tmp_path, approved_voice_ids="aura-2-apollo-en,aura-2-thalia-en", default_voice_id="aura-2-apollo-en"
     )
-    with TestClient(create_app(settings, voice_catalog=service)) as client:
+    with TestClient(create_app(settings)) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
         rejected = client.post(
@@ -214,7 +147,7 @@ def test_saved_server_setting_outranks_the_default_and_is_catalog_validated(tmp_
                 "request_id": "unapproved",
                 "expected_revision": 0,
                 "source": "ui",
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "account-only-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-zeus-en"},
             },
         )
         assert rejected.status_code == 422
@@ -226,24 +159,23 @@ def test_saved_server_setting_outranks_the_default_and_is_catalog_validated(tmp_
                 "request_id": "approved",
                 "expected_revision": 0,
                 "source": "ui",
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-thalia-en"},
             },
         )
         assert saved.status_code == 200, saved.text
-        assert saved.json()["result"]["settings"]["approved_voice_id"] == "arabic-voice"
+        assert saved.json()["result"]["settings"]["approved_voice_id"] == "aura-2-thalia-en"
         response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
         assert response.status_code == 201
         body = response.json()
         assert (body["voice"]["id"], body["voice_source"], body["voice_language"]) == (
-            "arabic-voice",
+            "aura-2-thalia-en",
             "saved",
-            "ar",
+            "en",
         )
 
 
 def test_owner_scoped_settings_save_a_voice_without_creating_a_conversation(tmp_path):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+    with TestClient(create_app(configured(tmp_path))) as client:
         client.post("/v1/demo-session")
         assert client.get("/v1/conversations").json() == []
         response = client.post(
@@ -251,27 +183,26 @@ def test_owner_scoped_settings_save_a_voice_without_creating_a_conversation(tmp_
             json={
                 "request_id": "first-visit",
                 "expected_revision": 0,
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-thalia-en"},
             },
         )
         assert response.status_code == 200, response.text
-        assert response.json()["settings"]["approved_voice_id"] == "arabic-voice"
+        assert response.json()["settings"]["approved_voice_id"] == "aura-2-thalia-en"
         assert response.json()["settings"]["revision"] == 1
-        assert client.get("/v1/settings").json()["approved_voice_id"] == "arabic-voice"
+        assert client.get("/v1/settings").json()["approved_voice_id"] == "aura-2-thalia-en"
         # Persisting a preference must not add a chat row.
         assert client.get("/v1/conversations").json() == []
 
 
 def test_owner_scoped_settings_enforce_approval_revision_and_action_kind(tmp_path):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+    with TestClient(create_app(configured(tmp_path))) as client:
         client.post("/v1/demo-session")
         unapproved = client.post(
             "/v1/settings/actions",
             json={
                 "request_id": "unapproved",
                 "expected_revision": 0,
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "account-only-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-zeus-en"},
             },
         )
         assert unapproved.status_code == 422
@@ -281,7 +212,7 @@ def test_owner_scoped_settings_enforce_approval_revision_and_action_kind(tmp_pat
             json={
                 "request_id": "approved",
                 "expected_revision": 0,
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "other-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-apollo-en"},
             },
         )
         assert saved.status_code == 200, saved.text
@@ -290,7 +221,7 @@ def test_owner_scoped_settings_enforce_approval_revision_and_action_kind(tmp_pat
             json={
                 "request_id": "stale",
                 "expected_revision": 0,
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-thalia-en"},
             },
         )
         assert stale.status_code == 409
@@ -304,13 +235,12 @@ def test_owner_scoped_settings_enforce_approval_revision_and_action_kind(tmp_pat
 
 
 def test_owner_scoped_settings_replay_a_duplicate_request(tmp_path):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+    with TestClient(create_app(configured(tmp_path))) as client:
         client.post("/v1/demo-session")
         body = {
             "request_id": "lost-response",
             "expected_revision": 0,
-            "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+            "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-thalia-en"},
         }
         first = client.post("/v1/settings/actions", json=body)
         assert first.status_code == 200, first.text
@@ -319,22 +249,21 @@ def test_owner_scoped_settings_replay_a_duplicate_request(tmp_path):
         assert retry.status_code == 200, retry.text
         assert retry.json() == first.json()
         assert retry.json()["settings"]["revision"] == 1
-        assert client.get("/v1/settings").json()["approved_voice_id"] == "arabic-voice"
+        assert client.get("/v1/settings").json()["approved_voice_id"] == "aura-2-thalia-en"
         with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
             assert db.execute("SELECT COUNT(*) FROM setting_revisions").fetchone()[0] == 1
             assert db.execute("SELECT COUNT(*) FROM setting_write_requests").fetchone()[0] == 1
 
 
 def test_owner_scoped_settings_reject_a_reused_request_id_for_a_different_action(tmp_path):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+    with TestClient(create_app(configured(tmp_path))) as client:
         client.post("/v1/demo-session")
         first = client.post(
             "/v1/settings/actions",
             json={
                 "request_id": "reused",
                 "expected_revision": 0,
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "other-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-apollo-en"},
             },
         )
         assert first.status_code == 200, first.text
@@ -343,17 +272,16 @@ def test_owner_scoped_settings_reject_a_reused_request_id_for_a_different_action
             json={
                 "request_id": "reused",
                 "expected_revision": 0,
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-thalia-en"},
             },
         )
         assert conflict.status_code == 409
         assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
-        assert client.get("/v1/settings").json()["approved_voice_id"] == "other-voice"
+        assert client.get("/v1/settings").json()["approved_voice_id"] == "aura-2-apollo-en"
 
 
 def test_conversation_voice_action_uses_the_single_owner_scoped_writer(tmp_path):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+    with TestClient(create_app(configured(tmp_path))) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
         through_conversation = client.post(
@@ -363,7 +291,7 @@ def test_conversation_voice_action_uses_the_single_owner_scoped_writer(tmp_path)
                 "request_id": "from-conversation",
                 "expected_revision": 0,
                 "source": "ui",
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-thalia-en"},
             },
         )
         assert through_conversation.status_code == 200, through_conversation.text
@@ -375,7 +303,7 @@ def test_conversation_voice_action_uses_the_single_owner_scoped_writer(tmp_path)
             json={
                 "request_id": "from-settings",
                 "expected_revision": 1,
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-thalia-en"},
             },
         )
         assert through_settings.status_code == 200, through_settings.text
@@ -390,8 +318,8 @@ def test_conversation_voice_action_uses_the_single_owner_scoped_writer(tmp_path)
 
 
 def test_saved_voice_language_is_derived_from_the_catalog():
-    arabic = VoiceOption(id="arabic-voice", name="Arabic", languages=("ar",))
-    undeclared = VoiceOption(id="other-voice", name="Other")
+    arabic = VoiceOption(id="aura-2-thalia-en", name="Arabic", languages=("ar",))
+    undeclared = VoiceOption(id="aura-2-apollo-en", name="Other")
     # A saved Arabic voice stays Arabic even when the browser requests English.
     assert spoken_voice_language("saved", "en", arabic, "en") == "ar"
     assert spoken_voice_language("saved", "ar", arabic, "en") == "ar"
@@ -404,10 +332,9 @@ def test_saved_voice_language_is_derived_from_the_catalog():
     assert spoken_voice_language("default", "en", arabic, "ar") == "ar"
 
 
-def test_saved_voice_without_catalog_language_uses_the_default_language(tmp_path, livekit_control_plane):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    settings = configured_with_default(tmp_path, approved_voice_ids="other-voice,arabic-voice")
-    with TestClient(create_app(settings, voice_catalog=service)) as client:
+def test_saved_voice_uses_its_catalog_language(tmp_path, livekit_control_plane):
+    settings = configured_with_default(tmp_path, approved_voice_ids="aura-2-apollo-en,aura-2-thalia-en")
+    with TestClient(create_app(settings)) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
         saved = client.post(
@@ -415,21 +342,24 @@ def test_saved_voice_without_catalog_language_uses_the_default_language(tmp_path
             json={
                 "request_id": "save-other",
                 "expected_revision": 0,
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "other-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-apollo-en"},
             },
         )
         assert saved.status_code == 200, saved.text
         response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
         assert response.status_code == 201, response.text
         body = response.json()
-        # other-voice declares no languages; the configured default language is ar.
-        assert (body["voice"]["id"], body["voice_source"], body["voice_language"]) == ("other-voice", "saved", "ar")
+        # The saved voice's catalog language wins over the request.
+        assert (body["voice"]["id"], body["voice_source"], body["voice_language"]) == (
+            "aura-2-apollo-en",
+            "saved",
+            "en",
+        )
 
 
 def test_clearing_a_saved_voice_restores_the_server_default(tmp_path, livekit_control_plane):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    settings = configured_with_default(tmp_path, approved_voice_ids="other-voice,arabic-voice")
-    with TestClient(create_app(settings, voice_catalog=service)) as client:
+    settings = configured_with_default(tmp_path, approved_voice_ids="aura-2-apollo-en,aura-2-thalia-en")
+    with TestClient(create_app(settings)) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
         saved = client.post(
@@ -437,7 +367,7 @@ def test_clearing_a_saved_voice_restores_the_server_default(tmp_path, livekit_co
             json={
                 "request_id": "save",
                 "expected_revision": 0,
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "other-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-apollo-en"},
             },
         )
         assert saved.status_code == 200, saved.text
@@ -454,13 +384,12 @@ def test_clearing_a_saved_voice_restores_the_server_default(tmp_path, livekit_co
         response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
         assert response.status_code == 201, response.text
         body = response.json()
-        assert (body["voice"]["id"], body["voice_source"]) == ("arabic-voice", "default")
+        assert (body["voice"]["id"], body["voice_source"]) == ("aura-2-thalia-en", "default")
 
 
 def test_saved_voice_removed_from_allow_list_falls_back_to_the_default(tmp_path, livekit_control_plane):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    settings = configured_with_default(tmp_path, approved_voice_ids="arabic-voice")
-    with TestClient(create_app(settings, voice_catalog=service)) as client:
+    settings = configured_with_default(tmp_path, approved_voice_ids="aura-2-thalia-en")
+    with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
         # Simulate a saved id that was approved at save time and has since been
@@ -469,13 +398,13 @@ def test_saved_voice_removed_from_allow_list_falls_back_to_the_default(tmp_path,
             db.execute(
                 "INSERT INTO user_settings"
                 " (owner_id, speaking_speed, captions_visible, approved_voice_id, response_preference, revision, updated_at)"
-                " VALUES (?, 1.0, 1, 'other-voice', 'automatic', 1, '2026-01-01T00:00:00+00:00')",
+                " VALUES (?, 1.0, 1, 'aura-2-apollo-en', 'automatic', 1, '2026-01-01T00:00:00+00:00')",
                 (owner,),
             )
         response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
         assert response.status_code == 201, response.text
         body = response.json()
-        assert body["voice"]["id"] == "arabic-voice"
+        assert body["voice"]["id"] == "aura-2-thalia-en"
         assert body["voice_source"] == "default"
         assert body["saved_voice_unavailable"] == "removed"
         # The dead preference is cleared, so the picker cannot keep showing it.
@@ -512,84 +441,36 @@ def _saved_setting(tmp_path, owner, voice_id):
         )
 
 
-@pytest.mark.parametrize(
-    ("failure", "outcome"),
-    [
-        (lambda request: httpx.Response(500, text="upstream down"), "transient"),
-        (lambda request: httpx.Response(403, text="denied"), "transient"),
-    ],
-)
-def test_transient_saved_voice_failure_keeps_the_preference(tmp_path, livekit_control_plane, failure, outcome):
-    def handler(request):
-        if request.url.params.get("voice_ids") == "gone-voice":
-            return failure(request)
-        return catalog_transport(request)
-
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(handler))
-    settings = configured_with_default(tmp_path, approved_voice_ids="gone-voice,arabic-voice")
-    with TestClient(create_app(settings, voice_catalog=service)) as client:
-        owner = client.post("/v1/demo-session").json()["id"]
-        chat = client.post("/v1/conversations").json()["id"]
-        _saved_setting(tmp_path, owner, "gone-voice")
-        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
-        assert response.status_code == 201, response.text
-        body = response.json()
-        assert (body["voice"]["id"], body["voice_source"]) == ("arabic-voice", "default")
-        assert body["saved_voice_unavailable"] == outcome
-        # A transient failure must not delete the preference.
-        assert client.get("/v1/settings").json()["approved_voice_id"] == "gone-voice"
-
-
 def test_provider_not_configured_keeps_the_saved_preference(tmp_path, livekit_control_plane):
     class SelectiveCatalog:
         async def require(self, voice_id):
-            if voice_id == "gone-voice":
+            if voice_id == "aura-2-missing-en":
                 raise VoiceCatalogError("VOICE_PROVIDER_NOT_CONFIGURED", 503)
-            return VoiceOption(id=voice_id, name="Default voice", languages=("ar",))
+            return VoiceOption(id=voice_id, name="Default voice", languages=("en",))
 
-    settings = configured_with_default(tmp_path, approved_voice_ids="gone-voice,arabic-voice")
+    settings = configured_with_default(tmp_path, approved_voice_ids="aura-2-missing-en,aura-2-thalia-en")
     with TestClient(create_app(settings, voice_catalog=SelectiveCatalog())) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
-        _saved_setting(tmp_path, owner, "gone-voice")
+        _saved_setting(tmp_path, owner, "aura-2-missing-en")
         response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
         assert response.status_code == 201, response.text
-        assert response.json()["voice"]["id"] == "arabic-voice"
+        assert response.json()["voice"]["id"] == "aura-2-thalia-en"
         assert response.json()["saved_voice_unavailable"] == "transient"
-        assert client.get("/v1/settings").json()["approved_voice_id"] == "gone-voice"
+        assert client.get("/v1/settings").json()["approved_voice_id"] == "aura-2-missing-en"
 
 
 def test_voice_unavailable_clears_the_preference(tmp_path, livekit_control_plane):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    settings = configured_with_default(tmp_path, approved_voice_ids="gone-voice,arabic-voice")
-    with TestClient(create_app(settings, voice_catalog=service)) as client:
+    settings = configured_with_default(tmp_path, approved_voice_ids="aura-2-missing-en,aura-2-thalia-en")
+    with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
-        _saved_setting(tmp_path, owner, "gone-voice")
+        _saved_setting(tmp_path, owner, "aura-2-missing-en")
         response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
         assert response.status_code == 201, response.text
-        assert response.json()["voice"]["id"] == "arabic-voice"
+        assert response.json()["voice"]["id"] == "aura-2-thalia-en"
         assert response.json()["saved_voice_unavailable"] == "removed"
         assert client.get("/v1/settings").json()["approved_voice_id"] is None
-
-
-@pytest.mark.parametrize(
-    ("handler", "status", "code"),
-    [
-        (lambda request: httpx.Response(200, json={"voices": [], "has_more": False}), 422, "VOICE_DEFAULT_UNAVAILABLE"),
-        (lambda request: httpx.Response(500, text="upstream detail"), 503, "VOICE_CATALOG_UNAVAILABLE"),
-    ],
-)
-def test_default_failure_is_precise_and_never_creates_a_session(tmp_path, livekit_control_plane, handler, status, code):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(handler))
-    with TestClient(create_app(configured_with_default(tmp_path), voice_catalog=service)) as client:
-        client.post("/v1/demo-session")
-        chat = client.post("/v1/conversations").json()["id"]
-        response = client.post("/v1/voice/sessions", json={"conversation_id": chat})
-        assert response.status_code == status
-        assert response.json()["detail"]["code"] == code
-        assert "upstream detail" not in response.text
-        assert session_count(tmp_path) == 0
 
 
 @pytest.fixture
@@ -618,41 +499,39 @@ def livekit_control_plane(monkeypatch):
 
 
 def test_selected_voice_is_frozen_per_call_and_reaches_snapshot(tmp_path, livekit_control_plane):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+    with TestClient(create_app(configured(tmp_path))) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
 
         def start(voice):
             return client.post("/v1/voice/sessions", json={"conversation_id": chat, "voice_id": voice})
 
-        first = start("arabic-voice")
+        first = start("aura-2-thalia-en")
         assert first.status_code == 201
         session_id = first.json()["id"]
         with closing(sqlite3.connect(tmp_path / "voice.db")) as db, db:
             room, pipeline = db.execute(
                 "SELECT room_name,pipeline FROM voice_sessions WHERE id=?", (session_id,)
             ).fetchone()
-        assert json.loads(pipeline)["tts"]["voice_id"] == "arabic-voice"
-        assert start("other-voice").status_code == 429
+        assert json.loads(pipeline)["tts"]["voice_id"] == "aura-2-thalia-en"
+        assert start("aura-2-apollo-en").status_code == 429
         headers = {"x-agent-secret": "worker-secret", "x-session-id": session_id, "x-room-name": room}
         snapshot = client.post(
             "/internal/agent/turn/start", headers=headers, json={"request_id": "utterance", "text": "Hello"}
         ).json()["context"]
-        assert snapshot["pipeline_config"]["tts"]["voice_id"] == "arabic-voice"
+        assert snapshot["pipeline_config"]["tts"]["voice_id"] == "aura-2-thalia-en"
         assert client.post(f"/v1/voice/sessions/{session_id}/end").status_code == 200
-        assert start("other-voice").status_code == 201
+        assert start("aura-2-apollo-en").status_code == 201
 
 
 def test_start_voice_resolves_tier_from_preference_and_bootstrap_carries_guidance(tmp_path, livekit_control_plane):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+    with TestClient(create_app(configured(tmp_path))) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
 
         def start(**extra):
             response = client.post(
-                "/v1/voice/sessions", json={"conversation_id": chat, "voice_id": "arabic-voice", **extra}
+                "/v1/voice/sessions", json={"conversation_id": chat, "voice_id": "aura-2-thalia-en", **extra}
             )
             assert response.status_code == 201
             session = response.json()
@@ -679,27 +558,15 @@ def test_start_voice_resolves_tier_from_preference_and_bootstrap_carries_guidanc
         assert "512" not in instructions and "token" not in instructions.lower()
 
 
-def test_provider_errors_are_typed_and_do_not_leak_response(tmp_path):
-    service = ElevenLabsVoices(
-        "tts-test", transport=httpx.MockTransport(lambda request: httpx.Response(403, text="sensitive upstream detail"))
-    )
-    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
-        client.post("/v1/demo-session")
-        response = client.get("/v1/voices")
-        assert response.status_code == 503
-        assert response.json() == {"detail": {"code": "VOICE_CATALOG_ACCESS_DENIED"}}
-
-
 def test_legacy_bootstrap_and_snapshot_share_effective_configuration(tmp_path, livekit_control_plane):
-    service = ElevenLabsVoices("tts-test", transport=httpx.MockTransport(catalog_transport))
-    with TestClient(create_app(configured(tmp_path), voice_catalog=service)) as client:
+    with TestClient(create_app(configured(tmp_path))) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
         session = client.post(
             "/v1/voice/sessions",
             json={
                 "conversation_id": chat,
-                "voice_id": "arabic-voice",
+                "voice_id": "aura-2-thalia-en",
                 "response_tier": 5,
                 "response_preference": "brief",
             },
@@ -743,7 +610,7 @@ def test_committed_settings_receipt_replays_during_catalog_outage(tmp_path):
         body = {
             "request_id": "committed-before-outage",
             "expected_revision": 0,
-            "action": {"kind": "SelectApprovedVoice", "voice_id": "other-voice"},
+            "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-apollo-en"},
         }
         first = client.post("/v1/settings/actions", json=body)
         assert first.status_code == 200, first.text
@@ -757,8 +624,34 @@ def test_committed_settings_receipt_replays_during_catalog_outage(tmp_path):
             json={
                 "request_id": "new-during-outage",
                 "expected_revision": 1,
-                "action": {"kind": "SelectApprovedVoice", "voice_id": "arabic-voice"},
+                "action": {"kind": "SelectApprovedVoice", "voice_id": "aura-2-thalia-en"},
             },
         )
         assert unseen.status_code == 503
         assert unseen.json()["detail"]["code"] == "VOICE_CATALOG_UNAVAILABLE"
+
+
+def test_a_configured_arabic_default_language_never_reaches_the_stored_pipeline(tmp_path, livekit_control_plane):
+    """Aura-2 is English only: DEFAULT_VOICE_LANGUAGE=ar must not admit a session the worker refuses to build."""
+    from app.config import Settings
+    from app.main import create_app
+    from fastapi.testclient import TestClient
+
+    settings = Settings(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'ar.db'}",
+        deepgram_api_key="test-deepgram",
+        deepseek_api_key="test-deepseek",
+        openai_api_key="test-openai",
+        default_voice_language="ar",
+        livekit_url="https://fake.livekit",
+        livekit_api_key="key" * 8,
+        livekit_api_secret="secret" * 8,
+        agent_service_secret="agent-secret-value",
+        _env_file=None,
+    )
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201, response.text
+        assert response.json()["voice_language"] == "en"

@@ -1,31 +1,28 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from app.domain.budget import (
     DEEPGRAM_DAILY_CHARACTERS,
     DEEPSEEK_DAILY_MICRO_USD,
     DEEPSEEK_REQUEST_MICRO_USD,
-    ELEVENLABS_DAILY_CHARACTERS,
     JEV_DAILY_REQUESTS,
     OPENAI_DAILY_MICRO_USD,
     OPENAI_REQUEST_MICRO_USD,
     budget_day,
 )
 from app.infrastructure.database import DevelopmentBudget
-from app.infrastructure.upsert import insert_ignore
+from app.infrastructure.upsert import insert_or_increment
 
 REQUEST_UNITS = {"openai": OPENAI_REQUEST_MICRO_USD, "deepseek": DEEPSEEK_REQUEST_MICRO_USD, "jev": 1}
 DAILY_LIMITS = {
     "openai": OPENAI_DAILY_MICRO_USD,
     "deepseek": DEEPSEEK_DAILY_MICRO_USD,
-    "elevenlabs": ELEVENLABS_DAILY_CHARACTERS,
     "deepgram_tts": DEEPGRAM_DAILY_CHARACTERS,
     "jev": JEV_DAILY_REQUESTS,
 }
-CHARACTER_PROVIDERS = frozenset({"elevenlabs", "deepgram_tts"})
-UNIT_LABELS = {"elevenlabs": "characters", "deepgram_tts": "characters", "jev": "requests"}
+CHARACTER_PROVIDERS = frozenset({"deepgram_tts"})
+UNIT_LABELS = {"deepgram_tts": "characters", "jev": "requests"}
 
 
 async def reserve_in_transaction(
@@ -46,23 +43,17 @@ async def reserve_in_transaction(
     if units <= 0 or units > limit:
         raise ValueError("DAILY_BUDGET_EXHAUSTED")
     day = budget_day(now or datetime.now(UTC))
-    await insert_ignore(db, DevelopmentBudget, {"day": day, "provider": provider, "reserved_units": 0})
-    changed = await db.execute(
-        update(DevelopmentBudget)
-        .where(
-            DevelopmentBudget.day == day,
-            DevelopmentBudget.provider == provider,
-            DevelopmentBudget.reserved_units <= limit - units,
-        )
-        .values(reserved_units=DevelopmentBudget.reserved_units + units)
+    total = await insert_or_increment(
+        db,
+        DevelopmentBudget,
+        {"day": day, "provider": provider, "reserved_units": units},
+        index_elements=["day", "provider"],
+        column="reserved_units",
+        amount=units,
+        limit=limit,
     )
-    if changed.rowcount != 1:
+    if total is None:
         raise ValueError("DAILY_BUDGET_EXHAUSTED")
-    total = await db.scalar(
-        select(DevelopmentBudget.reserved_units).where(
-            DevelopmentBudget.day == day, DevelopmentBudget.provider == provider
-        )
-    )
     return {
         "day": day,
         "provider": provider,

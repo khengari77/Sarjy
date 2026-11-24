@@ -11,10 +11,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
-# Measured on the same fixture: the pre-#224 path issued 12 statements and the
-# three collapses in this change leave 9.
+# Measured on the same fixture: the pre-#224 path issued 12 statements, the
+# three #224 collapses left 9, the blocked-memory collapse left 8, folding the
+# session guard and retractions into reads that already run left 6, and the
+# one-statement turn-start read leaves 3 (lock, combined read, insert).
 STATEMENTS_BEFORE = 12
-STATEMENTS_AFTER = 8
+STATEMENTS_AFTER = 3
 START = "/internal/agent/turn/start"
 
 
@@ -99,7 +101,7 @@ def start_turn(client, headers):
     return response.json()["context"]
 
 
-def test_turn_start_uses_three_fewer_statements(tmp_path):
+def test_turn_start_statement_budget(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         client.post("/v1/demo-session")
@@ -110,6 +112,13 @@ def test_turn_start_uses_three_fewer_statements(tmp_path):
         after = len(statements)
         assert after == STATEMENTS_AFTER
         assert after <= STATEMENTS_BEFORE - 3
+        # The session row rides the locked conversation read and the retraction
+        # blocks come from the blocked-memory read, so neither read is repeated.
+        session_reads = [statement for statement in statements if "voice_sessions" in statement]
+        assert len(session_reads) == 1
+        assert "JOIN voice_sessions" in session_reads[0]
+        assert "LEFT OUTER JOIN turns" in session_reads[0]
+        assert not [statement for statement in statements if "memories.source_conversation_id = ?" in statement]
 
 
 def test_window_and_tool_reads_do_not_select_the_snapshot_column(tmp_path):
@@ -120,10 +129,113 @@ def test_window_and_tool_reads_do_not_select_the_snapshot_column(tmp_path):
         headers = seed(file, chat)
         with capture_statements() as statements:
             start_turn(client, headers)
-        window = [statement for statement in statements if "SELECT turns.id, turns.conversation_id" in statement]
-        tools = [statement for statement in statements if "FROM tool_calls JOIN turns" in statement]
-        assert window and tools
-        assert all("snapshot" not in statement for statement in window + tools)
+        combined = [statement for statement in statements if "UNION ALL" in statement]
+        assert len(combined) == 1
+        statement = combined[0]
+        # The tool join and the recent-turns window are parts of this one read.
+        assert "FROM tool_calls JOIN turns" in statement
+        assert "FROM turns" in statement
+        assert "snapshot" not in statement
+        assert "memories.embedding AS" not in statement
+
+
+def test_combined_read_matches_the_four_individual_reads(tmp_path):
+    import asyncio
+
+    from app.infrastructure.database import ToolCall, Turn
+    from app.services.context_assembly import (
+        HISTORY_LIMIT,
+        HISTORY_WINDOW_MULTIPLIER,
+        TOOL_RESULT_LIMIT,
+        _combined_context_rows,
+        _memory_candidates_from_rows,
+        _recent_turns,
+        orm_memory_candidates,
+    )
+    from app.services.memory_eligibility import blocked_memory_rows
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.orm import load_only
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        seed(file, chat)
+    with closing(sqlite3.connect(file)) as db, db:
+        owner = db.execute("SELECT owner_id FROM conversations WHERE id=?", (chat,)).fetchone()[0]
+        db.execute(
+            "INSERT INTO memories (id,owner_id,content,embedding_model,source_turn_id,source_conversation_id,"
+            "version,status,created_at,updated_at) VALUES (?,?,?, 'text-embedding-3-small', ?, ?, 1, 'hidden', ?, ?)",
+            (
+                "mem-hidden",
+                owner,
+                "a hidden fact",
+                "old-4",
+                chat,
+                "2026-01-01T00:00:09+00:00",
+                "2026-01-01T00:00:09+00:00",
+            ),
+        )
+        for tool_id, turn_id in (("tool-a", "old-2"), ("tool-b", "old-4")):
+            db.execute(
+                "INSERT INTO tool_calls (id,turn_id,request_id,name,state,result) VALUES (?,?,?,?,?,?)",
+                (tool_id, turn_id, f"req-{tool_id}", "get_current_weather", "completed", json.dumps({"ok": tool_id})),
+            )
+        db.commit()
+
+    async def compare():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{file}")
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as db:
+                reference_blocked = await blocked_memory_rows(db, owner, chat)
+                reference_memories = await orm_memory_candidates(db, owner_id=owner, conversation_id=chat)
+                reference_tools = (
+                    await db.execute(
+                        select(ToolCall, Turn)
+                        .join(Turn, ToolCall.turn_id == Turn.id)
+                        .options(
+                            load_only(
+                                Turn.id,
+                                Turn.conversation_id,
+                                Turn.request_id,
+                                Turn.role,
+                                Turn.text,
+                                Turn.status,
+                                Turn.created_at,
+                            )
+                        )
+                        .where(
+                            Turn.conversation_id == chat,
+                            Turn.status == "completed",
+                            ToolCall.state == "completed",
+                        )
+                        .order_by(Turn.created_at.desc(), ToolCall.id)
+                        .limit(TOOL_RESULT_LIMIT)
+                    )
+                ).all()
+                reference_window = await _recent_turns(db, chat, limit=HISTORY_LIMIT * HISTORY_WINDOW_MULTIPLIER)
+                combined = await _combined_context_rows(
+                    db, owner_id=owner, conversation_id=chat, history_limit=HISTORY_LIMIT
+                )
+        finally:
+            await engine.dispose()
+        return reference_blocked, reference_memories, reference_tools, reference_window, combined
+
+    reference_blocked, reference_memories, reference_tools, reference_window, combined = asyncio.run(compare())
+    combined_blocked, combined_active, combined_tools, combined_window = combined
+    combined_memories = _memory_candidates_from_rows(combined_blocked, combined_active, conversation_id=chat)
+
+    assert sorted(row.id for row in combined_blocked) == sorted(row.id for row in reference_blocked)
+    assert [row.id for row in combined_active] == list(reference_memories.rows)
+    assert combined_memories.included == reference_memories.included
+    assert combined_memories.denied == reference_memories.denied
+    assert combined_memories.blocked_sources == reference_memories.blocked_sources
+    assert combined_memories.retractions == reference_memories.retractions
+    assert [call.id for call, _ in combined_tools] == [call.id for call, _ in reference_tools]
+    assert [call.result for call, _ in combined_tools] == [call.result for call, _ in reference_tools]
+    assert [turn.id for turn in combined_window] == [turn.id for turn in reference_window]
 
 
 def test_excluded_memory_is_absent_from_request_memories_and_messages(tmp_path):

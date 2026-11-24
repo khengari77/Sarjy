@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Final
+from collections import OrderedDict
+from typing import Final, Literal
 
 import httpx
 from sqlalchemy import select, update
@@ -34,6 +35,15 @@ OPENAI_TITLE_URL: Final = "https://api.openai.com/v1/chat/completions"
 MAX_SOURCE_CHARS: Final = 600
 MAX_TITLE_CHARS: Final = 60
 TITLE_TIMEOUT_SECONDS: Final = 4.0
+MAX_TRACKED_CONVERSATIONS: Final = 1000
+MAX_FAILED_ATTEMPTS: Final = 2
+_SETTLED: Final = -1
+
+# Per-process memory, bounded: conversation id -> failed attempts so far, or _SETTLED once titled or renamed.
+# A failed attempt costs a budget reservation and a provider call, so each conversation gets a few tries
+# rather than one per turn. _IN_FLIGHT makes the claim before any await, so concurrent finalizes cannot both go.
+_STATE: Final[OrderedDict[str, int]] = OrderedDict()
+_IN_FLIGHT: Final[set[str]] = set()
 
 _MARKDOWN = re.compile(r"[*_#~`]+")
 _EDGE_QUOTES = "\"'“”‘’`«»"
@@ -45,6 +55,19 @@ _SYSTEM_PROMPT = (
     "Write a conversation title of 3 to 6 words in {language}. "
     "Return only the title, without quotes, markdown or a trailing period."
 )
+
+
+def _remember(conversation_id: str, value: int) -> None:
+    _STATE[conversation_id] = value
+    _STATE.move_to_end(conversation_id)
+    while len(_STATE) > MAX_TRACKED_CONVERSATIONS:
+        _STATE.popitem(last=False)
+
+
+def _record_failure(conversation_id: str) -> None:
+    failures = _STATE.get(conversation_id, 0)
+    if failures != _SETTLED:
+        _remember(conversation_id, failures + 1)
 
 
 def _language_for(user_text: str) -> str:
@@ -107,8 +130,8 @@ async def fetch_title(
     timeout: float = TITLE_TIMEOUT_SECONDS,
 ) -> str | None:
     """Ask the configured provider once; any failure is an ordinary ``None``."""
-    if not api_key.strip():
-        return None
+    if not api_key.strip() or provider not in {OPENAI_PROVIDER, DEEPSEEK_PROVIDER}:
+        return None  # never send a key to a provider it does not belong to
     messages = build_title_messages(user_text, assistant_text)
     if provider == OPENAI_PROVIDER:
         url = OPENAI_TITLE_URL
@@ -126,6 +149,7 @@ async def fetch_title(
             "messages": messages,
             "temperature": 0,
             "max_tokens": 24,
+            "thinking": {"type": "disabled"},
             "stream": False,
         }
     try:
@@ -152,13 +176,17 @@ async def _first_turn(db: AsyncSession, conversation_id: str, role: str) -> Turn
     )
 
 
-async def _title_sources(sessions: async_sessionmaker[AsyncSession], conversation_id: str) -> tuple[str, str] | None:
-    """The first exchange's text, or ``None`` when it is not ready or not ours."""
+async def _title_sources(
+    sessions: async_sessionmaker[AsyncSession], conversation_id: str
+) -> tuple[str, str] | Literal[False] | None:
+    """The first exchange's text; ``None`` when it is not ready yet; ``False`` when the title is settled."""
     async with sessions() as db:
         conversation = await db.get(Conversation, conversation_id)
         # A user rename is authoritative forever: no provider call, no write.
-        if conversation is None or conversation.title != SENTINEL_TITLE:
+        if conversation is None:
             return None
+        if conversation.title != SENTINEL_TITLE:
+            return False
         user_turn = await _first_turn(db, conversation_id, "user")
         assistant_turn = await _first_turn(db, conversation_id, "assistant")
         if user_turn is None or assistant_turn is None:
@@ -166,7 +194,7 @@ async def _title_sources(sessions: async_sessionmaker[AsyncSession], conversatio
         return user_turn.text, assistant_turn.text
 
 
-async def generate_conversation_title(
+async def _generate_title(
     sessions: async_sessionmaker[AsyncSession],
     conversation_id: str,
     *,
@@ -185,6 +213,9 @@ async def generate_conversation_title(
         sources = await _title_sources(sessions, conversation_id)
         if sources is None:
             return None
+        if sources is False:  # titled or renamed: no later turn needs to read the database for it again
+            _remember(conversation_id, _SETTLED)
+            return None
 
         async def request() -> str | None:
             return await fetch_title(
@@ -201,6 +232,7 @@ async def generate_conversation_title(
             try:
                 title = await guarded_openai_request(sessions, request)
             except ValueError:
+                _record_failure(conversation_id)
                 return None
         else:
             if reserve_budget:
@@ -208,9 +240,11 @@ async def generate_conversation_title(
                     async with sessions() as db:
                         await reserve(db, "deepseek", units=budget_units, limit=budget_limit)
                 except ValueError:
+                    _record_failure(conversation_id)
                     return None
             title = await request()
         if title is None:
+            _record_failure(conversation_id)
             return None
         # No connection is held across the provider call; the sentinel predicate
         # is the final authority against a rename that landed meanwhile.
@@ -221,6 +255,28 @@ async def generate_conversation_title(
                 .values(title=title)
             )
             await db.commit()
-            return title if changed.rowcount == 1 else None
+            if changed.rowcount == 1:
+                _remember(conversation_id, _SETTLED)
+                return title
+            return None
     except Exception:  # noqa: BLE001 - fire-and-forget boundary must never escape
+        _record_failure(conversation_id)
         return None
+
+
+async def generate_conversation_title(
+    sessions: async_sessionmaker[AsyncSession], conversation_id: str, **options
+) -> str | None:
+    """Generate and store one title, never raising at the background boundary.
+
+    Settled conversations, ones that failed ``MAX_FAILED_ATTEMPTS`` times and ones already being
+    generated return before any database, budget or network work.
+    """
+    state = _STATE.get(conversation_id, 0)
+    if state == _SETTLED or state >= MAX_FAILED_ATTEMPTS or conversation_id in _IN_FLIGHT:
+        return None
+    _IN_FLIGHT.add(conversation_id)
+    try:
+        return await _generate_title(sessions, conversation_id, **options)
+    finally:
+        _IN_FLIGHT.discard(conversation_id)

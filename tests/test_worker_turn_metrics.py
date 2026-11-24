@@ -91,16 +91,23 @@ def test_turn_metrics_round_trip_new_measurement_stages(worker):
     stages = {
         "turn_start_server_ms": 5,
         "turn_start_db_ms": 1,
+        "api_connect_ms": 3,
+        "api_headers_ms": 4,
+        "api_body_ms": 5,
         "command_server_ms": 6,
         "command_db_ms": 2,
+        "command_api_headers_ms": 7,
         "model_first_chunk_ms": 7,
-        "release_wait_ms": 8,
+        "release_wait_ms": 9,
         "prompt_cache_hit_tokens": 1024,
         "prompt_cache_miss_tokens": 2048,
+        "prompt_cache_hit_tokens_2": 512,
+        "prompt_cache_miss_tokens_2": 256,
         "request_bytes": 4096,
         "provider_connect_ms": 9,
         "provider_headers_ms": 10,
         "loop_lag_ms": 11,
+        "predicted_prefix_hit_pct": 73,
     }
     response = client.post(METRICS_PATH, headers=headers, json={"turn_id": turn_id, "stages": stages})
     assert response.status_code == 200

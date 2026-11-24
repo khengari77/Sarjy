@@ -41,7 +41,7 @@ class SpeechBudget:
         # requests rather than one per streamed piece. It never grows within a call.
         self._block = BLOCK
 
-    async def take(self, wanted: int) -> int:
+    async def take(self, wanted: int, *, report: bool = True) -> int:
         """Spend between one and ``wanted`` granted characters, waiting only when none are left."""
         if wanted < 1:
             raise ValueError("SPEECH_CHARACTERS_REQUIRED")
@@ -59,7 +59,7 @@ class SpeechBudget:
             if _exhausted(error) and self._refused > needed:
                 continue
             # Only text that was really needed reports a failure to the user.
-            if isinstance(error, httpx.HTTPStatusError):
+            if report and isinstance(error, httpx.HTTPStatusError):
                 await self._report(error)
             raise error
         spent = min(wanted, self._available)

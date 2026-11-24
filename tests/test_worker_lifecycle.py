@@ -43,6 +43,10 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
         def __init__(self, **kwargs):
             pass
 
+        def on(self, event, callback=None):
+            assert event in {"user_state_changed", "user_input_transcribed"}
+            return callback
+
         async def start(self, agent, **kwargs):
             rpc_events = [index for index, event in enumerate(events) if event.startswith("rpc:")]
             assert rpc_events and events.index("connected") < min(rpc_events)
@@ -65,7 +69,7 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
 
     original = httpx.AsyncClient
     monkeypatch.setattr(
-        worker.httpx, "AsyncClient", lambda **kwargs: original(**kwargs, transport=httpx.MockTransport(upstream))
+        worker.httpx, "AsyncClient", lambda **kwargs: original(**{**kwargs, "transport": httpx.MockTransport(upstream)})
     )
     monkeypatch.setattr(worker, "AgentSession", Session)
     monkeypatch.setattr(worker, "build_providers", lambda config, credentials: {})
@@ -77,7 +81,6 @@ def test_worker_connects_before_registering_rpc_and_closes_session(monkeypatch):
             "API_INTERNAL_URL": "http://test",
             "AGENT_SERVICE_SECRET": "test-secret",
             "DEEPGRAM_API_KEY": "test",
-            "ELEVEN_API_KEY": "test",
             "OPENAI_API_KEY": "test",
         },
     )

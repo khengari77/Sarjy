@@ -752,6 +752,23 @@ def test_worker_replies_after_a_successful_replacement(monkeypatch):
     asyncio.run(run())
 
 
+def test_memory_note_is_a_new_trailing_system_message_and_keeps_the_cached_prefix():
+    from generation import _build_context
+    from main import _with_memory_note
+    from test_generation import request
+
+    written = request()
+    noted = _with_memory_note(written, "The memory save succeeded.")
+
+    assert noted.instructions == written.instructions
+    assert noted.messages[: len(written.messages)] == written.messages
+    assert noted.messages[0].content == written.messages[0].content
+    assert noted.messages[-1].role == "system"
+    assert noted.messages[-1].content == "The memory save succeeded."
+    seen = [item.text_content for item in _build_context(noted).items]
+    assert seen[-1] == "The memory save succeeded."
+
+
 def test_explicit_remember_accepts_non_first_person_content(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:

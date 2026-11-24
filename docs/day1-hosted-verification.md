@@ -24,7 +24,7 @@ A zero-inference hosted lifecycle check created a session in 8.120 seconds. End 
 
 Synthetic typed input, using real hosted generation/TTS: 'Ready to help' completed and played audio; a short Tripoli, Libya weather question produced a stored Open-Meteo result and audible response. This establishes typed-input speech, not human microphone or listening quality.
 
-Before operations: OpenAI reservations $0.14; ElevenLabs 92 characters. Migration/reconciliation/zero-inference lifecycle left these unchanged. After the typed smoke: OpenAI $0.20; ElevenLabs 129 characters. The smoke reserved $0.06 and 37 additional characters. Reservations are conservative guards, not vendor invoices. No counters were reset or refunded.
+Before operations: OpenAI reservations $0.14; TTS 92 characters. Migration/reconciliation/zero-inference lifecycle left these unchanged. After the typed smoke: OpenAI $0.20; TTS 129 characters. The smoke reserved $0.06 and 37 additional characters. Reservations are conservative guards, not vendor invoices. No counters were reset or refunded.
 
 ## Remaining gates
 

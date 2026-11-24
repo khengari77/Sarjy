@@ -4,22 +4,18 @@ from typing import Any
 
 import httpx
 import openai as openai_sdk
-from livekit.plugins import deepgram, elevenlabs, openai
-from stream_completion import KEEPALIVE_LIMITS, ObservedTransport
+from app.domain.deepgram_voices import DEFAULT_DEEPGRAM_VOICE_ID, deepgram_voice
+from livekit.plugins import deepgram, openai
+from stream_completion import KEEPALIVE_LIMITS, HttpWarmup, ObservedTransport
 
-# ElevenLabs exposes pace as a voice setting, not a synthesis parameter. The
-# installed plugin (livekit-plugins-elevenlabs 1.8.11, VoiceSettings.speed)
-# documents the interval as [0.8 - 1.2]; anything outside it is rejected by the
-# provider. Keep this worker-side clamp independent of the stored settings so a
-# stale or tampered snapshot can never send an unsupported value.
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+
+# The contract interval is [0.8 - 1.2]; Deepgram accepts a subset of its own
+# [0.7 - 1.5] range. Keep this worker-side clamp independent of the stored
+# settings so a stale or tampered snapshot can never send an unsupported value.
 SPEAKING_SPEED_MIN = 0.8
 SPEAKING_SPEED_MAX = 1.2
 SPEAKING_SPEED_DEFAULT = 1.0
-# ElevenLabs' documented defaults for the two required voice settings. They are
-# materialised whenever this worker sets pace, so the default character of the
-# voice is unchanged for a voice that had no explicit settings.
-VOICE_STABILITY_DEFAULT = 0.5
-VOICE_SIMILARITY_BOOST_DEFAULT = 0.75
 
 
 class OwnedClientMixin:
@@ -42,40 +38,6 @@ def clamp_speaking_speed(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return SPEAKING_SPEED_DEFAULT
     return min(max(float(value), SPEAKING_SPEED_MIN), SPEAKING_SPEED_MAX)
-
-
-class SpeakingSpeedController:
-    """Apply pace to ElevenLabs without reading the plugin's private options.
-
-    The plugin exposes no public accessor for current voice settings, and its
-    private option shape may change on upgrade. This controller therefore owns
-    the last value it applied and treats a different TTS instance as
-    unconfigured. It calls ``update_options`` only when a write is needed,
-    because that invalidates the live TTS connection.
-    """
-
-    def __init__(self) -> None:
-        self._tts: Any = None
-        self._applied: float | None = None
-
-    def apply(self, tts: Any, value: object) -> float:
-        """Apply the clamped speed and return it; repeated calls are no-ops."""
-        speed = clamp_speaking_speed(value)
-        if tts is self._tts and speed == self._applied:
-            return speed
-        # An untouched provider already speaks at 1.0; do not reconnect for it.
-        if speed == SPEAKING_SPEED_DEFAULT and (tts is not self._tts or self._applied is None):
-            self._tts, self._applied = tts, speed
-            return speed
-        tts.update_options(
-            voice_settings=elevenlabs.VoiceSettings(
-                stability=VOICE_STABILITY_DEFAULT,
-                similarity_boost=VOICE_SIMILARITY_BOOST_DEFAULT,
-                speed=speed,
-            )
-        )
-        self._tts, self._applied = tts, speed
-        return speed
 
 
 class DeepgramSpeedController:
@@ -110,35 +72,29 @@ class DeepgramSpeedController:
         return speed
 
 
-def speed_controller_for(pipeline: dict) -> Any:
-    tts = pipeline.get("tts") or {}
-    if tts.get("provider") == "deepgram_direct":
-        return DeepgramSpeedController(tts.get("voice_id") or "")
-    return SpeakingSpeedController()
+def speed_controller_for(pipeline: dict) -> DeepgramSpeedController:
+    return DeepgramSpeedController((pipeline.get("tts") or {}).get("voice_id") or "")
 
 
 def tts_budget_provider(pipeline: dict) -> str:
-    """Shared-ledger key for the session's TTS provider."""
-    return "deepgram_tts" if (pipeline.get("tts") or {}).get("provider") == "deepgram_direct" else "elevenlabs"
+    """Shared-ledger key for TTS; Deepgram Aura-2 is the only provider."""
+    return "deepgram_tts"
 
 
 def build_tts(config: dict, credentials: dict[str, str]):
     choice = config["tts"]
-    if choice.get("provider") == "deepgram_direct":
-        if choice["language"] != "en":
-            raise ValueError("TTS_LANGUAGE_UNSUPPORTED")
-        return deepgram.TTS(
-            model=choice["voice_id"],
-            encoding="linear16",
-            sample_rate=24000,
-            api_key=credentials["DEEPGRAM_API_KEY"],
-        )
-    return elevenlabs.TTS(
-        model=choice["model"],
-        voice_id=choice["voice_id"],
-        language=choice["language"],
-        api_key=credentials["ELEVEN_API_KEY"],
-        enable_logging=False,
+    voice_id = choice.get("voice_id")
+    if choice.get("provider") != "deepgram_direct" or deepgram_voice(voice_id) is None:
+        # An unknown or previously saved ElevenLabs provider/voice falls back
+        # rather than sending an unsupported model string to Deepgram.
+        voice_id = DEFAULT_DEEPGRAM_VOICE_ID
+    if choice.get("language", "en") != "en":
+        raise ValueError("TTS_LANGUAGE_UNSUPPORTED")
+    return deepgram.TTS(
+        model=voice_id,
+        encoding="linear16",
+        sample_rate=24000,
+        api_key=credentials["DEEPGRAM_API_KEY"],
     )
 
 
@@ -164,24 +120,33 @@ def build_llm(config: dict, credentials: dict[str, str], *, client=None):
             prompt_cache_breakpoints=False,
         )
     elif choice["provider"] == "deepseek_direct" and choice["model"] == "deepseek-flash":
-        owns_client = client is None
-        sdk_client = client or openai_sdk.AsyncOpenAI(
-            api_key=credentials["DEEPSEEK_API_KEY"],
-            base_url="https://api.deepseek.com/v1",
-            max_retries=0,
-            http_client=httpx.AsyncClient(
+        http_client = None
+        if client is None:
+            http_client = httpx.AsyncClient(
                 transport=ObservedTransport(httpx.AsyncHTTPTransport(retries=0, limits=KEEPALIVE_LIMITS))
-            ),
-        )
+            )
+            sdk_client = openai_sdk.AsyncOpenAI(
+                api_key=credentials["DEEPSEEK_API_KEY"],
+                base_url=DEEPSEEK_BASE_URL,
+                max_retries=0,
+                http_client=http_client,
+            )
+        else:
+            sdk_client = client
         llm = OwnedDeepSeekLLM(
-            owns_client=owns_client,
+            owns_client=client is None,
             model=choice["model"],
             api_key=credentials["DEEPSEEK_API_KEY"],
-            base_url="https://api.deepseek.com/v1",
+            base_url=DEEPSEEK_BASE_URL,
             client=sdk_client,
             max_retries=0,
             extra_body={"thinking": {"type": "disabled"}},
         )
+        if http_client is not None:
+            # Same pool the SDK uses for completions, so this connection is the one the turn reuses.
+            llm.warm_connection = HttpWarmup(
+                http_client, f"{DEEPSEEK_BASE_URL}/models", credentials["DEEPSEEK_API_KEY"]
+            )
     else:
         raise ValueError("Unsupported LLM configuration")
     return llm

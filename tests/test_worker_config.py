@@ -1,7 +1,15 @@
 import os
 
 import pytest
-from config import provider_credentials, read_worker_environment, require_values
+from config import first_event_seconds, provider_credentials, read_worker_environment, require_values
+
+
+def test_first_event_seconds_defaults_and_validates():
+    assert first_event_seconds({}) == 2.5
+    assert first_event_seconds({"GENERATION_FIRST_EVENT_SECONDS": "1.25"}) == 1.25
+    for bad in ("0.4", "31", "not-a-number"):
+        with pytest.raises(ValueError, match="GENERATION_FIRST_EVENT_SECONDS"):
+            first_event_seconds({"GENERATION_FIRST_EVENT_SECONDS": bad})
 
 
 def test_cli_imported_job_gets_file_credentials_without_mutating_environment(tmp_path):
@@ -32,7 +40,6 @@ def test_injected_environment_takes_precedence_and_missing_values_fail_closed(tm
 def test_deepseek_primary_keeps_optional_openai_fallback_key():
     values = {
         "DEEPGRAM_API_KEY": "deepgram",
-        "ELEVEN_API_KEY": "eleven",
         "DEEPSEEK_API_KEY": "deepseek",
         "OPENAI_API_KEY": "openai",
     }
@@ -44,7 +51,6 @@ def test_deepseek_primary_keeps_optional_openai_fallback_key():
 def test_deepseek_primary_without_openai_key_remains_primary_only():
     values = {
         "DEEPGRAM_API_KEY": "deepgram",
-        "ELEVEN_API_KEY": "eleven",
         "DEEPSEEK_API_KEY": "deepseek",
     }
     credentials = provider_credentials(values, "deepseek_direct")
@@ -54,7 +60,6 @@ def test_deepseek_primary_without_openai_key_remains_primary_only():
 def test_openai_primary_does_not_require_deepseek_or_build_fallback_credentials():
     values = {
         "DEEPGRAM_API_KEY": "deepgram",
-        "ELEVEN_API_KEY": "eleven",
         "OPENAI_API_KEY": "openai",
     }
     credentials = provider_credentials(values, "openai_direct")

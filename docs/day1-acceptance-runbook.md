@@ -33,8 +33,8 @@ heard live. D1.7 and D1.8 are recorded only from the results of this run.
   session with capture off, so the control reads **Enable microphone** until it is pressed. Do not add an
   extra enable step after a successful **Start call**.
 
-Expected provider spend for one full pass: roughly 10–20 LLM requests and a few hundred ElevenLabs
-characters, subject to the existing `$1/day` and `500 characters/day` guards. If a
+Expected provider spend for one full pass: roughly 10–20 LLM requests and a few hundred Deepgram
+characters, subject to the existing `$1/day` and `50,000 characters/day` guards. If a
 `DAILY_BUDGET_EXHAUSTED` or `BUDGET_SERVICE_UNAVAILABLE` error appears, stop and record the stopping
 point; do not reset or refund the ledger.
 

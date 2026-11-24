@@ -80,14 +80,13 @@ Turn on `REVIEWER_ACCESS_ENABLED=true` for both processes first.
 - **Voice protection is one shared guard, by decision.** There is no per-invitation voice allowance
   (the migration-0015 design in issue #151 was dropped, and the stored `max_calls` value is no longer
   enforced since #208). All reviewers share the deployment's daily text-to-speech guard
-  (`DEEPGRAM_DAILY_CHARACTERS`, default 50,000 characters, roughly 50 minutes of audio;
-  `ELEVENLABS_DAILY_CHARACTERS` if `TTS_PROVIDER=elevenlabs`), so one heavy reviewer can use up the day for
-  the others. There is no per-link call ceiling: a leaked link admits up to its identity cap until it
+  (`DEEPGRAM_DAILY_CHARACTERS`, default 50,000 characters, roughly 50 minutes of audio), so one heavy
+  reviewer can use up the day for the others. There is no per-link call ceiling: a leaked link admits up to its identity cap until it
   expires (72 hours unless `--expires-at` says otherwise), bounded only by the two-concurrent-session cap and
   the provider spend guards. **Revoke the invitation to stop one link.** The other per-link limit is identities per
   invitation; the shared daily OpenAI spend ceiling also applies. Raise the TTS guard through the setting
   if the day runs out.
-- **Hosted state: verified 2026-11-15.** Release `9148a60` is deployed (API, web and worker), migration `0014_reviewer_access` is applied on hosted Supabase after a real-data rehearsal on a disposable PostgreSQL 17 + pgvector copy, and `REVIEWER_ACCESS_ENABLED=true` is set on both the API and the web app. `/review` answers without the shared token, an invitation exchange returned `200` with a reviewer identity valid to seven days, and owner-scoped reads (`/api/v1/settings`, `/api/v1/conversations`) succeeded with the reviewer cookie. Voice now uses Deepgram by default (`TTS_PROVIDER` unset), so the ElevenLabs credit exhaustion no longer blocks replies.
+- **Hosted state: verified 2026-11-15.** Release `9148a60` is deployed (API, web and worker), migration `0014_reviewer_access` is applied on hosted Supabase after a real-data rehearsal on a disposable PostgreSQL 17 + pgvector copy, and `REVIEWER_ACCESS_ENABLED=true` is set on both the API and the web app. `/review` answers without the shared token, an invitation exchange returned `200` with a reviewer identity valid to seven days, and owner-scoped reads (`/api/v1/settings`, `/api/v1/conversations`) succeeded with the reviewer cookie. Voice uses Deepgram as its only text-to-speech provider.
 - **Recovery:** revoke the affected invitation, or set `REVIEWER_ACCESS_ENABLED=false` to fall back to the
   shared-token door. Rotating the shared token or setting `REVIEW_ACCESS_EXPIRES_AT` in the past
   ends shared-token access.

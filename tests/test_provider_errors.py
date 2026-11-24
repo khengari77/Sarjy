@@ -8,40 +8,14 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from app.services import weather
-from app.services.voices import ElevenLabsVoices, VoiceCatalogError
 from sqlalchemy.exc import OperationalError
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        None,
-        [],
-        {"voices": None},
-        {"voices": [], "has_more": "yes"},
-        {"voices": [], "next_page_token": 5},
-        {"voices": [], "has_more": True},
-        {"voices": [], "has_more": True, "next_page_token": None},
-        {"voices": [], "has_more": True, "next_page_token": ""},
-        {"voices": [{"voice_id": 1, "name": "n"}]},
-        {"voices": [{"voice_id": "v", "name": "n", "verified_languages": {}}]},
-        {"voices": [{"voice_id": "v", "name": "n", "labels": []}]},
-        {"voices": [None]},
-        {"voices": [{"voice_id": "v", "name": "n", "labels": "PRIVATE"}]},
-        {"voices": [{"voice_id": "v", "name": "n", "verified_languages": [None]}]},
-    ],
-)
-def test_malformed_catalog_is_typed(payload):
-    async def run():
-        service = ElevenLabsVoices(
-            "PRIVATE", transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
-        )
-        with pytest.raises(VoiceCatalogError) as caught:
-            await service.list()
-        assert caught.value.code == "VOICE_CATALOG_UNAVAILABLE"
-        assert "PRIVATE" not in str(caught.value)
-
-    asyncio.run(run())
+@pytest.fixture(autouse=True)
+def _weather_cache_is_isolated():
+    weather.clear_weather_cache()
+    yield
+    weather.clear_weather_cache()
 
 
 @pytest.mark.parametrize(
@@ -202,6 +176,56 @@ def test_valid_weather_and_empty_search_keep_existing_semantics(monkeypatch):
     assert result["city"] == "Tripoli"
     with pytest.raises(weather.WeatherError, match="LOCATION_NOT_FOUND"):
         asyncio.run(weather.get_current_weather("missing"))
+
+
+def test_repeated_city_geocodes_once_and_reuses_the_client(monkeypatch):
+    hosts = []
+    clients = []
+    client = httpx.AsyncClient
+
+    def transport(request):
+        hosts.append(request.url.host)
+        if "geocoding" in request.url.host:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "name": "Tripoli",
+                            "latitude": 32,
+                            "longitude": 13,
+                            "country": "Libya",
+                            "country_code": "LY",
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "current": {"temperature_2m": 20, "wind_speed_10m": 2, "weather_code": 0},
+                "timezone": "Africa/Tripoli",
+            },
+        )
+
+    def factory(**kw):
+        clients.append(kw)
+        return client(**kw, transport=httpx.MockTransport(transport))
+
+    monkeypatch.setattr(weather.httpx, "AsyncClient", factory)
+
+    async def run():
+        first = await weather.get_current_weather("Tripoli", "LY")
+        second = await weather.get_current_weather(" tripoli ", "ly")
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert first == second
+    assert len(clients) == 1
+    assert clients[0]["limits"].max_keepalive_connections == 4
+    assert clients[0]["limits"].keepalive_expiry == 60
+    assert hosts.count("geocoding-api.open-meteo.com") == 1
+    assert hosts.count("api.open-meteo.com") == 2
 
 
 def _diagnostic_response(mode, request):
