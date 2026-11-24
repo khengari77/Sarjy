@@ -62,7 +62,6 @@ def build(tmp_path, monkeypatch, **overrides):
         livekit_api_key="key" * 8,
         livekit_api_secret="secret" * 8,
         agent_service_secret=AGENT_SECRET,
-        demo_calls_per_identity=10,
         _env_file=None,
         **overrides,
     )
@@ -110,7 +109,7 @@ def expire(db_path, session_id):
 
 
 def test_failed_dispatch_releases_capacity_without_resetting_ledger(tmp_path, monkeypatch):
-    app, alice, state, db_path = build(tmp_path, monkeypatch, demo_session_budget=10)
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
     with alice, closing(TestClient(app)) as bob:
         chat_a = conversation(alice)
         chat_b = conversation(bob)
@@ -140,7 +139,7 @@ def test_failed_dispatch_releases_capacity_without_resetting_ledger(tmp_path, mo
 
 
 def test_expired_session_is_reaped_and_frees_capacity(tmp_path, monkeypatch):
-    app, alice, state, db_path = build(tmp_path, monkeypatch, demo_session_budget=10)
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
     with alice, closing(TestClient(app)) as bob:
         chat_a = conversation(alice)
         chat_b = conversation(bob)
@@ -163,6 +162,40 @@ def test_expired_session_is_reaped_and_frees_capacity(tmp_path, monkeypatch):
             assert session_row(db_path, first.json()["id"])["room_cleanup_completed_at"] is None
         with closing(sqlite3.connect(db_path)) as connection, connection:
             assert connection.execute("SELECT reserved_units FROM development_budgets").fetchone()[0] == reserved
+
+
+def test_second_simultaneous_call_by_the_same_owner_is_refused(tmp_path, monkeypatch):
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    with alice:
+        assert start(alice, conversation(alice)).status_code == 201
+        refused = start(alice, conversation(alice))
+        assert refused.status_code == 429
+        assert refused.json()["detail"]["code"] == "CALL_LIMIT_REACHED"
+
+
+def test_past_calls_and_legacy_limits_never_block_a_new_call(tmp_path, monkeypatch):
+    # Old deployments exported these; Settings must ignore them.
+    monkeypatch.setenv("DEMO_CALLS_PER_IDENTITY", "1")
+    monkeypatch.setenv("DEMO_SESSION_BUDGET", "1")
+    app, alice, state, db_path = build(tmp_path, monkeypatch)
+    with alice:
+        owner = alice.post("/v1/demo-session").json()["id"]
+        chat = conversation(alice)
+        stamp = datetime.now(UTC).isoformat()
+        with closing(sqlite3.connect(db_path)) as connection, connection:
+            connection.executemany(
+                "INSERT INTO voice_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [(f"past-{i}", chat, owner, f"room-{i}", "ended", stamp, "{}", stamp) for i in range(85)],
+            )
+        assert start(alice, conversation(alice)).status_code == 201
+
+
+def test_legacy_limits_in_a_dotenv_file_are_ignored(tmp_path):
+    env_file = tmp_path / "legacy.env"
+    env_file.write_text("DEMO_CALLS_PER_IDENTITY=1\nDEMO_SESSION_BUDGET=1\n")
+    settings = Settings(database_url=f"sqlite+aiosqlite:///{tmp_path}/legacy.db", _env_file=env_file)
+    assert not hasattr(settings, "demo_calls_per_identity")
+    assert not hasattr(settings, "demo_session_budget")
 
 
 def test_ending_twice_is_safe_and_cleans_room_once(tmp_path, monkeypatch):

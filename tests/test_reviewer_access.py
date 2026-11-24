@@ -28,7 +28,9 @@ from app.services.reviewer_access import (
     revoke_invitation,
     token_hash,
 )
+from app.services.voices import VoiceOption
 from fastapi.testclient import TestClient
+from livekit import api as livekit_api
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 WEB_SECRET = "reviewer-test-web-secret"
@@ -88,13 +90,15 @@ def seed_invitation(config, clock, *, expires_at=None, max_identities=DEFAULT_MA
                     expires_at=None if expires_at is not None and expires_at <= clock.value else expires_at,
                     now=clock.value,
                     max_identities=max_identities,
-                    max_calls=max_calls,
                 )
+                # The stored cap is no longer enforced; keep the ability to forge
+                # legacy rows so the non-enforcement test has something to prove.
+                invitation.max_calls = max_calls
                 if expires_at is not None and expires_at <= clock.value:
                     # The service refuses to create an expired credential; forge
                     # the stored value to exercise a link that has since expired.
                     invitation.expires_at = expires_at.isoformat()
-                    await db.commit()
+                await db.commit()
                 return invitation.id, token
         finally:
             await engine.dispose()
@@ -569,7 +573,7 @@ def test_demo_session_cannot_mint_in_reviewer_mode(tmp_path):
         assert rows(config, "SELECT id FROM identities") == [(owner,)]
 
 
-def test_invitation_call_cap_denies_new_voice_sessions(tmp_path):
+def test_stored_invitation_call_cap_is_not_enforced(tmp_path, monkeypatch):
     clock = Clock()
     config = settings(
         tmp_path,
@@ -587,15 +591,32 @@ def test_invitation_call_cap_denies_new_voice_sessions(tmp_path):
 
     class FakeCatalog:
         async def require(self, voice_id):
-            return type("Voice", (), {"id": voice_id, "name": "Test Voice"})()
+            return VoiceOption(id=voice_id, name="Test Voice")
 
+    class FakeLiveKitAPI:
+        def __init__(self, *args, **kwargs):
+            self.agent_dispatch = self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def create_dispatch(self, request):
+            return None
+
+    monkeypatch.setattr(livekit_api, "LiveKitAPI", FakeLiveKitAPI)
     app = create_app(config, voice_catalog=FakeCatalog(), clock=lambda: clock.value)
     with client_for(app) as client:
-        _, token = seed_invitation(config, clock, max_calls=1)
+        invitation_id, token = seed_invitation(config, clock, max_calls=1)
         owner = client.post("/v1/reviewer/session", json={"invitation_token": token}).json()["id"]
         conversation = client.post("/v1/conversations").json()["id"]
         path = config.database_url.removeprefix("sqlite+aiosqlite:///")
         with closing(sqlite3.connect(path)) as connection, connection:
+            assert connection.execute("SELECT max_calls FROM reviewer_invitations").fetchone()[0] == 1
+            link = connection.execute("SELECT invitation_id FROM identities WHERE id=?", (owner,)).fetchone()
+            assert link is not None and link[0] == invitation_id
             connection.execute(
                 "INSERT INTO voice_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -609,9 +630,8 @@ def test_invitation_call_cap_denies_new_voice_sessions(tmp_path):
                     clock.value.isoformat(),
                 ),
             )
-        denied = client.post("/v1/voice/sessions", json={"conversation_id": conversation, "voice_id": "test-voice"})
-        assert denied.status_code == 429
-        assert denied.json()["detail"]["code"] == "REVIEWER_INVITATION_BUDGET_EXHAUSTED"
+        started = client.post("/v1/voice/sessions", json={"conversation_id": conversation, "voice_id": "test-voice"})
+        assert started.status_code == 201
 
 
 def test_cli_create_list_revoke_permissions_and_output(tmp_path):
@@ -677,7 +697,6 @@ def test_cli_create_list_revoke_permissions_and_output(tmp_path):
         "max_identities",
         "identities_created",
         "remaining_identities",
-        "max_calls",
     }
     assert metadata[0]["remaining_identities"] == DEFAULT_MAX_IDENTITIES
     assert token not in listed.stdout
