@@ -12,6 +12,7 @@ import math
 import os
 import re
 import statistics
+import sys
 import time
 from pathlib import Path
 
@@ -55,8 +56,15 @@ def build_report(records: list[dict[str, object]]) -> dict[str, object]:
         "false_triggers": sum(
             record["expected"] == "NONE" and record["got"] not in ("NONE", "ERR") for record in records
         ),
+        # Right family of mistake but the wrong action ("theme:dark" expected, "theme:light" or "MULTI" got).
+        "wrong_action": sum(
+            record["expected"] not in ("NONE", "MULTI") and record["got"] not in ("NONE", "ERR", record["expected"])
+            for record in records
+        ),
         "missed": sum(record["expected"] not in ("NONE", "MULTI") and record["got"] == "NONE" for record in records),
-        "multi_wrong": sum(record["expected"] == "MULTI" and record["got"] != "MULTI" for record in records),
+        "multi_wrong": sum(
+            record["expected"] == "MULTI" and record["got"] not in ("MULTI", "ERR") for record in records
+        ),
         "per_expected": per_expected,
         "p50_ms": round(statistics.median(ordered)) if ordered else 0,
         "p95_ms": percentile(ordered, 0.95),
@@ -94,6 +102,14 @@ def main() -> None:
     cases = json.loads(CASES.read_text())[: args.limit]
     if not cases:
         raise SystemExit("no cases to run")
+    # A malformed row must fail before the first paid call, not in the middle of the run.
+    bad = [
+        i
+        for i, case in enumerate(cases)
+        if not (isinstance(case.get("text"), str) and isinstance(case.get("expected"), str))
+    ]
+    if bad:
+        raise SystemExit(f"fixture rows {bad} need string 'text' and 'expected'")
     if args.out:
         # Fail before the paid run, not after it: a bad path must not discard the results.
         args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -136,7 +152,13 @@ def main() -> None:
     finally:
         # Written even when the run is interrupted, so paid results are never lost.
         if args.out:
-            args.out.write_text(json.dumps(build_report(records), indent=2) + "\n", encoding="utf-8")
+            report = build_report(records)
+            report["cases_expected"] = len(cases)
+            report["complete"] = len(records) == len(cases)
+            try:
+                args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            except OSError as exc:  # never mask the exception that ended the run
+                print(f"could not write {args.out}: {exc}", file=sys.stderr)
     ordered = sorted(latencies)
     print(
         f"correct {correct}/{len(cases)} latency ms: median {statistics.median(ordered):.0f} "

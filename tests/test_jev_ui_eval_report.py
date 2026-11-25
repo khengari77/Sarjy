@@ -42,3 +42,10 @@ def test_percentiles_handle_empty_single_and_even_samples():
     assert percentile([1, 2, 3], 1.5) == 3
     assert build_report([record("NONE", "NONE", 100), record("NONE", "NONE", 200)])["p50_ms"] == 150
     assert build_report([])["p50_ms"] == 0
+
+
+def test_a_dead_key_does_not_count_multi_cases_as_wrong():
+    report = build_report([record("MULTI", "ERR"), record("theme:dark", "theme:light"), record("theme:dark", "MULTI")])
+    assert report["multi_wrong"] == 0
+    assert report["errors"] == 1
+    assert report["wrong_action"] == 2
