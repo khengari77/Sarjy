@@ -108,3 +108,8 @@ def test_missing_data_returns_2(tmp_path, capsys):
     result = latency_charts.main(["--data", str(tmp_path / "missing.json"), "--out-dir", str(tmp_path / "img")])
     assert result == 2
     assert "cannot read data file" in capsys.readouterr().err
+
+
+def test_worker_chart_written_from_the_repo_data(tmp_path):
+    assert latency_charts.main(["--out-dir", str(tmp_path)]) == 0
+    assert "Worker-side TTFA" in (tmp_path / "latency-worker.svg").read_text(encoding="utf-8")
