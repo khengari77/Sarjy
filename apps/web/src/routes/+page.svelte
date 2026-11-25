@@ -271,6 +271,8 @@
       speakingSpeed={commands.state.settings.speaking_speed}
       captionsVisible={commands.state.settings.captions_visible}
       memoryMode={commands.state.settings.memory_mode ?? 'auto'}
+      memorySaving={commands.memorySaving}
+      memoryError={commands.memoryError}
       onsearch={() => void catalogStore!.load()}
       onloadmore={() => void catalogStore!.load(true)}
       onremember={() => void catalogStore!.remember()}

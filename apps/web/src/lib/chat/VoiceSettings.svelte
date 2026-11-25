@@ -22,6 +22,8 @@
     speakingSpeed,
     captionsVisible,
     memoryMode,
+    memorySaving,
+    memoryError,
     onsearch,
     onloadmore,
     onremember,
@@ -45,6 +47,8 @@
     speakingSpeed: number;
     captionsVisible: boolean;
     memoryMode: MemoryMode;
+    memorySaving: boolean;
+    memoryError: string;
     onsearch: () => void;
     onloadmore: () => void;
     onremember: () => void;
@@ -193,6 +197,7 @@
           class="segmented-button"
           data-active={memoryMode === option.mode}
           aria-pressed={memoryMode === option.mode}
+          disabled={memorySaving}
           onclick={() => onmemorymode(option.mode)}
         >
           {option.label}
@@ -200,6 +205,9 @@
       {/each}
     </div>
     <small class="muted-text">{words.memoryModeNote}</small>
+    {#if memoryError}
+      <p class="voice-error" role="alert">{memoryError}</p>
+    {/if}
   </section>
 
   <section class="panel-block">

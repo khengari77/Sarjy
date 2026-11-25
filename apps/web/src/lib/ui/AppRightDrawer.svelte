@@ -20,6 +20,8 @@
     speakingSpeed: number;
     captionsVisible: boolean;
     memoryMode: MemoryMode;
+    memorySaving: boolean;
+    memoryError: string;
     turns: Turn[];
     provisional?: ProvisionalTranscript | null;
     tools: { id: string; name: string; result: unknown }[];
@@ -43,6 +45,8 @@
     speakingSpeed,
     captionsVisible,
     memoryMode,
+    memorySaving,
+    memoryError,
     turns,
     provisional = null,
     tools,
@@ -80,6 +84,8 @@
       {speakingSpeed}
       {captionsVisible}
       {memoryMode}
+      {memorySaving}
+      {memoryError}
       {onsearch}
       {onloadmore}
       {onremember}

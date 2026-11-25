@@ -235,7 +235,10 @@ describe('result validation', () => {
   it('keeps memory_mode optional for older payloads and rejects unknown modes', () => {
     const legacy: Record<string, unknown> = { ...voiceCaptions() };
     delete (legacy.settings as Record<string, unknown>).memory_mode;
-    expect(normalizeCommandResult(legacy)?.settings?.memory_mode).toBeUndefined();
+    const normalized = normalizeCommandResult(legacy);
+    expect(normalized).not.toBeNull();
+    expect(normalized?.settings?.revision).toBe(1);
+    expect(normalized?.settings?.memory_mode).toBeUndefined();
 
     const memory: CommandResult = voiceCaptions({
       action: 'SetMemoryMode',
