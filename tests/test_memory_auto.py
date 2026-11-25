@@ -223,17 +223,115 @@ def test_the_auto_route_refuses_work_while_memory_is_off(tmp_path):
         cm.__exit__(None, None, None)
 
 
-def test_a_credential_is_never_auto_saved(tmp_path):
+def forged_proposal(client, headers, file, text, request_id="forge-0"):
+    """A validly signed proposal for ``text``, minted directly (a credential never yields one through the app)."""
+    started_turn = turn(client, headers, "hello there", request_id).json()
+    owner_id, conversation_id = session_identity(file)
+    capture = parse_capture(text)
+    assert capture is not None, text
+    return proposal_for_capture(
+        capture,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        source_turn_id=started_turn["turn_id"],
+        secret="proposal-secret",
+    )
+
+
+def count_rows(file, table):
+    with closing(sqlite3.connect(file)) as db:
+        return db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+
+def test_a_credential_creates_no_proposal_and_is_never_recorded(tmp_path):
     cm, client, file, headers = started(tmp_path, "auto")
     try:
-        proposal = proposal_of(client, headers, "my password is hunter2", "secret-1")
-        assert proposal["plan"] == "skip"
+        body = turn(client, headers, "remember that my password is hunter2", "secret-1").json()
+        assert body["memory_proposal"] is None
+        assert "sensitive" in body["context"]["model_request"]["instructions"].lower()
+        assert count_rows(file, "memory_write_requests") == 0
+        assert memory_rows(file) == []
+    finally:
+        cm.__exit__(None, None, None)
 
+
+def test_the_propose_tool_rejects_a_credential_before_recording_anything(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        started_turn = turn(client, headers, "hello there", "t1").json()
+        body = client.post(
+            PROPOSE,
+            headers=headers,
+            json={"turn_id": started_turn["turn_id"], "request_id": "p1", "fact": "my password is hunter2"},
+        ).json()
+        assert body["status"] == "rejected" and body["error"] == "MEMORY_SENSITIVE"
+        assert "proposal" not in body
+        assert count_rows(file, "memory_write_requests") == 0
+        assert count_rows(file, "tool_calls") <= 1  # at most the rejected call itself, never the secret as a proposal
+        assert memory_rows(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_a_forged_credential_token_is_refused_by_the_auto_route(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        proposal = forged_proposal(client, headers, file, "my password is hunter2")
         response = auto(client, headers, proposal["token"])
         assert response.status_code == 409, response.text
         assert response.json()["detail"]["code"] == "MEMORY_NEEDS_CONSENT"
         assert memory_rows(file) == []
         assert operations(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_the_credential_net_covers_tokens_keys_and_national_ids(tmp_path):
+    from app.domain.memory_policy import Decision, plan_for_proposal
+
+    for text in (
+        "my github token is ghp_abc123",
+        "my ssh key is AAAAB3Nza",
+        "my login is ada and the secret is hunter2",
+        "my social security number is 123-45-6789",
+        "my backup code is 99887766",
+        "my api secret is xyz",
+    ):
+        assert plan_for_proposal("auto", text, explicit=True) is Decision.SKIP, text
+
+
+def test_any_negation_word_makes_a_fact_ask_first_even_if_the_parser_misses_it(tmp_path):
+    from app.domain.memory_policy import Decision, plan_for_proposal
+
+    for text in ("I'm not vegetarian", "I stopped working at Acme", "I never eat meat", "I don't drink coffee now"):
+        assert plan_for_proposal("auto", text, explicit=True) is Decision.ASK, text
+    assert plan_for_proposal("auto", "I live in Benghazi", explicit=True) is Decision.SAVE
+
+
+def test_a_token_without_the_negated_claim_cannot_auto_save_a_negation(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        save_via_auto(client, headers, "I live in Benghazi", "fact-0")
+        proposal = forged_proposal(client, headers, file, "I no longer live in Benghazi", "forge-1")
+        response = auto(client, headers, proposal["token"])
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "MEMORY_NEEDS_CONSENT"
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_undo_is_refused_when_another_fact_for_the_subject_is_now_active(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        save_via_auto(client, headers, "I like coffee", "fact-1")
+        second = save_via_auto(client, headers, "I like tea", "fact-2")
+        # Same parsed value as the second fact: saved beside it instead of replacing it.
+        save_via_auto(client, headers, "I love tea", "fact-3")
+        active_before = active_contents(file)
+        undone = client.post(f"/v1/changes/{second['id']}/undo")
+        assert undone.status_code == 409, undone.text
+        assert undone.json()["detail"]["code"] == "CHANGE_SUPERSEDED"
+        assert active_contents(file) == active_before
     finally:
         cm.__exit__(None, None, None)
 

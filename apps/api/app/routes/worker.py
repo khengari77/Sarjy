@@ -23,7 +23,7 @@ from app.domain.contracts import (
     resolve_response_policy,
 )
 from app.domain.intro import intro_for
-from app.domain.memory_policy import Decision, plan_for_proposal
+from app.domain.memory_policy import Decision, Sensitivity, classify_sensitivity, plan_for_proposal
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
@@ -201,6 +201,22 @@ PENDING_MEMORY_INSTRUCTION = (
     "A memory candidate is pending for this turn. Ask the user to confirm or decline before it is saved. "
     "Do not claim it is saved until confirmation succeeds."
 )
+AUTO_SAVE_INSTRUCTION = (
+    "The user's last message states a fact that is being saved automatically, with no question needed. "
+    'Acknowledge it briefly and naturally (for example "Got it"), say it is remembered, and do not ask for '
+    "confirmation."
+)
+SENSITIVE_MEMORY_INSTRUCTION = (
+    "The user's last message contains something sensitive (such as a password or a secret code) that Sarjy never "
+    "saves. Do not claim it was saved and do not repeat it; briefly say you can't keep details like that."
+)
+SENSITIVE_TOOL_NOTE = (
+    "That is sensitive (a password or secret) and is never saved. Nothing was saved. Do not repeat it; tell the "
+    "user briefly that you can't keep details like that."
+)
+AUTO_SAVE_TOOL_NOTE = (
+    "This is being saved automatically; no question is needed. Confirm briefly that you will remember it."
+)
 
 
 def register_worker_routes(
@@ -281,18 +297,25 @@ def _context_instructions(
             strict=strict_capture,
         )
     )
+    plan = None
     if proposal is not None:
-        # The worker acts on this: "save" commits without a question, "ask" keeps the spoken question.
+        # The worker acts on this: "save" commits without a question, "ask" keeps the spoken question. A "skip"
+        # (a credential) creates no proposal at all, so the sensitive text is never recorded as one.
         plan = plan_for_proposal(
             memory_mode,
             proposal["text"],
             explicit=bool(proposal["explicit"]),
             negated=bool(proposal.get("negated")),
         )
-        proposal = {**proposal, "plan": plan.value}
+        proposal = None if plan is Decision.SKIP else {**proposal, "plan": plan.value}
     instructions = pipeline_instructions(pipeline)
-    if proposal is not None and proposal["plan"] == "ask":
-        instructions = f"{instructions}\n\n{PENDING_MEMORY_INSTRUCTION}"
+    note = {
+        Decision.ASK: PENDING_MEMORY_INSTRUCTION,
+        Decision.SAVE: AUTO_SAVE_INSTRUCTION,
+        Decision.SKIP: SENSITIVE_MEMORY_INSTRUCTION,
+    }.get(plan)
+    if note is not None:
+        instructions = f"{instructions}\n\n{note}"
     return instructions, proposal
 
 
@@ -1030,6 +1053,9 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
                     "message": "Memory is turned off, so nothing was saved. Tell the user memory is off; "
                     "do not claim it was saved.",
                 }
+            if classify_sensitivity(body.fact) is Sensitivity.CREDENTIAL:
+                # Never record it as a proposal: that would store the text we promise not to keep.
+                return {"status": "rejected", "error": "MEMORY_SENSITIVE", "message": SENSITIVE_TOOL_NOTE}
             result = await memory_propose_tool(
                 db,
                 owner_id=owner_id,
@@ -1048,6 +1074,10 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
                     negated=bool(proposal.get("negated")),
                 )
                 result = {**result, "proposal": {**proposal, "plan": plan.value}}
+                if plan is Decision.SAVE:
+                    result["message"] = AUTO_SAVE_TOOL_NOTE
+                elif plan is Decision.SKIP:
+                    result = {"status": "rejected", "error": "MEMORY_SENSITIVE", "message": SENSITIVE_TOOL_NOTE}
             return result
 
         return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)

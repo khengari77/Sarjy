@@ -179,6 +179,21 @@ async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dic
     )
     if decision is Revert.CONFLICT:
         raise ChangeConflict
+    if old is not None and old.subject:
+        # Restoring the replaced fact must not leave two active facts for one subject (a newer fact with the same
+        # parsed value can have been saved beside the one being undone).
+        clash = await db.scalar(
+            select(Memory.id)
+            .where(
+                Memory.owner_id == owner_id,
+                Memory.subject == old.subject,
+                Memory.status == "active",
+                Memory.id != change.memory_id,
+            )
+            .limit(1)
+        )
+        if clash is not None:
+            raise ChangeConflict
 
     # Only the new row is withdrawn. The earlier fact it replaced (if any) is restored untouched, so this is not
     # ``delete_memory``, which wipes a whole correction lineage. Both writes are guarded on status as well as version

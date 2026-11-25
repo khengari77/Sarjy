@@ -35,8 +35,17 @@ _ORDER = (
 )
 
 _CREDENTIAL = re.compile(
-    r"\b(?:password|passcode|passphrase|pin(?: code| number)?|cvv|cvc|api[ -]?key|secret key|private key|"
-    r"security code|one[- ]time (?:code|password)|otp|recovery (?:code|phrase)|seed phrase)\b",
+    r"\b(?:password|passcode|passphrase|pin(?: code| number)?|cvv|cvc|api[ -]?(?:key|secret)|secret(?: key| code)?|"
+    r"private key|ssh[ -]?key|(?:access |auth(?:entication)? |bearer |refresh |session )?token|"
+    r"security code|one[- ]time (?:code|password)|otp|2fa|two[- ]factor|backup code|recovery (?:code|phrase)|"
+    r"seed phrase|log-?in|credentials?|social security|ssn|national id)\b",
+    re.IGNORECASE,
+)
+# Any negation word. A fact that mentions one may contradict something already stored ("I'm not vegetarian"), and the
+# capture parser only recognises a few phrasings, so the policy is stricter than the parser: such a fact asks first.
+_NEGATION_HINT = re.compile(
+    r"\b(?:no longer|not|never|stopped|quit|gave up|no more|isn't|aren't|wasn't|weren't|don't|doesn't|didn't|"
+    r"can't|won't)\b|n't\b",
     re.IGNORECASE,
 )
 _FINANCE = re.compile(
@@ -100,4 +109,6 @@ def decide(mode: MemoryMode, sensitivity: Sensitivity, *, explicit: bool, negate
 
 def plan_for_proposal(mode: MemoryMode, text: str, *, explicit: bool, negated: bool = False) -> Decision:
     """The decision for a proposed fact, from its text. The keyword net sets the sensitivity."""
-    return decide(mode, classify_sensitivity(text), explicit=explicit, negated=negated)
+    return decide(
+        mode, classify_sensitivity(text), explicit=explicit, negated=negated or bool(_NEGATION_HINT.search(text))
+    )

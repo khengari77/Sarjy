@@ -6,6 +6,7 @@ from contextlib import closing
 from fastapi.testclient import TestClient
 from test_context_assembly import seed_memories, start_turn
 from test_context_workflow import configured, create_app, seed
+from test_memory_capture import set_mode
 
 PROPOSE = "/internal/agent/tool/memory-propose"
 FORGET = "/internal/agent/tool/memory-forget"
@@ -44,11 +45,13 @@ def command(client, headers, turn):
 def test_propose_memory_returns_unsaved_signed_proposal(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
-        _, _, headers, turn = setup(client, file)
+        owner, _, headers, turn = setup(client, file)
+        set_mode(file, owner, "ask")  # this covers the ask-first flow; auto saves without a question
         response = call(client, headers, PROPOSE, turn, "k1", fact="I live in Benghazi")
         body = response.json()
         assert response.status_code == 200
         assert body["status"] == "proposed"
+        assert body["proposal"]["plan"] == "ask"
         assert body["proposal"]["text"] == "I live in Benghazi"
         assert body["proposal"]["token"]
         assert "Nothing has been saved" in body["message"]
@@ -255,3 +258,13 @@ def test_forgetting_and_recalling_keep_working_when_memory_is_off(tmp_path):
         assert table_count(file, "memories", "status='hidden'") == 1
         assert table_count(file, "memories", "status='active'") == 1
         assert table_count(file, "memory_write_requests") == 0
+
+
+def test_in_auto_mode_the_propose_tool_plans_to_save_and_says_so(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(client, file)
+        body = call(client, headers, PROPOSE, turn, "k1", fact="I live in Benghazi").json()
+        assert body["status"] == "proposed" and body["proposal"]["plan"] == "save"
+        assert "saved automatically" in body["message"]
+        assert table_count(file, "memories") == 0
