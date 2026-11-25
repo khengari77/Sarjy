@@ -1,3 +1,7 @@
+/** Context strip retraction chip: its block text may quote a forgotten fact. */
+export const RETRACTION_CHIP_LABEL = 'Forget reminder in context';
+export const RETRACTION_CHIP_TOOLTIP = 'Sarjy was told to forget something you removed';
+
 export interface ContextWords {
   why: string;
   loading: string;

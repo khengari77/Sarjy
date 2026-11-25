@@ -72,4 +72,31 @@ describe('turn context receipts', () => {
     await receipts.open('turn-1');
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it('does not wedge a reply whose response lands after the conversation changed', async () => {
+    let conversation = 'conversation-1';
+    let resolve!: (response: Response) => void;
+    const fetch = vi.fn(
+      () =>
+        new Promise<Response>((settle) => {
+          resolve = settle;
+        }),
+    );
+    const receipts = createTurnContextReceipts({ conversationId: () => conversation, fetch });
+
+    const opening = receipts.open('turn-1');
+    expect(receipts.entry('turn-1').status).toBe('loading');
+
+    conversation = 'conversation-2';
+    expect(receipts.entry('turn-1').status).toBe('idle');
+
+    resolve(Response.json(payload()));
+    await opening;
+    expect(receipts.entry('turn-1').status).toBe('idle');
+
+    conversation = 'conversation-1';
+    expect(receipts.entry('turn-1')).toMatchObject({ status: 'ready', data: { turn_id: 'turn-1' } });
+    await receipts.open('turn-1');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
 });

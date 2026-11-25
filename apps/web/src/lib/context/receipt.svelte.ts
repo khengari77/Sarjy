@@ -47,11 +47,11 @@ export class TurnContextReceipts {
     if (current && current.status !== 'idle' && current.status !== 'error') return;
     this.entries = { ...this.entries, [key]: { status: 'loading' } };
     try {
+      // The key is conversation-scoped, so resolving after a switch cannot land
+      // on another conversation and must not leave this entry stuck loading.
       const data = await loadTurnContext(conversationId, turnId, this.#fetch ?? fetch);
-      if (this.#conversationId() !== conversationId) return;
       this.entries = { ...this.entries, [key]: { status: 'ready', data } };
     } catch (error) {
-      if (this.#conversationId() !== conversationId) return;
       if (isContextNotFound(error)) {
         this.entries = {
           ...this.entries,
