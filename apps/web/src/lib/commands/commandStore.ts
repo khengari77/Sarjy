@@ -11,6 +11,16 @@ import { THEME_PREFERENCES, type ThemePreference } from '../ui/theme';
 
 export type CommandKind = 'executed' | 'unchanged' | 'needs_confirmation' | 'unsupported' | 'failed' | 'unknown';
 export type MemoryMode = 'off' | 'ask' | 'auto';
+export type MemoryChangeKind = 'memory_saved' | 'memory_updated';
+
+/** A server-authored memory change that the person can still undo. */
+export interface MemoryChange {
+  id: string;
+  kind: MemoryChangeKind;
+  label: string;
+  undoable: boolean;
+  memory_id: string | null;
+}
 
 /** What the Memory capture control needs: the mode, whether a save is in flight, and the last failure. */
 export interface MemoryControl {
@@ -40,6 +50,8 @@ export interface CommandResult {
   changed: boolean;
   spoken: string;
   detail: string | null;
+  /** Present only for a MemoryChange result; it never carries a settings snapshot. */
+  change?: MemoryChange | null;
 }
 
 export interface PanelState {
@@ -55,6 +67,8 @@ export interface CommandState {
   /** Right-drawer tab selected by the last navigation command. */
   panelTab: RightTab;
   last: CommandResult | null;
+  /** Latest memory change that may still be undone; replaced by the next change. */
+  change: MemoryChange | null;
   /** Applied typed-action identifiers, in order; observable for parity tests. */
   trace: string[];
   applied: string[];
@@ -86,6 +100,7 @@ export function initialCommandState(): CommandState {
     panels: { history: false, memory_explorer: false },
     panelTab: 'controls',
     last: null,
+    change: null,
     trace: [],
     applied: [],
   };
@@ -113,6 +128,28 @@ function isSettings(value: unknown): value is SettingsSnapshot {
   );
 }
 
+/** Actions that must carry the authoritative settings snapshot they changed. */
+const SETTINGS_ACTIONS: ReadonlySet<string> = new Set([
+  'SelectApprovedVoice',
+  'AdjustSpeakingSpeed',
+  'SetSpeakingSpeed',
+  'SetCaptionsVisible',
+  'SetMemoryMode',
+]);
+
+function isMemoryChange(value: unknown): value is MemoryChange {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    value.id.length > 0 &&
+    (value.kind === 'memory_saved' || value.kind === 'memory_updated') &&
+    typeof value.label === 'string' &&
+    value.label.length > 0 &&
+    typeof value.undoable === 'boolean' &&
+    (value.memory_id === null || typeof value.memory_id === 'string')
+  );
+}
+
 /** Validate a worker-published result before it can touch UI state. */
 export function normalizeCommandResult(value: unknown): CommandResult | null {
   if (!isRecord(value)) return null;
@@ -126,20 +163,36 @@ export function normalizeCommandResult(value: unknown): CommandResult | null {
   if (navigation !== null && navigation !== undefined && navigation !== 'history' && navigation !== 'memory_explorer') {
     return null;
   }
-  if (value.settings !== null && value.settings !== undefined && !isSettings(value.settings)) return null;
+  const action = value.action ?? null;
+  const memoryChange = action === 'MemoryChange';
+  if (memoryChange) {
+    // The auto-save result is identified by its change payload and is not a
+    // settings write, even when a worker accidentally includes a snapshot.
+    if (!isMemoryChange(value.change)) return null;
+  } else {
+    if (action !== null && SETTINGS_ACTIONS.has(action) && !isSettings(value.settings)) return null;
+    if (value.settings !== null && value.settings !== undefined && !isSettings(value.settings)) return null;
+    if (value.change !== null && value.change !== undefined && !isMemoryChange(value.change)) {
+      return null;
+    }
+  }
   const theme = value.theme;
   if (theme !== null && theme !== undefined && !THEME_PREFERENCES.includes(theme as ThemePreference)) return null;
-  return {
+  const change = isMemoryChange(value.change) ? value.change : null;
+  const result: CommandResult = {
     request_id: value.request_id,
     kind: value.kind as CommandKind,
-    action: value.action ?? null,
-    settings: isSettings(value.settings) ? value.settings : null,
+    action,
+    settings: memoryChange ? null : isSettings(value.settings) ? value.settings : null,
     navigation: (navigation as CommandResult['navigation']) ?? null,
     theme: THEME_PREFERENCES.includes(theme as ThemePreference) ? (theme as ThemePreference) : null,
     changed: value.changed,
     spoken: value.spoken,
     detail: typeof value.detail === 'string' ? value.detail : null,
   };
+  // Omit the key when there is no change so existing payload equality holds.
+  if (change) result.change = change;
+  return result;
 }
 
 export interface CommandStoreOptions {
@@ -153,11 +206,13 @@ export interface CommandStoreOptions {
 export function createCommandStore(state: CommandState, options: CommandStoreOptions = {}) {
   function apply(result: CommandResult): boolean {
     if (state.applied.includes(result.request_id)) return false;
+    const memoryChange = result.action === 'MemoryChange';
     // A stale settings snapshot must never rewind the authoritative state. The
     // worker may replay an old request id whose result predates another surface.
-    if (result.settings && result.settings.revision < state.settings.revision) return false;
+    if (!memoryChange && result.settings && result.settings.revision < state.settings.revision) return false;
     state.applied.push(result.request_id);
-    if (result.settings) state.settings = result.settings;
+    // A memory change is never a settings write, even if a payload carries one.
+    if (!memoryChange && result.settings) state.settings = result.settings;
     // Theme is presentation-only and only an executed/unchanged hint may touch
     // the shell. A failed, unsupported or unknown result changes nothing.
     if (result.theme && (result.kind === 'executed' || result.kind === 'unchanged')) {
@@ -168,9 +223,16 @@ export function createCommandStore(state: CommandState, options: CommandStoreOpt
       state.panels.memory_explorer = true;
       state.panelTab = 'memories';
     }
+    // A new change replaces the old toast; the settings path is untouched.
+    if (result.change) state.change = result.change;
     state.trace.push(result.action ?? result.kind);
     state.last = result;
     return true;
+  }
+
+  /** Dismiss the current change, or only the one with this id if it is still current. */
+  function dismissChange(id?: string) {
+    if (id === undefined || state.change?.id === id) state.change = null;
   }
 
   function hydrate(settings: Partial<SettingsSnapshot>) {
@@ -199,7 +261,7 @@ export function createCommandStore(state: CommandState, options: CommandStoreOpt
     state.panels[panel] = true;
   }
 
-  return { apply, hydrate, fail, openPanel };
+  return { apply, hydrate, fail, openPanel, dismissChange };
 }
 
 export type CommandStore = ReturnType<typeof createCommandStore>;

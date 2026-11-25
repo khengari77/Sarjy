@@ -25,6 +25,7 @@
   import { createSelectionController } from '../lib/voice/selection';
   import { createCommandSession } from '../lib/commands/commandSession.svelte';
   import CommandStatus from '../lib/commands/CommandStatus.svelte';
+  import ChangeToast from '../lib/chat/ChangeToast.svelte';
   import WordleLauncher from '../lib/wordle/WordleLauncher.svelte';
   import '../lib/chat/chat.css';
 
@@ -57,7 +58,6 @@
     getConversations: () => conversations!,
   });
   const words = $derived(wordsFor(arabic));
-  const selectedVoice = $derived(selectedVoiceOption(catalog.voices, catalog.voiceId));
   // Any finalised turn can save a memory server-side; the panel uses this to
   // invalidate a list it loaded before the save.
   // Panel state is a top-level reactive object so the shell bindings and the
@@ -74,10 +74,8 @@
 
   // One projection owns the phase, copy and orb presentation; the orb button
   // dispatches whatever action that presentation advertises.
-  const stage = $derived(deriveStage(voice, arabic, devOverlay, theme));
-  const canInterrupt = $derived(stage.canInterrupt);
-  const voiceErrorText = $derived(stage.errorText);
-  const presentation = $derived(stage.presentation);
+  const view = $derived(deriveStage(voice, arabic, devOverlay, theme));
+  const presentation = $derived(view.presentation);
 
   async function run(work: () => Promise<void>, onError?: (error: unknown) => void) {
     busy = true;
@@ -115,7 +113,8 @@
   const startConnect = () => void connection!.connect(true).catch(onVoiceError);
   const toggleMute = () => run(() => connection!.toggleMute(), onVoiceError);
 
-  const interrupt = () => (voice.live && canInterrupt ? run(() => connection!.interrupt(), onVoiceError) : undefined);
+  const interrupt = () =>
+    voice.live && view.canInterrupt ? run(() => connection!.interrupt(), onVoiceError) : undefined;
 
   async function send() {
     if (!draft.trim()) return;
@@ -206,7 +205,7 @@
       connecting={voice.connecting}
       connectionLost={voice.connectionLost}
       voiceErrorCode={voice.voiceErrorCode}
-      {voiceErrorText}
+      voiceErrorText={view.errorText}
       audioBlocked={voice.audioBlocked}
       {pendingIntent}
       turns={conversation.turns}
@@ -234,7 +233,7 @@
       {busy}
       muted={voice.muted}
       connectionLost={voice.connectionLost}
-      {canInterrupt}
+      canInterrupt={view.canInterrupt}
       cleanupRequired={voice.pendingCleanup !== null}
       {words}
       onretrycleanup={() => run(() => connection!.retryCleanup(), onVoiceError)}
@@ -259,13 +258,13 @@
     <AppRightDrawer
       {arabic}
       conversationId={conversation.current}
-      memoryRevision={`${conversation.current ?? ''}:${conversation.turns.length}`}
+      memoryRevision={`${conversation.current ?? ''}:${conversation.turns.length}:${commands.memoryRevision}`}
       bind:activeTab={commands.state.panelTab}
       turns={conversation.turns}
       provisional={voice.provisional}
       tools={conversation.toolCalls}
       {catalog}
-      {selectedVoice}
+      selectedVoice={selectedVoiceOption(catalog.voices, catalog.voiceId)}
       sessionVoice={voice.live?.voice ?? null}
       live={voice.live !== null}
       speakingSpeed={commands.state.settings.speaking_speed}
@@ -283,3 +282,4 @@
 
 <p class="sr-only" aria-live="polite" aria-atomic="true">{announcement.message}</p>
 <CommandStatus session={commands} />
+<ChangeToast session={commands} {arabic} />

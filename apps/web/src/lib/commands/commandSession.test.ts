@@ -5,11 +5,13 @@ const mocks = vi.hoisted(() => ({
   saveCaptionSelection: vi.fn(),
   saveMemoryMode: vi.fn(),
   saveSpeakingSpeed: vi.fn(),
+  undoChange: vi.fn(),
 }));
 
 vi.mock('../chat/session', () => mocks);
 
 import { createCommandSession } from './commandSession.svelte';
+import type { CommandResult } from './commandStore';
 
 const snapshot = (memory_mode: 'off' | 'ask' | 'auto', revision: number) => ({
   speaking_speed: 1,
@@ -26,6 +28,7 @@ describe('memory mode control', () => {
     mocks.saveCaptionSelection.mockReset();
     mocks.saveMemoryMode.mockReset();
     mocks.saveSpeakingSpeed.mockReset();
+    mocks.undoChange.mockReset();
   });
 
   it('writes the mode through the settings path and applies the server snapshot', async () => {
@@ -112,5 +115,123 @@ describe('memory mode control', () => {
     expect(session.state.settings.memory_mode).toBe('auto');
     expect(session.state.last).toMatchObject({ kind: 'failed', action: 'SetMemoryMode' });
     expect(session.memorySaving).toBe(false);
+  });
+});
+
+function memoryChange(id = 'change-1', label = 'Remembered: prefers oat milk.'): CommandResult {
+  return {
+    request_id: `memauto:${id}`,
+    kind: 'executed',
+    action: 'MemoryChange',
+    settings: null,
+    navigation: null,
+    theme: null,
+    changed: true,
+    spoken: label,
+    detail: null,
+    change: { id, kind: 'memory_saved', label, undoable: true, memory_id: 'memory-1' },
+  };
+}
+
+const undoResult = {
+  id: 'change-1',
+  kind: 'memory_saved' as const,
+  label: 'Remembered: prefers oat milk.',
+  undoable: false,
+  memory_id: 'memory-1',
+  changed: true,
+};
+
+describe('memory change undo', () => {
+  beforeEach(() => {
+    mocks.fetchSettings.mockReset();
+    mocks.saveCaptionSelection.mockReset();
+    mocks.saveMemoryMode.mockReset();
+    mocks.saveSpeakingSpeed.mockReset();
+    mocks.undoChange.mockReset();
+  });
+
+  it('undoes through the change endpoint, refreshes memories and dismisses the toast', async () => {
+    mocks.undoChange.mockResolvedValue(undoResult);
+    const refresh = vi.fn();
+    const session = createCommandSession(undefined, undefined, { onMemoryChange: refresh });
+    session.apply(memoryChange());
+    const revision = session.memoryRevision;
+
+    expect(await session.undoChange('change-1')).toBe(true);
+
+    expect(mocks.undoChange).toHaveBeenCalledWith('change-1');
+    expect(session.change).toBeNull();
+    expect(session.memoryRevision).toBe(revision + 1);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(session.changeStatus).toBe('Undone.');
+    expect(session.changeError).toBe('');
+  });
+
+  it('keeps the toast and shows the superseded message on 409', async () => {
+    mocks.undoChange.mockRejectedValue(new Error('CHANGE_SUPERSEDED'));
+    const refresh = vi.fn();
+    const session = createCommandSession(undefined, undefined, { onMemoryChange: refresh });
+    session.apply(memoryChange());
+    const revision = session.memoryRevision;
+
+    expect(await session.undoChange('change-1')).toBe(false);
+
+    expect(session.change?.id).toBe('change-1');
+    expect(session.changeError).toBe('That memory changed since, so I left it alone.');
+    expect(session.changeStatus).toBe('');
+    expect(session.memoryRevision).toBe(revision);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('keeps the toast and shows the missing-change message on 404', async () => {
+    mocks.undoChange.mockRejectedValue(new Error('CHANGE_NOT_FOUND'));
+    const session = createCommandSession();
+    session.apply(memoryChange());
+
+    expect(await session.undoChange('change-1')).toBe(false);
+
+    expect(session.change?.id).toBe('change-1');
+    expect(session.changeError).toBe('That change is no longer available.');
+  });
+
+  it('ignores a second undo while one is in flight', async () => {
+    let resolveUndo!: (value: unknown) => void;
+    mocks.undoChange.mockReturnValue(new Promise((resolve) => (resolveUndo = resolve)));
+    const session = createCommandSession();
+    session.apply(memoryChange());
+
+    const first = session.undoChange('change-1');
+    expect(await session.undoChange('change-1')).toBe(false);
+    expect(mocks.undoChange).toHaveBeenCalledTimes(1);
+
+    resolveUndo(undoResult);
+    expect(await first).toBe(true);
+    expect(session.changeUndoing).toBe(false);
+  });
+
+  it('clears a previous error at the start of the next attempt', async () => {
+    mocks.undoChange.mockRejectedValueOnce(new Error('CHANGE_NOT_FOUND')).mockResolvedValueOnce(undoResult);
+    const session = createCommandSession();
+    session.apply(memoryChange());
+
+    expect(await session.undoChange('change-1')).toBe(false);
+    expect(session.changeError).toBe('That change is no longer available.');
+
+    expect(await session.undoChange('change-1')).toBe(true);
+    expect(session.changeError).toBe('');
+  });
+
+  it('a new change replaces the old toast and clears an old error', async () => {
+    mocks.undoChange.mockRejectedValue(new Error('CHANGE_NOT_FOUND'));
+    const session = createCommandSession();
+    session.apply(memoryChange('change-1'));
+    expect(await session.undoChange('change-1')).toBe(false);
+    expect(session.changeError).not.toBe('');
+
+    session.apply(memoryChange('change-2', 'Remembered: drinks tea.'));
+
+    expect(session.change).toMatchObject({ id: 'change-2', label: 'Remembered: drinks tea.' });
+    expect(session.changeError).toBe('');
   });
 });

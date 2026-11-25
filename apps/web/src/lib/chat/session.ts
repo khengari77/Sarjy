@@ -8,7 +8,7 @@ import {
   type UserSettings,
   type VoiceOption,
 } from '../api';
-import type { MemoryMode } from '../commands/commandStore';
+import type { MemoryChangeKind, MemoryMode } from '../commands/commandStore';
 
 export type ToolCall = { id: string; name: string; result: unknown };
 
@@ -92,6 +92,20 @@ export async function saveSpeakingSpeed(speed: number, expectedRevision: number)
     expected_revision: expectedRevision,
     action: { kind: 'SetSpeakingSpeed', speed },
   });
+}
+
+export interface ChangeUndoResult {
+  id: string;
+  kind: MemoryChangeKind;
+  label: string;
+  undoable: boolean;
+  memory_id: string | null;
+  changed: boolean;
+}
+
+/** Undo one auto-saved memory change; the server owns whether it still applies. */
+export async function undoChange(id: string): Promise<ChangeUndoResult> {
+  return request<ChangeUndoResult>(`changes/${encodeURIComponent(id)}/undo`, {});
 }
 
 export async function endVoiceSession(session: SessionConfig | null): Promise<void> {

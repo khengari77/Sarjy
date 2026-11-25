@@ -22,6 +22,8 @@ export type Words = {
   memoryModeAsk: string;
   memoryModeAuto: string;
   memoryModeNote: string;
+  undo: string;
+  dismiss: string;
 };
 
 const EN: Words = {
@@ -48,6 +50,8 @@ const EN: Words = {
   memoryModeAsk: 'Ask first',
   memoryModeAuto: 'Automatic',
   memoryModeNote: 'Controls whether new facts are saved from this conversation.',
+  undo: 'Undo',
+  dismiss: 'Dismiss',
 };
 
 const AR: Words = {
@@ -74,6 +78,8 @@ const AR: Words = {
   memoryModeAsk: 'اسأل أولًا',
   memoryModeAuto: 'تلقائي',
   memoryModeNote: 'يتحكم في حفظ المعلومات الجديدة من هذه المحادثة.',
+  undo: 'تراجع',
+  dismiss: 'تجاهل',
 };
 
 export function wordsFor(arabic: boolean): Words {
