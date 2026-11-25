@@ -130,10 +130,13 @@ _MEMORY_GLOBAL = re.compile(
 # "forget the trip but keep the budget" is a compound request with its own
 # keep-exception semantics; it stays unsupported rather than silently dropping
 # the keep clause and excluding everything it matched.
-_MEMORY_COMPOUND = re.compile(
-    r"\b(?:but|and) (?:keep|leave|except)\b|\bexcept\b|(?<!\bi )(?<!\bwe )\bkeep (?:the|my|it|that|everything)\b",
-    re.IGNORECASE,
+# A keep clause is structural: after a comma or conjunction ("but I keep the budget"), or "keep the/my/it"
+# directly after the target. "where I keep my passport" is a fact about the user, not a keep clause.
+_KEEP_CLAUSE = (
+    r"(?:(?:^|[,;]|\b(?:but|and|then|so)\b)\s*(?:(?:i|we|you|they)\s+)?keep\b"
+    r"|(?<!\bi )(?<!\bwe )(?<!\byou )(?<!\bthey )(?<!\bwhere )(?<!\bwhat )\bkeep (?:the|my|it|that|everything)\b)"
 )
+_MEMORY_COMPOUND = re.compile(r"\b(?:but|and) (?:leave|except)\b|\bexcept\b|" + _KEEP_CLAUSE, re.IGNORECASE)
 _MEMORY_RESTORE = re.compile(
     r"^(?:please )?(?:restore (?:the |my )?(?:excluded )?memories\b.*"
     r"|bring back (?:the |my )?memories\b.*"
@@ -216,8 +219,7 @@ _UNSUPPORTED_COMMANDS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (
         re.compile(
             r"^(?:(?:remove|delete) .+"
-            r"|(?:forget|exclude) .*(?:\b(?:but|and) (?:keep|leave|except)\b|\bexcept\b"
-            r"|(?<!\bi )(?<!\bwe )\bkeep (?:the|my|it|that|everything)\b).*"
+            r"|(?:forget|exclude) .*(?:\b(?:but|and) (?:leave|except)\b|\bexcept\b|" + _KEEP_CLAUSE + r").*"
             r"|don't remember .+"
             r"|(?:delete|remove) (?:the )?memory of .+)$"
         ),

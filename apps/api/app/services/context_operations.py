@@ -135,9 +135,15 @@ def _tokens(text: str) -> set[str]:
     return {token for token in TOKEN.findall(text.casefold()) if token not in STOPWORDS}
 
 
+# Words that point at something without naming it; a target made of these (and stopwords) is no target.
+_REFERENTIAL = frozenset(
+    {"them", "they", "us", "we", "our", "his", "her", "him", "their", "those", "these", "stuff", "things", "thing"}
+)
+
+
 def has_content_words(text: str) -> bool:
-    """Whether ``text`` names anything beyond stopwords ("all of it" does not)."""
-    return bool(_tokens(text))
+    """Whether ``text`` names anything beyond stopwords and referential words ("all of them" does not)."""
+    return bool(_tokens(text) - _REFERENTIAL)
 
 
 async def keyword_search(

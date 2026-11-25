@@ -216,30 +216,46 @@ def test_compound_forget_keeps_its_honest_refusal():
     "text",
     [
         "forget the trip KEEP the budget",
+        "forget the trip Keep the budget",
         "Forget the trip EXCEPT the hotel",
-        "forget where I keep my passport",
-        "forget my name and my address",
+        "forget the trip but I keep the budget",
+        "forget the trip and we keep the budget",
     ],
 )
-def test_compound_guard_is_case_insensitive_and_ignores_possessive_keep(text):
-    compound = unsupported_command(text) is not None
-    expected = ("KEEP" in text) or ("EXCEPT" in text)
-    assert compound is expected
-    if compound:
-        assert parse_memory_exclusion_target(text) is None
+def test_keep_clauses_are_compound_whatever_the_case_or_subject(text):
+    assert unsupported_command(text) is not None
+    assert parse_memory_exclusion_target(text) is None
 
 
 @pytest.mark.parametrize(
-    "text", ["forget all of it", "forget all of that", "forget this chat", "forget the conversation"]
+    ("text", "target"),
+    [
+        ("forget where I keep my passport", "where I keep my passport"),
+        ("forget where they keep the spare key", "where they keep the spare key"),
+        ("forget what I keep in my safe", "what I keep in my safe"),
+    ],
 )
-def test_stopword_only_forget_target_never_reaches_the_search(text):
-    from app.services.commands import _handle_memory_mutation
+def test_possessive_keep_is_a_fact_not_a_keep_clause(text, target):
+    assert unsupported_command(text) is None
+    assert parse_memory_exclusion_target(text) == target
 
-    # db=None proves the guard returns before any lookup; an empty keyword
-    # query would otherwise match every memory.
-    result = asyncio.run(
-        _handle_memory_mutation(
-            None, owner_id="o", conversation_id="c", request_id="r", text=text, secret="s", search=None
-        )
-    )
-    assert result is None
+
+@pytest.mark.parametrize(
+    "text",
+    ["all of it", "all of that", "this chat", "the conversation", "all of them", "everything about us", "stuff"],
+)
+def test_targets_that_name_nothing_never_search(text):
+    from app.services.context_operations import has_content_words
+    from app.services.voice_exclusions import hide_target
+
+    assert not has_content_words(text)
+    # db=None proves the guard returns before any lookup, on the path the model's forget tool also uses.
+    result = asyncio.run(hide_target(None, owner_id="o", conversation_id="c", target=text, request_id="r", search=None))
+    assert result.detail == "MEMORY_TARGET_UNSPECIFIED"
+
+
+def test_a_real_memory_word_still_counts_as_content():
+    from app.services.context_operations import has_content_words
+
+    assert has_content_words("my favorite color")
+    assert has_content_words("the Paris trip")
