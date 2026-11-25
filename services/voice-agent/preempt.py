@@ -37,6 +37,9 @@ class RecentFinals:
         if segment:
             self._segments = [*self._segments, segment][-self._size :]
 
+    def size(self) -> int:
+        return len(self._segments)
+
     def clear(self) -> None:
         self._segments = []
 

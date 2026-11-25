@@ -1,6 +1,7 @@
 """Immutable request boundary around native provider streaming plugins."""
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict, cast
@@ -86,6 +87,13 @@ class ProviderAdapter:
             self.prompt_cache_hit_tokens = state.prompt_cache_hit_tokens
             self.prompt_cache_miss_tokens = state.prompt_cache_miss_tokens
             if _incomplete_response(token, state):
+                logging.warning(
+                    "Incomplete model response: done=%s reason=%s received=%s partial=%s",
+                    state.done,
+                    state.reason,
+                    received,
+                    partial,
+                )
                 raise GenerationFailure(
                     GenerationEvent("error", **identity, partial=partial, error_code="incomplete_response")
                 )
