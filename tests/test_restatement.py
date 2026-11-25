@@ -38,18 +38,40 @@ def test_matching_is_case_insensitive():
     assert restating_turn_ids([("upper", "I LOVE THE COLOR BLUE")], [FACT]) == frozenset({"upper"})
 
 
-def test_live_is_a_content_token_so_the_benghazi_fact_needs_both_tokens():
-    # "I live in Benghazi" -> {live, benghazi}: "live" is four letters and not a stopword, so the fact has two
-    # content tokens and the threshold is min(2, 2) == 2.  Naming only one of them is not enough.
+def test_a_proper_noun_carries_the_fact_on_its_own():
+    # The place IS the fact. Naming it alone (any case) restates it; an unrelated turn, or a different place, does not.
     fact = "I live in Benghazi"
-    assert content_tokens(fact) == frozenset({"live", "benghazi"})
     turns = [
-        ("both", "I live in Benghazi"),  # live + benghazi (2) -> blocked
-        ("city-only", "I visited Benghazi"),  # benghazi only (1) -> allowed
-        ("live-only", "I live in Tripoli"),  # live only (1) -> allowed
+        ("both", "I live in Benghazi"),
+        ("city", "Benghazi is home"),
+        ("lower", "benghazi is where my family is"),
+        ("other", "I live in Tripoli"),
+        ("visit", "I visited Tripoli last year"),
     ]
 
-    assert restating_turn_ids(turns, [fact]) == frozenset({"both"})
+    assert restating_turn_ids(turns, [fact]) == frozenset({"both", "city", "lower"})
+
+
+def test_names_and_acronyms_count_double_like_numbers():
+    cases = [
+        ("My dog is called Max", "Max needs a walk", True),
+        ("My sister Lina lives in Rome", "Lina called me", True),
+        ("I work at Acme as an engineer", "my job at Acme is fine", True),
+        ("My name is Sam", "say hi to sam", True),
+        ("I live in the UK", "I am in the UK", True),
+        ("I love AI", "AI is great", True),
+        # A generic shared verb is not enough on its own.
+        ("I live in the UK", "I live for music", False),
+        ("I love AI", "I love this show", False),
+        ("My sister Lina lives in Rome", "I like pizza", False),
+    ]
+    for fact, turn, blocked in cases:
+        assert bool(restating_turn_ids([("t", turn)], [fact])) is blocked, (fact, turn)
+
+
+def test_a_lowercase_value_with_one_shared_word_is_a_documented_limit():
+    # Without a name, number or acronym a one-word echo of a longer fact is not detected (accepted, see the PR).
+    assert restating_turn_ids([("t", "pizza tonight?")], ["My favorite food is pizza"]) == frozenset()
 
 
 def test_a_fact_with_one_distinctive_token_matches_on_that_token():
@@ -152,7 +174,6 @@ STOPWORD_OR_SHORT = st.sampled_from(
         "do",
         "go",
         "x",
-        "yz",
     ]
 )
 

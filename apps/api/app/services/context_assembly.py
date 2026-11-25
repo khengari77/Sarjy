@@ -76,7 +76,6 @@ DENIED_STATUSES = frozenset({"superseded", "inactive", "excluded"})
 # history window are not confirmed back to the user.
 RETRACTION_PREFIX = "retraction:"
 RETRACTION_LIMIT = 5
-RETRACTION_TEXT_LIMIT = 300
 # The line never quotes the fact: the fact itself is what must not reach the model again.
 RETRACTION_TEMPLATE = (
     "The user asked you to forget something they told you earlier. Do not use, repeat or confirm it, and do not "
