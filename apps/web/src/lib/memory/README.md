@@ -28,9 +28,11 @@ with:
 import MemoryPanel from '$lib/memory/MemoryPanel.svelte';
 ```
 
-The drawer has three tabs (Memories, Controls, Transcript); per-conversation
-context blocks are not exposed in the UI by owner decision (2026-11-15), so the
-memory panel is the single place that shows the inclusion/exclusion projection.
+The drawer has three tabs (Memories, Controls, Transcript). `MemoryPanel`
+leads with a read-only “In Sarjy's context” strip built from
+`GET /v1/conversations/{id}/context/blocks`, and assistant transcript rows open
+a “Why this answer” receipt lazily from the per-turn context endpoint. Neither
+view writes context state.
 
 `conversation.current` may be `null`; the panel then shows the owner's stored
 facts without candidates/exclusion annotations and disables exclusion actions.

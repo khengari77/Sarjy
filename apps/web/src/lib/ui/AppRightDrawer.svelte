@@ -61,7 +61,7 @@
     <MemoryPanel {conversationId} {active} revision={memoryRevision} />
   {/snippet}
   {#snippet transcriptPanel()}
-    <TranscriptPanel {turns} {provisional} {tools} {arabic} />
+    <TranscriptPanel {conversationId} {turns} {provisional} {tools} {arabic} />
   {/snippet}
   {#snippet voicePanel()}
     <VoiceSettings
