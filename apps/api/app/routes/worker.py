@@ -23,6 +23,7 @@ from app.domain.contracts import (
     resolve_response_policy,
 )
 from app.domain.intro import intro_for
+from app.domain.memory_policy import plan_for_proposal
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
@@ -34,6 +35,7 @@ from app.services.budget import reserve as reserve_development_budget
 from app.services.commands import command_request_id, handle_finalized_utterance
 from app.services.context_assembly import location_evidence, read_context_inputs
 from app.services.memory import MemoryService
+from app.services.memory_auto import auto_commit_memory
 from app.services.memory_capture import (
     MemoryCaptureError,
     confirm_memory,
@@ -66,6 +68,10 @@ class AgentInput(BaseModel):
 class MemoryConfirm(BaseModel):
     token: str = Field(min_length=1, max_length=20000)
     decision: Literal["save", "discard", "replace"]
+
+
+class MemoryAuto(BaseModel):
+    token: str = Field(min_length=1, max_length=20000)
 
 
 class AgentOutput(BaseModel):
@@ -216,6 +222,7 @@ def register_worker_routes(
     _register_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
+    _register_auto_memory_route(app, config=config, database=database, guard=guard, embedder=embedder)
     if wordle_source is not None:
 
         async def run_tool(db, request, body, name, arguments, effect):
@@ -273,8 +280,12 @@ def _context_instructions(
             strict=strict_capture,
         )
     )
-    instructions = pipeline_instructions(pipeline)
     if proposal is not None:
+        # The worker acts on this: "save" commits without a question, "ask" keeps the spoken question.
+        plan = plan_for_proposal(memory_mode, proposal["text"], explicit=bool(proposal["explicit"]))
+        proposal = {**proposal, "plan": plan.value}
+    instructions = pipeline_instructions(pipeline)
+    if proposal is not None and proposal["plan"] == "ask":
         instructions = f"{instructions}\n\n{PENDING_MEMORY_INSTRUCTION}"
     return instructions, proposal
 
@@ -332,6 +343,36 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
                 conversation_id=voice.conversation_id,
                 source_turn_id=None,
                 secret=_memory_secret(config),
+            )
+        except MemoryCaptureError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code, **exc.details}) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                429 if str(exc) == "DAILY_BUDGET_EXHAUSTED" else 422, detail={"code": str(exc)}
+            ) from exc
+
+
+def _register_auto_memory_route(app, *, config: Settings, database, guard, embedder):
+    @app.post("/internal/agent/memory/auto")
+    async def auto_memory_route(body: MemoryAuto, request: Request, db: AsyncSession = Depends(database)):
+        """Commit a proposal without a spoken question. Only valid in ``auto`` mode and only when the policy says save."""
+        voice = await guard(request, db, allow_ended=True)
+        conversation = await db.get(Conversation, voice.conversation_id)
+        if conversation is None:
+            raise HTTPException(404)
+        row = await db.get(UserSetting, conversation.owner_id)
+        mode = row.memory_mode if row is not None else "auto"
+        if mode == "off":
+            raise HTTPException(409, detail={"code": "MEMORY_OFF"})
+        try:
+            return await auto_commit_memory(
+                db,
+                MemoryService(db, embedder),
+                token=body.token,
+                owner_id=conversation.owner_id,
+                conversation_id=voice.conversation_id,
+                secret=_memory_secret(config),
+                mode=mode,
             )
         except MemoryCaptureError as exc:
             raise HTTPException(exc.status, detail={"code": exc.code, **exc.details}) from exc
@@ -971,7 +1012,7 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
                     "message": "Memory is turned off, so nothing was saved. Tell the user memory is off; "
                     "do not claim it was saved.",
                 }
-            return await memory_propose_tool(
+            result = await memory_propose_tool(
                 db,
                 owner_id=owner_id,
                 conversation_id=conversation_id,
@@ -979,6 +1020,12 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
                 fact=body.fact,
                 secret=secret,
             )
+            proposal = result.get("proposal")
+            if proposal is not None:
+                mode = row.memory_mode if row is not None else "auto"
+                plan = plan_for_proposal(mode, proposal["text"], explicit=bool(proposal["explicit"]))
+                result = {**result, "proposal": {**proposal, "plan": plan.value}}
+            return result
 
         return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)
 

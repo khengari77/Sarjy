@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.memory import MemoryResult, MemoryService
+from app.services.memory_auto import ChangeConflict, ChangeNotFound, undo_change
 from app.services.memory_visibility import delete_memory, hide_memory, unhide_memory
 
 
@@ -60,6 +61,16 @@ class MemoryList(BaseModel):
     items: list[MemoryListItem]
     total: int = Field(ge=0)
     next_offset: int | None
+
+
+class ChangeUndone(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    kind: str
+    label: str
+    undoable: bool
+    memory_id: str | None
+    changed: bool
 
 
 class MemoryVisibility(BaseModel):
@@ -139,5 +150,22 @@ def memory_router(database, identity, embedder):
     @router.delete("/v1/memories/{memory_id}", response_model=MemoryVisibility)
     async def delete(memory_id: str, user=Depends(identity), db=Depends(database)):
         return await _visibility(delete_memory, memory_id, user, db)
+
+    return router
+
+
+def changes_router(database, identity):
+    """Undo for changes made without a spoken question (auto-saved memories)."""
+    router = APIRouter()
+
+    @router.post("/v1/changes/{change_id}/undo", response_model=ChangeUndone)
+    async def undo(change_id: str, user=Depends(identity), db=Depends(database)):
+        """Undo one auto-saved change by id. Idempotent; 409 if the memory was changed since."""
+        try:
+            return await undo_change(db, owner_id=user.id, change_id=change_id)
+        except ChangeNotFound:
+            raise HTTPException(404, detail={"code": "CHANGE_NOT_FOUND"}) from None
+        except ChangeConflict:
+            raise HTTPException(409, detail={"code": "CHANGE_SUPERSEDED"}) from None
 
     return router

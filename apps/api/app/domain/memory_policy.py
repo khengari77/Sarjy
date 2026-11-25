@@ -94,3 +94,8 @@ def decide(mode: MemoryMode, sensitivity: Sensitivity, *, explicit: bool) -> Dec
     if sensitivity is Sensitivity.NORMAL:
         return Decision.SAVE
     return Decision.ASK
+
+
+def plan_for_proposal(mode: MemoryMode, text: str, *, explicit: bool) -> Decision:
+    """The decision for a proposed fact, from its text. The keyword net sets the sensitivity."""
+    return decide(mode, classify_sensitivity(text), explicit=explicit)

@@ -833,6 +833,12 @@ async def _discard(
     return response
 
 
+def proposal_summary(token: str, secret: str, owner_id: str, conversation_id: str) -> tuple[str, str, bool]:
+    """``(confirmation_id, text, explicit)`` of a verified proposal, for callers outside this module."""
+    capture, payload = _verified(token, secret, owner_id, conversation_id)
+    return str(payload["confirmation_id"]), capture.text, bool(capture.explicit)
+
+
 async def confirm_memory(
     db: AsyncSession,
     memory_service: MemoryService,
