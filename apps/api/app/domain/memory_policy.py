@@ -34,13 +34,21 @@ _ORDER = (
     Sensitivity.CREDENTIAL,
 )
 
-_CREDENTIAL = re.compile(
-    r"\b(?:password|passcode|passphrase|pin(?: code| number)?|cvv|cvc|api[ -]?(?:key|secret)|secret(?: key| code)?|"
-    r"private key|ssh[ -]?key|(?:access |auth(?:entication)? |bearer |refresh |session )?token|"
-    r"security code|one[- ]time (?:code|password)|otp|2fa|two[- ]factor|backup code|recovery (?:code|phrase)|"
-    r"seed phrase|log-?in|credentials?|social security|ssn|national id)\b",
-    re.IGNORECASE,
+# Words that are credentials wherever they appear.
+_CREDENTIAL_WORDS = (
+    r"password|passcode|passphrase|pin (?:code|number)|pin (?:for|of|to) (?:my|the|our)|cvv|cvc|api[ -]?(?:key|secret)|secret (?:key|code)|"
+    r"private key|ssh[ -]?key|security code|one[- ]time (?:code|password)|otp|2fa|two[- ]factor|backup code|"
+    r"recovery (?:code|phrase)|seed phrase|social security|ssn|national id|passport (?:number|no)|"
+    r"(?:safe|door|garage|gate|alarm|lock|wi-?fi) (?:code|combination|password)|safe combination|"
+    r"code to (?:my|the|our) \w+"
 )
+# Words that are only a credential in a credential context: "my github token is ghp_x", "my login is ada", "my pin
+# is 1234". A bare "token", "secret", "login" or "pin" ("a token for the bus", "pin badges") is an ordinary fact.
+_CREDENTIAL_CONTEXT = (
+    r"(?:my|the|our)\s+(?:[\w-]+\s+){0,2}(?:(?:access |auth(?:entication)? |bearer |refresh |session )?token|secret|pin|"
+    r"log-?in|credentials?)\s*(?:is|are|was|:|=)"
+)
+_CREDENTIAL = re.compile(rf"\b(?:{_CREDENTIAL_WORDS})\b|\b{_CREDENTIAL_CONTEXT}", re.IGNORECASE)
 # Any negation word. A fact that mentions one may contradict something already stored ("I'm not vegetarian"), and the
 # capture parser only recognises a few phrasings, so the policy is stricter than the parser: such a fact asks first.
 _NEGATION_HINT = re.compile(
