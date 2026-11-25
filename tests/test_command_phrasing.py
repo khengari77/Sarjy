@@ -192,6 +192,8 @@ def test_extra_words_never_leave_an_exact_command(phrase, prefix, suffix):
         "Forget the weather, tell me a joke",
         "forget the trip and tell me about Rome",
         "Forget me, I'm leaving",
+        "Forget the car rental. I want to keep the hotel booking.",
+        "Forget the car rental. I should keep the hotel booking",
     ],
 )
 def test_forget_idioms_and_clause_breaks_are_not_memory_commands(text):
@@ -270,6 +272,9 @@ def test_a_real_memory_word_still_counts_as_content():
     from app.services.context_operations import has_content_words
 
     assert has_content_words("X")
+    assert has_content_words("7")
+    assert not has_content_words("a")
+    assert not has_content_words("i")
     assert not has_content_words("it's")
 
     assert has_content_words("my favorite color")

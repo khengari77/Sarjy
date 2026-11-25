@@ -166,9 +166,9 @@ def has_content_words(text: str) -> bool:
     """Whether ``text`` names anything beyond stopwords and referential words ("all of them" does not)."""
     # One-character tokens are apostrophe fragments ("it's" -> it, s) and match every possessive memory.
     # A lone letter or digit ("X", "7") is a legitimate, exact target.
-    return any(len(token) > 1 for token in _tokens(text) - _REFERENTIAL) or bool(
-        re.fullmatch(r"[0-9A-Za-z]", text.strip())
-    )
+    tokens = _tokens(text) - _REFERENTIAL
+    # A lone non-stopword letter or digit survives tokenising; "a" and "i" do not.
+    return any(len(token) > 1 for token in tokens) or (len(text.strip()) == 1 and bool(tokens))
 
 
 async def keyword_search(

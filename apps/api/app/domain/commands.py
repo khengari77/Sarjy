@@ -149,7 +149,7 @@ _REFERENTIAL_TARGETS = frozenset({"it", "that", "this", "them", "those", "these"
 # "forget it", "forget about it" and "forget you!" are figures of speech, not memory commands.
 _FORGET_IDIOM_TARGETS = frozenset({"you", "me", "us", "him", "her", "yourself", "myself", "about it", "it all"})
 # A target with a clause break ("the weather, tell me a joke") is a different request, not a memory name.
-_CLAUSE_BREAK = re.compile(r"[,;:!?]|\b(?:and|then|so|because|but|while|(?:tell|give|show) me)\b", re.IGNORECASE)
+_CLAUSE_BREAK = re.compile(r"[,;:!?]|\.\s|\b(?:and|then|so|because|but|while|(?:tell|give|show) me)\b", re.IGNORECASE)
 _YES = frozenset(
     {
         "yes",
