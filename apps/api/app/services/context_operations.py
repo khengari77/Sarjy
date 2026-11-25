@@ -137,13 +137,35 @@ def _tokens(text: str) -> set[str]:
 
 # Words that point at something without naming it; a target made of these (and stopwords) is no target.
 _REFERENTIAL = frozenset(
-    {"them", "they", "us", "we", "our", "his", "her", "him", "their", "those", "these", "stuff", "things", "thing"}
+    {
+        "them",
+        "they",
+        "us",
+        "we",
+        "our",
+        "his",
+        "her",
+        "him",
+        "their",
+        "those",
+        "these",
+        "stuff",
+        "things",
+        "thing",
+        "something",
+        "anything",
+        "nothing",
+        "everything",
+        "one",
+        "ones",
+    }
 )
 
 
 def has_content_words(text: str) -> bool:
     """Whether ``text`` names anything beyond stopwords and referential words ("all of them" does not)."""
-    return bool(_tokens(text) - _REFERENTIAL)
+    # One-character tokens are apostrophe fragments ("it's" -> it, s) and match every possessive memory.
+    return any(len(token) > 1 for token in _tokens(text) - _REFERENTIAL)
 
 
 async def keyword_search(

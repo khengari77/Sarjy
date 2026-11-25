@@ -133,7 +133,7 @@ _MEMORY_GLOBAL = re.compile(
 # A keep clause is structural: after a comma or conjunction ("but I keep the budget"), or "keep the/my/it"
 # directly after the target. "where I keep my passport" is a fact about the user, not a keep clause.
 _KEEP_CLAUSE = (
-    r"(?:(?:^|[,;]|\b(?:but|and|then|so)\b)\s*(?:(?:i|we|you|they)\s+)?keep\b"
+    r"(?:(?:[,;]|\b(?:but|and|then|so)\b)\s*(?:(?:i|we|you|they)\s+)?keep\b"
     r"|(?<!\bi )(?<!\bwe )(?<!\byou )(?<!\bthey )(?<!\bwhere )(?<!\bwhat )\bkeep (?:the|my|it|that|everything)\b)"
 )
 _MEMORY_COMPOUND = re.compile(r"\b(?:but|and) (?:leave|except)\b|\bexcept\b|" + _KEEP_CLAUSE, re.IGNORECASE)

@@ -242,7 +242,18 @@ def test_possessive_keep_is_a_fact_not_a_keep_clause(text, target):
 
 @pytest.mark.parametrize(
     "text",
-    ["all of it", "all of that", "this chat", "the conversation", "all of them", "everything about us", "stuff"],
+    [
+        "all of it",
+        "all of that",
+        "this chat",
+        "the conversation",
+        "all of them",
+        "everything about us",
+        "stuff",
+        "it's",
+        "what's that",
+        "something",
+    ],
 )
 def test_targets_that_name_nothing_never_search(text):
     from app.services.context_operations import has_content_words
