@@ -173,9 +173,9 @@ def restating_turn_ids(turns: Iterable[tuple[str, str]], facts: Iterable[str]) -
 
     Known limits: a lowercase value shared alone ("pizza tonight?" against "My favorite food is pizza"), a name that
     opens the fact's sentence, and a different spelling or form of the same words ("favourite colour", "twenty-six",
-    "NYC" for "New York") are not detected. Sarjy's own retraction lines quote the stored text, so they match; the
-    background observer, not a growing word list, is the place to judge paraphrases. The rule errs towards blocking, and only inside a conversation where
-    the user asked to forget something.
+    "NYC" for "New York") are not detected. Sarjy's spoken "Hidden '...'" confirmation quotes the stored text, so it
+    matches; the background observer, not a growing word list, is the place to judge paraphrases. The rule errs
+    towards blocking, and only inside a conversation where the user asked to forget something.
     """
     wanted = []
     for fact in facts:

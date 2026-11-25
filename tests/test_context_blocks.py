@@ -180,6 +180,17 @@ def test_blocks_endpoint_states_counts_and_no_writes(tmp_path):
             {"derivation": {"turn_id": "reply-src", "record_ids": ["age"]}},
             request="reply:reply-src",
         )
+        add_turn(
+            file,
+            chat,
+            "derived-plain",
+            "assistant",
+            "Noted",
+            "2026-11-12T00:00:04+00:00",
+            {"derivation": {"turn_id": "reply-src", "record_ids": ["age"]}},
+            request="reply:derived-plain",
+        )
+        add_turn(file, chat, "restates", "user", "I turned 26 yesterday", "2026-11-12T00:00:05+00:00")
         for number in range(25):
             add_turn(file, chat, f"t{number:02d}", "user", f"line {number}", f"2026-11-12T01:00:{number:02d}+00:00")
         tables = ("turns", "memories", "context_exclusions", "context_operations", "context_revisions")
@@ -195,6 +206,12 @@ def test_blocks_endpoint_states_counts_and_no_writes(tmp_path):
         assert by_id["tea"]["state"] == "included" and by_id["tea"]["kind"] == "memory"
         assert by_id["src"]["state"] == "blocked" and by_id["src"]["reason"] == "source_of_blocked_memory"
         assert by_id["derived"]["state"] == "blocked"
+        # Audit reasons: a source wins, then a turn that restates the forgotten fact (even if also derived from it),
+        # then one that is only derived from it.
+        assert by_id["derived"]["reason"] == "restates_forgotten_fact"
+        assert by_id["restates"]["state"] == "blocked" and by_id["restates"]["reason"] == "restates_forgotten_fact"
+        assert by_id["derived-plain"]["state"] == "blocked"
+        assert by_id["derived-plain"]["reason"] == "derived_from_blocked_record"
         assert by_id["t24"]["state"] == "included" and by_id["t24"]["role"] == "user"
         assert by_id["t00"]["state"] == "outside_window"
         counts = body["counts"]
