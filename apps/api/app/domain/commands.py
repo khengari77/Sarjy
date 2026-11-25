@@ -140,6 +140,10 @@ _MEMORY_UNDO = re.compile(
     r"^(?:please )?(?:undo(?: that| it| the hide)?|bring (?:it|that) back|unhide (?:it|that)|un-?hide)$"
 )
 _REFERENTIAL_TARGETS = frozenset({"it", "that", "this", "them", "those", "these", "everything", "anything", "all"})
+# "forget it", "forget about it" and "forget you!" are figures of speech, not memory commands.
+_FORGET_IDIOM_TARGETS = frozenset({"you", "me", "us", "him", "her", "yourself", "myself", "about it", "it all"})
+# A target with a clause break ("the weather, tell me a joke") is a different request, not a memory name.
+_CLAUSE_BREAK = re.compile(r"[,;:!?]|\b(?:and|then|so|because|but|while|(?:tell|give|show) me)\b", re.IGNORECASE)
 _YES = frozenset(
     {
         "yes",
@@ -208,7 +212,8 @@ _UNSUPPORTED_COMMANDS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     ),
     (
         re.compile(
-            r"^(?:(?:forget|exclude|remove|delete) .+"
+            r"^(?:(?:remove|delete) .+"
+            r"|(?:forget|exclude) .*(?:\b(?:but|and) (?:keep|leave|except)\b|\bexcept\b|\bkeep\b).*"
             r"|don't remember .+"
             r"|(?:delete|remove) (?:the )?memory of .+)$"
         ),
@@ -358,7 +363,9 @@ def parse_memory_exclusion_target(text: str) -> str | None:
     if match is None:
         return None
     target = match.group("target").strip()
-    if not target or target.casefold() in _REFERENTIAL_TARGETS:
+    if not target or target.casefold() in _REFERENTIAL_TARGETS | _FORGET_IDIOM_TARGETS:
+        return None
+    if _CLAUSE_BREAK.search(target):
         return None
     if _MEMORY_COMPOUND.search(normalized) or memory_request_is_global(normalized):
         return None

@@ -2,13 +2,18 @@
 
 import pytest
 from app.domain.commands import (
+    _EXACT_COMMANDS,
     normalize_utterance,
     parse_exact_command,
     parse_memory_exclusion_target,
     parse_voice_gender,
+    parse_voice_selection,
+    unsupported_command,
 )
 from app.domain.contracts import AdjustSpeakingSpeed, SetCaptionsVisible, SetTheme
 from app.domain.memory_capture import parse_capture
+from hypothesis import assume, given, settings
+from hypothesis import strategies as st
 
 
 @pytest.mark.parametrize(
@@ -131,3 +136,75 @@ def test_explicit_save_phrasings_capture_the_fact(text, content):
 def test_questions_and_incomplete_requests_never_capture(text):
     capture = parse_capture(text)
     assert capture is None or not capture.explicit
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "You're pushing me to my dark mode",
+        "I like dark mode better",
+        "My dark mode is when I'm sad",
+        "Dark mode is bad for your eyes",
+        "Do you have dark mode?",
+        "don't switch to dark mode",
+        "I said dark mode",
+        "Light mode, honestly, is better",
+        "Speak faster than me",
+        "You speak faster",
+        "Why do you speak slower?",
+        "Slow down, I'm getting confused about my life",
+        "I always turn off captions on Netflix",
+        "My ex used to say: use the dark theme",
+        "switch to a man",
+    ],
+)
+def test_figurative_and_near_miss_sentences_are_not_commands(text):
+    assert parse_exact_command(text) is None
+    assert parse_voice_gender(text) is None
+    assert parse_voice_selection(text) is None
+
+
+# Extra words that are neither filler leads nor polite wrappers, so appending
+# them must make an exact command stop matching instead of being stripped.
+_EXTRA_WORDS = ["banana", "yesterday", "because", "my", "friend", "said", "when", "never"]
+
+
+@pytest.mark.parametrize("phrase", sorted(_EXACT_COMMANDS))
+@settings(max_examples=200)
+@given(
+    prefix=st.lists(st.sampled_from(_EXTRA_WORDS), max_size=3),
+    suffix=st.lists(st.sampled_from(_EXTRA_WORDS), max_size=3),
+)
+def test_extra_words_never_leave_an_exact_command(phrase, prefix, suffix):
+    assume(prefix or suffix)
+    assert parse_exact_command(phrase) is not None
+    assert parse_exact_command(" ".join([*prefix, phrase, *suffix])) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Forget it",
+        "Forget about it",
+        "Forget you!",
+        "Forget the weather, tell me a joke",
+        "forget the trip and tell me about Rome",
+        "Forget me, I'm leaving",
+    ],
+)
+def test_forget_idioms_and_clause_breaks_are_not_memory_commands(text):
+    assert parse_memory_exclusion_target(text) is None
+    assert unsupported_command(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "target"),
+    [("Forget my favorite color", "my favorite color"), ("forget my favorite show", "my favorite show")],
+)
+def test_plain_forget_still_names_a_target(text, target):
+    assert parse_memory_exclusion_target(text) == target
+
+
+def test_compound_forget_keeps_its_honest_refusal():
+    assert unsupported_command("forget the trip but keep the budget")[0] == "MEMORY_MUTATION_UNSUPPORTED"
+    assert unsupported_command("delete my name")[0] == "MEMORY_MUTATION_UNSUPPORTED"
