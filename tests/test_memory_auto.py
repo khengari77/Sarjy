@@ -311,6 +311,8 @@ CREDENTIALS = [
     "my passport number is X1234567",
     "the safe combination is 12-34-56",
     "my 2fa code is 445566",
+    "my security codes are 778 and 991",
+    "my passwords are hunter2 and swordfish",
 ]
 # Out of the scoped floor on purpose (judged by the background observer, not by a growing regex):
 # "my github token is ...", "my login is ...", "the code to my safe is ...".
@@ -327,6 +329,7 @@ ORDINARY = [
     "I have a secret garden",
     "I pin my notes to the board",
     "my passport is blue",
+    "I use 2fa on every account",
 ]
 
 
