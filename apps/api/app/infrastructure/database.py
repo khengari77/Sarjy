@@ -289,6 +289,7 @@ class UserSetting(Base):
     captions_visible: Mapped[bool] = mapped_column(Boolean, default=True)
     approved_voice_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     response_preference: Mapped[str] = mapped_column(String(20), default="automatic")
+    memory_mode: Mapped[str] = mapped_column(String(10), default="auto", server_default="auto")
     revision: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
     # Set once the full spoken introduction finished playing uninterrupted. Not a user

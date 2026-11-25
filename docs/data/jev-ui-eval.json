@@ -1,0 +1,477 @@
+{
+  "n": 70,
+  "correct": 68,
+  "errors": 0,
+  "false_triggers": 1,
+  "wrong_action": 0,
+  "missed": 1,
+  "multi_wrong": 0,
+  "per_expected": {
+    "MULTI": {
+      "n": 2,
+      "correct": 2
+    },
+    "NONE": {
+      "n": 46,
+      "correct": 45
+    },
+    "captions:off": {
+      "n": 3,
+      "correct": 3
+    },
+    "captions:on": {
+      "n": 2,
+      "correct": 1
+    },
+    "speed:+": {
+      "n": 1,
+      "correct": 1
+    },
+    "speed:-": {
+      "n": 4,
+      "correct": 4
+    },
+    "theme:dark": {
+      "n": 6,
+      "correct": 6
+    },
+    "theme:light": {
+      "n": 3,
+      "correct": 3
+    },
+    "voice:female": {
+      "n": 2,
+      "correct": 2
+    },
+    "voice:male": {
+      "n": 1,
+      "correct": 1
+    }
+  },
+  "p50_ms": 322,
+  "p95_ms": 936,
+  "cases": [
+    {
+      "text": "Change to light mode.",
+      "expected": "theme:light",
+      "got": "theme:light",
+      "ms": 1914
+    },
+    {
+      "text": "Can you make it dark?",
+      "expected": "theme:dark",
+      "got": "theme:dark",
+      "ms": 278
+    },
+    {
+      "text": "It's too bright in here, can you fix that?",
+      "expected": "theme:dark",
+      "got": "theme:dark",
+      "ms": 221
+    },
+    {
+      "text": "Speak a bit slower please",
+      "expected": "speed:-",
+      "got": "speed:-",
+      "ms": 215
+    },
+    {
+      "text": "You're talking too fast",
+      "expected": "speed:-",
+      "got": "speed:-",
+      "ms": 230
+    },
+    {
+      "text": "Please talk faster",
+      "expected": "speed:+",
+      "got": "speed:+",
+      "ms": 250
+    },
+    {
+      "text": "Hide the subtitles",
+      "expected": "captions:off",
+      "got": "captions:off",
+      "ms": 252
+    },
+    {
+      "text": "Show me what you're saying",
+      "expected": "captions:on",
+      "got": "NONE",
+      "ms": 273
+    },
+    {
+      "text": "Change to a man's voice",
+      "expected": "voice:male",
+      "got": "voice:male",
+      "ms": 325
+    },
+    {
+      "text": "I want a woman to read this to me",
+      "expected": "voice:female",
+      "got": "voice:female",
+      "ms": 238
+    },
+    {
+      "text": "Could you turn the captions off?",
+      "expected": "captions:off",
+      "got": "captions:off",
+      "ms": 237
+    },
+    {
+      "text": "Go back to the bright theme",
+      "expected": "theme:light",
+      "got": "theme:light",
+      "ms": 227
+    },
+    {
+      "text": "Can you change to dark mode?",
+      "expected": "theme:dark",
+      "got": "theme:dark",
+      "ms": 285
+    },
+    {
+      "text": "Can you change to light mode?",
+      "expected": "theme:light",
+      "got": "theme:light",
+      "ms": 266
+    },
+    {
+      "text": "Can you bring back dark mode?",
+      "expected": "theme:dark",
+      "got": "theme:dark",
+      "ms": 234
+    },
+    {
+      "text": "No. That's too bright. Can you bring back dark mode?",
+      "expected": "theme:dark",
+      "got": "theme:dark",
+      "ms": 294
+    },
+    {
+      "text": "Would you slow down a bit?",
+      "expected": "speed:-",
+      "got": "speed:-",
+      "ms": 734
+    },
+    {
+      "text": "Could you show the captions?",
+      "expected": "captions:on",
+      "got": "captions:on",
+      "ms": 562
+    },
+    {
+      "text": "I love dark mode",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 308
+    },
+    {
+      "text": "What's the weather today in Tripoli?",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 295
+    },
+    {
+      "text": "Remember my name is Sam",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 312
+    },
+    {
+      "text": "Don't switch to dark mode",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 936
+    },
+    {
+      "text": "Make the text darker in my essay",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 467
+    },
+    {
+      "text": "Tell me a joke",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 417
+    },
+    {
+      "text": "What voice are you using?",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 1003
+    },
+    {
+      "text": "Tell me about fast food",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 501
+    },
+    {
+      "text": "How does light travel?",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 800
+    },
+    {
+      "text": "Is dark mode better for your eyes?",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 404
+    },
+    {
+      "text": "Can you explain what captions are?",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 319
+    },
+    {
+      "text": "What are captions?",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 321
+    },
+    {
+      "text": "My brother talks too fast",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 291
+    },
+    {
+      "text": "Forget my name",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 296
+    },
+    {
+      "text": "Do you remember my name?",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 339
+    },
+    {
+      "text": "Dark mode and hide captions",
+      "expected": "MULTI",
+      "got": "MULTI",
+      "ms": 463
+    },
+    {
+      "text": "Speak faster and turn on captions",
+      "expected": "MULTI",
+      "got": "MULTI",
+      "ms": 422
+    },
+    {
+      "text": "Thanks, that was helpful",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 857
+    },
+    {
+      "text": "You're pushing me to my dark mode",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 823
+    },
+    {
+      "text": "I'm going dark on social media for a week",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 578
+    },
+    {
+      "text": "Slow down, life is too fast",
+      "expected": "NONE",
+      "got": "speed:-",
+      "ms": 603
+    },
+    {
+      "text": "My sister says I should turn the volume down on my life",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 333
+    },
+    {
+      "text": "The movie has captions in Spanish",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 321
+    },
+    {
+      "text": "He asked me to speak faster yesterday",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 417
+    },
+    {
+      "text": "That song is called Light Mode",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 409
+    },
+    {
+      "text": "Dark mode makes my phone battery last longer",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 322
+    },
+    {
+      "text": "I wish you could speak faster, but it's fine",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 293
+    },
+    {
+      "text": "Subtitles are annoying in my opinion",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 298
+    },
+    {
+      "text": "Her voice is lovely",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 262
+    },
+    {
+      "text": "Tell me about the history of dark matter",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 237
+    },
+    {
+      "text": "A man's voice came from the radio",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 348
+    },
+    {
+      "text": "My friend prefers the light theme",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 318
+    },
+    {
+      "text": "The captions on that meme were hilarious",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 321
+    },
+    {
+      "text": "My uncle speaks so fast I can't follow him",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 250
+    },
+    {
+      "text": "She said the light was too bright in the room",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 311
+    },
+    {
+      "text": "The radio host has a deep male voice",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 238
+    },
+    {
+      "text": "We watched the film with subtitles at my cousin's place",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 239
+    },
+    {
+      "text": "He turned the lights off before leaving the office",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 252
+    },
+    {
+      "text": "I prefer my coffee light, not dark",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 433
+    },
+    {
+      "text": "The singer's voice cracked on the high note",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 251
+    },
+    {
+      "text": "The report says the market slowed down last quarter",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 343
+    },
+    {
+      "text": "My grandmother told me to slow down and enjoy life",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 357
+    },
+    {
+      "text": "The subtitles were out of sync at the cinema",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 528
+    },
+    {
+      "text": "There's a dark cloud over the city this morning",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 554
+    },
+    {
+      "text": "My teacher speaks faster than anyone I know",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 330
+    },
+    {
+      "text": "He asked whether the museum has captions for the tour",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 2322
+    },
+    {
+      "text": "The theme of the novel is loss and memory",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 545
+    },
+    {
+      "text": "The light in the hallway flickered all night",
+      "expected": "NONE",
+      "got": "NONE",
+      "ms": 327
+    },
+    {
+      "text": "Switch the display to dark please",
+      "expected": "theme:dark",
+      "got": "theme:dark",
+      "ms": 315
+    },
+    {
+      "text": "Mind talking a little slower?",
+      "expected": "speed:-",
+      "got": "speed:-",
+      "ms": 324
+    },
+    {
+      "text": "Subtitles off",
+      "expected": "captions:off",
+      "got": "captions:off",
+      "ms": 358
+    },
+    {
+      "text": "Use a female voice",
+      "expected": "voice:female",
+      "got": "voice:female",
+      "ms": 470
+    }
+  ],
+  "cases_expected": 70,
+  "complete": true
+}

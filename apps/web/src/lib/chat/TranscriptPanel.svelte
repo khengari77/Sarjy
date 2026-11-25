@@ -1,16 +1,21 @@
 <script lang="ts">
   import type { Turn } from '../api';
   import type { ProvisionalTranscript } from '../voice/connection';
+  import { createTurnContextReceipts } from '../context/receipt.svelte';
+  import TurnContextReceipt from '../context/TurnContextReceipt.svelte';
   import ToolTraceChip from './ToolTraceChip.svelte';
 
   interface Props {
+    conversationId: string | null;
     turns: Turn[];
     tools: { id: string; name: string; result: unknown }[];
     arabic: boolean;
     provisional?: ProvisionalTranscript | null;
   }
 
-  let { turns, tools, arabic, provisional = null }: Props = $props();
+  let { conversationId, turns, tools, arabic, provisional = null }: Props = $props();
+
+  const receipts = createTurnContextReceipts({ conversationId: () => conversationId });
 
   function speaker(role: string): string {
     if (role === 'assistant') return arabic ? 'سَرْجي' : 'Sarjy';
@@ -36,6 +41,9 @@
         {speaker(turn.role)}{#if note}<span class="note" data-status={turn.status}>{` · ${note}`}</span>{/if}
       </small>
       <p>{turn.text}</p>
+      {#if turn.role === 'assistant' && conversationId}
+        <TurnContextReceipt turnId={turn.id} {arabic} {receipts} />
+      {/if}
     </article>
   {/each}
   {#if provisional}

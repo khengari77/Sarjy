@@ -8,6 +8,7 @@ import {
   type UserSettings,
   type VoiceOption,
 } from '../api';
+import type { MemoryChangeKind, MemoryMode } from '../commands/commandStore';
 
 export type ToolCall = { id: string; name: string; result: unknown };
 
@@ -70,6 +71,16 @@ export async function saveCaptionSelection(visible: boolean, expectedRevision: n
   });
 }
 
+/** Persist the memory capture mode owner-side; the server snapshot is authoritative. */
+export async function saveMemoryMode(mode: MemoryMode, expectedRevision: number): Promise<SettingsActionResult> {
+  const requestId = `memory:${expectedRevision}:${mode}`;
+  return request<SettingsActionResult>('settings/actions', {
+    request_id: requestId,
+    expected_revision: expectedRevision,
+    action: { kind: 'SetMemoryMode', mode },
+  });
+}
+
 /**
  * Persist the speaking-speed preference owner-side. The worker reads it from
  * the frozen turn snapshot, so a change applies to the next turn (#136).
@@ -80,6 +91,22 @@ export async function saveSpeakingSpeed(speed: number, expectedRevision: number)
     request_id: requestId,
     expected_revision: expectedRevision,
     action: { kind: 'SetSpeakingSpeed', speed },
+  });
+}
+
+export interface ChangeUndoResult {
+  id: string;
+  kind: MemoryChangeKind;
+  label: string;
+  undoable: boolean;
+  memory_id: string | null;
+  changed: boolean;
+}
+
+/** Undo one auto-saved memory change; the server owns whether it still applies. A 204 is success. */
+export async function undoChange(id: string): Promise<ChangeUndoResult> {
+  return request<ChangeUndoResult>(`changes/${encodeURIComponent(id)}/undo`, {}, undefined, {
+    emptyBody: { changed: true },
   });
 }
 

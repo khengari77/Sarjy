@@ -39,7 +39,9 @@ def test_qualified_city_and_unknown_legacy_evidence_fail_closed():
     assert decide_weather_request(city="Tripoli, Libya", country="LY", user_text="Weather in Tripoli?").allowed
 
 
-def test_real_reader_filters_tracked_sources_derivatives_and_unknown_tools_but_keeps_independent_history(tmp_path):
+def test_real_reader_filters_tracked_sources_derivatives_unknown_tools_and_restatements_but_keeps_unrelated_history(
+    tmp_path,
+):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
@@ -66,6 +68,7 @@ def test_real_reader_filters_tracked_sources_derivatives_and_unknown_tools_but_k
 
             turn("source", "user", "I live in Paris", "source")
             turn("independent", "user", "I independently mentioned Paris", "independent")
+            turn("rome-turn", "user", "I lived in Rome for years", "rome")
             turn("weather-user", "user", "What is the weather?", "weather", {"included_record_ids": ["m-city"]})
             turn("assistant", "assistant", "Paris is 20 degrees", "reply:weather-user")
             turn("legacy-user", "user", "Another question", "legacy")
@@ -94,8 +97,11 @@ def test_real_reader_filters_tracked_sources_derivatives_and_unknown_tools_but_k
         assert response.status_code == 200, response.text
         context = response.json()["context"]
         ids = set(context["included_record_ids"])
-        assert "independent" in ids and "weather-user" in ids
-        assert not ids & {"m-city", "source", "assistant", "derived", "unknown"}
+        assert "weather-user" in ids and "legacy-user" in ids
+        # "I lived in Rome" was corrected (superseded), not forgotten, so history that restates it is kept.
+        assert "rome-turn" in ids
+        # "I independently mentioned Paris" restates the excluded fact, so it is dropped too (#194).
+        assert not ids & {"m-city", "source", "assistant", "derived", "unknown", "independent"}
         assert context["weather_policy"]["excluded_memory_ids"] == ["m-city"]
         assert "old" not in context["weather_policy"]["excluded_memory_ids"]
         with closing(sqlite3.connect(file)) as db, db:
@@ -103,4 +109,4 @@ def test_real_reader_filters_tracked_sources_derivatives_and_unknown_tools_but_k
         restored = client.post(
             "/internal/agent/turn/start", headers=headers, json={"request_id": "restored", "text": "Next"}
         ).json()["context"]
-        assert {"m-city", "source", "assistant", "derived"} <= set(restored["included_record_ids"])
+        assert {"m-city", "source", "assistant", "derived", "independent"} <= set(restored["included_record_ids"])

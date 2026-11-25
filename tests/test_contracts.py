@@ -163,6 +163,7 @@ def test_every_shared_action_round_trips_through_the_discriminator():
         {"kind": "ShowConversationHistory"},
         {"kind": "OpenMemoryExplorer"},
         {"kind": "SetCaptionsVisible", "visible": False},
+        {"kind": "SetMemoryMode", "mode": "ask"},
         {"kind": "SetTheme", "theme": "dark"},
         {"kind": "SearchMemory", "query": "trip", "limit": 5},
         {"kind": "ProposeContextExclusion", "query": "trip", "keep": ["budget"]},

@@ -342,6 +342,52 @@ def test_accounts_migration_is_additive_and_reversible(tmp_path):
     after = content()
     assert set(after) - set(before) == {"accounts", "account_sessions", "account_attempt_windows"}
     assert {name: after[name] for name in before} == before
+    alembic(url, "upgrade", "head")
     alembic(url, "check")
     alembic(url, "downgrade", "0015_intro_seen")
     assert content() == before
+
+
+def test_memory_mode_migration_is_additive_and_reversible(tmp_path):
+    path = tmp_path / "memory-mode.db"
+    url = f"sqlite+aiosqlite:///{path}"
+    alembic(url, "upgrade", "0016_accounts")
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "INSERT INTO identities (id, token_hash, expires_at)"
+            " VALUES ('owner-1', 'hash', '2030-01-01T00:00:00+00:00')"
+        )
+        connection.execute(
+            "INSERT INTO user_settings"
+            " (owner_id, speaking_speed, captions_visible, approved_voice_id, response_preference, revision, updated_at)"
+            " VALUES ('owner-1', 1.0, 1, NULL, 'automatic', 0, '2026-11-11T00:00:00+00:00')"
+        )
+        before = connection.execute(
+            "SELECT owner_id, speaking_speed, captions_visible, approved_voice_id, response_preference, revision"
+            " FROM user_settings"
+        ).fetchall()
+
+    alembic(url, "upgrade", "head")
+    with closing(sqlite3.connect(path)) as connection:
+        columns = {row[1]: row for row in connection.execute("PRAGMA table_info(user_settings)")}
+        assert columns["memory_mode"][3] == 1
+        assert (
+            connection.execute(
+                "SELECT owner_id, speaking_speed, captions_visible, approved_voice_id, response_preference, revision"
+                " FROM user_settings"
+            ).fetchall()
+            == before
+        )
+        assert connection.execute("SELECT memory_mode FROM user_settings").fetchall() == [("auto",)]
+    alembic(url, "check")
+
+    alembic(url, "downgrade", "0016_accounts")
+    with closing(sqlite3.connect(path)) as connection:
+        assert "memory_mode" not in {row[1] for row in connection.execute("PRAGMA table_info(user_settings)")}
+        assert (
+            connection.execute(
+                "SELECT owner_id, speaking_speed, captions_visible, approved_voice_id, response_preference, revision"
+                " FROM user_settings"
+            ).fetchall()
+            == before
+        )

@@ -1,14 +1,21 @@
 """Conversational wrappers and extra phrasings resolve to the same typed actions as the exact rows."""
 
+import asyncio
+
 import pytest
 from app.domain.commands import (
+    _EXACT_COMMANDS,
     normalize_utterance,
     parse_exact_command,
     parse_memory_exclusion_target,
     parse_voice_gender,
+    parse_voice_selection,
+    unsupported_command,
 )
 from app.domain.contracts import AdjustSpeakingSpeed, SetCaptionsVisible, SetTheme
 from app.domain.memory_capture import parse_capture
+from hypothesis import assume, given, settings
+from hypothesis import strategies as st
 
 
 @pytest.mark.parametrize(
@@ -131,3 +138,172 @@ def test_explicit_save_phrasings_capture_the_fact(text, content):
 def test_questions_and_incomplete_requests_never_capture(text):
     capture = parse_capture(text)
     assert capture is None or not capture.explicit
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "You're pushing me to my dark mode",
+        "I like dark mode better",
+        "My dark mode is when I'm sad",
+        "Dark mode is bad for your eyes",
+        "Do you have dark mode?",
+        "don't switch to dark mode",
+        "I said dark mode",
+        "Light mode, honestly, is better",
+        "Speak faster than me",
+        "You speak faster",
+        "Why do you speak slower?",
+        "Slow down, I'm getting confused about my life",
+        "I always turn off captions on Netflix",
+        "My ex used to say: use the dark theme",
+        "switch to a man",
+    ],
+)
+def test_figurative_and_near_miss_sentences_are_not_commands(text):
+    assert parse_exact_command(text) is None
+    assert parse_voice_gender(text) is None
+    assert parse_voice_selection(text) is None
+
+
+# Extra words that are neither filler leads nor polite wrappers, so appending
+# them must make an exact command stop matching instead of being stripped.
+_EXTRA_WORDS = ["banana", "yesterday", "because", "my", "friend", "said", "when", "never"]
+
+
+@pytest.mark.parametrize("phrase", sorted(_EXACT_COMMANDS))
+@settings(max_examples=200)
+@given(
+    prefix=st.lists(st.sampled_from(_EXTRA_WORDS), max_size=3),
+    suffix=st.lists(st.sampled_from(_EXTRA_WORDS), max_size=3),
+)
+def test_extra_words_never_leave_an_exact_command(phrase, prefix, suffix):
+    assume(prefix or suffix)
+    assert parse_exact_command(phrase) is not None
+    assert parse_exact_command(" ".join([*prefix, phrase, *suffix])) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Forget it",
+        "Forget about it",
+        "Forget you!",
+        "Forget the weather, tell me a joke",
+        "forget the trip and tell me about Rome",
+        "Forget me, I'm leaving",
+        "Forget the car rental. I want to keep the hotel booking.",
+        "Forget the car rental. I should keep the hotel booking",
+        "forget the trip. Leave the hotel",
+        "forget the trip. Skip the hotel",
+    ],
+)
+def test_forget_idioms_and_clause_breaks_are_not_memory_commands(text):
+    assert parse_memory_exclusion_target(text) is None
+    assert unsupported_command(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "target"),
+    [("Forget my favorite color", "my favorite color"), ("forget my favorite show", "my favorite show")],
+)
+def test_plain_forget_still_names_a_target(text, target):
+    assert parse_memory_exclusion_target(text) == target
+
+
+def test_compound_forget_keeps_its_honest_refusal():
+    assert unsupported_command("forget the trip but keep the budget")[0] == "MEMORY_MUTATION_UNSUPPORTED"
+    assert unsupported_command("delete my name")[0] == "MEMORY_MUTATION_UNSUPPORTED"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "forget the trip KEEP the budget",
+        "forget the trip Keep the budget",
+        "Forget the trip EXCEPT the hotel",
+        "forget the trip but I keep the budget",
+        "forget the trip and we keep the budget",
+    ],
+)
+def test_keep_clauses_are_compound_whatever_the_case_or_subject(text):
+    assert unsupported_command(text) is not None
+    assert parse_memory_exclusion_target(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "target"),
+    [
+        ("forget where I keep my passport", "where I keep my passport"),
+        ("forget where they keep the spare key", "where they keep the spare key"),
+        ("forget what I keep in my safe", "what I keep in my safe"),
+        ("forget my plan to keep the gym membership", "my plan to keep the gym membership"),
+        ("forget Dr. Smith's number", "Dr. Smith's number"),
+        ("forget the U.S. trip", "the U.S. trip"),
+    ],
+)
+def test_possessive_keep_is_a_fact_not_a_keep_clause(text, target):
+    assert unsupported_command(text) is None
+    assert parse_memory_exclusion_target(text) == target
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "all of it",
+        "all of that",
+        "this chat",
+        "the conversation",
+        "all of them",
+        "everything about us",
+        "stuff",
+        "it's",
+        "what's that",
+        "something",
+    ],
+)
+def test_targets_that_name_nothing_never_search(text):
+    from app.services.context_operations import has_content_words
+    from app.services.voice_exclusions import hide_target
+
+    assert not has_content_words(text)
+    # db=None proves the guard returns before any lookup, on the path the model's forget tool also uses.
+    result = asyncio.run(hide_target(None, owner_id="o", conversation_id="c", target=text, request_id="r", search=None))
+    assert result.detail == "MEMORY_TARGET_UNSPECIFIED"
+
+
+def test_a_real_memory_word_still_counts_as_content():
+    from app.services.context_operations import has_content_words
+
+    assert has_content_words("X")
+    assert has_content_words("7")
+    assert has_content_words("3.5")
+    assert not has_content_words("3 5")
+    assert not has_content_words("it's 7")
+    assert not has_content_words("the 7")  # a stray single digit beside stopwords is not enough to search on
+    assert has_content_words("Dr. Smith's number")
+    assert not has_content_words("a")
+    assert not has_content_words("i")
+    assert not has_content_words("it's")
+
+    assert has_content_words("my favorite color")
+    assert has_content_words("the Paris trip")
+
+
+def test_a_single_letter_never_elects_a_memory_beside_other_words():
+    from app.services.context_operations import query_tokens
+
+    assert query_tokens("vitamin D") == {"vitamin"}
+    assert query_tokens("plan b") == {"plan"}
+    assert query_tokens("X") == {"x"}
+    assert query_tokens("3.5") == {"3.5"}
+    assert query_tokens("it's 7") == set()
+
+
+def test_keyword_search_with_a_query_that_names_nothing_returns_nothing():
+    import asyncio
+
+    from app.services.context_operations import keyword_search
+
+    for query in ("them", "it's", "a", "C#", "all of it"):
+        assert asyncio.run(keyword_search(None, owner_id="o", conversation_id="c", query=query, limit=5)) == ()

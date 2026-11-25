@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 580" width="980" height="580" role="img" aria-labelledby="chart-title">
+  <title id="chart-title">Probe-run latency history</title>
+  <rect x="0" y="0" width="980" height="580" fill="#f8f9fb"/>
+  <g font-family="system-ui, -apple-system, &#x27;Segoe UI&#x27;, sans-serif" fill="#1a1a1a">
+    <text x="32" y="42" font-size="20" text-anchor="start" fill="#1a1a1a" font-weight="700">Probe-run latency history</text>
+    <text x="32" y="66" font-size="13" text-anchor="start" fill="#4a4a4a">p50 and p95 end-to-end latency for each probe run, in milliseconds</text>
+    <line x1="32" y1="90" x2="56" y2="90" stroke="#0072B2" stroke-width="2.5"/>
+    <text x="64" y="94" font-size="12" text-anchor="start" fill="#1a1a1a">p50</text>
+    <line x1="140" y1="90" x2="164" y2="90" stroke="#D55E00" stroke-width="2.5"/>
+    <text x="172" y="94" font-size="12" text-anchor="start" fill="#1a1a1a">p95</text>
+    <line x1="248" y1="90" x2="272" y2="90" stroke="#4a4a4a" stroke-width="2.5" stroke-dasharray="8 6"/>
+    <text x="280" y="94" font-size="12" text-anchor="start" fill="#1a1a1a">interim target</text>
+    <text x="948" y="94" font-size="12" text-anchor="end" fill="#4a4a4a">Long-term goals: p50 1500 ms / p95 2000 ms</text>
+    <line x1="96" y1="448" x2="936" y2="448" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="84" y="452" font-size="11" text-anchor="end" fill="#4a4a4a">0</text>
+    <line x1="96" y1="400" x2="936" y2="400" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="84" y="404" font-size="11" text-anchor="end" fill="#4a4a4a">1,000</text>
+    <line x1="96" y1="352" x2="936" y2="352" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="84" y="356" font-size="11" text-anchor="end" fill="#4a4a4a">2,000</text>
+    <line x1="96" y1="304" x2="936" y2="304" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="84" y="308" font-size="11" text-anchor="end" fill="#4a4a4a">3,000</text>
+    <line x1="96" y1="256" x2="936" y2="256" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="84" y="260" font-size="11" text-anchor="end" fill="#4a4a4a">4,000</text>
+    <line x1="96" y1="208" x2="936" y2="208" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="84" y="212" font-size="11" text-anchor="end" fill="#4a4a4a">5,000</text>
+    <line x1="96" y1="160" x2="936" y2="160" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="84" y="164" font-size="11" text-anchor="end" fill="#4a4a4a">6,000</text>
+    <line x1="96" y1="112" x2="936" y2="112" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="84" y="116" font-size="11" text-anchor="end" fill="#4a4a4a">7,000</text>
+    <line x1="96" y1="448" x2="936" y2="448" stroke="#b8bcc4" stroke-width="1.5"/>
+    <text x="516" y="546" font-size="12.5" text-anchor="middle" fill="#1a1a1a">Probe run (chronological order)</text>
+    <text x="30" y="280" font-size="12.5" text-anchor="middle" fill="#1a1a1a" transform="rotate(-90 30 280)">Latency (ms)</text>
+    <line x1="96" y1="352" x2="936" y2="352" stroke="#0072B2" stroke-width="1.5" stroke-dasharray="8 6" opacity="0.65"/>
+    <text x="532.8" y="346" font-size="11" text-anchor="middle" fill="#0072B2" font-weight="600">interim p50 target 2000 ms</text>
+    <line x1="96" y1="256" x2="936" y2="256" stroke="#D55E00" stroke-width="1.5" stroke-dasharray="8 6" opacity="0.65"/>
+    <text x="532.8" y="250" font-size="11" text-anchor="middle" fill="#D55E00" font-weight="600">interim p95 target 4000 ms</text>
+    <text x="96" y="474" font-size="11.5" text-anchor="middle" fill="#1a1a1a" font-weight="600">after</text>
+    <text x="96" y="490" font-size="10" text-anchor="middle" fill="#4a4a4a">11-24 08:12</text>
+    <text x="216" y="474" font-size="11.5" text-anchor="middle" fill="#1a1a1a" font-weight="600">after2</text>
+    <text x="216" y="490" font-size="10" text-anchor="middle" fill="#4a4a4a">11-24 08:21</text>
+    <text x="336" y="474" font-size="11.5" text-anchor="middle" fill="#1a1a1a" font-weight="600">after6</text>
+    <text x="336" y="490" font-size="10" text-anchor="middle" fill="#4a4a4a">11-24 09:32</text>
+    <text x="456" y="474" font-size="11.5" text-anchor="middle" fill="#1a1a1a" font-weight="600">1124d</text>
+    <text x="456" y="490" font-size="10" text-anchor="middle" fill="#4a4a4a">11-24 13:56</text>
+    <text x="576" y="474" font-size="11.5" text-anchor="middle" fill="#1a1a1a" font-weight="600">1124e</text>
+    <text x="576" y="490" font-size="10" text-anchor="middle" fill="#4a4a4a">11-24 14:56</text>
+    <text x="696" y="474" font-size="11.5" text-anchor="middle" fill="#1a1a1a" font-weight="600">1124h</text>
+    <text x="696" y="490" font-size="10" text-anchor="middle" fill="#4a4a4a">11-24 18:28</text>
+    <text x="816" y="474" font-size="11.5" text-anchor="middle" fill="#1a1a1a" font-weight="600">1124i</text>
+    <text x="816" y="490" font-size="10" text-anchor="middle" fill="#4a4a4a">11-24 21:21</text>
+    <text x="936" y="474" font-size="11.5" text-anchor="middle" fill="#1a1a1a" font-weight="600">nopreempt</text>
+    <text x="936" y="490" font-size="10" text-anchor="middle" fill="#4a4a4a">11-25 02:17</text>
+    <polyline points="96,223.46 216,247.94 336,292.29 456,290.61 576,295.41 696,313.5 816,296.99 936,308.66" fill="none" stroke="#0072B2" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="96" cy="223.46" r="4.5" fill="#0072B2"/>
+    <text x="96" y="211.46" font-size="10.5" text-anchor="middle" fill="#0072B2" font-weight="600">4,678</text>
+    <circle cx="216" cy="247.94" r="4.5" fill="#0072B2"/>
+    <text x="216" y="235.94" font-size="10.5" text-anchor="middle" fill="#0072B2" font-weight="600">4,168</text>
+    <circle cx="336" cy="292.29" r="4.5" fill="#0072B2"/>
+    <text x="336" y="280.29" font-size="10.5" text-anchor="middle" fill="#0072B2" font-weight="600">3,244</text>
+    <circle cx="456" cy="290.61" r="4.5" fill="#0072B2"/>
+    <text x="456" y="278.61" font-size="10.5" text-anchor="middle" fill="#0072B2" font-weight="600">3,279</text>
+    <circle cx="576" cy="295.41" r="4.5" fill="#0072B2"/>
+    <text x="576" y="283.41" font-size="10.5" text-anchor="middle" fill="#0072B2" font-weight="600">3,179</text>
+    <circle cx="696" cy="313.5" r="4.5" fill="#0072B2"/>
+    <text x="696" y="301.5" font-size="10.5" text-anchor="middle" fill="#0072B2" font-weight="600">2,802</text>
+    <circle cx="816" cy="296.99" r="4.5" fill="#0072B2"/>
+    <text x="816" y="284.99" font-size="10.5" text-anchor="middle" fill="#0072B2" font-weight="600">3,146</text>
+    <circle cx="936" cy="308.66" r="4.5" fill="#0072B2"/>
+    <text x="936" y="296.66" font-size="10.5" text-anchor="middle" fill="#0072B2" font-weight="600">2,903</text>
+    <polyline points="96,129.57 216,127.41 336,192.98 456,208.53 576,161.1 696,198.59 816,252.64 936,259.55" fill="none" stroke="#D55E00" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="96" cy="129.57" r="4.5" fill="#D55E00"/>
+    <text x="96" y="148.57" font-size="10.5" text-anchor="middle" fill="#D55E00" font-weight="600">6,634</text>
+    <circle cx="216" cy="127.41" r="4.5" fill="#D55E00"/>
+    <text x="216" y="146.41" font-size="10.5" text-anchor="middle" fill="#D55E00" font-weight="600">6,679</text>
+    <circle cx="336" cy="192.98" r="4.5" fill="#D55E00"/>
+    <text x="336" y="211.98" font-size="10.5" text-anchor="middle" fill="#D55E00" font-weight="600">5,313</text>
+    <circle cx="456" cy="208.53" r="4.5" fill="#D55E00"/>
+    <text x="456" y="227.53" font-size="10.5" text-anchor="middle" fill="#D55E00" font-weight="600">4,989</text>
+    <circle cx="576" cy="161.1" r="4.5" fill="#D55E00"/>
+    <text x="576" y="180.1" font-size="10.5" text-anchor="middle" fill="#D55E00" font-weight="600">5,977</text>
+    <circle cx="696" cy="198.59" r="4.5" fill="#D55E00"/>
+    <text x="696" y="217.59" font-size="10.5" text-anchor="middle" fill="#D55E00" font-weight="600">5,196</text>
+    <circle cx="816" cy="252.64" r="4.5" fill="#D55E00"/>
+    <text x="816" y="271.64" font-size="10.5" text-anchor="middle" fill="#D55E00" font-weight="600">4,070</text>
+    <circle cx="936" cy="259.55" r="4.5" fill="#D55E00"/>
+    <text x="936" y="278.55" font-size="10.5" text-anchor="middle" fill="#D55E00" font-weight="600">3,926</text>
+    <text x="32" y="568" font-size="10.5" text-anchor="start" fill="#4a4a4a">Source: docs/data/latency-history.json. Interim targets are dashed; long-term goals are 1500 / 2000 ms.</text>
+  </g>
+</svg>

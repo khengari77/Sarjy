@@ -872,6 +872,23 @@
         }
       }
     },
+    "/internal/agent/warm": {
+      "post": {
+        "summary": "Warm",
+        "description": "Best-effort latency warm-up; no turn, budget reservation or session state is involved.",
+        "operationId": "warm_internal_agent_warm_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/agent/bootstrap": {
       "post": {
         "summary": "Bootstrap",
@@ -1902,6 +1919,9 @@
                     "$ref": "#/components/schemas/SetCaptionsVisible"
                   },
                   {
+                    "$ref": "#/components/schemas/SetMemoryMode"
+                  },
+                  {
                     "$ref": "#/components/schemas/SetTheme"
                   },
                   {
@@ -1924,6 +1944,7 @@
                     "SearchMemory": "#/components/schemas/SearchMemory",
                     "SelectApprovedVoice": "#/components/schemas/SelectApprovedVoice",
                     "SetCaptionsVisible": "#/components/schemas/SetCaptionsVisible",
+                    "SetMemoryMode": "#/components/schemas/SetMemoryMode",
                     "SetSpeakingSpeed": "#/components/schemas/SetSpeakingSpeed",
                     "SetTheme": "#/components/schemas/SetTheme",
                     "ShowConversationHistory": "#/components/schemas/ShowConversationHistory"
@@ -3683,6 +3704,31 @@
         "title": "SetCaptionsVisible",
         "type": "object"
       },
+      "SetMemoryMode": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "SetMemoryMode",
+            "default": "SetMemoryMode",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "off",
+              "ask",
+              "auto"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "SetMemoryMode",
+        "type": "object"
+      },
       "SetSpeakingSpeed": {
         "additionalProperties": false,
         "properties": {
@@ -3739,7 +3785,8 @@
               "AdjustSpeakingSpeed",
               "SetSpeakingSpeed",
               "SelectApprovedVoice",
-              "SetCaptionsVisible"
+              "SetCaptionsVisible",
+              "SetMemoryMode"
             ],
             "title": "Kind"
           },
@@ -3793,6 +3840,9 @@
                 "$ref": "#/components/schemas/SetCaptionsVisible"
               },
               {
+                "$ref": "#/components/schemas/SetMemoryMode"
+              },
+              {
                 "$ref": "#/components/schemas/SetTheme"
               },
               {
@@ -3816,6 +3866,7 @@
                 "SearchMemory": "#/components/schemas/SearchMemory",
                 "SelectApprovedVoice": "#/components/schemas/SelectApprovedVoice",
                 "SetCaptionsVisible": "#/components/schemas/SetCaptionsVisible",
+                "SetMemoryMode": "#/components/schemas/SetMemoryMode",
                 "SetSpeakingSpeed": "#/components/schemas/SetSpeakingSpeed",
                 "SetTheme": "#/components/schemas/SetTheme",
                 "ShowConversationHistory": "#/components/schemas/ShowConversationHistory"
@@ -4062,6 +4113,45 @@
             ],
             "title": "Turn Start Db Ms"
           },
+          "api_connect_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Connect Ms"
+          },
+          "api_headers_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Headers Ms"
+          },
+          "api_body_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Body Ms"
+          },
           "command_server_ms": {
             "anyOf": [
               {
@@ -4087,6 +4177,19 @@
               }
             ],
             "title": "Command Db Ms"
+          },
+          "command_api_headers_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Api Headers Ms"
           },
           "model_first_chunk_ms": {
             "anyOf": [
@@ -4114,6 +4217,149 @@
             ],
             "title": "Release Wait Ms"
           },
+          "reassurance_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reassurance Ms"
+          },
+          "first_answer_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Answer Ms"
+          },
+          "t_turn_start_begin_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T Turn Start Begin Ms"
+          },
+          "t_turn_start_end_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T Turn Start End Ms"
+          },
+          "t_command_begin_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T Command Begin Ms"
+          },
+          "t_command_end_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T Command End Ms"
+          },
+          "t_model_request_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T Model Request Ms"
+          },
+          "t_model_first_chunk_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T Model First Chunk Ms"
+          },
+          "t_tool_start_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T Tool Start Ms"
+          },
+          "t_tool_end_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T Tool End Ms"
+          },
+          "t_tts_first_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T Tts First Ms"
+          },
           "prompt_cache_hit_tokens": {
             "anyOf": [
               {
@@ -4139,6 +4385,32 @@
               }
             ],
             "title": "Prompt Cache Miss Tokens"
+          },
+          "prompt_cache_hit_tokens_2": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Cache Hit Tokens 2"
+          },
+          "prompt_cache_miss_tokens_2": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Cache Miss Tokens 2"
           },
           "request_bytes": {
             "anyOf": [
@@ -4255,6 +4527,16 @@
           "response_preference": {
             "$ref": "#/components/schemas/ResponsePreference",
             "default": "automatic"
+          },
+          "memory_mode": {
+            "default": "auto",
+            "enum": [
+              "off",
+              "ask",
+              "auto"
+            ],
+            "title": "Memory Mode",
+            "type": "string"
           },
           "revision": {
             "default": 0,
@@ -5022,6 +5304,9 @@
           },
           {
             "$ref": "#/components/schemas/SetCaptionsVisible"
+          },
+          {
+            "$ref": "#/components/schemas/SetMemoryMode"
           },
           {
             "$ref": "#/components/schemas/SetTheme"

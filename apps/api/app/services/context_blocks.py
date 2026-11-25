@@ -117,7 +117,12 @@ def _turn_blocks(window: list[Turn], inputs, sent: set[str]) -> list[_Block]:
     blocks = []
     for turn in window:
         if turn.id in inputs.blocked_ids:
-            reason = "source_of_blocked_memory" if turn.id in sources else "derived_from_blocked_record"
+            if turn.id in sources:
+                reason = "source_of_blocked_memory"
+            elif turn.id in inputs.restating_ids:
+                reason = "restates_forgotten_fact"
+            else:
+                reason = "derived_from_blocked_record"
             blocks.append(_Block(turn.id, "turn", turn.role, turn.text, "blocked", reason))
         elif turn.id in history_ids:
             state, reason = ("included", None) if turn.id in sent else ("not_sent", "budget")
