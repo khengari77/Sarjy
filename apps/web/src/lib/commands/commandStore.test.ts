@@ -14,6 +14,7 @@ function settings(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
     captions_visible: true,
     approved_voice_id: null,
     response_preference: 'automatic',
+    memory_mode: 'auto',
     revision: 0,
     ...overrides,
   };
@@ -229,5 +230,26 @@ describe('result validation', () => {
     delete legacy.theme;
     expect(normalizeCommandResult(legacy)?.theme).toBeNull();
     expect(normalizeCommandResult(themeCommand())?.theme).toBe('light');
+  });
+
+  it('keeps memory_mode optional for older payloads and rejects unknown modes', () => {
+    const legacy: Record<string, unknown> = { ...voiceCaptions() };
+    delete (legacy.settings as Record<string, unknown>).memory_mode;
+    const normalized = normalizeCommandResult(legacy);
+    expect(normalized).not.toBeNull();
+    expect(normalized?.settings?.revision).toBe(1);
+    expect(normalized?.settings?.memory_mode).toBeUndefined();
+
+    const memory: CommandResult = voiceCaptions({
+      action: 'SetMemoryMode',
+      settings: settings({ memory_mode: 'off', revision: 1 }),
+    });
+    expect(normalizeCommandResult(memory)?.settings?.memory_mode).toBe('off');
+    expect(
+      normalizeCommandResult({
+        ...memory,
+        settings: { ...memory.settings, memory_mode: 'sometimes' },
+      }),
+    ).toBeNull();
   });
 });

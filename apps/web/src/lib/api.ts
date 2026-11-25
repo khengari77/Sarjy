@@ -26,21 +26,40 @@ export interface SessionConfig {
   saved_voice_unavailable?: 'removed' | 'transient' | null;
 }
 export interface SettingsActionResult {
-  kind: 'SelectApprovedVoice' | 'AdjustSpeakingSpeed' | 'SetSpeakingSpeed' | 'SetCaptionsVisible';
+  kind: 'SelectApprovedVoice' | 'AdjustSpeakingSpeed' | 'SetSpeakingSpeed' | 'SetCaptionsVisible' | 'SetMemoryMode';
   settings: UserSettings;
   changed: boolean;
 }
-export async function request<T>(path: string, body?: unknown, method?: 'DELETE'): Promise<T> {
+export interface RequestOptions {
+  /** Value returned for an empty successful body instead of API_RESPONSE_INVALID. */
+  emptyBody?: unknown;
+}
+
+export async function request<T>(
+  path: string,
+  body?: unknown,
+  method?: 'DELETE',
+  options: RequestOptions = {},
+): Promise<T> {
   const response = await fetch('/api/v1/' + path, {
     method: method ?? (body === undefined ? 'GET' : 'POST'),
     headers: body === undefined ? {} : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  const text = await response.text();
   let data;
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error(response.ok ? 'API_RESPONSE_INVALID' : `HTTP_${response.status}`);
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(response.ok ? 'API_RESPONSE_INVALID' : `HTTP_${response.status}`);
+    }
+  } else if (!response.ok) {
+    throw new Error(`HTTP_${response.status}`);
+  } else if (options.emptyBody !== undefined) {
+    return options.emptyBody as T;
+  } else {
+    throw new Error('API_RESPONSE_INVALID');
   }
   if (!response.ok) {
     const code = data?.detail?.code;

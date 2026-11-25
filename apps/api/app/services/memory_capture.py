@@ -134,6 +134,7 @@ def proposal_for_capture(
         "token": token,
         "text": capture.text,
         "explicit": capture.explicit,
+        "negated": capture.negated,
         "confirmation_id": confirmation_id,
         "confirmation_revision": 1,
         "question": _confirmation_question(capture.text),
@@ -831,6 +832,18 @@ async def _discard(
         lease_id=claim.lease_id,
     )
     return response
+
+
+def proposal_summary(token: str, secret: str, owner_id: str, conversation_id: str) -> tuple[str, str, bool, bool]:
+    """``(confirmation_id, text, explicit, negated)`` of a verified proposal, for callers outside this module."""
+    capture, payload = _verified(token, secret, owner_id, conversation_id)
+    negated = bool(capture.negated)
+    if "negated" not in payload:
+        # A token minted before the claim existed: re-derive it from the signed text with the scoped parser rather
+        # than trusting a missing claim as "not negated".
+        reparsed = parse_capture(capture.text)
+        negated = negated or bool(reparsed is not None and reparsed.negated)
+    return str(payload["confirmation_id"]), capture.text, bool(capture.explicit), negated
 
 
 async def confirm_memory(

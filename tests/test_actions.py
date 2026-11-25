@@ -90,6 +90,38 @@ def test_ui_settings_stay_revision_guarded_and_idempotent(tmp_path):
             assert db.execute("SELECT COUNT(*) FROM context_operations").fetchone()[0] == 1
 
 
+def test_memory_mode_uses_the_shared_settings_path(tmp_path):
+    app, path = setup(tmp_path)
+    with TestClient(app) as client:
+        client.post("/v1/demo-session")
+        response = client.post(
+            "/v1/settings/actions",
+            json={
+                "request_id": "memory-1",
+                "expected_revision": 0,
+                "action": {"kind": "SetMemoryMode", "mode": "off"},
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "kind": "SetMemoryMode",
+            "settings": {
+                "speaking_speed": 1.0,
+                "captions_visible": True,
+                "approved_voice_id": None,
+                "response_preference": "automatic",
+                "memory_mode": "off",
+                "revision": 1,
+            },
+            "changed": True,
+        }
+        assert client.get("/v1/settings").json()["memory_mode"] == "off"
+        with closing(sqlite3.connect(path)) as db, db:
+            assert db.execute("SELECT memory_mode FROM user_settings").fetchone() == ("off",)
+            stored = db.execute("SELECT settings FROM setting_revisions").fetchone()[0]
+            assert '"memory_mode": "off"' in stored
+
+
 def test_final_transcript_speed_commits_for_the_next_reply(tmp_path):
     app, path = setup(tmp_path)
     with TestClient(app) as client:

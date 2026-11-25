@@ -150,6 +150,38 @@ def test_captions_and_voice_use_the_one_settings_path(tmp_path):
         assert client.get("/v1/settings").json()["approved_voice_id"] == "approved"
 
 
+def test_memory_mode_by_voice_is_stored_through_the_one_settings_path(tmp_path):
+    app, path = app_for(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        assert client.get("/v1/settings").json()["memory_mode"] == "auto"
+
+        off = voice(client, conversation, "Turn memory off.").json()["result"]
+        assert off["kind"] == "executed" and off["action"] == "SetMemoryMode"
+        assert off["settings"]["memory_mode"] == "off" and off["settings"]["revision"] == 1
+        assert off["spoken"] == "Memory is off. I won't save anything."
+        assert client.get("/v1/settings").json()["memory_mode"] == "off"
+        assert counts(path) == (1, 0, 1)
+
+        again = voice(client, conversation, "turn memory off", request="r2", revision=1).json()["result"]
+        assert again["kind"] == "unchanged" and again["spoken"] == "Memory is already off."
+        assert counts(path)[0] == 1  # no second settings revision for an unchanged mode
+
+        ask = voice(client, conversation, "Ask me before remembering.", request="r3", revision=1).json()["result"]
+        assert ask["settings"]["memory_mode"] == "ask" and ask["spoken"] == "I'll ask before remembering."
+        assert client.get("/v1/settings").json()["memory_mode"] == "ask"
+
+
+def test_a_sentence_that_merely_mentions_memory_changes_nothing(tmp_path):
+    app, path = app_for(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        response = voice(client, conversation, "I want to turn memory off for my diary")
+        assert response.json()["handled"] is False
+        assert client.get("/v1/settings").json()["memory_mode"] == "auto"
+        assert counts(path) == (0, 0, 0)
+
+
 def test_unapproved_spoken_voice_is_refused_without_a_write(tmp_path):
     app, path = app_for(tmp_path)
     with TestClient(app) as client:

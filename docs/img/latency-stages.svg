@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 380" width="1080" height="380" role="img" aria-labelledby="chart-title">
+  <title id="chart-title">Worker latency by stage</title>
+  <rect x="0" y="0" width="1080" height="380" fill="#f8f9fb"/>
+  <g font-family="system-ui, -apple-system, &#x27;Segoe UI&#x27;, sans-serif" fill="#1a1a1a">
+    <text x="32" y="42" font-size="20" text-anchor="start" fill="#1a1a1a" font-weight="700">Worker latency by stage</text>
+    <text x="32" y="66" font-size="13" text-anchor="start" fill="#4a4a4a">Stacked worker stages for each worker_stages_ms entry, in milliseconds</text>
+    <line x1="250" y1="106" x2="250" y2="274" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="250" y="296" font-size="11" text-anchor="middle" fill="#4a4a4a">0</text>
+    <line x1="386" y1="106" x2="386" y2="274" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="386" y="296" font-size="11" text-anchor="middle" fill="#4a4a4a">500</text>
+    <line x1="522" y1="106" x2="522" y2="274" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="522" y="296" font-size="11" text-anchor="middle" fill="#4a4a4a">1,000</text>
+    <line x1="658" y1="106" x2="658" y2="274" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="658" y="296" font-size="11" text-anchor="middle" fill="#4a4a4a">1,500</text>
+    <line x1="794" y1="106" x2="794" y2="274" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="794" y="296" font-size="11" text-anchor="middle" fill="#4a4a4a">2,000</text>
+    <line x1="930" y1="106" x2="930" y2="274" stroke="#e3e5e9" stroke-width="1"/>
+    <text x="930" y="296" font-size="11" text-anchor="middle" fill="#4a4a4a">2,500</text>
+    <line x1="250" y1="106" x2="250" y2="274" stroke="#b8bcc4" stroke-width="1.5"/>
+    <text x="590" y="330" font-size="12.5" text-anchor="middle" fill="#1a1a1a">Latency (ms)</text>
+    <text x="236" y="145" font-size="12.5" text-anchor="end" fill="#1a1a1a" font-weight="600">before (#264 baseline)</text>
+    <rect x="250" y="118" width="156.94" height="46" fill="#0072B2" stroke="#f8f9fb" stroke-width="1"/>
+    <text x="328.47" y="145" font-size="11" text-anchor="middle" fill="#ffffff" font-weight="600">end of turn</text>
+    <rect x="406.94" y="118" width="110.16" height="46" fill="#E69F00" stroke="#f8f9fb" stroke-width="1"/>
+    <text x="462.02" y="145" font-size="11" text-anchor="middle" fill="#1a1a1a" font-weight="600">turn start</text>
+    <rect x="517.1" y="118" width="145.52" height="46" fill="#009E73" stroke="#f8f9fb" stroke-width="1"/>
+    <text x="589.86" y="145" font-size="11" text-anchor="middle" fill="#1a1a1a" font-weight="600">command</text>
+    <rect x="662.62" y="118" width="174.9" height="46" fill="#CC79A7" stroke="#f8f9fb" stroke-width="1"/>
+    <text x="750.07" y="145" font-size="11" text-anchor="middle" fill="#1a1a1a" font-weight="600">model first chunk</text>
+    <rect x="837.52" y="118" width="46.24" height="46" fill="#56B4E9" stroke="#f8f9fb" stroke-width="1"/>
+    <text x="860.64" y="145" font-size="11" text-anchor="middle" fill="#1a1a1a" font-weight="600">tts</text>
+    <text x="893.76" y="146" font-size="13" text-anchor="start" fill="#1a1a1a" font-weight="700">2,330 ms</text>
+    <text x="236" y="249" font-size="12.5" text-anchor="end" fill="#1a1a1a" font-weight="600">now (554 turns)</text>
+    <rect x="250" y="222" width="156.94" height="46" fill="#0072B2" stroke="#f8f9fb" stroke-width="1"/>
+    <text x="328.47" y="249" font-size="11" text-anchor="middle" fill="#ffffff" font-weight="600">end of turn</text>
+    <rect x="406.94" y="222" width="105.54" height="46" fill="#E69F00" stroke="#f8f9fb" stroke-width="1"/>
+    <text x="459.71" y="249" font-size="11" text-anchor="middle" fill="#1a1a1a" font-weight="600">turn start</text>
+    <rect x="512.48" y="222" width="145.52" height="46" fill="#009E73" stroke="#f8f9fb" stroke-width="1"/>
+    <text x="585.24" y="249" font-size="11" text-anchor="middle" fill="#1a1a1a" font-weight="600">command</text>
+    <rect x="658" y="222" width="174.9" height="46" fill="#CC79A7" stroke="#f8f9fb" stroke-width="1"/>
+    <text x="745.45" y="249" font-size="11" text-anchor="middle" fill="#1a1a1a" font-weight="600">model first chunk</text>
+    <rect x="832.9" y="222" width="46.24" height="46" fill="#56B4E9" stroke="#f8f9fb" stroke-width="1"/>
+    <text x="856.02" y="249" font-size="11" text-anchor="middle" fill="#1a1a1a" font-weight="600">tts</text>
+    <text x="889.14" y="250" font-size="13" text-anchor="start" fill="#1a1a1a" font-weight="700">2,313 ms</text>
+    <text x="32" y="368" font-size="10.5" text-anchor="start" fill="#4a4a4a">Source: docs/data/latency-history.json. Bar totals sum the worker stages.</text>
+  </g>
+</svg>

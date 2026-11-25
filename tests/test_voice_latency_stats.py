@@ -480,7 +480,7 @@ def test_failed_sessions_retry_then_write_one_incomplete(monkeypatch):
     async def fake_new_conversation(client, api):
         return "conversation"
 
-    async def fake_run_session(client, api, conversation_id, round_number, remaining, audio, sink):
+    async def fake_run_session(client, api, conversation_id, round_number, remaining, audio, sink, streak=None):
         nonlocal attempts
         attempts += 1
         probe._write_session_failed(sink, round_number, "RuntimeError")

@@ -1,6 +1,6 @@
 """Live Jev UI-command evaluation harness (manual; never run in CI, makes paid-quota calls).
 
-Usage: JEV_API_KEY=... uv run python scripts/jev_ui_eval.py [--limit N]
+Usage: JEV_API_KEY=... uv run python scripts/jev_ui_eval.py [--limit N] [--out PATH]
 The key is read only from the environment; nothing is printed or stored with it.
 """
 
@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import re
 import statistics
+import sys
 import time
 from pathlib import Path
 
@@ -26,6 +29,69 @@ from app.domain.ui_routing import (
 from app.services.jev import JEV_ENDPOINT
 
 CASES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "jev_ui_live_cases.json"
+ACTION_LABEL = re.compile(r"^(theme:(light|dark|system)|captions:(on|off)|speed:[+-]|voice:(male|female))$")
+
+
+def percentile(ordered: list[int], fraction: float) -> int:
+    """Nearest-rank percentile over an already sorted list."""
+    return ordered[min(len(ordered) - 1, max(0, math.ceil(fraction * len(ordered)) - 1))] if ordered else 0
+
+
+def build_report(records: list[dict[str, object]]) -> dict[str, object]:
+    expected_labels = sorted({str(record["expected"]) for record in records})
+    per_expected = {
+        label: {
+            "n": sum(record["expected"] == label for record in records),
+            "correct": sum(record["expected"] == label and record["got"] == label for record in records),
+        }
+        for label in expected_labels
+    }
+    ordered = sorted(int(record["ms"]) for record in records)  # type: ignore[arg-type]
+    return {
+        "n": len(records),
+        "correct": sum(record["expected"] == record["got"] for record in records),
+        # An error is neither a clean miss nor a clean pass: count it on its own so a dead key or a
+        # timeout storm cannot look like a perfect run.
+        "errors": sum(record["got"] == "ERR" for record in records),
+        "false_triggers": sum(
+            record["expected"] == "NONE" and record["got"] not in ("NONE", "ERR") for record in records
+        ),
+        # Right family of mistake but the wrong action ("theme:dark" expected, "theme:light" or "MULTI" got).
+        "wrong_action": sum(
+            record["expected"] not in ("NONE", "MULTI") and record["got"] not in ("NONE", "ERR", record["expected"])
+            for record in records
+        ),
+        "missed": sum(record["expected"] not in ("NONE", "MULTI") and record["got"] == "NONE" for record in records),
+        "multi_wrong": sum(
+            record["expected"] == "MULTI" and record["got"] not in ("MULTI", "ERR") for record in records
+        ),
+        "per_expected": per_expected,
+        "p50_ms": round(statistics.median(ordered)) if ordered else 0,
+        "p95_ms": percentile(ordered, 0.95),
+        "cases": records,
+    }
+
+
+def _valid_case(case: object) -> bool:
+    if not isinstance(case, dict):
+        return False
+    expected = case.get("expected")
+    return (
+        isinstance(case.get("text"), str)
+        and isinstance(expected, str)
+        and (expected in ("NONE", "MULTI") or bool(ACTION_LABEL.match(expected)))
+    )
+
+
+def load_cases(limit: int | None) -> list[dict[str, str]]:
+    """Read and validate the fixture; a malformed row must fail before the first paid call."""
+    cases = json.loads(CASES.read_text())[:limit]
+    if not cases:
+        raise SystemExit("no cases to run")
+    bad = [i for i, case in enumerate(cases) if not _valid_case(case)]
+    if bad:
+        raise SystemExit(f"fixture rows {bad} need a string 'text' and an 'expected' of NONE, MULTI or a known label")
+    return cases
 
 
 def label(decision: UiDecision | None) -> str:
@@ -50,47 +116,72 @@ def label(decision: UiDecision | None) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
+    if args.limit is not None and args.limit < 1:
+        parser.error("--limit must be at least 1")
     key = os.environ.get("JEV_API_KEY", "")
     if not key:
         raise SystemExit("JEV_API_KEY is not set")
-    cases = json.loads(CASES.read_text())[: args.limit]
+    cases = load_cases(args.limit)
+    if args.out:
+        # Fail before the paid run, not after it: a bad path must not discard the results.
+        args.out.parent.mkdir(parents=True, exist_ok=True)
     correct = 0
     latencies: list[int] = []
-    with httpx.Client(timeout=5) as client:
-        for case in cases:
-            started = time.monotonic()
-            body = None
-            try:
-                response = client.post(
-                    JEV_ENDPOINT,
-                    headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
-                    json=build_ui_request(case["text"]),
-                )
-                body = response.json() if response.status_code == 200 else None
-            except (httpx.HTTPError, ValueError):
+    records: list[dict[str, object]] = []
+    write_failed = False
+    try:
+        with httpx.Client(timeout=5) as client:
+            for case in cases:
+                started = time.monotonic()
                 body = None
-            latencies.append(round((time.monotonic() - started) * 1000))
-            result = parse_ui_response(body) if body else None
-            got = label(evaluate_ui_classification(result)) if result else "ERR"
-            if got == case["expected"]:
-                correct += 1
-                continue
-            gates = ""
-            if result:
-                family = result.family.choice
-                detail = getattr(result, family, None) if family in ("theme", "captions", "speed", "voice") else None
-                gates = (
-                    f"route={result.route.choice}:{result.route.probability:.2f} "
-                    f"family={family}:{result.family.probability:.2f}"
-                    + (f" detail={detail.choice}:{detail.probability:.2f}" if detail else "")
-                )
-            print(f"MISS {case['text']!r} want={case['expected']} got={got} {gates}")
+                try:
+                    response = client.post(
+                        JEV_ENDPOINT,
+                        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+                        json=build_ui_request(case["text"]),
+                    )
+                    body = response.json() if response.status_code == 200 else None
+                except (httpx.HTTPError, ValueError):
+                    body = None
+                latencies.append(round((time.monotonic() - started) * 1000))
+                result = parse_ui_response(body) if body else None
+                got = label(evaluate_ui_classification(result)) if result else "ERR"
+                records.append({"text": case["text"], "expected": case["expected"], "got": got, "ms": latencies[-1]})
+                if got == case["expected"]:
+                    correct += 1
+                    continue
+                gates = ""
+                if result:
+                    family = result.family.choice
+                    detail = (
+                        getattr(result, family, None) if family in ("theme", "captions", "speed", "voice") else None
+                    )
+                    gates = (
+                        f"route={result.route.choice}:{result.route.probability:.2f} "
+                        f"family={family}:{result.family.probability:.2f}"
+                        + (f" detail={detail.choice}:{detail.probability:.2f}" if detail else "")
+                    )
+                print(f"MISS {case['text']!r} want={case['expected']} got={got} {gates}")
+    finally:
+        # Written even when the run is interrupted, so paid results are never lost.
+        if args.out:
+            report = build_report(records)
+            report["cases_expected"] = len(cases)
+            report["complete"] = len(records) == len(cases)
+            try:
+                args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            except OSError as exc:  # never mask the exception that ended the run
+                print(f"could not write {args.out}: {exc}", file=sys.stderr)
+                write_failed = True
     ordered = sorted(latencies)
     print(
         f"correct {correct}/{len(cases)} latency ms: median {statistics.median(ordered):.0f} "
         f"p90 {ordered[int(len(ordered) * 0.9)]} max {ordered[-1]}"
     )
+    if write_failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

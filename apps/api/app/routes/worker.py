@@ -12,16 +12,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.domain.commands import CommandResult
+from app.domain.commands import CommandResult, parse_exact_command
 from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
 from app.domain.contracts import (
     MemoryRecord,
     MemorySource,
     ModelRequest,
+    SetMemoryMode,
     UserSettings,
     resolve_response_policy,
 )
 from app.domain.intro import intro_for
+from app.domain.memory_policy import Decision, Sensitivity, classify_sensitivity, plan_for_proposal
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
@@ -33,10 +35,12 @@ from app.services.budget import reserve as reserve_development_budget
 from app.services.commands import command_request_id, handle_finalized_utterance
 from app.services.context_assembly import location_evidence, read_context_inputs
 from app.services.memory import MemoryService
+from app.services.memory_auto import auto_commit_memory
 from app.services.memory_capture import (
     MemoryCaptureError,
     confirm_memory,
     load_proposal,
+    proposal_summary,
     propose_memory,
     record_proposal,
 )
@@ -65,6 +69,10 @@ class AgentInput(BaseModel):
 class MemoryConfirm(BaseModel):
     token: str = Field(min_length=1, max_length=20000)
     decision: Literal["save", "discard", "replace"]
+
+
+class MemoryAuto(BaseModel):
+    token: str = Field(min_length=1, max_length=20000)
 
 
 class AgentOutput(BaseModel):
@@ -193,6 +201,14 @@ PENDING_MEMORY_INSTRUCTION = (
     "A memory candidate is pending for this turn. Ask the user to confirm or decline before it is saved. "
     "Do not claim it is saved until confirmation succeeds."
 )
+SENSITIVE_MEMORY_INSTRUCTION = (
+    "The user's last message contains something sensitive (such as a password or a secret code) that Sarjy never "
+    "saves. Do not claim it was saved and do not repeat it; briefly say you can't keep details like that."
+)
+SENSITIVE_TOOL_NOTE = (
+    "That is sensitive (a password or secret) and is never saved. Nothing was saved. Do not repeat it; tell the "
+    "user briefly that you can't keep details like that."
+)
 
 
 def register_worker_routes(
@@ -215,6 +231,7 @@ def register_worker_routes(
     _register_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_tool_routes(app, config=config, database=database, guard=guard)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
+    _register_auto_memory_route(app, config=config, database=database, guard=guard, embedder=embedder)
     if wordle_source is not None:
 
         async def run_tool(db, request, body, name, arguments, effect):
@@ -233,6 +250,9 @@ def _memory_proposal(
     secret = _memory_secret(config)
     if not secret:
         return None
+    # "Remember things automatically" is a memory-mode command, not a fact to remember.
+    if isinstance(parse_exact_command(text), SetMemoryMode):
+        return None
     try:
         return propose_memory(
             text,
@@ -247,19 +267,38 @@ def _memory_proposal(
 
 
 def _context_instructions(
-    config: Settings, pipeline, *, owner_id: str, conversation_id: str, turn, strict_capture: bool = False
+    config: Settings,
+    pipeline,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    turn,
+    strict_capture: bool = False,
+    memory_mode: str = "auto",
 ) -> tuple[str, dict | None]:
-    proposal = _memory_proposal(
-        config,
-        owner_id=owner_id,
-        conversation_id=conversation_id,
-        source_turn_id=turn.id,
-        text=turn.text,
-        strict=strict_capture,
+    # With memory off nothing is ever proposed, so there is no question to ask and nothing to arm.
+    proposal = (
+        None
+        if memory_mode == "off"
+        else _memory_proposal(
+            config,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            source_turn_id=turn.id,
+            text=turn.text,
+            strict=strict_capture,
+        )
     )
+    sensitive = proposal is not None and classify_sensitivity(proposal["text"]) is Sensitivity.CREDENTIAL
+    if sensitive:
+        # A credential creates no proposal at all, so the sensitive text is never recorded as one.
+        proposal = None
     instructions = pipeline_instructions(pipeline)
     if proposal is not None:
         instructions = f"{instructions}\n\n{PENDING_MEMORY_INSTRUCTION}"
+    elif sensitive:
+        # Without this the model may claim it saved the secret; nothing was proposed or recorded.
+        instructions = f"{instructions}\n\n{SENSITIVE_MEMORY_INSTRUCTION}"
     return instructions, proposal
 
 
@@ -294,6 +333,17 @@ async def _replayed_turn_response(db: AsyncSession, *, owner_id: str, conversati
     }
 
 
+def _refuse_unsaveable(token: str, config: Settings, owner_id: str, conversation_id: str, row) -> None:
+    """A credential is never saved in any mode, so even a spoken "yes" cannot confirm one."""
+    try:
+        _, text, explicit, negated = proposal_summary(token, _memory_secret(config), owner_id, conversation_id)
+    except MemoryCaptureError:
+        return  # confirm_memory reports an invalid token itself
+    mode = row.memory_mode if row is not None else "auto"
+    if plan_for_proposal(mode, text, explicit=explicit, negated=negated) is Decision.SKIP:
+        raise HTTPException(409, detail={"code": "MEMORY_SENSITIVE"})
+
+
 def _register_memory_routes(app, *, config: Settings, database, guard, embedder):
     @app.post("/internal/agent/memory/confirm")
     async def confirm_memory_route(body: MemoryConfirm, request: Request, db: AsyncSession = Depends(database)):
@@ -301,6 +351,12 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
         conversation = await db.get(Conversation, voice.conversation_id)
         if conversation is None:
             raise HTTPException(404)
+        if body.decision != "discard":
+            # A proposal armed before the user turned memory off must not be savable afterwards.
+            row = await db.get(UserSetting, conversation.owner_id)
+            if row is not None and row.memory_mode == "off":
+                raise HTTPException(409, detail={"code": "MEMORY_OFF"})
+            _refuse_unsaveable(body.token, config, conversation.owner_id, voice.conversation_id, row)
         try:
             return await confirm_memory(
                 db,
@@ -311,6 +367,36 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
                 conversation_id=voice.conversation_id,
                 source_turn_id=None,
                 secret=_memory_secret(config),
+            )
+        except MemoryCaptureError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code, **exc.details}) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                429 if str(exc) == "DAILY_BUDGET_EXHAUSTED" else 422, detail={"code": str(exc)}
+            ) from exc
+
+
+def _register_auto_memory_route(app, *, config: Settings, database, guard, embedder):
+    @app.post("/internal/agent/memory/auto")
+    async def auto_memory_route(body: MemoryAuto, request: Request, db: AsyncSession = Depends(database)):
+        """Commit a proposal without a spoken question. Only valid in ``auto`` mode and only when the policy says save."""
+        voice = await guard(request, db, allow_ended=True)
+        conversation = await db.get(Conversation, voice.conversation_id)
+        if conversation is None:
+            raise HTTPException(404)
+        row = await db.get(UserSetting, conversation.owner_id)
+        mode = row.memory_mode if row is not None else "auto"
+        if mode == "off":
+            raise HTTPException(409, detail={"code": "MEMORY_OFF"})
+        try:
+            return await auto_commit_memory(
+                db,
+                MemoryService(db, embedder),
+                token=body.token,
+                owner_id=conversation.owner_id,
+                conversation_id=voice.conversation_id,
+                secret=_memory_secret(config),
+                mode=mode,
             )
         except MemoryCaptureError as exc:
             raise HTTPException(exc.status, detail={"code": exc.code, **exc.details}) from exc
@@ -556,6 +642,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
         instructions, proposal = _context_instructions(
             config,
             pipeline,
+            memory_mode=settings_row.memory_mode if settings_row is not None else "auto",
             owner_id=conversation.owner_id,
             conversation_id=voice.conversation_id,
             turn=turn,
@@ -598,6 +685,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
                 captions_visible=settings_row.captions_visible,
                 approved_voice_id=settings_row.approved_voice_id,
                 response_preference=settings_row.response_preference,
+                memory_mode=settings_row.memory_mode,
                 revision=settings_row.revision,
             )
         )
@@ -940,7 +1028,18 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
     @app.post("/internal/agent/tool/memory-propose")
     async def agent_memory_propose(body: MemoryProposeInput, request: Request, db: AsyncSession = Depends(database)):
         async def effect(owner_id, conversation_id):
-            return await memory_propose_tool(
+            row = await db.get(UserSetting, owner_id)
+            if row is not None and row.memory_mode == "off":
+                return {
+                    "status": "rejected",
+                    "error": "MEMORY_OFF",
+                    "message": "Memory is turned off, so nothing was saved. Tell the user memory is off; "
+                    "do not claim it was saved.",
+                }
+            if classify_sensitivity(body.fact) is Sensitivity.CREDENTIAL:
+                # Never record it as a proposal: that would store the text we promise not to keep.
+                return {"status": "rejected", "error": "MEMORY_SENSITIVE", "message": SENSITIVE_TOOL_NOTE}
+            result = await memory_propose_tool(
                 db,
                 owner_id=owner_id,
                 conversation_id=conversation_id,
@@ -948,6 +1047,7 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
                 fact=body.fact,
                 secret=secret,
             )
+            return result
 
         return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)
 

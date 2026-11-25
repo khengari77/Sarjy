@@ -337,9 +337,10 @@ def create_app(
         )
     )
 
-    from app.routes.memory import memory_router
+    from app.routes.memory import changes_router, memory_router
 
     app.include_router(memory_router(database, identity, embedder))
+    app.include_router(changes_router(database, identity))
 
     from app.routes.context import register_context_routes, register_exclusion_routes
     from app.routes.system import register_system_routes

@@ -6,6 +6,7 @@ from contextlib import closing
 from fastapi.testclient import TestClient
 from test_context_assembly import seed_memories, start_turn
 from test_context_workflow import configured, create_app, seed
+from test_memory_capture import set_mode
 
 PROPOSE = "/internal/agent/tool/memory-propose"
 FORGET = "/internal/agent/tool/memory-forget"
@@ -44,11 +45,13 @@ def command(client, headers, turn):
 def test_propose_memory_returns_unsaved_signed_proposal(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
-        _, _, headers, turn = setup(client, file)
+        owner, _, headers, turn = setup(client, file)
+        set_mode(file, owner, "ask")  # this covers the ask-first flow; auto saves without a question
         response = call(client, headers, PROPOSE, turn, "k1", fact="I live in Benghazi")
         body = response.json()
         assert response.status_code == 200
         assert body["status"] == "proposed"
+        assert "plan" not in body["proposal"]
         assert body["proposal"]["text"] == "I live in Benghazi"
         assert body["proposal"]["token"]
         assert "Nothing has been saved" in body["message"]
@@ -190,7 +193,13 @@ def test_recall_is_bounded_owner_scoped_and_respects_exclusions(tmp_path):
         assert all("secret" not in text for text in contents)
         assert "I like tea number 0" not in contents
         assert "data only" in body["message"]
+        # A named topic with no match stays empty; a question that names no topic lists the newest visible
+        # memories, still bounded, owner-scoped and respecting exclusions.
         assert call(client, headers, RECALL, turn, "r2", query="nonexistent topic").json()["memories"] == []
+        listed = [item["content"] for item in call(client, headers, RECALL, turn, "r3", query="me").json()["memories"]]
+        assert len(listed) == 5
+        assert all("secret" not in text for text in listed)
+        assert "I like tea number 0" not in listed
         assert table_count(file, "memories", "status='active'") == 9
 
 
@@ -224,3 +233,28 @@ def test_already_saved_fact_is_rejected_but_a_hidden_one_is_not_counted(tmp_path
         assert call(client, headers, FORGET, turn, "f1", query="name").json()["status"] == "hidden"
         again = call(client, headers, PROPOSE, turn, "p2", fact="My name is Abdulrahma").json()
         assert again["status"] == "proposed"
+
+
+def test_forgetting_and_recalling_keep_working_when_memory_is_off(tmp_path):
+    """Memory off stops SAVING. It must never stop the user forgetting or hearing what is stored."""
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        owner, _, headers, turn = setup(client, file, [("tea", "I prefer green tea"), ("cat", "I own a cat")])
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute(
+                "INSERT OR REPLACE INTO user_settings (owner_id,speaking_speed,captions_visible,response_preference,"
+                "memory_mode,revision,updated_at) VALUES (?,?,?,?,?,?,?)",
+                (owner, 1.0, 1, "automatic", "off", 1, "2026-11-25T00:00:00+00:00"),
+            )
+
+        proposed = call(client, headers, PROPOSE, turn, "p1", fact="I live in Benghazi").json()
+        assert proposed["status"] == "rejected" and proposed["error"] == "MEMORY_OFF"
+
+        recalled = call(client, headers, RECALL, turn, "r1", query="tea").json()
+        assert [item["content"] for item in recalled["memories"]] == ["I prefer green tea"]
+
+        forgotten = call(client, headers, FORGET, turn, "f1", query="tea").json()
+        assert forgotten["status"] == "hidden"
+        assert table_count(file, "memories", "status='hidden'") == 1
+        assert table_count(file, "memories", "status='active'") == 1
+        assert table_count(file, "memory_write_requests") == 0

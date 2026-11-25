@@ -47,6 +47,15 @@ def turn(client, headers, text, request_id):
     return client.post("/internal/agent/turn/start", headers=headers, json={"request_id": request_id, "text": text})
 
 
+def set_mode(file, owner, mode):
+    with closing(sqlite3.connect(file)) as db, db:
+        db.execute(
+            "INSERT OR REPLACE INTO user_settings (owner_id,speaking_speed,captions_visible,response_preference,"
+            "memory_mode,revision,updated_at) VALUES (?,?,?,?,?,?,?)",
+            (owner, 1.0, 1, "automatic", mode, 1, "2026-11-25T00:00:00+00:00"),
+        )
+
+
 def memory_rows(file):
     with closing(sqlite3.connect(file)) as db, db:
         return db.execute(
@@ -85,6 +94,8 @@ def test_finalized_fact_requires_confirmation_then_recalls_corrects_and_isolates
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
         headers = add_turn_session(file, chat, owner)
+        # This test covers the ask-first flow; the default (auto) saves an ordinary fact without a question.
+        set_mode(file, owner, "ask")
 
         started = turn(client, headers, "I prefer tea with mint", "fact-1").json()
         proposal = started["memory_proposal"]

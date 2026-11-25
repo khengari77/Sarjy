@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.memory_changes import AUTO_SAVE
 from app.infrastructure.database import ContextOperation, Memory, MemoryWriteRequest, now
 
 ACTIVE = "active"
@@ -111,7 +112,7 @@ async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> Visi
         await db.scalars(
             select(ContextOperation).where(
                 ContextOperation.owner_id == owner_id,
-                ContextOperation.command_type.in_((HIDE_OPERATION, UNHIDE_OPERATION)),
+                ContextOperation.command_type.in_((HIDE_OPERATION, UNHIDE_OPERATION, AUTO_SAVE)),
             )
         )
     ).all()
@@ -119,6 +120,6 @@ async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> Visi
         if (operation.payload or {}).get("memory_id") in ids:
             # Spoken lines quote the memory; keep the id (for audit) and drop the text.
             operation.payload = {"memory_id": (operation.payload or {}).get("memory_id"), "scrubbed": True}
-            if operation.outcome == "applied" and operation.command_type == HIDE_OPERATION:
+            if operation.outcome == "applied" and operation.command_type in (HIDE_OPERATION, AUTO_SAVE):
                 operation.outcome = "deleted"
     return VisibilityResult(memory_id, DELETED, True)
