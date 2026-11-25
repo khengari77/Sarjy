@@ -844,7 +844,9 @@ async def read_context_inputs(
         return frozenset(values)
 
     # Only generated assistant content inherits model-input dependencies. Independent
-    # user history is retained unless it is the explicitly tracked source of a memory.
+    # user history is retained unless it is the explicitly tracked source of a memory, or it restates a hidden,
+    # deleted or conversation-excluded fact (#194; see restating_turn_ids above). A corrected (superseded) fact is
+    # not forgotten, so its history is kept.
     # Unknown provenance or an exhausted closure fails closed while exclusions exist.
     fail_closed = closure_exceeded and policy_active
     turns = list(by_id.values())
