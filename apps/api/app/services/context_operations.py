@@ -165,7 +165,10 @@ _REFERENTIAL = frozenset(
 def has_content_words(text: str) -> bool:
     """Whether ``text`` names anything beyond stopwords and referential words ("all of them" does not)."""
     # One-character tokens are apostrophe fragments ("it's" -> it, s) and match every possessive memory.
-    return any(len(token) > 1 for token in _tokens(text) - _REFERENTIAL)
+    # A lone letter or digit ("X", "7") is a legitimate, exact target.
+    return any(len(token) > 1 for token in _tokens(text) - _REFERENTIAL) or bool(
+        re.fullmatch(r"[0-9A-Za-z]", text.strip())
+    )
 
 
 async def keyword_search(

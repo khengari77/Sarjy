@@ -233,6 +233,7 @@ def test_keep_clauses_are_compound_whatever_the_case_or_subject(text):
         ("forget where I keep my passport", "where I keep my passport"),
         ("forget where they keep the spare key", "where they keep the spare key"),
         ("forget what I keep in my safe", "what I keep in my safe"),
+        ("forget my plan to keep the gym membership", "my plan to keep the gym membership"),
     ],
 )
 def test_possessive_keep_is_a_fact_not_a_keep_clause(text, target):
@@ -267,6 +268,9 @@ def test_targets_that_name_nothing_never_search(text):
 
 def test_a_real_memory_word_still_counts_as_content():
     from app.services.context_operations import has_content_words
+
+    assert has_content_words("X")
+    assert not has_content_words("it's")
 
     assert has_content_words("my favorite color")
     assert has_content_words("the Paris trip")
