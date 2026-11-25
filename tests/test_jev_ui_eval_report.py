@@ -49,3 +49,13 @@ def test_a_dead_key_does_not_count_multi_cases_as_wrong():
     assert report["multi_wrong"] == 0
     assert report["errors"] == 1
     assert report["wrong_action"] == 2
+
+
+def test_fixture_rows_are_validated_before_any_paid_call():
+    from jev_ui_eval import _valid_case
+
+    assert _valid_case({"text": "Dark mode", "expected": "theme:dark"})
+    assert _valid_case({"text": "x", "expected": "MULTI"})
+    assert not _valid_case("Change to light mode.")
+    assert not _valid_case({"text": "x", "expected": "theme:ligth"})
+    assert not _valid_case({"text": "x"})

@@ -72,6 +72,28 @@ def build_report(records: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
+def _valid_case(case: object) -> bool:
+    if not isinstance(case, dict):
+        return False
+    expected = case.get("expected")
+    return (
+        isinstance(case.get("text"), str)
+        and isinstance(expected, str)
+        and (expected in ("NONE", "MULTI") or bool(ACTION_LABEL.match(expected)))
+    )
+
+
+def load_cases(limit: int | None) -> list[dict[str, str]]:
+    """Read and validate the fixture; a malformed row must fail before the first paid call."""
+    cases = json.loads(CASES.read_text())[:limit]
+    if not cases:
+        raise SystemExit("no cases to run")
+    bad = [i for i, case in enumerate(cases) if not _valid_case(case)]
+    if bad:
+        raise SystemExit(f"fixture rows {bad} need a string 'text' and an 'expected' of NONE, MULTI or a known label")
+    return cases
+
+
 def label(decision: UiDecision | None) -> str:
     if decision is None:
         return "NONE"
@@ -96,26 +118,19 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
+    if args.limit is not None and args.limit < 1:
+        parser.error("--limit must be at least 1")
     key = os.environ.get("JEV_API_KEY", "")
     if not key:
         raise SystemExit("JEV_API_KEY is not set")
-    cases = json.loads(CASES.read_text())[: args.limit]
-    if not cases:
-        raise SystemExit("no cases to run")
-    # A malformed row must fail before the first paid call, not in the middle of the run.
-    bad = [
-        i
-        for i, case in enumerate(cases)
-        if not (isinstance(case.get("text"), str) and isinstance(case.get("expected"), str))
-    ]
-    if bad:
-        raise SystemExit(f"fixture rows {bad} need string 'text' and 'expected'")
+    cases = load_cases(args.limit)
     if args.out:
         # Fail before the paid run, not after it: a bad path must not discard the results.
         args.out.parent.mkdir(parents=True, exist_ok=True)
     correct = 0
     latencies: list[int] = []
     records: list[dict[str, object]] = []
+    write_failed = False
     try:
         with httpx.Client(timeout=5) as client:
             for case in cases:
@@ -159,11 +174,14 @@ def main() -> None:
                 args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
             except OSError as exc:  # never mask the exception that ended the run
                 print(f"could not write {args.out}: {exc}", file=sys.stderr)
+                write_failed = True
     ordered = sorted(latencies)
     print(
         f"correct {correct}/{len(cases)} latency ms: median {statistics.median(ordered):.0f} "
         f"p90 {ordered[int(len(ordered) * 0.9)]} max {ordered[-1]}"
     )
+    if write_failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
