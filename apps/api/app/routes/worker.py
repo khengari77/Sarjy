@@ -201,11 +201,6 @@ PENDING_MEMORY_INSTRUCTION = (
     "A memory candidate is pending for this turn. Ask the user to confirm or decline before it is saved. "
     "Do not claim it is saved until confirmation succeeds."
 )
-AUTO_SAVE_INSTRUCTION = (
-    "The user's last message states a fact that is being saved automatically, with no question needed. "
-    'Acknowledge it briefly and naturally (for example "Got it"), say it is remembered, and do not ask for '
-    "confirmation."
-)
 SENSITIVE_MEMORY_INSTRUCTION = (
     "The user's last message contains something sensitive (such as a password or a secret code) that Sarjy never "
     "saves. Do not claim it was saved and do not repeat it; briefly say you can't keep details like that."
@@ -213,9 +208,6 @@ SENSITIVE_MEMORY_INSTRUCTION = (
 SENSITIVE_TOOL_NOTE = (
     "That is sensitive (a password or secret) and is never saved. Nothing was saved. Do not repeat it; tell the "
     "user briefly that you can't keep details like that."
-)
-AUTO_SAVE_TOOL_NOTE = (
-    "This is being saved automatically; no question is needed. Confirm briefly that you will remember it."
 )
 
 
@@ -297,25 +289,16 @@ def _context_instructions(
             strict=strict_capture,
         )
     )
-    plan = None
-    if proposal is not None:
-        # The worker acts on this: "save" commits without a question, "ask" keeps the spoken question. A "skip"
-        # (a credential) creates no proposal at all, so the sensitive text is never recorded as one.
-        plan = plan_for_proposal(
-            memory_mode,
-            proposal["text"],
-            explicit=bool(proposal["explicit"]),
-            negated=bool(proposal.get("negated")),
-        )
-        proposal = None if plan is Decision.SKIP else {**proposal, "plan": plan.value}
+    sensitive = proposal is not None and classify_sensitivity(proposal["text"]) is Sensitivity.CREDENTIAL
+    if sensitive:
+        # A credential creates no proposal at all, so the sensitive text is never recorded as one.
+        proposal = None
     instructions = pipeline_instructions(pipeline)
-    note = {
-        Decision.ASK: PENDING_MEMORY_INSTRUCTION,
-        Decision.SAVE: AUTO_SAVE_INSTRUCTION,
-        Decision.SKIP: SENSITIVE_MEMORY_INSTRUCTION,
-    }.get(plan)
-    if note is not None:
-        instructions = f"{instructions}\n\n{note}"
+    if proposal is not None:
+        instructions = f"{instructions}\n\n{PENDING_MEMORY_INSTRUCTION}"
+    elif sensitive:
+        # Without this the model may claim it saved the secret; nothing was proposed or recorded.
+        instructions = f"{instructions}\n\n{SENSITIVE_MEMORY_INSTRUCTION}"
     return instructions, proposal
 
 
@@ -1064,20 +1047,6 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
                 fact=body.fact,
                 secret=secret,
             )
-            proposal = result.get("proposal")
-            if proposal is not None:
-                mode = row.memory_mode if row is not None else "auto"
-                plan = plan_for_proposal(
-                    mode,
-                    proposal["text"],
-                    explicit=bool(proposal["explicit"]),
-                    negated=bool(proposal.get("negated")),
-                )
-                result = {**result, "proposal": {**proposal, "plan": plan.value}}
-                if plan is Decision.SAVE:
-                    result["message"] = AUTO_SAVE_TOOL_NOTE
-                elif plan is Decision.SKIP:
-                    result = {"status": "rejected", "error": "MEMORY_SENSITIVE", "message": SENSITIVE_TOOL_NOTE}
             return result
 
         return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)

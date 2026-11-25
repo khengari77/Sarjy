@@ -34,26 +34,13 @@ _ORDER = (
     Sensitivity.CREDENTIAL,
 )
 
-# Words that are credentials wherever they appear.
-_CREDENTIAL_WORDS = (
-    r"password|passcode|passphrase|pin (?:code|number)|pin (?:for|of|to) (?:my|the|our)|cvv|cvc|api[ -]?(?:key|secret)|secret (?:key|code)|"
-    r"private key|ssh[ -]?key|security code|one[- ]time (?:code|password)|otp|2fa|two[- ]factor|backup code|"
-    r"recovery (?:code|phrase)|seed phrase|social security|ssn|national id|passport (?:number|no)|"
-    r"(?:safe|door|garage|gate|alarm|lock|wi-?fi) (?:code|combination|password)|safe combination|"
-    r"code to (?:my|the|our) \w+"
-)
-# Words that are only a credential in a credential context: "my github token is ghp_x", "my login is ada", "my pin
-# is 1234". A bare "token", "secret", "login" or "pin" ("a token for the bus", "pin badges") is an ordinary fact.
-_CREDENTIAL_CONTEXT = (
-    r"(?:my|the|our)\s+(?:[\w-]+\s+){0,2}(?:(?:access |auth(?:entication)? |bearer |refresh |session )?token|secret|pin|"
-    r"log-?in|credentials?)\s*(?:is|are|was|:|=)"
-)
-_CREDENTIAL = re.compile(rf"\b(?:{_CREDENTIAL_WORDS})\b|\b{_CREDENTIAL_CONTEXT}", re.IGNORECASE)
-# Any negation word. A fact that mentions one may contradict something already stored ("I'm not vegetarian"), and the
-# capture parser only recognises a few phrasings, so the policy is stricter than the parser: such a fact asks first.
-_NEGATION_HINT = re.compile(
-    r"\b(?:no longer|not|never|stopped|quit|gave up|no more|isn't|aren't|wasn't|weren't|don't|doesn't|didn't|"
-    r"can't|won't)\b|n't\b",
+# Unmistakable credential terms only. Kept deliberately small and well defined: a wider pattern trips on ordinary
+# facts ("I collect pin badges"). Ambiguous words, paraphrases, other languages and negation are judged by the
+# background observer (Jev), never by growing this list.
+_CREDENTIAL = re.compile(
+    r"\b(?:password|passcode|passphrase|pin (?:code|number)|cvv|cvc|api[ -]?(?:key|secret)|private key|ssh[ -]?key|"
+    r"seed phrase|recovery (?:code|phrase)|one[- ]time (?:code|password)|backup code|otp|social security|ssn|"
+    r"national id)\b",
     re.IGNORECASE,
 )
 _FINANCE = re.compile(
@@ -117,6 +104,4 @@ def decide(mode: MemoryMode, sensitivity: Sensitivity, *, explicit: bool, negate
 
 def plan_for_proposal(mode: MemoryMode, text: str, *, explicit: bool, negated: bool = False) -> Decision:
     """The decision for a proposed fact, from its text. The keyword net sets the sensitivity."""
-    return decide(
-        mode, classify_sensitivity(text), explicit=explicit, negated=negated or bool(_NEGATION_HINT.search(text))
-    )
+    return decide(mode, classify_sensitivity(text), explicit=explicit, negated=negated)

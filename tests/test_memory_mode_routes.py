@@ -26,10 +26,10 @@ def started(tmp_path, mode):
 def test_regex_proposal_is_made_in_auto_and_ask_but_not_when_off(tmp_path):
     # (mode, a proposal is made, a spoken question is pending). In auto an ordinary fact is saved without asking.
     for mode, expected, asks in (
-        ("auto", True, False),
+        ("auto", True, True),
         ("ask", True, True),
         ("off", False, False),
-        (None, True, False),
+        (None, True, True),
     ):
         sub = tmp_path / f"{mode}"
         sub.mkdir()

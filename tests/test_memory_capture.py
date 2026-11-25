@@ -100,7 +100,6 @@ def test_finalized_fact_requires_confirmation_then_recalls_corrects_and_isolates
         started = turn(client, headers, "I prefer tea with mint", "fact-1").json()
         proposal = started["memory_proposal"]
         assert proposal is not None and proposal["text"] == "I prefer tea with mint"
-        assert proposal["plan"] == "ask"
         assert "pending" in started["context"]["model_request"]["instructions"].lower()
         assert memory_rows(file) == []
 

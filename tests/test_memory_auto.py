@@ -67,7 +67,6 @@ def test_auto_saves_an_ordinary_fact_without_a_question(tmp_path, mode):
     cm, client, file, headers = started(sub, mode)
     try:
         proposal = proposal_of(client, headers, "My name is Sam", "fact-1")
-        assert proposal["plan"] == "save"
 
         response = auto(client, headers, proposal["token"])
         assert response.status_code == 200, response.text
@@ -195,7 +194,6 @@ def test_the_auto_route_refuses_a_plan_that_still_needs_consent(tmp_path):
     cm, client, file, headers = started(tmp_path, "ask")
     try:
         proposal = proposal_of(client, headers, "My name is Sam", "fact-1")
-        assert proposal["plan"] == "ask"
 
         response = auto(client, headers, proposal["token"])
         assert response.status_code == 409, response.text
@@ -288,23 +286,18 @@ def test_a_forged_credential_token_is_refused_by_the_auto_route(tmp_path):
 
 CREDENTIALS = [
     "my password is hunter2",
-    "my github token is ghp_abc123",
-    "my login is ada and the secret is hunter2",
+    "my wifi password is x",
+    "my pin code is 1234",
     "my ssh key is AAAAB3Nza",
+    "my api key is abc",
+    "my api secret is xyz",
+    "my private key is ---",
     "my social security number is 123-45-6789",
     "my backup code is 99887766",
-    "my api secret is xyz",
-    "my pin: 1234",
-    "the pin for my card is 1234",
-    "my wifi password is x",
-    "the code to my safe is 4321",
-    "my passport number is X1234567",
-    "the safe combination is 12-34-56",
-    "my garage door code is 9988",
-    "my access token is abc",
-    "my credentials are ada hunter2",
-    "my bearer token is abc",
+    "my recovery phrase is apple banana",
 ]
+# Out of the scoped floor on purpose (judged by the background observer, not by a growing regex):
+# "my github token is ...", "my login is ...", "the code to my safe is ...", "my passport number is ...".
 ORDINARY = [
     "my secret to good coffee is fresh beans",
     "my favourite book is The Secret",
@@ -328,11 +321,11 @@ def test_the_credential_net_catches_credentials_and_leaves_ordinary_facts_alone(
         assert plan_for_proposal("auto", text, explicit=True) is Decision.SAVE, text
 
 
-def test_any_negation_word_makes_a_fact_ask_first_even_if_the_parser_misses_it(tmp_path):
+def test_a_parser_negation_asks_and_free_form_negation_is_left_to_the_observer():
     from app.domain.memory_policy import Decision, plan_for_proposal
 
-    for text in ("I'm not vegetarian", "I stopped working at Acme", "I never eat meat", "I don't drink coffee now"):
-        assert plan_for_proposal("auto", text, explicit=True) is Decision.ASK, text
+    assert plan_for_proposal("auto", "I no longer live in Benghazi", explicit=True, negated=True) is Decision.ASK
+    # No word list guesses at negation any more ("I'm not vegetarian" is the observer's call).
     assert plan_for_proposal("auto", "I live in Benghazi", explicit=True) is Decision.SAVE
 
 
@@ -364,68 +357,26 @@ def test_undo_is_refused_when_another_fact_for_the_subject_is_now_active(tmp_pat
         cm.__exit__(None, None, None)
 
 
-def test_an_ordinary_fact_plan_is_save_in_auto(tmp_path):
-    cm, client, file, headers = started(tmp_path, "auto")
-    try:
-        proposal = proposal_of(client, headers, "My name is Sam", "fact-1")
-        assert proposal["plan"] == "save"
-        assert memory_rows(file) == []
-    finally:
-        cm.__exit__(None, None, None)
+def test_policy_plans_for_ordinary_health_and_ask_mode_facts():
+    from app.domain.memory_policy import Decision, plan_for_proposal
+
+    assert plan_for_proposal("auto", "My name is Sam", explicit=True) is Decision.SAVE
+    assert plan_for_proposal("auto", "my doctor put me on metformin", explicit=False) is Decision.ASK
+    assert plan_for_proposal("ask", "My name is Sam", explicit=True) is Decision.ASK
 
 
-def test_a_health_fact_proposed_by_the_tool_plans_to_ask_in_auto(tmp_path):
-    cm, client, file, headers = started(tmp_path, "auto")
-    try:
-        started_turn = turn(client, headers, "hello there", "t1").json()
-        response = client.post(
-            PROPOSE,
-            headers=headers,
-            json={
-                "turn_id": started_turn["turn_id"],
-                "request_id": "propose-1",
-                "fact": "my doctor put me on metformin",
-            },
-        )
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["status"] == "proposed"
-        assert body["proposal"]["plan"] == "ask"
-        assert memory_rows(file) == []
-    finally:
-        cm.__exit__(None, None, None)
-
-
-def test_an_ordinary_fact_plan_is_ask_in_ask_mode(tmp_path):
-    cm, client, file, headers = started(tmp_path, "ask")
-    try:
-        proposal = proposal_of(client, headers, "My name is Sam", "fact-1")
-        assert proposal["plan"] == "ask"
-        assert memory_rows(file) == []
-    finally:
-        cm.__exit__(None, None, None)
-
-
-def test_only_the_ask_plan_appends_the_pending_question_instruction(tmp_path):
-    auto_dir = tmp_path / "auto"
-    auto_dir.mkdir()
-    cm, client, file, headers = started(auto_dir, "auto")
-    try:
-        saved = turn(client, headers, "My name is Sam", "fact-1").json()
-        assert saved["memory_proposal"]["plan"] == "save"
-        assert PENDING not in saved["context"]["model_request"]["instructions"].lower()
-    finally:
-        cm.__exit__(None, None, None)
-
-    ask_dir = tmp_path / "ask"
-    ask_dir.mkdir()
-    cm, client, file, headers = started(ask_dir, "ask")
-    try:
-        asked = turn(client, headers, "My name is Sam", "fact-1").json()
-        assert asked["memory_proposal"]["plan"] == "ask"
-        assert PENDING in asked["context"]["model_request"]["instructions"].lower()
-    finally:
-        cm.__exit__(None, None, None)
+def test_turn_start_carries_no_plan_and_keeps_the_pending_question_as_on_main(tmp_path):
+    # The save decision moves to the background observer; turn start is unchanged from main.
+    for mode in ("auto", "ask"):
+        sub = tmp_path / mode
+        sub.mkdir()
+        cm, client, file, headers = started(sub, mode)
+        try:
+            body = turn(client, headers, "My name is Sam", "fact-1").json()
+            assert "plan" not in body["memory_proposal"]
+            assert PENDING in body["context"]["model_request"]["instructions"].lower()
+        finally:
+            cm.__exit__(None, None, None)
 
 
 def test_undo_is_refused_when_a_newer_auto_save_replaced_the_row(tmp_path):
@@ -510,7 +461,6 @@ def test_negated_fact_is_never_auto_saved(tmp_path):
 
         proposal = proposal_of(client, headers, "I no longer live in Benghazi", "fact-2")
         assert proposal["negated"] is True
-        assert proposal["plan"] == "ask"
 
         refused = auto(client, headers, proposal["token"])
         assert refused.status_code == 409, refused.text

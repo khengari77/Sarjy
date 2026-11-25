@@ -51,7 +51,7 @@ def test_propose_memory_returns_unsaved_signed_proposal(tmp_path):
         body = response.json()
         assert response.status_code == 200
         assert body["status"] == "proposed"
-        assert body["proposal"]["plan"] == "ask"
+        assert "plan" not in body["proposal"]
         assert body["proposal"]["text"] == "I live in Benghazi"
         assert body["proposal"]["token"]
         assert "Nothing has been saved" in body["message"]
@@ -258,13 +258,3 @@ def test_forgetting_and_recalling_keep_working_when_memory_is_off(tmp_path):
         assert table_count(file, "memories", "status='hidden'") == 1
         assert table_count(file, "memories", "status='active'") == 1
         assert table_count(file, "memory_write_requests") == 0
-
-
-def test_in_auto_mode_the_propose_tool_plans_to_save_and_says_so(tmp_path):
-    file, settings = configured(tmp_path)
-    with TestClient(create_app(settings)) as client:
-        _, _, headers, turn = setup(client, file)
-        body = call(client, headers, PROPOSE, turn, "k1", fact="I live in Benghazi").json()
-        assert body["status"] == "proposed" and body["proposal"]["plan"] == "save"
-        assert "saved automatically" in body["message"]
-        assert table_count(file, "memories") == 0
