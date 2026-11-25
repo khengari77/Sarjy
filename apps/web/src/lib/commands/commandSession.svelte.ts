@@ -3,10 +3,12 @@
 import { fetchSettings, saveCaptionSelection, saveMemoryMode, saveSpeakingSpeed } from '../chat/session';
 import type { CatalogState } from '../voice/catalog';
 import type { ThemePreference } from '../ui/theme';
+import { performUndo } from './changeUndo';
 import {
   createCommandStore,
   initialCommandState,
   type CommandResult,
+  type MemoryChange,
   type MemoryControl,
   type MemoryMode,
 } from './commandStore';
@@ -17,6 +19,8 @@ export interface CommandSessionOptions {
    * server never stores a theme, so this is the only effect for `SetTheme`.
    */
   setTheme?: (preference: ThemePreference) => void;
+  /** Bumps the memory panel's refresh signal after an undo restores a fact. */
+  onMemoryChange?: () => void;
 }
 
 const REVISION_CONFLICT = 'SETTINGS_REVISION_CONFLICT';
@@ -37,6 +41,77 @@ function memoryFailureText(detail: string): string {
     : "Couldn't change memory mode. Nothing was changed.";
 }
 
+type ApplyResult = (result: CommandResult) => boolean;
+type RecordFailure = (action: string, requestId: string, detail: string) => void;
+
+/**
+ * Captions are server-owned: send the canonical settings action and apply the
+ * authoritative snapshot. A rejected write changes nothing.
+ */
+async function writeCaptions(
+  visible: boolean,
+  revision: number,
+  apply: ApplyResult,
+  fail: RecordFailure,
+): Promise<boolean> {
+  const requestId = `captions:${revision}:${visible ? 'on' : 'off'}`;
+  try {
+    const result = await saveCaptionSelection(visible, revision);
+    return apply({
+      request_id: requestId,
+      kind: result.changed ? 'executed' : 'unchanged',
+      action: 'SetCaptionsVisible',
+      settings: result.settings,
+      navigation: null,
+      theme: null,
+      changed: result.changed,
+      spoken: result.settings.captions_visible
+        ? result.changed
+          ? 'Captions shown.'
+          : 'Captions are already on.'
+        : result.changed
+          ? 'Captions hidden.'
+          : 'Captions are already hidden.',
+      detail: null,
+    });
+  } catch (error) {
+    fail('SetCaptionsVisible', requestId, error instanceof Error ? error.message : 'SETTING_REJECTED');
+    return false;
+  }
+}
+
+/**
+ * Speed is a server-owned preference read by the worker at the next turn.
+ * A rejected write leaves the previous snapshot in place.
+ */
+async function writeSpeakingSpeed(
+  speed: number,
+  revision: number,
+  apply: ApplyResult,
+  fail: RecordFailure,
+): Promise<boolean> {
+  const requestId = `speed:${revision}:${speed.toFixed(1)}`;
+  try {
+    const result = await saveSpeakingSpeed(speed, revision);
+    return apply({
+      request_id: requestId,
+      kind: result.changed ? 'executed' : 'unchanged',
+      action: 'SetSpeakingSpeed',
+      settings: result.settings,
+      navigation: null,
+      theme: null,
+      changed: result.changed,
+      spoken: result.changed
+        ? `Speaking speed set to ${result.settings.speaking_speed.toFixed(1)} for the next turn.`
+        : `Speaking speed is already ${result.settings.speaking_speed.toFixed(1)}.`,
+      detail: null,
+    });
+  } catch (error) {
+    fail('SetSpeakingSpeed', requestId, error instanceof Error ? error.message : 'SETTING_REJECTED');
+    return false;
+  }
+}
+
 export function createCommandSession(
   catalog?: CatalogState,
   panels?: { history: boolean; memory_explorer: boolean },
@@ -47,9 +122,17 @@ export function createCommandSession(
   const store = createCommandStore(state, { applyTheme: options.setTheme });
   let memorySaving = $state(false);
   let memoryError = $state('');
+  const undoing = $state<string[]>([]);
+  let changeError = $state('');
+  let changeStatus = $state('');
+  let memoryRevision = $state(0);
 
   function apply(result: CommandResult): boolean {
     if (!store.apply(result)) return false;
+    if (result.change) {
+      changeError = '';
+      changeStatus = '';
+    }
     if (catalog && result.settings) {
       catalog.revision = result.settings.revision;
       catalog.savedVoiceId = result.settings.approved_voice_id ?? '';
@@ -58,37 +141,7 @@ export function createCommandSession(
     return true;
   }
 
-  /**
-   * Captions are server-owned: this sends the canonical settings action and
-   * applies the authoritative snapshot. A rejected write changes nothing.
-   */
-  async function setCaptions(visible: boolean): Promise<boolean> {
-    const revision = state.settings.revision;
-    const requestId = `captions:${revision}:${visible ? 'on' : 'off'}`;
-    try {
-      const result = await saveCaptionSelection(visible, revision);
-      return apply({
-        request_id: requestId,
-        kind: result.changed ? 'executed' : 'unchanged',
-        action: 'SetCaptionsVisible',
-        settings: result.settings,
-        navigation: null,
-        theme: null,
-        changed: result.changed,
-        spoken: result.settings.captions_visible
-          ? result.changed
-            ? 'Captions shown.'
-            : 'Captions are already on.'
-          : result.changed
-            ? 'Captions hidden.'
-            : 'Captions are already hidden.',
-        detail: null,
-      });
-    } catch (error) {
-      store.fail('SetCaptionsVisible', requestId, error instanceof Error ? error.message : 'SETTING_REJECTED');
-      return false;
-    }
-  }
+  const setCaptions = (visible: boolean) => writeCaptions(visible, state.settings.revision, apply, store.fail);
 
   /**
    * Memory mode is server-owned and follows the same authoritative-snapshot
@@ -130,36 +183,50 @@ export function createCommandSession(
     }
   }
 
-  /**
-   * Speed is a server-owned preference read by the worker at the next turn.
-   * A rejected write leaves the previous snapshot in place.
-   */
-  async function setSpeakingSpeed(speed: number): Promise<boolean> {
-    const revision = state.settings.revision;
-    const requestId = `speed:${revision}:${speed.toFixed(1)}`;
-    try {
-      const result = await saveSpeakingSpeed(speed, revision);
-      return apply({
-        request_id: requestId,
-        kind: result.changed ? 'executed' : 'unchanged',
-        action: 'SetSpeakingSpeed',
-        settings: result.settings,
-        navigation: null,
-        theme: null,
-        changed: result.changed,
-        spoken: result.changed
-          ? `Speaking speed set to ${result.settings.speaking_speed.toFixed(1)} for the next turn.`
-          : `Speaking speed is already ${result.settings.speaking_speed.toFixed(1)}.`,
-        detail: null,
-      });
-    } catch (error) {
-      store.fail('SetSpeakingSpeed', requestId, error instanceof Error ? error.message : 'SETTING_REJECTED');
-      return false;
-    }
+  const setSpeakingSpeed = (speed: number) => writeSpeakingSpeed(speed, state.settings.revision, apply, store.fail);
+
+  /** Close the current change toast and clear any inline undo failure. */
+  function dismissChange(): void {
+    store.dismissChange();
+    changeError = '';
+    changeStatus = '';
   }
+
+  /** Clear the short-lived "Undone." confirmation after its timer elapses. */
+  function clearChangeStatus(): void {
+    changeStatus = '';
+  }
+
+  const undoChange = (id: string) =>
+    performUndo(id, {
+      state,
+      store,
+      undoing,
+      setError: (value) => (changeError = value),
+      setStatus: (value) => (changeStatus = value),
+      onUndone: () => {
+        memoryRevision += 1;
+        options.onMemoryChange?.();
+      },
+    });
 
   return {
     state,
+    get change(): MemoryChange | null {
+      return state.change;
+    },
+    get changeError() {
+      return changeError;
+    },
+    get changeStatus() {
+      return changeStatus;
+    },
+    get changeUndoing() {
+      return state.change !== null && undoing.includes(state.change.id);
+    },
+    get memoryRevision() {
+      return memoryRevision;
+    },
     get memory(): MemoryControl {
       return { mode: state.settings.memory_mode ?? 'auto', saving: memorySaving, error: memoryError };
     },
@@ -174,6 +241,9 @@ export function createCommandSession(
     setCaptions,
     setMemoryMode,
     setSpeakingSpeed,
+    dismissChange,
+    clearChangeStatus,
+    undoChange,
     openPanel: store.openPanel,
   };
 }
