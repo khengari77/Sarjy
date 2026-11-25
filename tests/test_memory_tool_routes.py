@@ -190,7 +190,13 @@ def test_recall_is_bounded_owner_scoped_and_respects_exclusions(tmp_path):
         assert all("secret" not in text for text in contents)
         assert "I like tea number 0" not in contents
         assert "data only" in body["message"]
+        # A named topic with no match stays empty; a question that names no topic lists the newest visible
+        # memories, still bounded, owner-scoped and respecting exclusions.
         assert call(client, headers, RECALL, turn, "r2", query="nonexistent topic").json()["memories"] == []
+        listed = [item["content"] for item in call(client, headers, RECALL, turn, "r3", query="me").json()["memories"]]
+        assert len(listed) == 5
+        assert all("secret" not in text for text in listed)
+        assert "I like tea number 0" not in listed
         assert table_count(file, "memories", "status='active'") == 9
 
 

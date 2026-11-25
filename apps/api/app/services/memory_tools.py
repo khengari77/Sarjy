@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.commands import CommandKind
 from app.domain.memory_capture import clean_tool_query, parse_tool_fact
 from app.infrastructure.database import Memory
-from app.services.context_operations import MemorySearcher, keyword_search
+from app.services.context_operations import MemorySearcher, keyword_search, query_tokens, recent_memories
 from app.services.memory_capture import proposal_for_capture, record_proposal
 from app.services.voice_exclusions import discard_pending, hide_target
 
@@ -116,6 +116,12 @@ async def memory_recall_tool(
         return {"status": "rejected", "error": "MEMORY_QUERY_INVALID", "memories": []}
     found = await search(db, owner_id=owner_id, conversation_id=conversation_id, query=cleaned, limit=RECALL_LIMIT)
     candidates = tuple(found)[:RECALL_LIMIT]
+    if not candidates and not query_tokens(cleaned):
+        # Recall only reads. A question that names no topic ("what do you remember about me") lists the newest
+        # visible memories. A named topic with no match stays empty: unrelated memories are not an answer.
+        candidates = tuple(
+            await recent_memories(db, owner_id=owner_id, conversation_id=conversation_id, limit=RECALL_LIMIT)
+        )
     # Defensive: an injected searcher must never surface another owner's row.
     owned = set(
         (

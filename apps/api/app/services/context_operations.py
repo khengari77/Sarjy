@@ -231,6 +231,36 @@ async def keyword_search(
     return tuple(item for item in scored if item.id not in excluded)[:limit]
 
 
+async def recent_memories(
+    db: AsyncSession, *, owner_id: str, conversation_id: str, limit: int
+) -> Sequence[MemoryCandidate]:
+    """The newest active, visible memories: a bounded "what do you remember" listing.
+
+    Read-only on purpose. Anything that hides, excludes or deletes must use ``keyword_search`` and its strict
+    matching; only the recall tool, which hands data to the model, may browse.
+    """
+    rows = (
+        await db.scalars(
+            select(Memory)
+            .where(Memory.owner_id == owner_id, Memory.status == "active")
+            .order_by(Memory.created_at.desc(), Memory.id.desc())
+            .limit(PREVIEW_SEARCH_ROW_LIMIT)
+        )
+    ).all()
+    excluded = await blocked_memory_ids(db, owner_id, conversation_id)
+    return tuple(
+        MemoryCandidate(
+            id=row.id,
+            content=row.content,
+            source_turn_id=row.source_turn_id,
+            score=0.0,
+            kind=classify(row.content),
+        )
+        for row in rows
+        if row.id not in excluded
+    )[:limit]
+
+
 def _digest(*parts: str) -> str:
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
