@@ -88,9 +88,18 @@ POLL_SECONDS = 0.02
 def _install_cancel_handlers(loop: asyncio.AbstractEventLoop, task: asyncio.Task[Any]) -> list[signal.Signals]:
     """Cancel the probe task on SIGTERM/SIGINT so session cleanup still runs."""
     installed: list[signal.Signals] = []
+    fired = False
+
+    def cancel_once() -> None:
+        # A second signal must not cancel the cleanup the first one started.
+        nonlocal fired
+        if not fired:
+            fired = True
+            task.cancel()
+
     for signum in (signal.SIGTERM, signal.SIGINT):
         try:
-            loop.add_signal_handler(signum, task.cancel)
+            loop.add_signal_handler(signum, cancel_once)
         except (NotImplementedError, RuntimeError):
             continue
         installed.append(signum)
@@ -574,8 +583,13 @@ async def _run_session(
     phrases: Sequence[Phrase],
     audio: Mapping[str, np.ndarray],
     sink: JsonlSink,
+    streak: list[int] | None = None,
 ) -> list[Phrase]:
-    """Run one session and return the phrases it left for the next one."""
+    """Run one session and return the phrases it left for the next one.
+
+    ``streak`` carries the consecutive-timeout count across a round's sessions.
+    """
+    streak = streak if streak is not None else [0]
     session: Any = None
     room: rtc.Room | None = None
     agent_audio: AgentAudio | None = None
@@ -624,7 +638,6 @@ async def _run_session(
         )
         await _wait_greeting(monitor)
         remaining: list[Phrase] = []
-        consecutive_timeouts = 0
         for index, phrase in enumerate(phrases):
             if time.monotonic() - started >= SESSION_LIMIT_S:
                 remaining = list(phrases[index:])
@@ -635,8 +648,8 @@ async def _run_session(
                 remaining = list(phrases[index:])
                 _write_session_failed(sink, round_number, type(exc).__name__)
                 return remaining
-            consecutive_timeouts = consecutive_timeouts + 1 if outcome == TIMEOUT else 0
-            if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS:
+            streak[0] = streak[0] + 1 if outcome == TIMEOUT else 0
+            if streak[0] >= MAX_CONSECUTIVE_TIMEOUTS:
                 sink.write({"type": "aborted", "reason": "consecutive_timeouts", "round": round_number})
                 return SessionRemaining(phrases[index + 1 :], aborted=True)
         return remaining
@@ -672,9 +685,10 @@ async def _run_round(
         return 0
     remaining = list(phrases)
     sessions = 0
+    streak = [0]
     while remaining and sessions < MAX_SESSIONS_PER_ROUND:
         sessions += 1
-        remaining = await _run_session(client, api, conversation_id, round_number, remaining, audio, sink)
+        remaining = await _run_session(client, api, conversation_id, round_number, remaining, audio, sink, streak)
         if getattr(remaining, "aborted", False):
             return 3
     if remaining:

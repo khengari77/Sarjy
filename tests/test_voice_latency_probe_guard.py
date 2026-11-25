@@ -113,7 +113,7 @@ def test_sigterm_and_sigint_cancel_the_probe_task():
     assert installed == [signal.SIGTERM, signal.SIGINT]
     for signum in installed:
         loop.handlers[signum]()
-    assert cancelled == [True, True]
+    assert cancelled == [True]  # a second signal must not cancel the cleanup the first one started
 
 
 def test_five_consecutive_timeouts_abort_and_an_answer_resets_the_count(monkeypatch):
@@ -151,7 +151,7 @@ def test_the_round_stops_on_an_aborted_session(monkeypatch):
     async def fake_new_conversation(client, api):
         return "conversation"
 
-    async def aborting_session(client, api, conversation_id, round_number, remaining, audio, sink):
+    async def aborting_session(client, api, conversation_id, round_number, remaining, audio, sink, streak=None):
         nonlocal calls
         calls += 1
         return probe.SessionRemaining(remaining[1:], aborted=True)
@@ -187,4 +187,25 @@ def test_a_cancelled_run_still_ends_the_session(monkeypatch):
             await task
 
     asyncio.run(run())
+    assert ended == ["session"]
+
+
+def test_the_timeout_streak_carries_over_to_the_next_session_of_a_round(monkeypatch):
+    sink = _RecordingSink()
+    ended: list[str] = []
+    _stub_session(monkeypatch, ended)
+    phrases = _phrases(6)
+    outcomes = [TIMEOUT] * 6
+
+    async def fake_play(monitor, microphone, sink, phrase, round_number, samples):
+        return outcomes.pop(0)
+
+    monkeypatch.setattr(probe, "_play_phrase", fake_play)
+    streak = [3]  # three timeouts were already seen by an earlier session of the same round
+
+    remaining = asyncio.run(
+        probe._run_session(None, "http://127.0.0.1:9", "conversation", 1, phrases, _audio(phrases), sink, streak)
+    )
+
+    assert remaining.aborted is True and remaining == phrases[2:]
     assert ended == ["session"]
