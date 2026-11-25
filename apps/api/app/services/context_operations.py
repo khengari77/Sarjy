@@ -162,13 +162,16 @@ _REFERENTIAL = frozenset(
 )
 
 
+_CONTRACTION_SUFFIX = re.compile(r"['\u2019](?:s|t|d|m|re|ve|ll)\b", re.IGNORECASE)
+
+
 def has_content_words(text: str) -> bool:
-    """Whether ``text`` names anything beyond stopwords and referential words ("all of them" does not)."""
-    # One-character tokens are apostrophe fragments ("it's" -> it, s) and match every possessive memory.
-    # A lone letter or digit ("X", "7") is a legitimate, exact target.
-    tokens = _tokens(text) - _REFERENTIAL
-    # A lone non-stopword letter or digit survives tokenising; "a" and "i" do not.
-    return any(len(token) > 1 for token in tokens) or (len(text.strip()) == 1 and bool(tokens))
+    """Whether ``text`` names anything beyond stopwords and referential words ("all of them" does not).
+
+    Contraction suffixes are stripped first, so "it's" is just "it" and cannot match every possessive
+    memory through a stray "s" token; a lone digit or letter ("7", "X") is still a real target.
+    """
+    return bool(_tokens(_CONTRACTION_SUFFIX.sub("", text)) - _REFERENTIAL)
 
 
 async def keyword_search(
