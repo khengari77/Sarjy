@@ -767,7 +767,7 @@ class SarjyAgent(WordleTools, Agent):
 
     def note_transcript(self, event) -> None:
         if self.preemptive and getattr(event, "is_final", False):
-            logging.warning("preempt: final segment noted")
+            logging.debug("preempt: final segment noted")
             self.recent_finals.add(getattr(event, "transcript", "") or "")
 
     def _cancel_preemption(self) -> None:
@@ -786,7 +786,7 @@ class SarjyAgent(WordleTools, Agent):
         if entry is None or entry.adopted or entry.retired:
             return
         entry.retired = True
-        logging.warning("preempt: retired %s turn=%s", entry.message_id[-6:], entry.turn_id)
+        logging.debug("preempt: retired %s turn=%s", entry.message_id[-6:], entry.turn_id)
         if not entry.decided.done():
             entry.decided.set_result(False)
         if not entry.ready.done():
@@ -842,7 +842,7 @@ class SarjyAgent(WordleTools, Agent):
             raise
         if not opened or entry.retired or self.preempt is not entry or entry.turn_id is None:
             return False
-        logging.warning("preempt: adopted %s", entry.message_id[-6:])
+        logging.debug("preempt: adopted %s", entry.message_id[-6:])
         entry.adopted = True
         self.preempt = None
         if not entry.decided.done():
@@ -852,7 +852,7 @@ class SarjyAgent(WordleTools, Agent):
     async def on_user_turn_completed(self, turn_ctx, new_message):
         started = time.perf_counter()
         if self.preemptive:
-            logging.warning("preempt: hook %s early=%s", new_message.id[-6:], self.preempt is not None)
+            logging.debug("preempt: hook %s early=%s", new_message.id[-6:], self.preempt is not None)
         self.recent_finals.clear()
         if self.preempt is not None:
             if await self._adopt_preempt(new_message.text_content or ""):
@@ -954,17 +954,18 @@ class SarjyAgent(WordleTools, Agent):
             self.suppressed.discard(user.id)
             return
         early_turn = None
+        covered = self.preemptive and self.recent_finals.covers(user.text_content or "")
         if self.preemptive and user.id not in self.prepared:
-            logging.warning(
+            logging.debug(
                 "preempt: llm_node for unseen %s covered=%s finals=%s",
                 user.id[-6:],
-                self.recent_finals.covers(user.text_content or ""),
+                covered,
                 self.recent_finals.size(),
             )
-        if self.preemptive and user.id not in self.prepared and self.recent_finals.covers(user.text_content or ""):
-            logging.warning("preempt: early reply requested for %s", user.id[-6:])
+        if covered and user.id not in self.prepared:
+            logging.debug("preempt: early reply requested for %s", user.id[-6:])
             early_turn = await self._open_early_turn(user)
-            logging.warning("preempt: opened %s mode=%s retired=%s", user.id[-6:], early_turn.mode, early_turn.retired)
+            logging.debug("preempt: opened %s mode=%s retired=%s", user.id[-6:], early_turn.mode, early_turn.retired)
             if early_turn.mode == "wait" or early_turn.retired:
                 return
         try:
@@ -1051,9 +1052,9 @@ class SarjyAgent(WordleTools, Agent):
         early = self._start_reply_early(user, snapshot, chat_ctx, tools, model_settings)
         try:
             if gate is not None:
-                logging.warning("preempt: waiting for adoption of %s", user.id[-6:])
+                logging.debug("preempt: waiting for adoption of %s", user.id[-6:])
                 decided = await asyncio.shield(gate.decided)
-                logging.warning("preempt: gate decided=%s for %s", decided, user.id[-6:])
+                logging.debug("preempt: gate decided=%s for %s", decided, user.id[-6:])
                 if not decided:
                     return  # an early reply never acts on a transcript the turn may still replace
             command = None if self.command_blocked_turn == user.id else await self.command_for(user)
