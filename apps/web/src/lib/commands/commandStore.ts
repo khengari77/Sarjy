@@ -170,11 +170,13 @@ export function normalizeCommandResult(value: unknown): CommandResult | null {
     // settings write, even when a worker accidentally includes a snapshot.
     if (!isMemoryChange(value.change)) return null;
   } else {
-    if (action !== null && SETTINGS_ACTIONS.has(action) && !isSettings(value.settings)) return null;
+    // Only an applied settings result must carry the authoritative snapshot.
+    // Failed and unknown results deliberately report no settings at all.
+    const applied = value.kind === 'executed' || value.kind === 'unchanged';
+    if (action !== null && SETTINGS_ACTIONS.has(action) && applied && !isSettings(value.settings)) return null;
     if (value.settings !== null && value.settings !== undefined && !isSettings(value.settings)) return null;
-    if (value.change !== null && value.change !== undefined && !isMemoryChange(value.change)) {
-      return null;
-    }
+    // A change object belongs only to MemoryChange; another action must not adopt it.
+    if (value.change !== null && value.change !== undefined) return null;
   }
   const theme = value.theme;
   if (theme !== null && theme !== undefined && !THEME_PREFERENCES.includes(theme as ThemePreference)) return null;

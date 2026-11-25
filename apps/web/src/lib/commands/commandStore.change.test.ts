@@ -89,6 +89,52 @@ describe('memory change results', () => {
     expect(normalized?.settings).toBeNull();
   });
 
+  it('accepts a failed settings action without a snapshot and stores it as last', () => {
+    const payload = {
+      request_id: 'command:abc',
+      kind: 'failed',
+      action: 'SetCaptionsVisible',
+      settings: null,
+      navigation: null,
+      theme: null,
+      changed: false,
+      spoken: "I couldn't apply that. Nothing was changed.",
+      detail: 'SETTINGS_UNAVAILABLE',
+    };
+    const normalized = normalizeCommandResult(payload);
+    expect(normalized).toMatchObject({
+      action: 'SetCaptionsVisible',
+      kind: 'failed',
+      settings: null,
+      detail: 'SETTINGS_UNAVAILABLE',
+    });
+
+    const { store, state } = harness();
+    expect(store.apply(normalized!)).toBe(true);
+    expect(state.last).toEqual(normalized);
+  });
+
+  it('accepts failed, unknown, unsupported and confirming settings actions without a snapshot', () => {
+    for (const kind of ['failed', 'unknown', 'unsupported', 'needs_confirmation'] as const) {
+      expect(normalizeCommandResult(voiceCaptions({ kind, settings: null }))).not.toBeNull();
+      expect(normalizeCommandResult(voiceCaptions({ kind, settings: undefined }))).not.toBeNull();
+    }
+    expect(normalizeCommandResult(voiceCaptions({ kind: 'executed', settings: null }))).toBeNull();
+    expect(normalizeCommandResult(voiceCaptions({ kind: 'unchanged', settings: null }))).toBeNull();
+  });
+
+  it('rejects a present but malformed snapshot even when the kind permits none', () => {
+    expect(
+      normalizeCommandResult(voiceCaptions({ kind: 'failed', settings: { speaking_speed: 'fast' } as never })),
+    ).toBeNull();
+  });
+
+  it('rejects a change object on any action other than MemoryChange', () => {
+    const { change } = memoryChange();
+    expect(normalizeCommandResult(voiceCaptions({ change }))).toBeNull();
+    expect(normalizeCommandResult({ ...themeCommand(), change })).toBeNull();
+  });
+
   it('requires a settings snapshot for settings-bearing actions only', () => {
     for (const action of [
       'SelectApprovedVoice',

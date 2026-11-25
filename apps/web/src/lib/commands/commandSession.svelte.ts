@@ -1,14 +1,9 @@
 /** One reactive command session: the GUI and worker results share this state. */
 
-import {
-  fetchSettings,
-  saveCaptionSelection,
-  saveMemoryMode,
-  saveSpeakingSpeed,
-  undoChange as undoChangeRequest,
-} from '../chat/session';
+import { fetchSettings, saveCaptionSelection, saveMemoryMode, saveSpeakingSpeed } from '../chat/session';
 import type { CatalogState } from '../voice/catalog';
 import type { ThemePreference } from '../ui/theme';
+import { performUndo } from './changeUndo';
 import {
   createCommandStore,
   initialCommandState,
@@ -44,12 +39,6 @@ function memoryFailureText(detail: string): string {
   return detail === REVISION_CONFLICT
     ? 'Settings changed in another window. Try again.'
     : "Couldn't change memory mode. Nothing was changed.";
-}
-
-function changeFailureText(detail: string): string {
-  if (detail === 'CHANGE_SUPERSEDED') return 'That memory changed since, so I left it alone.';
-  if (detail === 'CHANGE_NOT_FOUND') return 'That change is no longer available.';
-  return "Couldn't undo that change. Nothing was changed.";
 }
 
 type ApplyResult = (result: CommandResult) => boolean;
@@ -133,7 +122,7 @@ export function createCommandSession(
   const store = createCommandStore(state, { applyTheme: options.setTheme });
   let memorySaving = $state(false);
   let memoryError = $state('');
-  let changeUndoing = $state(false);
+  const undoing = $state<string[]>([]);
   let changeError = $state('');
   let changeStatus = $state('');
   let memoryRevision = $state(0);
@@ -203,26 +192,23 @@ export function createCommandSession(
     changeStatus = '';
   }
 
-  /** Undo an auto-saved memory change; a second call while one is in flight is ignored. */
-  async function undoChange(id: string): Promise<boolean> {
-    if (changeUndoing) return false;
-    changeUndoing = true;
-    changeError = '';
+  /** Clear the short-lived "Undone." confirmation after its timer elapses. */
+  function clearChangeStatus(): void {
     changeStatus = '';
-    try {
-      await undoChangeRequest(id);
-      store.dismissChange(id);
-      memoryRevision += 1;
-      options.onMemoryChange?.();
-      changeStatus = 'Undone.';
-      return true;
-    } catch (error) {
-      changeError = changeFailureText(error instanceof Error ? error.message : 'CHANGE_UNDO_FAILED');
-      return false;
-    } finally {
-      changeUndoing = false;
-    }
   }
+
+  const undoChange = (id: string) =>
+    performUndo(id, {
+      state,
+      store,
+      undoing,
+      setError: (value) => (changeError = value),
+      setStatus: (value) => (changeStatus = value),
+      onUndone: () => {
+        memoryRevision += 1;
+        options.onMemoryChange?.();
+      },
+    });
 
   return {
     state,
@@ -236,7 +222,7 @@ export function createCommandSession(
       return changeStatus;
     },
     get changeUndoing() {
-      return changeUndoing;
+      return state.change !== null && undoing.includes(state.change.id);
     },
     get memoryRevision() {
       return memoryRevision;
@@ -256,6 +242,7 @@ export function createCommandSession(
     setMemoryMode,
     setSpeakingSpeed,
     dismissChange,
+    clearChangeStatus,
     undoChange,
     openPanel: store.openPanel,
   };

@@ -103,9 +103,11 @@ export interface ChangeUndoResult {
   changed: boolean;
 }
 
-/** Undo one auto-saved memory change; the server owns whether it still applies. */
+/** Undo one auto-saved memory change; the server owns whether it still applies. A 204 is success. */
 export async function undoChange(id: string): Promise<ChangeUndoResult> {
-  return request<ChangeUndoResult>(`changes/${encodeURIComponent(id)}/undo`, {});
+  return request<ChangeUndoResult>(`changes/${encodeURIComponent(id)}/undo`, {}, undefined, {
+    emptyBody: { changed: true },
+  });
 }
 
 export async function endVoiceSession(session: SessionConfig | null): Promise<void> {

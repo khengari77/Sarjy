@@ -1,33 +1,33 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { CommandSession } from '../commands/commandSession.svelte';
+  import { createChangeToastTiming } from './changeToastTiming';
   import { wordsFor } from './words';
 
   let { session, arabic }: { session: CommandSession; arabic: boolean } = $props();
 
   const words = $derived(wordsFor(arabic));
-  let timer: ReturnType<typeof setTimeout> | null = null;
-
-  function clearTimer() {
-    if (timer !== null) {
-      clearTimeout(timer);
-      timer = null;
-    }
-  }
-
-  // A new change restarts the quiet window; an undo in flight may finish it.
-  $effect(() => {
-    const id = session.change?.id ?? null;
-    clearTimer();
-    if (id === null) return;
-    timer = setTimeout(() => {
-      timer = null;
-      if (!session.changeUndoing) session.dismissChange();
-    }, 8000);
-    return clearTimer;
+  const timing = createChangeToastTiming({
+    isUndoing: () => session.changeUndoing,
+    hasError: () => session.changeError.length > 0,
+    dismiss: () => session.dismissChange(),
+    clearStatus: () => session.clearChangeStatus(),
   });
 
-  onDestroy(clearTimer);
+  // A new change, or an undo attempt settling, restarts the quiet window.
+  $effect(() => {
+    void session.change?.id;
+    void session.changeUndoing;
+    void session.changeError;
+    timing.syncChange(session.change?.id ?? null);
+  });
+
+  // "Undone." is a short confirmation, never a permanent overlay.
+  $effect(() => {
+    timing.syncStatus(session.changeStatus);
+  });
+
+  onDestroy(() => timing.destroy());
 </script>
 
 {#if session.change}
@@ -79,6 +79,7 @@
     padding: 8px 14px;
     font-size: 13px;
     color: var(--text-muted);
+    pointer-events: none;
   }
 
   .change-label {
