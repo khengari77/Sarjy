@@ -6,18 +6,9 @@ from contextlib import closing
 from app.main import create_app
 from fastapi.testclient import TestClient
 from test_memory import FakeEmbedder
-from test_memory_capture import add_turn_session, configured, memory_rows, turn
+from test_memory_capture import add_turn_session, configured, memory_rows, set_mode, turn
 
 PROPOSE = "/internal/agent/tool/memory-propose"
-
-
-def set_mode(file, owner, mode):
-    with closing(sqlite3.connect(file)) as db, db:
-        db.execute(
-            "INSERT OR REPLACE INTO user_settings (owner_id,speaking_speed,captions_visible,response_preference,"
-            "memory_mode,revision,updated_at) VALUES (?,?,?,?,?,?,?)",
-            (owner, 1.0, 1, "automatic", mode, 1, "2026-11-25T00:00:00+00:00"),
-        )
 
 
 def started(tmp_path, mode):
