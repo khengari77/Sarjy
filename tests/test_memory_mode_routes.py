@@ -62,3 +62,39 @@ def test_model_tool_proposal_is_rejected_when_off_and_nothing_is_recorded(tmp_pa
             assert db.execute("SELECT COUNT(*) FROM memory_write_requests").fetchone()[0] == 0
     finally:
         cm.__exit__(None, None, None)
+
+
+def test_a_proposal_armed_before_memory_was_turned_off_cannot_be_saved_afterwards(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        body = turn(client, headers, "My name is Sam", "fact-1").json()
+        token = body["memory_proposal"]["token"]
+        with closing(sqlite3.connect(file)) as db, db:
+            owner = db.execute("SELECT owner_id FROM voice_sessions LIMIT 1").fetchone()[0]
+        set_mode(file, owner, "off")
+
+        saved = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": token, "decision": "save"}
+        )
+        assert saved.status_code == 409 and saved.json()["detail"]["code"] == "MEMORY_OFF"
+        assert memory_rows(file) == []
+
+        # Declining is always allowed, so the worker can still retire the question.
+        discarded = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": token, "decision": "discard"}
+        )
+        assert discarded.status_code == 200 and memory_rows(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_a_memory_mode_phrase_is_not_also_proposed_as_a_fact(tmp_path):
+    cm, client, file, headers = started(tmp_path, None)
+    try:
+        for index, text in enumerate(("Remember things automatically", "remember automatically")):
+            body = turn(client, headers, text, f"mode-{index}").json()
+            assert body["memory_proposal"] is None, text
+        body = turn(client, headers, "Remember that my name is Sam", "fact-1").json()
+        assert body["memory_proposal"] is not None
+    finally:
+        cm.__exit__(None, None, None)

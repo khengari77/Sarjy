@@ -5,7 +5,7 @@
   import VoiceSettings from '../chat/VoiceSettings.svelte';
   import MemoryPanel from '../memory/MemoryPanel.svelte';
   import type { CatalogState } from '../voice/catalog';
-  import type { MemoryMode } from '../commands/commandStore';
+  import type { MemoryControl, MemoryMode } from '../commands/commandStore';
   import RightDrawer from './RightDrawer.svelte';
 
   interface Props {
@@ -19,9 +19,7 @@
     live: boolean;
     speakingSpeed: number;
     captionsVisible: boolean;
-    memoryMode: MemoryMode;
-    memorySaving: boolean;
-    memoryError: string;
+    memory: MemoryControl;
     turns: Turn[];
     provisional?: ProvisionalTranscript | null;
     tools: { id: string; name: string; result: unknown }[];
@@ -44,9 +42,7 @@
     live,
     speakingSpeed,
     captionsVisible,
-    memoryMode,
-    memorySaving,
-    memoryError,
+    memory,
     turns,
     provisional = null,
     tools,
@@ -83,9 +79,7 @@
       {sessionVoice}
       {speakingSpeed}
       {captionsVisible}
-      {memoryMode}
-      {memorySaving}
-      {memoryError}
+      {memory}
       {onsearch}
       {onloadmore}
       {onremember}

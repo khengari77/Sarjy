@@ -3,7 +3,13 @@
 import { fetchSettings, saveCaptionSelection, saveMemoryMode, saveSpeakingSpeed } from '../chat/session';
 import type { CatalogState } from '../voice/catalog';
 import type { ThemePreference } from '../ui/theme';
-import { createCommandStore, initialCommandState, type CommandResult, type MemoryMode } from './commandStore';
+import {
+  createCommandStore,
+  initialCommandState,
+  type CommandResult,
+  type MemoryControl,
+  type MemoryMode,
+} from './commandStore';
 
 export interface CommandSessionOptions {
   /**
@@ -11,6 +17,24 @@ export interface CommandSessionOptions {
    * server never stores a theme, so this is the only effect for `SetTheme`.
    */
   setTheme?: (preference: ThemePreference) => void;
+}
+
+const REVISION_CONFLICT = 'SETTINGS_REVISION_CONFLICT';
+
+/** Write the mode; on a revision conflict adopt the newest revision via `adopt`, then retry once. */
+async function saveMemoryModeWithRetry(mode: MemoryMode, revision: number, adopt: () => Promise<number>) {
+  try {
+    return await saveMemoryMode(mode, revision);
+  } catch (error) {
+    if (!(error instanceof Error && error.message === REVISION_CONFLICT)) throw error;
+    return saveMemoryMode(mode, await adopt());
+  }
+}
+
+function memoryFailureText(detail: string): string {
+  return detail === REVISION_CONFLICT
+    ? 'Settings changed in another window. Try again.'
+    : "Couldn't change memory mode. Nothing was changed.";
 }
 
 export function createCommandSession(
@@ -78,19 +102,13 @@ export function createCommandSession(
     memoryError = '';
     const revision = state.settings.revision;
     const requestId = `memory:${revision}:${mode}`;
-    async function writeMemoryMode(expectedRevision: number) {
-      try {
-        return await saveMemoryMode(mode, expectedRevision);
-      } catch (error) {
-        if (!(error instanceof Error && error.message === 'SETTINGS_REVISION_CONFLICT')) throw error;
-        // Another tab committed first: adopt its authoritative snapshot through
-        // the same hydrate path the worker resync uses, then retry once.
-        store.hydrate(await fetchSettings());
-        return saveMemoryMode(mode, state.settings.revision);
-      }
-    }
     try {
-      const result = await writeMemoryMode(revision);
+      const result = await saveMemoryModeWithRetry(mode, revision, async () => {
+        // Another tab committed first: adopt its authoritative snapshot through the same
+        // hydrate path the worker resync uses, then retry once.
+        store.hydrate(await fetchSettings());
+        return state.settings.revision;
+      });
       return apply({
         request_id: requestId,
         kind: result.changed ? 'executed' : 'unchanged',
@@ -104,10 +122,7 @@ export function createCommandSession(
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'SETTING_REJECTED';
-      memoryError =
-        detail === 'SETTINGS_REVISION_CONFLICT'
-          ? 'Settings changed in another window. Try again.'
-          : "Couldn't change memory mode. Nothing was changed.";
+      memoryError = memoryFailureText(detail);
       store.fail('SetMemoryMode', requestId, detail);
       return false;
     } finally {
@@ -145,6 +160,9 @@ export function createCommandSession(
 
   return {
     state,
+    get memory(): MemoryControl {
+      return { mode: state.settings.memory_mode ?? 'auto', saving: memorySaving, error: memoryError };
+    },
     get memorySaving() {
       return memorySaving;
     },

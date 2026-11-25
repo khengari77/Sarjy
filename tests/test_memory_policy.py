@@ -125,3 +125,20 @@ def test_setting_the_same_mode_is_unchanged_and_a_change_bumps_the_revision():
     changed = apply_settings_action(settings, SetMemoryMode(mode="off"))
     assert (changed.memory_mode, changed.revision) == ("off", settings.revision + 1)
     assert apply_settings_action(changed, SetMemoryMode(mode="off")) is changed
+
+
+def test_auto_mode_matches_its_documented_table():
+    table = {
+        (Sensitivity.NORMAL, False): Decision.SAVE,
+        (Sensitivity.NORMAL, True): Decision.SAVE,
+        (Sensitivity.THIRD_PARTY, False): Decision.ASK,
+        (Sensitivity.THIRD_PARTY, True): Decision.SAVE,
+        (Sensitivity.HEALTH, False): Decision.ASK,
+        (Sensitivity.HEALTH, True): Decision.ASK,
+        (Sensitivity.FINANCE, False): Decision.ASK,
+        (Sensitivity.FINANCE, True): Decision.ASK,
+        (Sensitivity.CREDENTIAL, False): Decision.SKIP,
+        (Sensitivity.CREDENTIAL, True): Decision.SKIP,
+    }
+    for (sensitivity, explicit), expected in table.items():
+        assert decide("auto", sensitivity, explicit=explicit) is expected, (sensitivity, explicit)

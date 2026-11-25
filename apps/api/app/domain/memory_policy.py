@@ -80,8 +80,10 @@ def decide(mode: MemoryMode, sensitivity: Sensitivity, *, explicit: bool) -> Dec
     * ``off`` never saves, even when the user explicitly asks; the spoken reply says memory is off.
     * A credential is never saved in any mode, however it was asked for.
     * ``ask`` always asks, so the user hears one question per fact.
-    * ``auto`` saves without asking when the user explicitly said to remember it, or the fact is ordinary. A
-      sensitive fact the user did not explicitly ask to keep is asked about once.
+    * ``auto`` saves an ordinary fact without asking, and a fact about another person only when the user
+      explicitly asked to remember it (otherwise it asks once). Health and finance facts are asked about once even
+      when the user explicitly said to remember them: a spoken request is not consent to store medical or money
+      details, so the question is the one consent step that remains.
     """
     if mode == "off" or sensitivity is Sensitivity.CREDENTIAL:
         return Decision.SKIP

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { VoiceOption } from '../api';
   import { friendlyVoiceError } from '../audio/livekitAdapter';
-  import type { MemoryMode } from '../commands/commandStore';
+  import type { MemoryControl, MemoryMode } from '../commands/commandStore';
   import { wordsFor } from './words';
   import { voiceStatus, voiceStatusText } from './voice-state';
 
@@ -21,9 +21,7 @@
     confirmedVoice = null,
     speakingSpeed,
     captionsVisible,
-    memoryMode,
-    memorySaving,
-    memoryError,
+    memory,
     onsearch,
     onloadmore,
     onremember,
@@ -46,9 +44,7 @@
     confirmedVoice?: VoiceOption | null;
     speakingSpeed: number;
     captionsVisible: boolean;
-    memoryMode: MemoryMode;
-    memorySaving: boolean;
-    memoryError: string;
+    memory: MemoryControl;
     onsearch: () => void;
     onloadmore: () => void;
     onremember: () => void;
@@ -195,9 +191,9 @@
         <button
           type="button"
           class="segmented-button"
-          data-active={memoryMode === option.mode}
-          aria-pressed={memoryMode === option.mode}
-          disabled={memorySaving}
+          data-active={memory.mode === option.mode}
+          aria-pressed={memory.mode === option.mode}
+          disabled={memory.saving}
           onclick={() => onmemorymode(option.mode)}
         >
           {option.label}
@@ -205,8 +201,8 @@
       {/each}
     </div>
     <small class="muted-text">{words.memoryModeNote}</small>
-    {#if memoryError}
-      <p class="voice-error" role="alert">{memoryError}</p>
+    {#if memory.error}
+      <p class="voice-error" role="alert">{memory.error}</p>
     {/if}
   </section>
 

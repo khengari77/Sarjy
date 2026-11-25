@@ -12,6 +12,13 @@ import { THEME_PREFERENCES, type ThemePreference } from '../ui/theme';
 export type CommandKind = 'executed' | 'unchanged' | 'needs_confirmation' | 'unsupported' | 'failed' | 'unknown';
 export type MemoryMode = 'off' | 'ask' | 'auto';
 
+/** What the Memory capture control needs: the mode, whether a save is in flight, and the last failure. */
+export interface MemoryControl {
+  mode: MemoryMode;
+  saving: boolean;
+  error: string;
+}
+
 export interface SettingsSnapshot {
   speaking_speed: number;
   captions_visible: boolean;

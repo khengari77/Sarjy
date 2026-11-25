@@ -12,12 +12,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.domain.commands import CommandResult
+from app.domain.commands import CommandResult, parse_exact_command
 from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
 from app.domain.contracts import (
     MemoryRecord,
     MemorySource,
     ModelRequest,
+    SetMemoryMode,
     UserSettings,
     resolve_response_policy,
 )
@@ -233,6 +234,9 @@ def _memory_proposal(
     secret = _memory_secret(config)
     if not secret:
         return None
+    # "Remember things automatically" is a memory-mode command, not a fact to remember.
+    if isinstance(parse_exact_command(text), SetMemoryMode):
+        return None
     try:
         return propose_memory(
             text,
@@ -313,6 +317,11 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
         conversation = await db.get(Conversation, voice.conversation_id)
         if conversation is None:
             raise HTTPException(404)
+        if body.decision != "discard":
+            # A proposal armed before the user turned memory off must not be savable afterwards.
+            row = await db.get(UserSetting, conversation.owner_id)
+            if row is not None and row.memory_mode == "off":
+                raise HTTPException(409, detail={"code": "MEMORY_OFF"})
         try:
             return await confirm_memory(
                 db,
