@@ -8,6 +8,9 @@ silently clobbers a newer edit is worse than no undo.
 from dataclasses import dataclass
 from enum import StrEnum
 
+# ContextOperation.command_type of a memory saved without a question; shared with the permanent-delete scrub.
+AUTO_SAVE = "memory_auto_save"
+
 
 @dataclass(frozen=True)
 class MemoryChange:

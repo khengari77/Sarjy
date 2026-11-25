@@ -23,7 +23,7 @@ from app.domain.contracts import (
     resolve_response_policy,
 )
 from app.domain.intro import intro_for
-from app.domain.memory_policy import plan_for_proposal
+from app.domain.memory_policy import Decision, plan_for_proposal
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.tool_operations import ToolOperationState, terminal_state
@@ -40,6 +40,7 @@ from app.services.memory_capture import (
     MemoryCaptureError,
     confirm_memory,
     load_proposal,
+    proposal_summary,
     propose_memory,
     record_proposal,
 )
@@ -282,7 +283,12 @@ def _context_instructions(
     )
     if proposal is not None:
         # The worker acts on this: "save" commits without a question, "ask" keeps the spoken question.
-        plan = plan_for_proposal(memory_mode, proposal["text"], explicit=bool(proposal["explicit"]))
+        plan = plan_for_proposal(
+            memory_mode,
+            proposal["text"],
+            explicit=bool(proposal["explicit"]),
+            negated=bool(proposal.get("negated")),
+        )
         proposal = {**proposal, "plan": plan.value}
     instructions = pipeline_instructions(pipeline)
     if proposal is not None and proposal["plan"] == "ask":
@@ -321,6 +327,17 @@ async def _replayed_turn_response(db: AsyncSession, *, owner_id: str, conversati
     }
 
 
+def _refuse_unsaveable(token: str, config: Settings, owner_id: str, conversation_id: str, row) -> None:
+    """A credential is never saved in any mode, so even a spoken "yes" cannot confirm one."""
+    try:
+        _, text, explicit, negated = proposal_summary(token, _memory_secret(config), owner_id, conversation_id)
+    except MemoryCaptureError:
+        return  # confirm_memory reports an invalid token itself
+    mode = row.memory_mode if row is not None else "auto"
+    if plan_for_proposal(mode, text, explicit=explicit, negated=negated) is Decision.SKIP:
+        raise HTTPException(409, detail={"code": "MEMORY_SENSITIVE"})
+
+
 def _register_memory_routes(app, *, config: Settings, database, guard, embedder):
     @app.post("/internal/agent/memory/confirm")
     async def confirm_memory_route(body: MemoryConfirm, request: Request, db: AsyncSession = Depends(database)):
@@ -333,6 +350,7 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
             row = await db.get(UserSetting, conversation.owner_id)
             if row is not None and row.memory_mode == "off":
                 raise HTTPException(409, detail={"code": "MEMORY_OFF"})
+            _refuse_unsaveable(body.token, config, conversation.owner_id, voice.conversation_id, row)
         try:
             return await confirm_memory(
                 db,
@@ -1023,7 +1041,12 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
             proposal = result.get("proposal")
             if proposal is not None:
                 mode = row.memory_mode if row is not None else "auto"
-                plan = plan_for_proposal(mode, proposal["text"], explicit=bool(proposal["explicit"]))
+                plan = plan_for_proposal(
+                    mode,
+                    proposal["text"],
+                    explicit=bool(proposal["explicit"]),
+                    negated=bool(proposal.get("negated")),
+                )
                 result = {**result, "proposal": {**proposal, "plan": plan.value}}
             return result
 

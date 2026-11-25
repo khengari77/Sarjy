@@ -74,12 +74,13 @@ def combine(*labels: Sensitivity) -> Sensitivity:
     return max(labels, key=_ORDER.index, default=Sensitivity.NORMAL)
 
 
-def decide(mode: MemoryMode, sensitivity: Sensitivity, *, explicit: bool) -> Decision:
+def decide(mode: MemoryMode, sensitivity: Sensitivity, *, explicit: bool, negated: bool = False) -> Decision:
     """What to do with a proposed fact.
 
     * ``off`` never saves, even when the user explicitly asks; the spoken reply says memory is off.
     * A credential is never saved in any mode, however it was asked for.
-    * ``ask`` always asks, so the user hears one question per fact.
+    * ``ask`` always asks, so the user hears one question per fact. So does a negated fact in any mode, because it
+      retracts a stored fact instead of adding one.
     * ``auto`` saves an ordinary fact without asking, and a fact about another person only when the user
       explicitly asked to remember it (otherwise it asks once). Health and finance facts are asked about once even
       when the user explicitly said to remember them: a spoken request is not consent to store medical or money
@@ -87,7 +88,8 @@ def decide(mode: MemoryMode, sensitivity: Sensitivity, *, explicit: bool) -> Dec
     """
     if mode == "off" or sensitivity is Sensitivity.CREDENTIAL:
         return Decision.SKIP
-    if mode == "ask":
+    if mode == "ask" or negated:
+        # A negated fact ("I no longer live in X") retracts something already stored, so it always needs consent.
         return Decision.ASK
     if explicit and sensitivity in (Sensitivity.NORMAL, Sensitivity.THIRD_PARTY):
         return Decision.SAVE
@@ -96,6 +98,6 @@ def decide(mode: MemoryMode, sensitivity: Sensitivity, *, explicit: bool) -> Dec
     return Decision.ASK
 
 
-def plan_for_proposal(mode: MemoryMode, text: str, *, explicit: bool) -> Decision:
+def plan_for_proposal(mode: MemoryMode, text: str, *, explicit: bool, negated: bool = False) -> Decision:
     """The decision for a proposed fact, from its text. The keyword net sets the sensitivity."""
-    return decide(mode, classify_sensitivity(text), explicit=explicit)
+    return decide(mode, classify_sensitivity(text), explicit=explicit, negated=negated)

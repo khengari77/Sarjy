@@ -4,6 +4,8 @@ import sqlite3
 from contextlib import closing
 
 import pytest
+from app.domain.memory_capture import parse_capture
+from app.services.memory_capture import proposal_for_capture
 from fastapi.testclient import TestClient
 from test_memory_capture import memory_rows, turn
 from test_memory_mode_routes import set_mode, started
@@ -41,6 +43,21 @@ def save_via_auto(client, headers, text, request_id):
     response = auto(client, headers, proposal["token"])
     assert response.status_code == 200, response.text
     return response.json()["change"]
+
+
+def active_contents(file):
+    with closing(sqlite3.connect(file)) as db:
+        return [row[0] for row in db.execute("SELECT content FROM memories WHERE status = 'active'")]
+
+
+def operation_payloads(file):
+    with closing(sqlite3.connect(file)) as db:
+        return [row[0] for row in db.execute("SELECT payload FROM context_operations")]
+
+
+def session_identity(file):
+    with closing(sqlite3.connect(file)) as db:
+        return db.execute("SELECT owner_id, conversation_id FROM voice_sessions LIMIT 1").fetchone()
 
 
 @pytest.mark.parametrize("mode", ["auto", None])
@@ -281,5 +298,136 @@ def test_only_the_ask_plan_appends_the_pending_question_instruction(tmp_path):
         asked = turn(client, headers, "My name is Sam", "fact-1").json()
         assert asked["memory_proposal"]["plan"] == "ask"
         assert PENDING in asked["context"]["model_request"]["instructions"].lower()
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_undo_is_refused_when_a_newer_auto_save_replaced_the_row(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        save_via_auto(client, headers, "My name is Sam", "fact-1")
+        alex = save_via_auto(client, headers, "My name is Alex", "fact-2")
+        adam = save_via_auto(client, headers, "My name is Adam", "fact-3")
+        assert alex["memory_id"] != adam["memory_id"]
+
+        refused = client.post(f"/v1/changes/{alex['id']}/undo")
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["detail"]["code"] == "CHANGE_SUPERSEDED"
+        assert active_contents(file) == ["My name is Adam"]
+        assert {content: status for content, _, status, _ in memory_rows(file)} == {
+            "My name is Sam": "superseded",
+            "My name is Alex": "superseded",
+            "My name is Adam": "active",
+        }
+
+        undone = client.post(f"/v1/changes/{adam['id']}/undo")
+        assert undone.status_code == 200, undone.text
+        assert undone.json()["changed"] is True
+        assert active_contents(file) == ["My name is Alex"]
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_undo_is_refused_after_the_memory_was_permanently_deleted(tmp_path):
+    # SOURCE BUG: delete_memory scrubs the journal payload down to {"memory_id", "scrubbed"} and marks the
+    # operation "deleted", but undo_change still reads payload["version"] before checking "undoable"/"scrubbed".
+    # The request therefore raises KeyError (HTTP 500) instead of the specified 409 CHANGE_SUPERSEDED.
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        change = save_via_auto(client, headers, "My name is Sam", "fact-1")
+        deleted = client.delete(f"/v1/memories/{change['memory_id']}")
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["status"] == "deleted"
+
+        response = client.post(f"/v1/changes/{change['id']}/undo")
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "CHANGE_SUPERSEDED"
+
+        with closing(sqlite3.connect(file)) as db:
+            assert db.execute("SELECT COUNT(*) FROM memories WHERE status = 'active'").fetchone()[0] == 0
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_deleting_a_memory_scrubs_the_auto_save_journal_label(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        proposal = proposal_of(client, headers, "My name is Sam", "fact-1")
+        saved = auto(client, headers, proposal["token"])
+        assert saved.status_code == 200, saved.text
+        memory_id = saved.json()["change"]["memory_id"]
+        assert "Sam" in saved.json()["change"]["label"]
+        assert "Sam" in operation_payloads(file)[0]
+
+        deleted = client.delete(f"/v1/memories/{memory_id}")
+        assert deleted.status_code == 200, deleted.text
+
+        replay = auto(client, headers, proposal["token"])
+        assert replay.status_code == 200, replay.text
+        change = replay.json()["change"]
+        assert change is not None
+        assert "Sam" not in change["label"]
+        assert change["undoable"] is False
+
+        payloads = operation_payloads(file)
+        assert len(payloads) == 1
+        assert all("Sam" not in (payload or "") for payload in payloads)
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_negated_fact_is_never_auto_saved(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        saved = save_via_auto(client, headers, "I live in Benghazi", "fact-1")
+        assert saved["kind"] == "memory_saved"
+
+        proposal = proposal_of(client, headers, "I no longer live in Benghazi", "fact-2")
+        assert proposal["negated"] is True
+        assert proposal["plan"] == "ask"
+
+        refused = auto(client, headers, proposal["token"])
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["detail"]["code"] == "MEMORY_NEEDS_CONSENT"
+
+        assert active_contents(file) == ["I live in Benghazi"]
+        assert operations(file) == [("memory_auto_save", "applied")]
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_a_credential_cannot_be_confirmed_even_in_ask_mode(tmp_path):
+    cm, client, file, headers = started(tmp_path, "ask")
+    try:
+        started_turn = turn(client, headers, "hello there", "t0").json()
+        owner_id, conversation_id = session_identity(file)
+        capture = parse_capture("my password is hunter2")
+        assert capture is not None
+        assert capture.subject == "attribute:password"
+        proposal = proposal_for_capture(
+            capture,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            source_turn_id=started_turn["turn_id"],
+            secret="proposal-secret",
+        )
+
+        refused = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": proposal["token"], "decision": "save"},
+        )
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["detail"]["code"] == "MEMORY_SENSITIVE"
+        assert memory_rows(file) == []
+        assert operations(file) == []
+
+        discarded = client.post(
+            "/internal/agent/memory/confirm",
+            headers=headers,
+            json={"token": proposal["token"], "decision": "discard"},
+        )
+        assert discarded.status_code == 200, discarded.text
+        assert memory_rows(file) == []
     finally:
         cm.__exit__(None, None, None)

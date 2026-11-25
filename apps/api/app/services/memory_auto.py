@@ -11,7 +11,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.contracts import MemoryMode
-from app.domain.memory_changes import MemoryChange, Revert, RowState, revert_decision
+from app.domain.memory_changes import AUTO_SAVE, MemoryChange, Revert, RowState, revert_decision
 from app.domain.memory_policy import Decision, plan_for_proposal
 from app.infrastructure.database import ContextOperation, Memory, MemoryWriteRequest, now
 from app.services.memory import MemoryService
@@ -21,7 +21,6 @@ from app.services.memory_capture import (
     proposal_summary,
 )
 
-AUTO_SAVE = "memory_auto_save"
 APPLIED = "applied"
 UNDONE = "undone"
 LABEL_CHARS = 80
@@ -78,8 +77,8 @@ async def auto_commit_memory(
     Idempotent per proposal: a replay returns the same change without writing twice. An exact duplicate of an
     already-saved fact is not a change and carries none.
     """
-    confirmation_id, text, explicit = proposal_summary(token, secret, owner_id, conversation_id)
-    if plan_for_proposal(mode, text, explicit=explicit) is not Decision.SAVE:
+    confirmation_id, text, explicit, negated = proposal_summary(token, secret, owner_id, conversation_id)
+    if plan_for_proposal(mode, text, explicit=explicit, negated=negated) is not Decision.SAVE:
         raise MemoryCaptureError("MEMORY_NEEDS_CONSENT", 409)
     key = f"memauto:{confirmation_id}"[:100]
     existing = await _journalled(db, owner_id, key)
@@ -160,6 +159,9 @@ async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dic
     payload = operation.payload or {}
     if operation.outcome == UNDONE:
         return {**_change_payload(operation), "undoable": False, "changed": False}
+    if operation.outcome != APPLIED or "version" not in payload:
+        # Permanently deleted (the journal was scrubbed) or otherwise no longer an applied change: nothing to revert.
+        raise ChangeConflict
 
     change = MemoryChange(
         memory_id=payload["memory_id"],
@@ -179,27 +181,39 @@ async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dic
         raise ChangeConflict
 
     # Only the new row is withdrawn. The earlier fact it replaced (if any) is restored untouched, so this is not
-    # ``delete_memory``, which wipes a whole correction lineage.
-    await db.execute(
+    # ``delete_memory``, which wipes a whole correction lineage. Both writes are guarded on status as well as version
+    # (replacing or deleting a row does not bump its version) and must each match exactly one row; otherwise the rows
+    # moved on between the check above and now, and the whole undo is rolled back.
+    withdrawn = await db.execute(
         update(Memory)
-        .where(Memory.id == change.memory_id, Memory.owner_id == owner_id, Memory.version == change.version)
+        .where(
+            Memory.id == change.memory_id,
+            Memory.owner_id == owner_id,
+            Memory.version == change.version,
+            Memory.status == "active",
+        )
         .values(status="deleted", content="", subject=None, embedding=None, updated_at=now())
     )
-    if new is not None and new.request_key:
-        await db.execute(
-            update(MemoryWriteRequest)
-            .where(MemoryWriteRequest.owner_id == owner_id, MemoryWriteRequest.request_key == new.request_key)
-            .values(embedding=None, result=None)
-        )
+    restored = None
     if change.superseded_id:
-        await db.execute(
+        restored = await db.execute(
             update(Memory)
             .where(
                 Memory.id == change.superseded_id,
                 Memory.owner_id == owner_id,
                 Memory.version == change.superseded_version,
+                Memory.status == "superseded",
             )
             .values(status="active", version=Memory.version + 1, updated_at=now())
+        )
+    if withdrawn.rowcount != 1 or (restored is not None and restored.rowcount != 1):
+        await db.rollback()
+        raise ChangeConflict
+    if new is not None and new.request_key:
+        await db.execute(
+            update(MemoryWriteRequest)
+            .where(MemoryWriteRequest.owner_id == owner_id, MemoryWriteRequest.request_key == new.request_key)
+            .values(embedding=None, result=None)
         )
     operation.outcome = UNDONE
     # The label quotes the fact the user just withdrew; keep the id for audit and drop the text.

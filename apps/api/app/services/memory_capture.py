@@ -134,6 +134,7 @@ def proposal_for_capture(
         "token": token,
         "text": capture.text,
         "explicit": capture.explicit,
+        "negated": capture.negated,
         "confirmation_id": confirmation_id,
         "confirmation_revision": 1,
         "question": _confirmation_question(capture.text),
@@ -833,10 +834,10 @@ async def _discard(
     return response
 
 
-def proposal_summary(token: str, secret: str, owner_id: str, conversation_id: str) -> tuple[str, str, bool]:
-    """``(confirmation_id, text, explicit)`` of a verified proposal, for callers outside this module."""
+def proposal_summary(token: str, secret: str, owner_id: str, conversation_id: str) -> tuple[str, str, bool, bool]:
+    """``(confirmation_id, text, explicit, negated)`` of a verified proposal, for callers outside this module."""
     capture, payload = _verified(token, secret, owner_id, conversation_id)
-    return str(payload["confirmation_id"]), capture.text, bool(capture.explicit)
+    return str(payload["confirmation_id"]), capture.text, bool(capture.explicit), bool(capture.negated)
 
 
 async def confirm_memory(
