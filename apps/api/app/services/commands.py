@@ -47,7 +47,7 @@ from app.domain.ui_routing import (
     ui_text_is_eligible,
 )
 from app.services.actions import dispatch_action, dispatch_setting
-from app.services.context_operations import ContextOperationError, MemorySearcher, keyword_search
+from app.services.context_operations import ContextOperationError, MemorySearcher, has_content_words, keyword_search
 from app.services.jev_ui import UiClassifier
 from app.services.voice_exclusions import (
     discard_pending,
@@ -278,7 +278,9 @@ async def _handle_memory_mutation(
             request_id=request_id,
         )
     target = parse_memory_exclusion_target(text)
-    if target is None:
+    # A target made only of stopwords ("all of it", "this chat") names nothing, and an empty
+    # keyword query matches every memory; never let it hide one.
+    if target is None or not has_content_words(target):
         return None
     return await _run_memory_command(
         hide_target(

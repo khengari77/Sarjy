@@ -135,6 +135,11 @@ def _tokens(text: str) -> set[str]:
     return {token for token in TOKEN.findall(text.casefold()) if token not in STOPWORDS}
 
 
+def has_content_words(text: str) -> bool:
+    """Whether ``text`` names anything beyond stopwords ("all of it" does not)."""
+    return bool(_tokens(text))
+
+
 async def keyword_search(
     db: AsyncSession,
     *,

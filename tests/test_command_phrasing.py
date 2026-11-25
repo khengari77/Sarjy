@@ -1,5 +1,7 @@
 """Conversational wrappers and extra phrasings resolve to the same typed actions as the exact rows."""
 
+import asyncio
+
 import pytest
 from app.domain.commands import (
     _EXACT_COMMANDS,
@@ -208,3 +210,36 @@ def test_plain_forget_still_names_a_target(text, target):
 def test_compound_forget_keeps_its_honest_refusal():
     assert unsupported_command("forget the trip but keep the budget")[0] == "MEMORY_MUTATION_UNSUPPORTED"
     assert unsupported_command("delete my name")[0] == "MEMORY_MUTATION_UNSUPPORTED"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "forget the trip KEEP the budget",
+        "Forget the trip EXCEPT the hotel",
+        "forget where I keep my passport",
+        "forget my name and my address",
+    ],
+)
+def test_compound_guard_is_case_insensitive_and_ignores_possessive_keep(text):
+    compound = unsupported_command(text) is not None
+    expected = ("KEEP" in text) or ("EXCEPT" in text)
+    assert compound is expected
+    if compound:
+        assert parse_memory_exclusion_target(text) is None
+
+
+@pytest.mark.parametrize(
+    "text", ["forget all of it", "forget all of that", "forget this chat", "forget the conversation"]
+)
+def test_stopword_only_forget_target_never_reaches_the_search(text):
+    from app.services.commands import _handle_memory_mutation
+
+    # db=None proves the guard returns before any lookup; an empty keyword
+    # query would otherwise match every memory.
+    result = asyncio.run(
+        _handle_memory_mutation(
+            None, owner_id="o", conversation_id="c", request_id="r", text=text, secret="s", search=None
+        )
+    )
+    assert result is None
