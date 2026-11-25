@@ -767,6 +767,7 @@ class SarjyAgent(WordleTools, Agent):
 
     def note_transcript(self, event) -> None:
         if self.preemptive and getattr(event, "is_final", False):
+            logging.warning("preempt: final segment noted")
             self.recent_finals.add(getattr(event, "transcript", "") or "")
 
     def _cancel_preemption(self) -> None:
@@ -953,6 +954,13 @@ class SarjyAgent(WordleTools, Agent):
             self.suppressed.discard(user.id)
             return
         early_turn = None
+        if self.preemptive and user.id not in self.prepared:
+            logging.warning(
+                "preempt: llm_node for unseen %s covered=%s finals=%s",
+                user.id[-6:],
+                self.recent_finals.covers(user.text_content or ""),
+                self.recent_finals.size(),
+            )
         if self.preemptive and user.id not in self.prepared and self.recent_finals.covers(user.text_content or ""):
             logging.warning("preempt: early reply requested for %s", user.id[-6:])
             early_turn = await self._open_early_turn(user)
