@@ -130,7 +130,13 @@ _MEMORY_GLOBAL = re.compile(
 # "forget the trip but keep the budget" is a compound request with its own
 # keep-exception semantics; it stays unsupported rather than silently dropping
 # the keep clause and excluding everything it matched.
-_MEMORY_COMPOUND = re.compile(r"\b(?:but|and) (?:keep|leave|except)\b|\bexcept\b|\bkeep\b")
+# A keep clause is structural: after a comma or conjunction ("but I keep the budget"), or "keep the/my/it"
+# directly after the target. "where I keep my passport" is a fact about the user, not a keep clause.
+_KEEP_CLAUSE = (
+    r"(?:(?:[,;]|\b(?:but|and|then|so)\b)\s*(?:(?:i|we|you|they)\s+)?keep\b"
+    r"|(?<!\bi )(?<!\bwe )(?<!\byou )(?<!\bthey )(?<!\bwhere )(?<!\bwhat )(?<!\bto )(?<!\bcan )(?<!\bshould )(?<!\bwill )(?<!\bmust )\bkeep (?:the|my|it|that|everything)\b)"
+)
+_MEMORY_COMPOUND = re.compile(r"\b(?:but|and) (?:leave|except)\b|\bexcept\b|" + _KEEP_CLAUSE, re.IGNORECASE)
 _MEMORY_RESTORE = re.compile(
     r"^(?:please )?(?:restore (?:the |my )?(?:excluded )?memories\b.*"
     r"|bring back (?:the |my )?memories\b.*"
@@ -140,6 +146,18 @@ _MEMORY_UNDO = re.compile(
     r"^(?:please )?(?:undo(?: that| it| the hide)?|bring (?:it|that) back|unhide (?:it|that)|un-?hide)$"
 )
 _REFERENTIAL_TARGETS = frozenset({"it", "that", "this", "them", "those", "these", "everything", "anything", "all"})
+# "forget it", "forget about it" and "forget you!" are figures of speech, not memory commands.
+_FORGET_IDIOM_TARGETS = frozenset({"you", "me", "us", "him", "her", "yourself", "myself", "about it", "it all"})
+# A target with a clause break ("the weather, tell me a joke") is a different request, not a memory name.
+_CLAUSE_BREAK = re.compile(
+    r"[,;:!?]"
+    # Any period followed by a space ends the target, except after a known abbreviation or a single-letter
+    # initial ("Dr. Smith's number", "the U.S. trip"). This is a deny-by-default sentence boundary, not a list
+    # of clause openers: a missing opener must fail closed, never hide a memory the user said to keep.
+    r"|(?<!\bdr)(?<!\bmr)(?<!\bmrs)(?<!\bms)(?<!\bst)(?<!\bjr)(?<!\bsr)(?<!\bprof)(?<!\bvs)(?<!\b[a-z])\.\s"
+    r"|\b(?:and|then|so|because|but|while|(?:tell|give|show) me)\b",
+    re.IGNORECASE,
+)
 _YES = frozenset(
     {
         "yes",
@@ -208,7 +226,8 @@ _UNSUPPORTED_COMMANDS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     ),
     (
         re.compile(
-            r"^(?:(?:forget|exclude|remove|delete) .+"
+            r"^(?:(?:remove|delete) .+"
+            r"|(?:forget|exclude) .*(?:\b(?:but|and) (?:leave|except)\b|\bexcept\b|" + _KEEP_CLAUSE + r").*"
             r"|don't remember .+"
             r"|(?:delete|remove) (?:the )?memory of .+)$"
         ),
@@ -358,7 +377,9 @@ def parse_memory_exclusion_target(text: str) -> str | None:
     if match is None:
         return None
     target = match.group("target").strip()
-    if not target or target.casefold() in _REFERENTIAL_TARGETS:
+    if not target or target.casefold() in _REFERENTIAL_TARGETS | _FORGET_IDIOM_TARGETS:
+        return None
+    if _CLAUSE_BREAK.search(target):
         return None
     if _MEMORY_COMPOUND.search(normalized) or memory_request_is_global(normalized):
         return None

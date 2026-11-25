@@ -28,6 +28,7 @@ from app.services.context_operations import (
     MemorySearcher,
     confirm_proposal,
     create_exclusion_proposal,
+    has_content_words,
     keyword_search,
     undo_operation,
 )
@@ -385,6 +386,12 @@ async def hide_target(
     Zero matches and several matches change nothing (never hide "all"). A hide
     needs no confirmation; the spoken line tells the user how to undo it.
     """
+    if not has_content_words(target):
+        # Reached from the voice grammar and from the model's forget tool alike. An empty keyword
+        # query matches every memory, so a target that names nothing must never search.
+        return _unchanged(
+            request_id, "MEMORY_TARGET_UNSPECIFIED", "Tell me which memory to forget. Nothing was changed."
+        )
     replay = await _replay_proposal(
         db, owner_id=owner_id, conversation_id=conversation_id, command_type=HIDE_OPERATION, request_id=request_id
     )

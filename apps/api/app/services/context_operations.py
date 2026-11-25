@@ -105,7 +105,7 @@ STOPWORDS = frozenset(
         "your",
     ]
 )
-TOKEN = re.compile(r"[0-9A-Za-z\u0600-\u06ff]+")
+TOKEN = re.compile(r"\d+(?:\.\d+)+|[0-9A-Za-z\u0600-\u06ff]+")
 
 
 class ContextOperationError(Exception):
@@ -131,8 +131,58 @@ class MemorySearcher(Protocol):
     ) -> Sequence[MemoryCandidate]: ...
 
 
+_CONTRACTION_SUFFIX = re.compile(r"['\u2019](?:s|t|d|m|re|ve|ll)\b", re.IGNORECASE)
+
+
 def _tokens(text: str) -> set[str]:
-    return {token for token in TOKEN.findall(text.casefold()) if token not in STOPWORDS}
+    # One tokenizer for the guard and the search: contraction suffixes are removed ("it's" -> "it"), so a
+    # stray "s" can never match every possessive memory, and "3.5" stays one token.
+    cleaned = _CONTRACTION_SUFFIX.sub("", text.casefold())
+    return {token for token in TOKEN.findall(cleaned) if token not in STOPWORDS}
+
+
+# Words that point at something without naming it; a target made of these (and stopwords) is no target.
+_REFERENTIAL = frozenset(
+    {
+        "them",
+        "they",
+        "us",
+        "we",
+        "our",
+        "his",
+        "her",
+        "him",
+        "their",
+        "those",
+        "these",
+        "stuff",
+        "things",
+        "thing",
+        "something",
+        "anything",
+        "nothing",
+        "everything",
+        "one",
+        "ones",
+    }
+)
+
+
+def query_tokens(query: str) -> set[str]:
+    """Tokens a keyword search may match on: the guard's content rule applied to the query itself.
+
+    A single character never elects a memory next to other words ("vitamin D" must not match "got a D in
+    math" on the "d"); it is a search term only when it is the whole query ("X").
+    """
+    tokens = _tokens(query) - _REFERENTIAL
+    if len(query.strip()) == 1:
+        return tokens
+    return {token for token in tokens if len(token) > 1}
+
+
+def has_content_words(text: str) -> bool:
+    """Whether ``text`` names anything a search could match on ("all of them" and "it's" do not)."""
+    return bool(query_tokens(text))
 
 
 async def keyword_search(
@@ -148,6 +198,11 @@ async def keyword_search(
     Applies the same owner-scoped correction-lineage exclusions as semantic
     retrieval so injected/test adapters cannot drift from production policy.
     """
+    wanted = query_tokens(query)
+    if not wanted:
+        # A query that names nothing matches nothing. "Browse everything" is not a keyword search, and
+        # recall, preview and exclusion proposals must never present arbitrary memories as matches.
+        return ()
     rows = (
         await db.scalars(
             select(Memory)
@@ -156,13 +211,12 @@ async def keyword_search(
             .limit(PREVIEW_SEARCH_ROW_LIMIT)
         )
     ).all()
-    wanted = _tokens(query)
     scored: list[MemoryCandidate] = []
     for row in rows:
         content_tokens = _tokens(row.content)
         overlap = len(wanted & content_tokens)
-        if not wanted or overlap:
-            score = float(overlap) if wanted else 0.0
+        if overlap:
+            score = float(overlap)
             scored.append(
                 MemoryCandidate(
                     id=row.id,
@@ -175,6 +229,36 @@ async def keyword_search(
     scored.sort(key=lambda candidate: (-candidate.score, candidate.id))
     excluded = await blocked_memory_ids(db, owner_id, conversation_id)
     return tuple(item for item in scored if item.id not in excluded)[:limit]
+
+
+async def recent_memories(
+    db: AsyncSession, *, owner_id: str, conversation_id: str, limit: int
+) -> Sequence[MemoryCandidate]:
+    """The newest active, visible memories: a bounded "what do you remember" listing.
+
+    Read-only on purpose. Anything that hides, excludes or deletes must use ``keyword_search`` and its strict
+    matching; only the recall tool, which hands data to the model, may browse.
+    """
+    rows = (
+        await db.scalars(
+            select(Memory)
+            .where(Memory.owner_id == owner_id, Memory.status == "active")
+            .order_by(Memory.created_at.desc(), Memory.id.desc())
+            .limit(PREVIEW_SEARCH_ROW_LIMIT)
+        )
+    ).all()
+    excluded = await blocked_memory_ids(db, owner_id, conversation_id)
+    return tuple(
+        MemoryCandidate(
+            id=row.id,
+            content=row.content,
+            source_turn_id=row.source_turn_id,
+            score=0.0,
+            kind=classify(row.content),
+        )
+        for row in rows
+        if row.id not in excluded
+    )[:limit]
 
 
 def _digest(*parts: str) -> str:
