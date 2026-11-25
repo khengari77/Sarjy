@@ -1,9 +1,15 @@
 /** One reactive command session: the GUI and worker results share this state. */
 
-import { saveCaptionSelection, saveSpeakingSpeed } from '../chat/session';
+import { fetchSettings, saveCaptionSelection, saveMemoryMode, saveSpeakingSpeed } from '../chat/session';
 import type { CatalogState } from '../voice/catalog';
 import type { ThemePreference } from '../ui/theme';
-import { createCommandStore, initialCommandState, type CommandResult } from './commandStore';
+import {
+  createCommandStore,
+  initialCommandState,
+  type CommandResult,
+  type MemoryControl,
+  type MemoryMode,
+} from './commandStore';
 
 export interface CommandSessionOptions {
   /**
@@ -11,6 +17,24 @@ export interface CommandSessionOptions {
    * server never stores a theme, so this is the only effect for `SetTheme`.
    */
   setTheme?: (preference: ThemePreference) => void;
+}
+
+const REVISION_CONFLICT = 'SETTINGS_REVISION_CONFLICT';
+
+/** Write the mode; on a revision conflict adopt the newest revision via `adopt`, then retry once. */
+async function saveMemoryModeWithRetry(mode: MemoryMode, revision: number, adopt: () => Promise<number>) {
+  try {
+    return await saveMemoryMode(mode, revision);
+  } catch (error) {
+    if (!(error instanceof Error && error.message === REVISION_CONFLICT)) throw error;
+    return saveMemoryMode(mode, await adopt());
+  }
+}
+
+function memoryFailureText(detail: string): string {
+  return detail === REVISION_CONFLICT
+    ? 'Settings changed in another window. Try again.'
+    : "Couldn't change memory mode. Nothing was changed.";
 }
 
 export function createCommandSession(
@@ -21,6 +45,8 @@ export function createCommandSession(
   const state = $state(initialCommandState());
   if (panels) state.panels = panels;
   const store = createCommandStore(state, { applyTheme: options.setTheme });
+  let memorySaving = $state(false);
+  let memoryError = $state('');
 
   function apply(result: CommandResult): boolean {
     if (!store.apply(result)) return false;
@@ -65,6 +91,46 @@ export function createCommandSession(
   }
 
   /**
+   * Memory mode is server-owned and follows the same authoritative-snapshot
+   * path as captions. A rejected write leaves the previous snapshot in place.
+   * A revision conflict adopts the current server snapshot and retries once,
+   * mirroring the voice picker's recovery for a commit made by another tab.
+   */
+  async function setMemoryMode(mode: MemoryMode): Promise<boolean> {
+    if (memorySaving) return false;
+    memorySaving = true;
+    memoryError = '';
+    const revision = state.settings.revision;
+    const requestId = `memory:${revision}:${mode}`;
+    try {
+      const result = await saveMemoryModeWithRetry(mode, revision, async () => {
+        // Another tab committed first: adopt its authoritative snapshot through the same
+        // hydrate path the worker resync uses, then retry once.
+        store.hydrate(await fetchSettings());
+        return state.settings.revision;
+      });
+      return apply({
+        request_id: requestId,
+        kind: result.changed ? 'executed' : 'unchanged',
+        action: 'SetMemoryMode',
+        settings: result.settings,
+        navigation: null,
+        theme: null,
+        changed: result.changed,
+        spoken: result.changed ? `Memory mode set to ${mode}.` : `Memory mode is already ${mode}.`,
+        detail: null,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'SETTING_REJECTED';
+      memoryError = memoryFailureText(detail);
+      store.fail('SetMemoryMode', requestId, detail);
+      return false;
+    } finally {
+      memorySaving = false;
+    }
+  }
+
+  /**
    * Speed is a server-owned preference read by the worker at the next turn.
    * A rejected write leaves the previous snapshot in place.
    */
@@ -94,9 +160,19 @@ export function createCommandSession(
 
   return {
     state,
+    get memory(): MemoryControl {
+      return { mode: state.settings.memory_mode ?? 'auto', saving: memorySaving, error: memoryError };
+    },
+    get memorySaving() {
+      return memorySaving;
+    },
+    get memoryError() {
+      return memoryError;
+    },
     apply,
     hydrate: store.hydrate,
     setCaptions,
+    setMemoryMode,
     setSpeakingSpeed,
     openPanel: store.openPanel,
   };

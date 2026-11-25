@@ -202,11 +202,16 @@ class Decision(Contract):
         return self.intent is not Intent.AMBIGUOUS and self.selected_probability >= threshold and self.lead >= lead
 
 
+MemoryMode = Literal["off", "ask", "auto"]
+
+
 class UserSettings(Contract):
     speaking_speed: float = Field(default=1.0, ge=SPEAKING_SPEED_MIN, le=SPEAKING_SPEED_MAX)
     captions_visible: bool = True
     approved_voice_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,100}$")
     response_preference: ResponsePreference = ResponsePreference.AUTOMATIC
+    # off: never save. ask: one spoken question per fact. auto: save without asking (P2); until then it behaves like ask.
+    memory_mode: MemoryMode = "auto"
     revision: int = Field(default=0, ge=0)
 
     _speed_step = field_validator("speaking_speed")(_on_speed_step)
@@ -368,6 +373,11 @@ class SetCaptionsVisible(Contract):
     visible: bool
 
 
+class SetMemoryMode(Contract):
+    kind: Literal["SetMemoryMode"] = "SetMemoryMode"
+    mode: MemoryMode
+
+
 ThemeName = Literal["light", "dark", "system"]
 
 
@@ -408,6 +418,7 @@ ActionType = (
     | ShowConversationHistory
     | OpenMemoryExplorer
     | SetCaptionsVisible
+    | SetMemoryMode
     | SetTheme
     | SearchMemory
     | ProposeContextExclusion
@@ -439,6 +450,10 @@ def apply_settings_action(settings: UserSettings, action: Action) -> UserSetting
         if action.visible == settings.captions_visible:
             return settings
         return settings.model_copy(update={"captions_visible": action.visible, "revision": settings.revision + 1})
+    if isinstance(action, SetMemoryMode):
+        if action.mode == settings.memory_mode:
+            return settings
+        return settings.model_copy(update={"memory_mode": action.mode, "revision": settings.revision + 1})
     return settings
 
 
@@ -483,6 +498,7 @@ __all__ = [
     "DecisionSource",
     "EMBEDDING_DIMENSIONS",
     "Intent",
+    "MemoryMode",
     "MemoryRecord",
     "MemorySource",
     "ModelRequest",
@@ -498,6 +514,7 @@ __all__ = [
     "SearchMemory",
     "SelectApprovedVoice",
     "SetCaptionsVisible",
+    "SetMemoryMode",
     "SetSpeakingSpeed",
     "SetTheme",
     "ShowConversationHistory",

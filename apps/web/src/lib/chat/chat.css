@@ -318,6 +318,42 @@ h1 {
   accent-color: var(--orb-idle);
 }
 
+.segmented-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: transparent;
+}
+
+.segmented-button {
+  font: inherit;
+  font-size: 13px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background var(--transition-quick),
+    color var(--transition-quick);
+}
+
+.segmented-button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.segmented-button[data-active='true'] {
+  background: var(--surface-raised);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.16);
+}
+
 .controls {
   display: flex;
   gap: 10px;

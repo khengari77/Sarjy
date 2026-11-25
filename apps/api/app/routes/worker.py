@@ -12,12 +12,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.domain.commands import CommandResult
+from app.domain.commands import CommandResult, parse_exact_command
 from app.domain.context import ContextCandidate, compile_turn_context, validate_assembly
 from app.domain.contracts import (
     MemoryRecord,
     MemorySource,
     ModelRequest,
+    SetMemoryMode,
     UserSettings,
     resolve_response_policy,
 )
@@ -233,6 +234,9 @@ def _memory_proposal(
     secret = _memory_secret(config)
     if not secret:
         return None
+    # "Remember things automatically" is a memory-mode command, not a fact to remember.
+    if isinstance(parse_exact_command(text), SetMemoryMode):
+        return None
     try:
         return propose_memory(
             text,
@@ -247,15 +251,27 @@ def _memory_proposal(
 
 
 def _context_instructions(
-    config: Settings, pipeline, *, owner_id: str, conversation_id: str, turn, strict_capture: bool = False
+    config: Settings,
+    pipeline,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    turn,
+    strict_capture: bool = False,
+    memory_mode: str = "auto",
 ) -> tuple[str, dict | None]:
-    proposal = _memory_proposal(
-        config,
-        owner_id=owner_id,
-        conversation_id=conversation_id,
-        source_turn_id=turn.id,
-        text=turn.text,
-        strict=strict_capture,
+    # With memory off nothing is ever proposed, so there is no question to ask and nothing to arm.
+    proposal = (
+        None
+        if memory_mode == "off"
+        else _memory_proposal(
+            config,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            source_turn_id=turn.id,
+            text=turn.text,
+            strict=strict_capture,
+        )
     )
     instructions = pipeline_instructions(pipeline)
     if proposal is not None:
@@ -301,6 +317,11 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
         conversation = await db.get(Conversation, voice.conversation_id)
         if conversation is None:
             raise HTTPException(404)
+        if body.decision != "discard":
+            # A proposal armed before the user turned memory off must not be savable afterwards.
+            row = await db.get(UserSetting, conversation.owner_id)
+            if row is not None and row.memory_mode == "off":
+                raise HTTPException(409, detail={"code": "MEMORY_OFF"})
         try:
             return await confirm_memory(
                 db,
@@ -556,6 +577,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
         instructions, proposal = _context_instructions(
             config,
             pipeline,
+            memory_mode=settings_row.memory_mode if settings_row is not None else "auto",
             owner_id=conversation.owner_id,
             conversation_id=voice.conversation_id,
             turn=turn,
@@ -598,6 +620,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
                 captions_visible=settings_row.captions_visible,
                 approved_voice_id=settings_row.approved_voice_id,
                 response_preference=settings_row.response_preference,
+                memory_mode=settings_row.memory_mode,
                 revision=settings_row.revision,
             )
         )
@@ -940,6 +963,14 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
     @app.post("/internal/agent/tool/memory-propose")
     async def agent_memory_propose(body: MemoryProposeInput, request: Request, db: AsyncSession = Depends(database)):
         async def effect(owner_id, conversation_id):
+            row = await db.get(UserSetting, owner_id)
+            if row is not None and row.memory_mode == "off":
+                return {
+                    "status": "rejected",
+                    "error": "MEMORY_OFF",
+                    "message": "Memory is turned off, so nothing was saved. Tell the user memory is off; "
+                    "do not claim it was saved.",
+                }
             return await memory_propose_tool(
                 db,
                 owner_id=owner_id,

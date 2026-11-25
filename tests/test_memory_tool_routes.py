@@ -230,3 +230,28 @@ def test_already_saved_fact_is_rejected_but_a_hidden_one_is_not_counted(tmp_path
         assert call(client, headers, FORGET, turn, "f1", query="name").json()["status"] == "hidden"
         again = call(client, headers, PROPOSE, turn, "p2", fact="My name is Abdulrahma").json()
         assert again["status"] == "proposed"
+
+
+def test_forgetting_and_recalling_keep_working_when_memory_is_off(tmp_path):
+    """Memory off stops SAVING. It must never stop the user forgetting or hearing what is stored."""
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        owner, _, headers, turn = setup(client, file, [("tea", "I prefer green tea"), ("cat", "I own a cat")])
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute(
+                "INSERT OR REPLACE INTO user_settings (owner_id,speaking_speed,captions_visible,response_preference,"
+                "memory_mode,revision,updated_at) VALUES (?,?,?,?,?,?,?)",
+                (owner, 1.0, 1, "automatic", "off", 1, "2026-11-25T00:00:00+00:00"),
+            )
+
+        proposed = call(client, headers, PROPOSE, turn, "p1", fact="I live in Benghazi").json()
+        assert proposed["status"] == "rejected" and proposed["error"] == "MEMORY_OFF"
+
+        recalled = call(client, headers, RECALL, turn, "r1", query="tea").json()
+        assert [item["content"] for item in recalled["memories"]] == ["I prefer green tea"]
+
+        forgotten = call(client, headers, FORGET, turn, "f1", query="tea").json()
+        assert forgotten["status"] == "hidden"
+        assert table_count(file, "memories", "status='hidden'") == 1
+        assert table_count(file, "memories", "status='active'") == 1
+        assert table_count(file, "memory_write_requests") == 0

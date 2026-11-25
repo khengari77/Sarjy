@@ -15,6 +15,7 @@ from app.domain.contracts import (
     OpenMemoryExplorer,
     SelectApprovedVoice,
     SetCaptionsVisible,
+    SetMemoryMode,
     SetSpeakingSpeed,
     ShowConversationHistory,
     UserSettings,
@@ -33,7 +34,13 @@ from app.infrastructure.upsert import insert_ignore
 from app.services.leases import LEASE_SECONDS, lease_expired, lease_expiry
 from app.services.voices import VoiceCatalogError
 
-SETTING_ACTIONS = (AdjustSpeakingSpeed, SelectApprovedVoice, SetCaptionsVisible, SetSpeakingSpeed)
+SETTING_ACTIONS = (
+    AdjustSpeakingSpeed,
+    SelectApprovedVoice,
+    SetCaptionsVisible,
+    SetMemoryMode,
+    SetSpeakingSpeed,
+)
 CONVERSATION_SETTING_ACTIONS = (AdjustSpeakingSpeed, SetCaptionsVisible, SetSpeakingSpeed)
 PREPARATION_LEASE_SECONDS = LEASE_SECONDS
 PREPARED_MAX_BYTES = 64 * 1024
@@ -55,6 +62,7 @@ def settings_value(row):
         captions_visible=row.captions_visible,
         approved_voice_id=row.approved_voice_id,
         response_preference=row.response_preference,
+        memory_mode=row.memory_mode,
         revision=row.revision,
     )
 
@@ -513,7 +521,7 @@ async def _apply_setting(db, owner_id, expected_revision, action):
         if row is None:
             row = UserSetting(owner_id=owner_id)
             db.add(row)
-        for field in ("speaking_speed", "captions_visible", "approved_voice_id", "revision"):
+        for field in ("speaking_speed", "captions_visible", "approved_voice_id", "memory_mode", "revision"):
             setattr(row, field, getattr(after, field))
         row.response_preference = after.response_preference.value
         row.updated_at = now()

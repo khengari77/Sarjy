@@ -17,6 +17,11 @@ export type Words = {
   talk: string;
   micOn: string;
   micOff: string;
+  memoryMode: string;
+  memoryModeOff: string;
+  memoryModeAsk: string;
+  memoryModeAuto: string;
+  memoryModeNote: string;
 };
 
 const EN: Words = {
@@ -38,6 +43,11 @@ const EN: Words = {
   talk: 'Talk to Sarjy',
   micOn: 'Microphone on',
   micOff: 'Microphone muted',
+  memoryMode: 'Memory',
+  memoryModeOff: 'Off',
+  memoryModeAsk: 'Ask first',
+  memoryModeAuto: 'Automatic',
+  memoryModeNote: 'Controls whether new facts are saved from this conversation.',
 };
 
 const AR: Words = {
@@ -59,6 +69,11 @@ const AR: Words = {
   talk: 'تحدث إلى سَرْجي',
   micOn: 'الميكروفون يعمل',
   micOff: 'الميكروفون مكتوم',
+  memoryMode: 'الذاكرة',
+  memoryModeOff: 'إيقاف',
+  memoryModeAsk: 'اسأل أولًا',
+  memoryModeAuto: 'تلقائي',
+  memoryModeNote: 'يتحكم في حفظ المعلومات الجديدة من هذه المحادثة.',
 };
 
 export function wordsFor(arabic: boolean): Words {

@@ -26,7 +26,7 @@ export interface SessionConfig {
   saved_voice_unavailable?: 'removed' | 'transient' | null;
 }
 export interface SettingsActionResult {
-  kind: 'SelectApprovedVoice' | 'AdjustSpeakingSpeed' | 'SetSpeakingSpeed' | 'SetCaptionsVisible';
+  kind: 'SelectApprovedVoice' | 'AdjustSpeakingSpeed' | 'SetSpeakingSpeed' | 'SetCaptionsVisible' | 'SetMemoryMode';
   settings: UserSettings;
   changed: boolean;
 }

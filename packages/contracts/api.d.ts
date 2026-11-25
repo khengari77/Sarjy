@@ -379,6 +379,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/agent/warm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Warm
+         * @description Best-effort latency warm-up; no turn, budget reservation or session state is involved.
+         */
+        post: operations["warm_internal_agent_warm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/agent/bootstrap": {
         parameters: {
             query?: never;
@@ -886,7 +906,7 @@ export interface components {
              */
             source: "ui" | "transcript";
             /** Action */
-            action?: (components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"]) | null;
+            action?: (components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetMemoryMode"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"]) | null;
             /** Transcript */
             transcript?: string | null;
             /**
@@ -1513,6 +1533,19 @@ export interface components {
             /** Visible */
             visible: boolean;
         };
+        /** SetMemoryMode */
+        SetMemoryMode: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SetMemoryMode";
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "off" | "ask" | "auto";
+        };
         /** SetSpeakingSpeed */
         SetSpeakingSpeed: {
             /**
@@ -1549,7 +1582,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "AdjustSpeakingSpeed" | "SetSpeakingSpeed" | "SelectApprovedVoice" | "SetCaptionsVisible";
+            kind: "AdjustSpeakingSpeed" | "SetSpeakingSpeed" | "SelectApprovedVoice" | "SetCaptionsVisible" | "SetMemoryMode";
             settings: components["schemas"]["UserSettings"];
             /** Changed */
             changed: boolean;
@@ -1564,7 +1597,7 @@ export interface components {
             /** Expected Revision */
             expected_revision: number;
             /** Action */
-            action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
+            action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetMemoryMode"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
         };
         /** ShowConversationHistory */
         ShowConversationHistory: {
@@ -1621,18 +1654,52 @@ export interface components {
             turn_start_server_ms?: number | null;
             /** Turn Start Db Ms */
             turn_start_db_ms?: number | null;
+            /** Api Connect Ms */
+            api_connect_ms?: number | null;
+            /** Api Headers Ms */
+            api_headers_ms?: number | null;
+            /** Api Body Ms */
+            api_body_ms?: number | null;
             /** Command Server Ms */
             command_server_ms?: number | null;
             /** Command Db Ms */
             command_db_ms?: number | null;
+            /** Command Api Headers Ms */
+            command_api_headers_ms?: number | null;
             /** Model First Chunk Ms */
             model_first_chunk_ms?: number | null;
             /** Release Wait Ms */
             release_wait_ms?: number | null;
+            /** Reassurance Ms */
+            reassurance_ms?: number | null;
+            /** First Answer Ms */
+            first_answer_ms?: number | null;
+            /** T Turn Start Begin Ms */
+            t_turn_start_begin_ms?: number | null;
+            /** T Turn Start End Ms */
+            t_turn_start_end_ms?: number | null;
+            /** T Command Begin Ms */
+            t_command_begin_ms?: number | null;
+            /** T Command End Ms */
+            t_command_end_ms?: number | null;
+            /** T Model Request Ms */
+            t_model_request_ms?: number | null;
+            /** T Model First Chunk Ms */
+            t_model_first_chunk_ms?: number | null;
+            /** T Tool Start Ms */
+            t_tool_start_ms?: number | null;
+            /** T Tool End Ms */
+            t_tool_end_ms?: number | null;
+            /** T Tts First Ms */
+            t_tts_first_ms?: number | null;
             /** Prompt Cache Hit Tokens */
             prompt_cache_hit_tokens?: number | null;
             /** Prompt Cache Miss Tokens */
             prompt_cache_miss_tokens?: number | null;
+            /** Prompt Cache Hit Tokens 2 */
+            prompt_cache_hit_tokens_2?: number | null;
+            /** Prompt Cache Miss Tokens 2 */
+            prompt_cache_miss_tokens_2?: number | null;
             /** Request Bytes */
             request_bytes?: number | null;
             /** Provider Connect Ms */
@@ -1671,6 +1738,12 @@ export interface components {
             approved_voice_id: string | null;
             /** @default automatic */
             response_preference: components["schemas"]["ResponsePreference"];
+            /**
+             * Memory Mode
+             * @default auto
+             * @enum {string}
+             */
+            memory_mode: "off" | "ask" | "auto";
             /**
              * Revision
              * @default 0
@@ -1959,7 +2032,7 @@ export interface components {
              */
             language: "ar" | "en";
         };
-        Action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
+        Action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetMemoryMode"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
     };
     responses: never;
     parameters: never;
@@ -2637,6 +2710,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    warm_internal_agent_warm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

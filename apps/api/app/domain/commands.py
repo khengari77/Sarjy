@@ -21,6 +21,7 @@ from app.domain.contracts import (
     OpenMemoryExplorer,
     SelectApprovedVoice,
     SetCaptionsVisible,
+    SetMemoryMode,
     SetSpeakingSpeed,
     SetTheme,
     ShowConversationHistory,
@@ -58,6 +59,24 @@ _EXACT_COMMANDS: dict[str, Action] = {
     "show my conversations": ShowConversationHistory(),
     "open the memory explorer": OpenMemoryExplorer(),
     "show the memory explorer": OpenMemoryExplorer(),
+    # Memory mode, whole utterances only. "Don't remember anything" is deliberately absent: it is ambiguous
+    # between turning memory off and pausing one chat.
+    "turn memory off": SetMemoryMode(mode="off"),
+    "turn off memory": SetMemoryMode(mode="off"),
+    "memory off": SetMemoryMode(mode="off"),
+    "stop remembering things": SetMemoryMode(mode="off"),
+    "stop saving memories": SetMemoryMode(mode="off"),
+    "ask before remembering": SetMemoryMode(mode="ask"),
+    "ask me before remembering": SetMemoryMode(mode="ask"),
+    "ask me before you remember things": SetMemoryMode(mode="ask"),
+    "ask me before saving memories": SetMemoryMode(mode="ask"),
+    "only remember when i ask": SetMemoryMode(mode="ask"),
+    "remember things automatically": SetMemoryMode(mode="auto"),
+    "remember automatically": SetMemoryMode(mode="auto"),
+    "save memories automatically": SetMemoryMode(mode="auto"),
+    "turn memory on": SetMemoryMode(mode="auto"),
+    "turn on memory": SetMemoryMode(mode="auto"),
+    "memory on": SetMemoryMode(mode="auto"),
     # Theme is browser-local and never a server preference. Every row is a
     # whole utterance, so "dark mode and hide captions" is not a command.
     "dark mode": SetTheme(theme="dark"),
@@ -482,6 +501,20 @@ def unknown_result(*, request_id: str, detail: str, action: Action | None = None
     )
 
 
+def _memory_mode_outcome(action: SetMemoryMode, kind: CommandKind) -> str:
+    if kind is CommandKind.UNCHANGED:
+        return {
+            "off": "Memory is already off.",
+            "ask": "I already ask before remembering.",
+            "auto": "I already remember automatically.",
+        }[action.mode]
+    return {
+        "off": "Memory is off. I won't save anything.",
+        "ask": "I'll ask before remembering.",
+        "auto": "I'll remember things automatically.",
+    }[action.mode]
+
+
 def spoken_outcome(
     action: Action,
     *,
@@ -502,6 +535,8 @@ def spoken_outcome(
         if kind is CommandKind.UNCHANGED:
             return "Captions are already on." if action.visible else "Captions are already hidden."
         return "Captions shown." if action.visible else "Captions hidden."
+    if isinstance(action, SetMemoryMode):
+        return _memory_mode_outcome(action, kind)
     if isinstance(action, SetTheme):
         return {
             "dark": "Dark mode on.",

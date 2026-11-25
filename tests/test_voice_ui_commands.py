@@ -301,6 +301,7 @@ def test_compound_theme_utterance_falls_through_without_effects(tmp_path):
             "captions_visible": True,
             "approved_voice_id": None,
             "response_preference": "automatic",
+            "memory_mode": "auto",
             "revision": 0,
         }
 

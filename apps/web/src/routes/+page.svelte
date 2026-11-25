@@ -270,11 +270,13 @@
       live={voice.live !== null}
       speakingSpeed={commands.state.settings.speaking_speed}
       captionsVisible={commands.state.settings.captions_visible}
+      memory={commands.memory}
       onsearch={() => void catalogStore!.load()}
       onloadmore={() => void catalogStore!.load(true)}
       onremember={() => void catalogStore!.remember()}
       onspeed={(speed) => commands.setSpeakingSpeed(speed)}
       ontoggleCaptions={() => void commands.setCaptions(!commands.state.settings.captions_visible)}
+      onmemorymode={(mode) => void commands.setMemoryMode(mode)}
     />
   {/snippet}
 </AppShell>
