@@ -54,6 +54,7 @@ class StageBar:
 @dataclass(frozen=True)
 class History:
     runs: tuple[ProbeRun, ...]
+    worker_runs: tuple[ProbeRun, ...]
     stage_bars: tuple[StageBar, ...]
     interim_p50: float
     interim_p95: float
@@ -82,6 +83,28 @@ def _text_value(value: Any, where: str) -> str:
     return value
 
 
+def _parse_runs(raw_runs: Any, name: str) -> tuple[ProbeRun, ...]:
+    if not isinstance(raw_runs, list) or not raw_runs:
+        raise ValueError(f"{name}: expected a non-empty array")
+    runs: list[ProbeRun] = []
+    for index, item in enumerate(raw_runs):
+        where = f"{name}[{index}]"
+        entry = _mapping(item, where)
+        label = _text_value(entry.get("label"), f"{where}.label")
+        date = entry.get("date", "")
+        if not isinstance(date, str):
+            raise ValueError(f"{where}.date: expected a string")
+        runs.append(
+            ProbeRun(
+                label=label,
+                date=date,
+                p50=_number(entry.get("p50"), f"{where}.p50"),
+                p95=_number(entry.get("p95"), f"{where}.p95"),
+            )
+        )
+    return tuple(runs)
+
+
 def load_history(path: Path) -> History:
     """Load and validate the probe history; raises ValueError with a readable message."""
     try:
@@ -92,25 +115,8 @@ def load_history(path: Path) -> History:
         raise ValueError(f"invalid JSON in {path}: {exc}") from exc
 
     root = _mapping(payload, "root")
-    raw_runs = root.get("probe_runs")
-    if not isinstance(raw_runs, list) or not raw_runs:
-        raise ValueError("probe_runs: expected a non-empty array")
-
-    runs: list[ProbeRun] = []
-    for index, item in enumerate(raw_runs):
-        entry = _mapping(item, f"probe_runs[{index}]")
-        label = _text_value(entry.get("label"), f"probe_runs[{index}].label")
-        date = entry.get("date", "")
-        if not isinstance(date, str):
-            raise ValueError(f"probe_runs[{index}].date: expected a string")
-        runs.append(
-            ProbeRun(
-                label=label,
-                date=date,
-                p50=_number(entry.get("p50"), f"probe_runs[{index}].p50"),
-                p95=_number(entry.get("p95"), f"probe_runs[{index}].p95"),
-            )
-        )
+    runs = _parse_runs(root.get("probe_runs"), "probe_runs")
+    worker_runs = _parse_runs(root["worker_runs"], "worker_runs") if "worker_runs" in root else ()
 
     raw_stages = _mapping(root.get("worker_stages_ms"), "worker_stages_ms")
     if not raw_stages:
@@ -132,7 +138,8 @@ def load_history(path: Path) -> History:
 
     targets = _mapping(root.get("targets"), "targets")
     return History(
-        runs=tuple(runs),
+        runs=runs,
+        worker_runs=worker_runs,
         stage_bars=tuple(stage_bars),
         interim_p50=_number(targets.get("interim_p50"), "targets.interim_p50"),
         interim_p95=_number(targets.get("interim_p95"), "targets.interim_p95"),
@@ -223,19 +230,27 @@ def _legend_swatch(x: float, y: float, colour: str, label: str, dashed: bool) ->
     ]
 
 
-def render_history_svg(history: History) -> str:
+def render_history_svg(
+    history: History,
+    runs: Sequence[ProbeRun] | None = None,
+    title: str = "Probe-run latency history",
+    subtitle: str = "p50 and p95 end-to-end latency for each probe run, in milliseconds",
+    axis_label: str = "Probe run (chronological order)",
+    target_labels: bool = True,
+) -> str:
+    runs = history.runs if runs is None else runs
     width, height = 980, 580
     left, right, top, bottom = 96, 44, 112, 132
     plot_w = width - left - right
     plot_h = height - top - bottom
     plot_bottom = top + plot_h
 
-    all_values = [run.p50 for run in history.runs]
-    all_values += [run.p95 for run in history.runs]
+    all_values = [run.p50 for run in runs]
+    all_values += [run.p95 for run in runs]
     all_values += [history.interim_p50, history.interim_p95]
     step = _nice_step(max(all_values))
     y_max = _axis_max(max(all_values), step)
-    run_count = len(history.runs)
+    run_count = len(runs)
 
     def x_at(index: int) -> float:
         if run_count == 1:
@@ -246,8 +261,8 @@ def render_history_svg(history: History) -> str:
         return top + plot_h * (1 - value / y_max)
 
     body: list[str] = [
-        _text(32, 42, "Probe-run latency history", size=20, weight="700"),
-        _text(32, 66, "p50 and p95 end-to-end latency for each probe run, in milliseconds", size=13, fill=MUTED),
+        _text(32, 42, title, size=20, weight="700"),
+        _text(32, 66, subtitle, size=13, fill=MUTED),
     ]
     body += _legend_swatch(32, 94, P50_COLOR, "p50", dashed=False)
     body += _legend_swatch(140, 94, P95_COLOR, "p95", dashed=False)
@@ -277,7 +292,7 @@ def render_history_svg(history: History) -> str:
         f'    <line x1="{_coord(left)}" y1="{_coord(plot_bottom)}" x2="{_coord(left + plot_w)}" '
         f'y2="{_coord(plot_bottom)}" stroke="{AXIS}" stroke-width="1.5"/>'
     )
-    body.append(_text(left + plot_w / 2, height - 34, "Probe run (chronological order)", size=12.5, anchor="middle"))
+    body.append(_text(left + plot_w / 2, height - 34, axis_label, size=12.5, anchor="middle"))
     body.append(
         _text(
             30,
@@ -298,6 +313,8 @@ def render_history_svg(history: History) -> str:
             f'    <line x1="{_coord(left)}" y1="{_coord(y)}" x2="{_coord(left + plot_w)}" '
             f'y2="{_coord(y)}" stroke="{colour}" stroke-width="1.5" stroke-dasharray="8 6" opacity="0.65"/>'
         )
+        if not target_labels:
+            continue
         body.append(
             _text(
                 left + plot_w * 0.52,
@@ -310,14 +327,14 @@ def render_history_svg(history: History) -> str:
             )
         )
 
-    for index, run in enumerate(history.runs):
+    for index, run in enumerate(runs):
         x = x_at(index)
         body.append(_text(x, plot_bottom + 26, run.label, size=11.5, anchor="middle", weight="600"))
         if run.date:
             body.append(_text(x, plot_bottom + 42, run.date, size=10, anchor="middle", fill=MUTED))
 
     for key, colour, offset, anchor in (("p50", P50_COLOR, -12, "middle"), ("p95", P95_COLOR, 19, "middle")):
-        values = [getattr(run, key) for run in history.runs]
+        values = [getattr(run, key) for run in runs]
         points = " ".join(f"{_coord(x_at(index))},{_coord(y_at(value))}" for index, value in enumerate(values))
         body.append(
             f'    <polyline points="{points}" fill="none" stroke="{colour}" stroke-width="2.5" '
@@ -338,7 +355,7 @@ def render_history_svg(history: History) -> str:
             fill=MUTED,
         )
     )
-    return _svg_document(width, height, "Probe-run latency history", body)
+    return _svg_document(width, height, title, body)
 
 
 def render_stages_svg(history: History) -> str:
@@ -440,13 +457,28 @@ def render_stages_svg(history: History) -> str:
     return _svg_document(width, height, "Worker latency by stage", body)
 
 
-def write_charts(history: History, out_dir: Path) -> tuple[Path, Path]:
+def write_charts(history: History, out_dir: Path) -> tuple[Path, ...]:
     out_dir.mkdir(parents=True, exist_ok=True)
     history_path = out_dir / "latency-history.svg"
     stages_path = out_dir / "latency-stages.svg"
     history_path.write_text(render_history_svg(history), encoding="utf-8")
     stages_path.write_text(render_stages_svg(history), encoding="utf-8")
-    return history_path, stages_path
+    written = [history_path, stages_path]
+    if history.worker_runs:
+        worker_path = out_dir / "latency-worker.svg"
+        worker_path.write_text(
+            render_history_svg(
+                history,
+                runs=history.worker_runs,
+                title="Worker-side TTFA over time",
+                subtitle="p50 and p95 time to first audio measured inside the worker (turn_metrics), per hour with 8+ turns; dashed lines are the interim targets (2,000 / 4,000 ms)",
+                axis_label="Hour (UTC)",
+                target_labels=False,
+            ),
+            encoding="utf-8",
+        )
+        written.append(worker_path)
+    return tuple(written)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
