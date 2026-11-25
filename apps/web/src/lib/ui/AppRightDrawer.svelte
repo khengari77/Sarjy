@@ -5,6 +5,7 @@
   import VoiceSettings from '../chat/VoiceSettings.svelte';
   import MemoryPanel from '../memory/MemoryPanel.svelte';
   import type { CatalogState } from '../voice/catalog';
+  import type { MemoryMode } from '../commands/commandStore';
   import RightDrawer from './RightDrawer.svelte';
 
   interface Props {
@@ -18,6 +19,7 @@
     live: boolean;
     speakingSpeed: number;
     captionsVisible: boolean;
+    memoryMode: MemoryMode;
     turns: Turn[];
     provisional?: ProvisionalTranscript | null;
     tools: { id: string; name: string; result: unknown }[];
@@ -27,6 +29,7 @@
     onremember: () => void;
     onspeed: (speed: number) => Promise<boolean>;
     ontoggleCaptions: () => void;
+    onmemorymode: (mode: MemoryMode) => void;
   }
 
   let {
@@ -39,6 +42,7 @@
     live,
     speakingSpeed,
     captionsVisible,
+    memoryMode,
     turns,
     provisional = null,
     tools,
@@ -48,6 +52,7 @@
     onremember,
     onspeed,
     ontoggleCaptions,
+    onmemorymode,
   }: Props = $props();
 </script>
 
@@ -74,11 +79,13 @@
       {sessionVoice}
       {speakingSpeed}
       {captionsVisible}
+      {memoryMode}
       {onsearch}
       {onloadmore}
       {onremember}
       {onspeed}
       {ontoggleCaptions}
+      {onmemorymode}
     />
   {/snippet}
 </RightDrawer>

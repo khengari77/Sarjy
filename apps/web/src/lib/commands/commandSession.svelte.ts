@@ -1,9 +1,9 @@
 /** One reactive command session: the GUI and worker results share this state. */
 
-import { saveCaptionSelection, saveSpeakingSpeed } from '../chat/session';
+import { saveCaptionSelection, saveMemoryMode, saveSpeakingSpeed } from '../chat/session';
 import type { CatalogState } from '../voice/catalog';
 import type { ThemePreference } from '../ui/theme';
-import { createCommandStore, initialCommandState, type CommandResult } from './commandStore';
+import { createCommandStore, initialCommandState, type CommandResult, type MemoryMode } from './commandStore';
 
 export interface CommandSessionOptions {
   /**
@@ -65,6 +65,32 @@ export function createCommandSession(
   }
 
   /**
+   * Memory mode is server-owned and follows the same authoritative-snapshot
+   * path as captions. A rejected write leaves the previous snapshot in place.
+   */
+  async function setMemoryMode(mode: MemoryMode): Promise<boolean> {
+    const revision = state.settings.revision;
+    const requestId = `memory:${revision}:${mode}`;
+    try {
+      const result = await saveMemoryMode(mode, revision);
+      return apply({
+        request_id: requestId,
+        kind: result.changed ? 'executed' : 'unchanged',
+        action: 'SetMemoryMode',
+        settings: result.settings,
+        navigation: null,
+        theme: null,
+        changed: result.changed,
+        spoken: result.changed ? `Memory mode set to ${mode}.` : `Memory mode is already ${mode}.`,
+        detail: null,
+      });
+    } catch (error) {
+      store.fail('SetMemoryMode', requestId, error instanceof Error ? error.message : 'SETTING_REJECTED');
+      return false;
+    }
+  }
+
+  /**
    * Speed is a server-owned preference read by the worker at the next turn.
    * A rejected write leaves the previous snapshot in place.
    */
@@ -97,6 +123,7 @@ export function createCommandSession(
     apply,
     hydrate: store.hydrate,
     setCaptions,
+    setMemoryMode,
     setSpeakingSpeed,
     openPanel: store.openPanel,
   };

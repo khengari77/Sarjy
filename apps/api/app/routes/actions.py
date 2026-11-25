@@ -61,7 +61,9 @@ class SettingsSubmission(BaseModel):
 
 
 class SettingsActionResult(BaseModel):
-    kind: Literal["AdjustSpeakingSpeed", "SetSpeakingSpeed", "SelectApprovedVoice", "SetCaptionsVisible"]
+    kind: Literal[
+        "AdjustSpeakingSpeed", "SetSpeakingSpeed", "SelectApprovedVoice", "SetCaptionsVisible", "SetMemoryMode"
+    ]
     settings: UserSettings
     changed: bool
 

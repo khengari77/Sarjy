@@ -8,6 +8,7 @@ import {
   type UserSettings,
   type VoiceOption,
 } from '../api';
+import type { MemoryMode } from '../commands/commandStore';
 
 export type ToolCall = { id: string; name: string; result: unknown };
 
@@ -67,6 +68,16 @@ export async function saveCaptionSelection(visible: boolean, expectedRevision: n
     request_id: requestId,
     expected_revision: expectedRevision,
     action: { kind: 'SetCaptionsVisible', visible },
+  });
+}
+
+/** Persist the memory capture mode owner-side; the server snapshot is authoritative. */
+export async function saveMemoryMode(mode: MemoryMode, expectedRevision: number): Promise<SettingsActionResult> {
+  const requestId = `memory:${expectedRevision}:${mode}`;
+  return request<SettingsActionResult>('settings/actions', {
+    request_id: requestId,
+    expected_revision: expectedRevision,
+    action: { kind: 'SetMemoryMode', mode },
   });
 }
 

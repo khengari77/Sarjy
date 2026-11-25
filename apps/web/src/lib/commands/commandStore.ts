@@ -10,12 +10,15 @@
 import { THEME_PREFERENCES, type ThemePreference } from '../ui/theme';
 
 export type CommandKind = 'executed' | 'unchanged' | 'needs_confirmation' | 'unsupported' | 'failed' | 'unknown';
+export type MemoryMode = 'off' | 'ask' | 'auto';
 
 export interface SettingsSnapshot {
   speaking_speed: number;
   captions_visible: boolean;
   approved_voice_id: string | null;
   response_preference: string;
+  /** Optional so payloads from before the memory-mode setting still validate. */
+  memory_mode?: MemoryMode;
   revision: number;
 }
 
@@ -65,6 +68,7 @@ export function initialSettings(): SettingsSnapshot {
     captions_visible: true,
     approved_voice_id: null,
     response_preference: 'automatic',
+    memory_mode: 'auto',
     revision: 0,
   };
 }
@@ -92,6 +96,10 @@ function isSettings(value: unknown): value is SettingsSnapshot {
     typeof value.captions_visible === 'boolean' &&
     (value.approved_voice_id === null || typeof value.approved_voice_id === 'string') &&
     typeof value.response_preference === 'string' &&
+    (value.memory_mode === undefined ||
+      value.memory_mode === 'off' ||
+      value.memory_mode === 'ask' ||
+      value.memory_mode === 'auto') &&
     typeof value.revision === 'number' &&
     Number.isInteger(value.revision) &&
     value.revision >= 0

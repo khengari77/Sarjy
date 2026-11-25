@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { VoiceOption } from '../api';
   import { friendlyVoiceError } from '../audio/livekitAdapter';
+  import type { MemoryMode } from '../commands/commandStore';
+  import { wordsFor } from './words';
   import { voiceStatus, voiceStatusText } from './voice-state';
 
   let {
@@ -19,11 +21,13 @@
     confirmedVoice = null,
     speakingSpeed,
     captionsVisible,
+    memoryMode,
     onsearch,
     onloadmore,
     onremember,
     onspeed,
     ontoggleCaptions,
+    onmemorymode,
   }: {
     arabic: boolean;
     voices: VoiceOption[];
@@ -40,12 +44,21 @@
     confirmedVoice?: VoiceOption | null;
     speakingSpeed: number;
     captionsVisible: boolean;
+    memoryMode: MemoryMode;
     onsearch: () => void;
     onloadmore: () => void;
     onremember: () => void;
     onspeed: (speed: number) => Promise<boolean>;
     ontoggleCaptions: () => void;
+    onmemorymode: (mode: MemoryMode) => void;
   } = $props();
+
+  const words = $derived(wordsFor(arabic));
+  const MEMORY_MODES = $derived<{ mode: MemoryMode; label: string }[]>([
+    { mode: 'off', label: words.memoryModeOff },
+    { mode: 'ask', label: words.memoryModeAsk },
+    { mode: 'auto', label: words.memoryModeAuto },
+  ]);
 
   // Mirrors the server contract (SPEAKING_SPEED_MIN/MAX/STEP). The server still
   // validates every write; this only decides which options the picker offers.
@@ -166,6 +179,27 @@
     {#if speedError}
       <p class="voice-error" role="alert">{speedError}</p>
     {/if}
+  </section>
+
+  <section class="panel-block">
+    <h2>{words.memoryMode}</h2>
+    <span class="field-label" id="memory-mode-label">
+      {arabic ? 'حفظ الذاكرة' : 'Memory capture'}
+    </span>
+    <div class="segmented-control" role="group" aria-labelledby="memory-mode-label">
+      {#each MEMORY_MODES as option (option.mode)}
+        <button
+          type="button"
+          class="segmented-button"
+          data-active={memoryMode === option.mode}
+          aria-pressed={memoryMode === option.mode}
+          onclick={() => onmemorymode(option.mode)}
+        >
+          {option.label}
+        </button>
+      {/each}
+    </div>
+    <small class="muted-text">{words.memoryModeNote}</small>
   </section>
 
   <section class="panel-block">
