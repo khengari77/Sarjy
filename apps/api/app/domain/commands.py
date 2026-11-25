@@ -151,9 +151,11 @@ _FORGET_IDIOM_TARGETS = frozenset({"you", "me", "us", "him", "her", "yourself", 
 # A target with a clause break ("the weather, tell me a joke") is a different request, not a memory name.
 _CLAUSE_BREAK = re.compile(
     r"[,;:!?]"
-    # A period is a sentence break only before a clause opener, so "Dr. Smith's number" stays one target.
-    r"|\.\s+(?=(?:and|then|so|but|please|can|could|would|will|do|does|what|who|where|when|why|how|tell|give|show"
-    r"|is|are|was|were|i|i'm|we|you|it|that)\b)|\b(?:and|then|so|because|but|while|(?:tell|give|show) me)\b",
+    # Any period followed by a space ends the target, except after a known abbreviation or a single-letter
+    # initial ("Dr. Smith's number", "the U.S. trip"). This is a deny-by-default sentence boundary, not a list
+    # of clause openers: a missing opener must fail closed, never hide a memory the user said to keep.
+    r"|(?<!\bdr)(?<!\bmr)(?<!\bmrs)(?<!\bms)(?<!\bst)(?<!\bjr)(?<!\bsr)(?<!\bprof)(?<!\bvs)(?<!\b[a-z])\.\s"
+    r"|\b(?:and|then|so|because|but|while|(?:tell|give|show) me)\b",
     re.IGNORECASE,
 )
 _YES = frozenset(

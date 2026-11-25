@@ -105,7 +105,7 @@ STOPWORDS = frozenset(
         "your",
     ]
 )
-TOKEN = re.compile(r"[0-9A-Za-z\u0600-\u06ff]+")
+TOKEN = re.compile(r"\d+(?:\.\d+)+|[0-9A-Za-z\u0600-\u06ff]+")
 
 
 class ContextOperationError(Exception):
@@ -131,8 +131,14 @@ class MemorySearcher(Protocol):
     ) -> Sequence[MemoryCandidate]: ...
 
 
+_CONTRACTION_SUFFIX = re.compile(r"['\u2019](?:s|t|d|m|re|ve|ll)\b", re.IGNORECASE)
+
+
 def _tokens(text: str) -> set[str]:
-    return {token for token in TOKEN.findall(text.casefold()) if token not in STOPWORDS}
+    # One tokenizer for the guard and the search: contraction suffixes are removed ("it's" -> "it"), so a
+    # stray "s" can never match every possessive memory, and "3.5" stays one token.
+    cleaned = _CONTRACTION_SUFFIX.sub("", text.casefold())
+    return {token for token in TOKEN.findall(cleaned) if token not in STOPWORDS}
 
 
 # Words that point at something without naming it; a target made of these (and stopwords) is no target.
@@ -162,16 +168,14 @@ _REFERENTIAL = frozenset(
 )
 
 
-_CONTRACTION_SUFFIX = re.compile(r"['\u2019](?:s|t|d|m|re|ve|ll)\b", re.IGNORECASE)
-
-
 def has_content_words(text: str) -> bool:
     """Whether ``text`` names anything beyond stopwords and referential words ("all of them" does not).
 
-    Contraction suffixes are stripped first, so "it's" is just "it" and cannot match every possessive
-    memory through a stray "s" token; a lone digit or letter ("7", "X") is still a real target.
+    A single-character token alone is not enough ("3.5" is one token, "3 5" is two stray digits), except when
+    the whole target is that one character ("X", "7").
     """
-    return bool(_tokens(_CONTRACTION_SUFFIX.sub("", text)) - _REFERENTIAL)
+    tokens = _tokens(text) - _REFERENTIAL
+    return any(len(token) > 1 for token in tokens) or (len(text.strip()) == 1 and bool(tokens))
 
 
 async def keyword_search(
