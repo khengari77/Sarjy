@@ -35,6 +35,7 @@ from app.domain.contracts import (
     AdjustSpeakingSpeed,
     SelectApprovedVoice,
     SetCaptionsVisible,
+    SetMemoryMode,
     SetSpeakingSpeed,
     SetTheme,
     UserSettings,
@@ -154,6 +155,17 @@ async def handle_finalized_utterance(
             db,
             owner_id=owner_id,
             request_id=setting_request,
+            settings_revision=settings_revision,
+            action=action,
+            catalog=catalog,
+            approved_voice_ids=approved_voice_ids,
+            spoken=None,
+        )
+    if isinstance(action, SetMemoryMode):
+        return await _run_setting(
+            db,
+            owner_id=owner_id,
+            request_id=f"memory_mode:{settings_revision}:{action.mode}",
             settings_revision=settings_revision,
             action=action,
             catalog=catalog,
