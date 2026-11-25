@@ -126,6 +126,8 @@ class ContextInputs:
     memories: MemoryCandidates
     tool_results: tuple[ContextCandidate, ...]
     blocked_ids: frozenset[str] = frozenset()
+    # Turns blocked only because they restate a forgotten fact (a subset of blocked_ids), for the audit reason.
+    restating_ids: frozenset[str] = frozenset()
     retractions: tuple[ContextCandidate, ...] = ()
 
     @property
@@ -827,9 +829,10 @@ async def read_context_inputs(
     blocked = set(memories.excluded_ids | memories.blocked_sources)
     # Hiding a memory must also hide the history that restates it, user and assistant turns alike, or the fact
     # reaches the model again through the window. Pure and bounded: both lists are already loaded.
-    blocked |= restating_turn_ids(
+    restating = restating_turn_ids(
         ((turn.id, turn.text or "") for turn in by_id.values()), (candidate.text for candidate in memories.denied)
     )
+    blocked |= restating
 
     def dependencies(turn):
         snapshot = snapshot_of(turn, snapshots)
@@ -920,6 +923,7 @@ async def read_context_inputs(
         memories=memories,
         tool_results=tool_results,
         blocked_ids=frozenset(blocked | blocked_tools),
+        restating_ids=restating,
         retractions=retractions,
     )
 

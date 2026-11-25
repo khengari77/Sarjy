@@ -1,8 +1,8 @@
 """Which history turns restate a forgotten fact (#194).
 
-The rule under test is the documented one: a turn restates a fact when it contains at least
-``min(len(fact content tokens), 2)`` of the fact's distinctive tokens (lower-cased, at least three characters,
-not a stopword).  A fact with no distinctive tokens matches nothing.
+The rule under test is the documented one: a turn restates a fact when the weight of the fact's distinctive tokens
+it contains (lower-cased, at least two characters or a number, not a stopword) reaches ``min(fact weight, 2)``, where a
+number, proper noun or acronym weighs 2 and any other word 1.  A fact with no distinctive tokens matches nothing.
 """
 
 import string
@@ -202,3 +202,9 @@ def test_a_fact_with_a_number_blocks_any_turn_repeating_that_number():
 def test_embedding_the_number_of_a_numeric_fact_always_blocks(number, words):
     turn = " ".join([*words, str(number), "please"])
     assert restating_turn_ids([("t", turn)], [f"My number is {number}"]) == {"t"}
+
+
+def test_arabic_function_words_alone_do_not_match_a_different_fact():
+    fact = "أنا من بنغازي"
+    assert restating_turn_ids([("other", "أنا من طرابلس")], [fact]) == frozenset()
+    assert restating_turn_ids([("same", "بنغازي مدينتي")], [fact]) == {"same"}

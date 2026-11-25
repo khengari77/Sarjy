@@ -68,6 +68,7 @@ def test_real_reader_filters_tracked_sources_derivatives_unknown_tools_and_resta
 
             turn("source", "user", "I live in Paris", "source")
             turn("independent", "user", "I independently mentioned Paris", "independent")
+            turn("rome-turn", "user", "I lived in Rome for years", "rome")
             turn("weather-user", "user", "What is the weather?", "weather", {"included_record_ids": ["m-city"]})
             turn("assistant", "assistant", "Paris is 20 degrees", "reply:weather-user")
             turn("legacy-user", "user", "Another question", "legacy")
@@ -97,6 +98,8 @@ def test_real_reader_filters_tracked_sources_derivatives_unknown_tools_and_resta
         context = response.json()["context"]
         ids = set(context["included_record_ids"])
         assert "weather-user" in ids and "legacy-user" in ids
+        # "I lived in Rome" was corrected (superseded), not forgotten, so history that restates it is kept.
+        assert "rome-turn" in ids
         # "I independently mentioned Paris" restates the excluded fact, so it is dropped too (#194).
         assert not ids & {"m-city", "source", "assistant", "derived", "unknown", "independent"}
         assert context["weather_policy"]["excluded_memory_ids"] == ["m-city"]

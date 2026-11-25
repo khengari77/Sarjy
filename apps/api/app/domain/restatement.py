@@ -1,7 +1,7 @@
 """Which history turns restate a fact the user asked Sarjy to forget.
 
 Pure. Hiding a memory removes the stored row, but the same words can still sit in earlier turns of the conversation
-("I love the colour blue", or Sarjy's own "Hidden 'my favourite colour is blue'"). If those turns reach the model, the
+("I love the color blue", or Sarjy's own "Hidden 'my favorite color is blue'"). If those turns reach the model, the
 fact leaks straight back. A turn restates a fact when it shares enough of the fact's distinctive words; the rule errs
 towards blocking, and only inside a conversation where the user asked to forget something.
 """
@@ -92,6 +92,36 @@ _STOPWORDS = frozenset(
         "hm",
         "does",
         "did",
+        # Arabic function words, so two of them alone ("أنا من ...") do not make unrelated turns match.
+        "أنا",
+        "انا",
+        "أنت",
+        "انت",
+        "هو",
+        "هي",
+        "نحن",
+        "من",
+        "في",
+        "على",
+        "إلى",
+        "الى",
+        "عن",
+        "مع",
+        "أن",
+        "ان",
+        "هذا",
+        "هذه",
+        "ذلك",
+        "التي",
+        "الذي",
+        "كان",
+        "كانت",
+        "لا",
+        "لم",
+        "ما",
+        "هل",
+        "يا",
+        "و",
     ]
 )
 # Fact tokens that must appear in a turn for it to count as restating the fact.
@@ -141,8 +171,10 @@ def restating_turn_ids(turns: Iterable[tuple[str, str]], facts: Iterable[str]) -
     fact made only of ordinary words ("My favorite color is blue") needs two of its words. A fact with no distinctive
     words (an erased, empty one) matches nothing.
 
-    Known limit: a lowercase value shared alone ("pizza tonight?" against "My favorite food is pizza"), and a name that
-    opens the fact's sentence, are not detected. The rule errs towards blocking, and only inside a conversation where
+    Known limits: a lowercase value shared alone ("pizza tonight?" against "My favorite food is pizza"), a name that
+    opens the fact's sentence, and a different spelling or form of the same words ("favourite colour", "twenty-six",
+    "NYC" for "New York") are not detected. Sarjy's own retraction lines quote the stored text, so they match; the
+    background observer, not a growing word list, is the place to judge paraphrases. The rule errs towards blocking, and only inside a conversation where
     the user asked to forget something.
     """
     wanted = []
