@@ -102,14 +102,14 @@ def test_hidden_memory_with_restating_turns_adds_retraction_block(tmp_path):
 
         context = start_turn(client, headers)
 
-        # The restating turns are still in the window (verified gap) ...
-        assert {"again1", "again2"} <= set(context["included_record_ids"])
-        assert "src" not in context["included_record_ids"]
-        # ... so the retraction block must be present, non-privileged and recorded.
+        # The restating turns are dropped with the hidden memory (#194), and so is its source turn ...
+        assert {"again1", "again2", "src"}.isdisjoint(context["included_record_ids"])
+        # ... the retraction block stays as a generic, non-privileged reminder that never quotes the fact.
         found = retraction_messages(context)
         assert len(found) == 1
         assert found[0]["role"] == "user"
-        assert "do not use, repeat or confirm it" in found[0]["content"]
+        assert "do not say what it was" in found[0]["content"].lower()
+        assert "26" not in found[0]["content"]
         assert "retraction:age" in context["included_record_ids"]
         assert "retraction:age" in context["manifest"]["included_record_ids"]
         assert context["messages"][0]["role"] == "system"

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from app.domain.context import ContextCandidate, canonical_json
+from app.domain.restatement import restating_turn_ids
 from app.domain.weather_permissions import LocationEvidence
 from app.infrastructure.database import Memory, ToolCall, Turn
 from app.services.memory_eligibility import blocked_memory_ids_select, blocked_memory_rows
@@ -76,7 +77,11 @@ DENIED_STATUSES = frozenset({"superseded", "inactive", "excluded"})
 RETRACTION_PREFIX = "retraction:"
 RETRACTION_LIMIT = 5
 RETRACTION_TEXT_LIMIT = 300
-RETRACTION_TEMPLATE = "The user asked you to forget this; do not use, repeat or confirm it: {text}"
+# The line never quotes the fact: the fact itself is what must not reach the model again.
+RETRACTION_TEMPLATE = (
+    "The user asked you to forget something they told you earlier. Do not use, repeat or confirm it, and do not "
+    "say what it was."
+)
 
 
 @dataclass(frozen=True)
@@ -276,7 +281,7 @@ def _retraction_candidates_from_rows(rows: Sequence[Memory], *, conversation_id:
         ContextCandidate(
             id=RETRACTION_PREFIX + row.id,
             role="memory",
-            text=RETRACTION_TEMPLATE.format(text=row.content[:RETRACTION_TEXT_LIMIT]),
+            text=RETRACTION_TEMPLATE,
             origin="memory",
             source="retraction",
             created_at=row.created_at,
@@ -821,6 +826,11 @@ async def read_context_inputs(
             db, owner_id=owner_id, conversation_id=conversation_id, loaded=by_id, snapshots=snapshots
         )
     blocked = set(memories.excluded_ids | memories.blocked_sources)
+    # Hiding a memory must also hide the history that restates it, user and assistant turns alike, or the fact
+    # reaches the model again through the window. Pure and bounded: both lists are already loaded.
+    blocked |= restating_turn_ids(
+        ((turn.id, turn.text or "") for turn in by_id.values()), (candidate.text for candidate in memories.denied)
+    )
 
     def dependencies(turn):
         snapshot = snapshot_of(turn, snapshots)
