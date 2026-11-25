@@ -34,9 +34,15 @@ _ORDER = (
     Sensitivity.CREDENTIAL,
 )
 
+# Unmistakable credential terms only. Kept deliberately small and well defined: a wider pattern trips on ordinary
+# facts ("I collect pin badges"). Ambiguous words, paraphrases, other languages and negation are judged by the
+# background observer (Jev), never by growing this list.
 _CREDENTIAL = re.compile(
-    r"\b(?:password|passcode|passphrase|pin(?: code| number)?|cvv|cvc|api[ -]?key|secret key|private key|"
-    r"security code|one[- ]time (?:code|password)|otp|recovery (?:code|phrase)|seed phrase)\b",
+    r"\b(?:password|passcode|passphrase|pin (?:code|number)|cvv|cvc|api[ -]?(?:key|secret)|private key|ssh[ -]?key|"
+    r"seed phrase|recovery (?:code|phrase)|one[- ]time (?:code|password)|backup code|otp|social security|ssn|"
+    r"national id|passport number|safe combination|security code|(?:2fa|two[- ]factor) code)s?\b"
+    # A PIN given as digits: "my pin is 1234". Fixed shape, so "pin badges" or "pin it to the wall" never match.
+    r"|\bpin\s*(?:is|:|=)\s*\d",
     re.IGNORECASE,
 )
 _FINANCE = re.compile(
@@ -74,12 +80,13 @@ def combine(*labels: Sensitivity) -> Sensitivity:
     return max(labels, key=_ORDER.index, default=Sensitivity.NORMAL)
 
 
-def decide(mode: MemoryMode, sensitivity: Sensitivity, *, explicit: bool) -> Decision:
+def decide(mode: MemoryMode, sensitivity: Sensitivity, *, explicit: bool, negated: bool = False) -> Decision:
     """What to do with a proposed fact.
 
     * ``off`` never saves, even when the user explicitly asks; the spoken reply says memory is off.
     * A credential is never saved in any mode, however it was asked for.
-    * ``ask`` always asks, so the user hears one question per fact.
+    * ``ask`` always asks, so the user hears one question per fact. So does a negated fact in any mode, because it
+      retracts a stored fact instead of adding one.
     * ``auto`` saves an ordinary fact without asking, and a fact about another person only when the user
       explicitly asked to remember it (otherwise it asks once). Health and finance facts are asked about once even
       when the user explicitly said to remember them: a spoken request is not consent to store medical or money
@@ -87,10 +94,16 @@ def decide(mode: MemoryMode, sensitivity: Sensitivity, *, explicit: bool) -> Dec
     """
     if mode == "off" or sensitivity is Sensitivity.CREDENTIAL:
         return Decision.SKIP
-    if mode == "ask":
+    if mode == "ask" or negated:
+        # A negated fact ("I no longer live in X") retracts something already stored, so it always needs consent.
         return Decision.ASK
     if explicit and sensitivity in (Sensitivity.NORMAL, Sensitivity.THIRD_PARTY):
         return Decision.SAVE
     if sensitivity is Sensitivity.NORMAL:
         return Decision.SAVE
     return Decision.ASK
+
+
+def plan_for_proposal(mode: MemoryMode, text: str, *, explicit: bool, negated: bool = False) -> Decision:
+    """The decision for a proposed fact, from its text. The keyword net sets the sensitivity."""
+    return decide(mode, classify_sensitivity(text), explicit=explicit, negated=negated)

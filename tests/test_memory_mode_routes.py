@@ -6,18 +6,9 @@ from contextlib import closing
 from app.main import create_app
 from fastapi.testclient import TestClient
 from test_memory import FakeEmbedder
-from test_memory_capture import add_turn_session, configured, memory_rows, turn
+from test_memory_capture import add_turn_session, configured, memory_rows, set_mode, turn
 
 PROPOSE = "/internal/agent/tool/memory-propose"
-
-
-def set_mode(file, owner, mode):
-    with closing(sqlite3.connect(file)) as db, db:
-        db.execute(
-            "INSERT OR REPLACE INTO user_settings (owner_id,speaking_speed,captions_visible,response_preference,"
-            "memory_mode,revision,updated_at) VALUES (?,?,?,?,?,?,?)",
-            (owner, 1.0, 1, "automatic", mode, 1, "2026-11-25T00:00:00+00:00"),
-        )
 
 
 def started(tmp_path, mode):
@@ -33,14 +24,21 @@ def started(tmp_path, mode):
 
 
 def test_regex_proposal_is_made_in_auto_and_ask_but_not_when_off(tmp_path):
-    for mode, expected in (("auto", True), ("ask", True), ("off", False), (None, True)):
+    # (mode, a proposal is made, a spoken question is pending). In auto an ordinary fact is saved without asking.
+    for mode, expected, asks in (
+        ("auto", True, True),
+        ("ask", True, True),
+        ("off", False, False),
+        (None, True, True),
+    ):
         sub = tmp_path / f"{mode}"
         sub.mkdir()
         cm, client, file, headers = started(sub, mode)
         try:
             body = turn(client, headers, "My name is Sam", "fact-1").json()
             assert (body["memory_proposal"] is not None) is expected, mode
-            assert "pending" in body["context"]["model_request"]["instructions"].lower() or not expected
+            pending = "pending" in body["context"]["model_request"]["instructions"].lower()
+            assert pending is asks, mode
             assert memory_rows(file) == []
         finally:
             cm.__exit__(None, None, None)

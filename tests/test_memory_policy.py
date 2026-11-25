@@ -68,7 +68,7 @@ def test_the_keyword_net_can_only_raise_sensitivity(model_label, net_label):
     ("text", "expected"),
     [
         ("my password is hunter2", Sensitivity.CREDENTIAL),
-        ("the pin for my card is 1234", Sensitivity.CREDENTIAL),
+        ("my pin code is 1234", Sensitivity.CREDENTIAL),
         ("my api key is abc", Sensitivity.CREDENTIAL),
         ("I make a salary of ninety thousand", Sensitivity.FINANCE),
         ("my doctor put me on metformin", Sensitivity.HEALTH),
