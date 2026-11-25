@@ -33,14 +33,21 @@ def started(tmp_path, mode):
 
 
 def test_regex_proposal_is_made_in_auto_and_ask_but_not_when_off(tmp_path):
-    for mode, expected in (("auto", True), ("ask", True), ("off", False), (None, True)):
+    # (mode, a proposal is made, a spoken question is pending). In auto an ordinary fact is saved without asking.
+    for mode, expected, asks in (
+        ("auto", True, False),
+        ("ask", True, True),
+        ("off", False, False),
+        (None, True, False),
+    ):
         sub = tmp_path / f"{mode}"
         sub.mkdir()
         cm, client, file, headers = started(sub, mode)
         try:
             body = turn(client, headers, "My name is Sam", "fact-1").json()
             assert (body["memory_proposal"] is not None) is expected, mode
-            assert "pending" in body["context"]["model_request"]["instructions"].lower() or not expected
+            pending = "pending" in body["context"]["model_request"]["instructions"].lower()
+            assert pending is asks, mode
             assert memory_rows(file) == []
         finally:
             cm.__exit__(None, None, None)
