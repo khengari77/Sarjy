@@ -1,9 +1,12 @@
 """Auto-save without a question, the undo journal, and the server-side policy re-check."""
 
+import base64
+import json
 import sqlite3
 from contextlib import closing
 
 import pytest
+from app.domain.context_operations import sign_proposal
 from app.domain.memory_capture import parse_capture
 from app.services.memory_capture import proposal_for_capture
 from fastapi.testclient import TestClient
@@ -236,6 +239,15 @@ def forged_proposal(client, headers, file, text, request_id="forge-0"):
     )
 
 
+def without_negated_claim(token, secret="proposal-secret"):
+    """Re-sign ``token`` without its ``negated`` claim, as a token minted before the claim existed."""
+    body = token.rsplit(".", 1)[0]
+    payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    assert "negated" in payload
+    del payload["negated"]
+    return sign_proposal(payload, secret)
+
+
 def count_rows(file, table):
     with closing(sqlite3.connect(file)) as db:
         return db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
@@ -295,9 +307,13 @@ CREDENTIALS = [
     "my social security number is 123-45-6789",
     "my backup code is 99887766",
     "my recovery phrase is apple banana",
+    "my pin is 1234",
+    "my passport number is X1234567",
+    "the safe combination is 12-34-56",
+    "my 2fa code is 445566",
 ]
 # Out of the scoped floor on purpose (judged by the background observer, not by a growing regex):
-# "my github token is ...", "my login is ...", "the code to my safe is ...", "my passport number is ...".
+# "my github token is ...", "my login is ...", "the code to my safe is ...".
 ORDINARY = [
     "my secret to good coffee is fresh beans",
     "my favourite book is The Secret",
@@ -309,6 +325,8 @@ ORDINARY = [
     "I like green tea",
     "my login screen is blue",
     "I have a secret garden",
+    "I pin my notes to the board",
+    "my passport is blue",
 ]
 
 
@@ -334,7 +352,7 @@ def test_a_token_without_the_negated_claim_cannot_auto_save_a_negation(tmp_path)
     try:
         save_via_auto(client, headers, "I live in Benghazi", "fact-0")
         proposal = forged_proposal(client, headers, file, "I no longer live in Benghazi", "forge-1")
-        response = auto(client, headers, proposal["token"])
+        response = auto(client, headers, without_negated_claim(proposal["token"]))
         assert response.status_code == 409, response.text
         assert response.json()["detail"]["code"] == "MEMORY_NEEDS_CONSENT"
     finally:
@@ -406,9 +424,8 @@ def test_undo_is_refused_when_a_newer_auto_save_replaced_the_row(tmp_path):
 
 
 def test_undo_is_refused_after_the_memory_was_permanently_deleted(tmp_path):
-    # SOURCE BUG: delete_memory scrubs the journal payload down to {"memory_id", "scrubbed"} and marks the
-    # operation "deleted", but undo_change still reads payload["version"] before checking "undoable"/"scrubbed".
-    # The request therefore raises KeyError (HTTP 500) instead of the specified 409 CHANGE_SUPERSEDED.
+    # delete_memory scrubs the journal payload down to {"memory_id", "scrubbed"}; undo must answer 409
+    # CHANGE_SUPERSEDED, not crash reading the missing version.
     cm, client, file, headers = started(tmp_path, "auto")
     try:
         change = save_via_auto(client, headers, "My name is Sam", "fact-1")

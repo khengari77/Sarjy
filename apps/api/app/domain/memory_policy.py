@@ -40,7 +40,9 @@ _ORDER = (
 _CREDENTIAL = re.compile(
     r"\b(?:password|passcode|passphrase|pin (?:code|number)|cvv|cvc|api[ -]?(?:key|secret)|private key|ssh[ -]?key|"
     r"seed phrase|recovery (?:code|phrase)|one[- ]time (?:code|password)|backup code|otp|social security|ssn|"
-    r"national id)\b",
+    r"national id|passport number|safe combination|security code|(?:2fa|two[- ]factor) code)\b"
+    # A PIN given as digits: "my pin is 1234". Fixed shape, so "pin badges" or "pin it to the wall" never match.
+    r"|\bpin\s*(?:is|:|=)\s*\d",
     re.IGNORECASE,
 )
 _FINANCE = re.compile(
