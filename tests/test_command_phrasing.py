@@ -298,3 +298,12 @@ def test_a_single_letter_never_elects_a_memory_beside_other_words():
     assert query_tokens("X") == {"x"}
     assert query_tokens("3.5") == {"3.5"}
     assert query_tokens("it's 7") == set()
+
+
+def test_keyword_search_with_a_query_that_names_nothing_returns_nothing():
+    import asyncio
+
+    from app.services.context_operations import keyword_search
+
+    for query in ("them", "it's", "a", "C#", "all of it"):
+        assert asyncio.run(keyword_search(None, owner_id="o", conversation_id="c", query=query, limit=5)) == ()

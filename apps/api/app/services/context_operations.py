@@ -198,6 +198,11 @@ async def keyword_search(
     Applies the same owner-scoped correction-lineage exclusions as semantic
     retrieval so injected/test adapters cannot drift from production policy.
     """
+    wanted = query_tokens(query)
+    if not wanted:
+        # A query that names nothing matches nothing. "Browse everything" is not a keyword search, and
+        # recall, preview and exclusion proposals must never present arbitrary memories as matches.
+        return ()
     rows = (
         await db.scalars(
             select(Memory)
@@ -206,13 +211,12 @@ async def keyword_search(
             .limit(PREVIEW_SEARCH_ROW_LIMIT)
         )
     ).all()
-    wanted = query_tokens(query)
     scored: list[MemoryCandidate] = []
     for row in rows:
         content_tokens = _tokens(row.content)
         overlap = len(wanted & content_tokens)
-        if not wanted or overlap:
-            score = float(overlap) if wanted else 0.0
+        if overlap:
+            score = float(overlap)
             scored.append(
                 MemoryCandidate(
                     id=row.id,
