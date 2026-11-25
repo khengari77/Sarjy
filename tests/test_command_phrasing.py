@@ -288,3 +288,13 @@ def test_a_real_memory_word_still_counts_as_content():
 
     assert has_content_words("my favorite color")
     assert has_content_words("the Paris trip")
+
+
+def test_a_single_letter_never_elects_a_memory_beside_other_words():
+    from app.services.context_operations import query_tokens
+
+    assert query_tokens("vitamin D") == {"vitamin"}
+    assert query_tokens("plan b") == {"plan"}
+    assert query_tokens("X") == {"x"}
+    assert query_tokens("3.5") == {"3.5"}
+    assert query_tokens("it's 7") == set()

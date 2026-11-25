@@ -168,14 +168,21 @@ _REFERENTIAL = frozenset(
 )
 
 
-def has_content_words(text: str) -> bool:
-    """Whether ``text`` names anything beyond stopwords and referential words ("all of them" does not).
+def query_tokens(query: str) -> set[str]:
+    """Tokens a keyword search may match on: the guard's content rule applied to the query itself.
 
-    A single-character token alone is not enough ("3.5" is one token, "3 5" is two stray digits), except when
-    the whole target is that one character ("X", "7").
+    A single character never elects a memory next to other words ("vitamin D" must not match "got a D in
+    math" on the "d"); it is a search term only when it is the whole query ("X").
     """
-    tokens = _tokens(text) - _REFERENTIAL
-    return any(len(token) > 1 for token in tokens) or (len(text.strip()) == 1 and bool(tokens))
+    tokens = _tokens(query) - _REFERENTIAL
+    if len(query.strip()) == 1:
+        return tokens
+    return {token for token in tokens if len(token) > 1}
+
+
+def has_content_words(text: str) -> bool:
+    """Whether ``text`` names anything a search could match on ("all of them" and "it's" do not)."""
+    return bool(query_tokens(text))
 
 
 async def keyword_search(
@@ -199,7 +206,7 @@ async def keyword_search(
             .limit(PREVIEW_SEARCH_ROW_LIMIT)
         )
     ).all()
-    wanted = _tokens(query)
+    wanted = query_tokens(query)
     scored: list[MemoryCandidate] = []
     for row in rows:
         content_tokens = _tokens(row.content)
