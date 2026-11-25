@@ -142,5 +142,141 @@
  {
   "text": "Thanks, that was helpful",
   "expected": "NONE"
+ },
+ {
+  "text": "You're pushing me to my dark mode",
+  "expected": "NONE"
+ },
+ {
+  "text": "I'm going dark on social media for a week",
+  "expected": "NONE"
+ },
+ {
+  "text": "Slow down, life is too fast",
+  "expected": "NONE"
+ },
+ {
+  "text": "My sister says I should turn the volume down on my life",
+  "expected": "NONE"
+ },
+ {
+  "text": "The movie has captions in Spanish",
+  "expected": "NONE"
+ },
+ {
+  "text": "He asked me to speak faster yesterday",
+  "expected": "NONE"
+ },
+ {
+  "text": "That song is called Light Mode",
+  "expected": "NONE"
+ },
+ {
+  "text": "Dark mode makes my phone battery last longer",
+  "expected": "NONE"
+ },
+ {
+  "text": "I wish you could speak faster, but it's fine",
+  "expected": "NONE"
+ },
+ {
+  "text": "Subtitles are annoying in my opinion",
+  "expected": "NONE"
+ },
+ {
+  "text": "Her voice is lovely",
+  "expected": "NONE"
+ },
+ {
+  "text": "Tell me about the history of dark matter",
+  "expected": "NONE"
+ },
+ {
+  "text": "A man's voice came from the radio",
+  "expected": "NONE"
+ },
+ {
+  "text": "My friend prefers the light theme",
+  "expected": "NONE"
+ },
+ {
+  "text": "The captions on that meme were hilarious",
+  "expected": "NONE"
+ },
+ {
+  "text": "My uncle speaks so fast I can't follow him",
+  "expected": "NONE"
+ },
+ {
+  "text": "She said the light was too bright in the room",
+  "expected": "NONE"
+ },
+ {
+  "text": "The radio host has a deep male voice",
+  "expected": "NONE"
+ },
+ {
+  "text": "We watched the film with subtitles at my cousin's place",
+  "expected": "NONE"
+ },
+ {
+  "text": "He turned the lights off before leaving the office",
+  "expected": "NONE"
+ },
+ {
+  "text": "I prefer my coffee light, not dark",
+  "expected": "NONE"
+ },
+ {
+  "text": "The singer's voice cracked on the high note",
+  "expected": "NONE"
+ },
+ {
+  "text": "The report says the market slowed down last quarter",
+  "expected": "NONE"
+ },
+ {
+  "text": "My grandmother told me to slow down and enjoy life",
+  "expected": "NONE"
+ },
+ {
+  "text": "The subtitles were out of sync at the cinema",
+  "expected": "NONE"
+ },
+ {
+  "text": "There's a dark cloud over the city this morning",
+  "expected": "NONE"
+ },
+ {
+  "text": "My teacher speaks faster than anyone I know",
+  "expected": "NONE"
+ },
+ {
+  "text": "He asked whether the museum has captions for the tour",
+  "expected": "NONE"
+ },
+ {
+  "text": "The theme of the novel is loss and memory",
+  "expected": "NONE"
+ },
+ {
+  "text": "The light in the hallway flickered all night",
+  "expected": "NONE"
+ },
+ {
+  "text": "Switch the display to dark please",
+  "expected": "theme:dark"
+ },
+ {
+  "text": "Mind talking a little slower?",
+  "expected": "speed:-"
+ },
+ {
+  "text": "Subtitles off",
+  "expected": "captions:off"
+ },
+ {
+  "text": "Use a female voice",
+  "expected": "voice:female"
  }
 ]

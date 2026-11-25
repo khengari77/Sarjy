@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import re
+from pathlib import Path
 
 import httpx
 import pytest
@@ -614,3 +616,18 @@ def test_a_closed_client_can_be_used_by_the_next_lifespan():
 
     assert asyncio.run(once()) is not None
     assert asyncio.run(once()) is not None
+
+
+def test_live_fixture_is_valid_and_has_no_duplicate_texts():
+    path = Path(__file__).resolve().parents[1] / "tests/fixtures/jev_ui_live_cases.json"
+    cases = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(cases, list)
+    action = re.compile(r"^(theme:(light|dark|system)|captions:(on|off)|speed:[+-]|voice:(male|female))$")
+    for case in cases:
+        assert isinstance(case, dict)
+        assert isinstance(case.get("text"), str) and case["text"].strip()
+        expected = case.get("expected")
+        assert isinstance(expected, str)
+        assert expected in {"NONE", "MULTI"} or action.fullmatch(expected)
+    texts = [case["text"].casefold() for case in cases]
+    assert len(texts) == len(set(texts))
