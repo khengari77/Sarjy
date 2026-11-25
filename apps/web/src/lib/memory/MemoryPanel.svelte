@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ContextStrip from '../context/ContextStrip.svelte';
   import DeleteMemoryDialog from './DeleteMemoryDialog.svelte';
   import MemoryCandidateList from './MemoryCandidateList.svelte';
   import MemoryIntro from './MemoryIntro.svelte';
@@ -50,6 +51,8 @@
   data-testid="memory-panel"
 >
   <MemoryIntro {conversationId} />
+
+  <ContextStrip {conversationId} {revision} />
 
   <MemorySearch
     bind:query={explorer.query}
