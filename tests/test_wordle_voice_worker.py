@@ -341,3 +341,20 @@ def test_closing_the_popup_ends_the_yes_no_grace_at_once(monkeypatch):
     # A "yes" right after closing Wordle is conversation again (e.g. answering a memory question).
     assert state.pending is False
     assert not is_wordle_command("yes", reveal_pending=state.pending, wordle_active=state.active)
+
+
+def test_a_stale_guess_flag_after_closing_never_claims_a_yes():
+    state = RevealState()
+    state.active = True
+    control = lambda kind, value: SimpleNamespace(  # noqa: E731
+        topic="sarjy.control", participant=HUMAN, data=json.dumps({"type": kind, "value": value}).encode()
+    )
+    apply_control(control("wordle.pending", "guess"), state)
+    # The client's close publish: active false, then its (stale) pending guess.
+    apply_control(control("wordle.active", False), state)
+    apply_control(control("wordle.pending", "guess"), state)
+    assert state.pending is False
+    assert not is_wordle_command("yes", reveal_pending=state.pending, wordle_active=state.active)
+    # A reveal asked with the popup closed is still the client's to answer.
+    apply_control(control("wordle.pending", "reveal"), state)
+    assert state.pending is True

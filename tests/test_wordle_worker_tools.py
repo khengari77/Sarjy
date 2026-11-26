@@ -460,8 +460,12 @@ def test_wordle_mode_nudges_unrelated_speech_without_the_model():
     assert agent._fixed_reply(weather, "t1") == WORDLE_MODE_NUDGE
     embedded = llm.ChatMessage(id="m2", role="user", content=["I think the word might be crane"])
     assert agent._fixed_reply(embedded, "t2") is None
+    # The answer to a consent question asked before the game is spoken, not nudged.
+    agent.memory_outcome = "save"
+    assert agent._fixed_reply(llm.ChatMessage(id="m3", role="user", content=["Yes."]), "t3") is None
+    agent.memory_outcome = None
     agent.wordle_active = lambda: False
-    assert agent._fixed_reply(weather, "t3") is None
+    assert agent._fixed_reply(weather, "t4") is None
 
 
 def test_worker_and_api_agree_on_the_wordle_mode_nudge():

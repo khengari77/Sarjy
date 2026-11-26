@@ -289,6 +289,10 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
     pending: () => pending,
     pendingWord: () => pendingWord,
     expectReset: () => setPending('reset'),
+    /** The popup closed: any yes/no it was waiting for (guess, reset or reveal) is over. */
+    clearPending: () => {
+      if (pending) setPending(null);
+    },
     /** The worker read a spoken guess back: arm the yes/no for that word (it already spoke the question). */
     expectGuess: (word: string) => setPending('guess', word),
   };

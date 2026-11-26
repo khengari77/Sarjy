@@ -76,6 +76,17 @@ describe('Wordle voice adapter: spoken guesses are confirmed', () => {
     expect(fake.calls.guesses).toEqual([]);
   });
 
+  it('closing the popup clears a pending reset, so a later yes never resets the game', async () => {
+    const { fake, voice } = setup();
+    await voice.handleEvent(transcript('reset the game', 's1'));
+    expect(voice.pending()).toBe('reset');
+    voice.clearPending();
+    expect(fake.pendingFlags.at(-1)).toBeNull();
+    const result = await voice.handleEvent(transcript('yes', 's2'));
+    expect(result).toEqual({ handled: false, ignored: 'nothing-pending' });
+    expect(fake.calls.reset).toBe(0);
+  });
+
   it('quitting by voice clears the pending guess', async () => {
     const { fake, voice } = setup();
     await voice.handleEvent(transcript('guess crane', 's1'));

@@ -1706,6 +1706,7 @@ class RevealState:
 
     def __init__(self) -> None:
         self._pending = False
+        self._kind: str | None = None
         self._active = False
         self._cleared_at: float | None = None
 
@@ -1719,12 +1720,14 @@ class RevealState:
         if not value:
             # A closed popup ends every Wordle yes/no at once, grace included.
             self._pending = False
+            self._kind = None
             self._cleared_at = None
 
     @property
     def pending(self) -> bool:
         if self._pending:
-            return True
+            # A spoken-guess confirmation only exists inside the open game; reveal/reset may be asked without it.
+            return self._active or self._kind != "guess"
         return (
             self._active
             and self._cleared_at is not None
@@ -1736,6 +1739,13 @@ class RevealState:
         if self._pending and not value:
             self._cleared_at = time.monotonic()
         self._pending = value
+        if not value:
+            self._kind = None
+
+    def pending_kind(self, kind: str | None) -> None:
+        """Record which yes/no the client is waiting for (None clears it)."""
+        self.pending = kind is not None
+        self._kind = kind
 
 
 def resolve_say_request(data, participants) -> tuple[str | None, str | None]:
@@ -1791,7 +1801,8 @@ def apply_control(packet, reveal: RevealState) -> None:
         reveal.pending = value.get("value") is True
     elif value.get("type") == "wordle.pending":
         # A spoken yes/no is awaited for a pending action ("reveal" or "reset"); null clears it.
-        reveal.pending = value.get("value") in {"reveal", "reset", "guess"}
+        kind = value.get("value")
+        reveal.pending_kind(kind if kind in {"reveal", "reset", "guess"} else None)
     elif value.get("type") == "wordle.active":
         reveal.active = value.get("value") is True
 
