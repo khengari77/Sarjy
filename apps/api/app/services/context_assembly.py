@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from sqlalchemy import cast, inspect, literal, null, select, union_all
+from sqlalchemy import cast, func, inspect, literal, null, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
@@ -22,6 +22,11 @@ from app.infrastructure.database import Memory, ToolCall, Turn
 from app.services.memory_eligibility import blocked_memory_ids_select, blocked_memory_rows
 
 HISTORY_LIMIT = 20
+# DeepSeek caches an exact request prefix, so a window that slides by one exchange every turn re-prefills the whole
+# history every turn. Evict the oldest turns in blocks instead: the window keeps HISTORY_LIMIT - HISTORY_BLOCK + 1
+# to HISTORY_LIMIT turns and its start moves only once per HISTORY_BLOCK turns (an even number keeps user and
+# assistant turns aligned).
+HISTORY_BLOCK = 8
 # The model still receives at most ``HISTORY_LIMIT`` turns, but retrieval reads
 # a small, deterministic recent window.  Older turns are loaded only when a
 # dependency needs their provenance to propagate an exclusion.
@@ -539,6 +544,25 @@ async def _dependency_closure(
                 return True, tools
 
 
+def history_keep(total: int, limit: int = HISTORY_LIMIT, block: int = HISTORY_BLOCK) -> int:
+    """How many of the newest ``total`` completed turns the model sees (never more than ``limit``)."""
+    if total <= limit:
+        return total
+    block = min(block, max(limit // 2, 1))
+    evicted = -(-(total - limit) // block) * block
+    return max(total - evicted, 0)
+
+
+async def _history_total(db: AsyncSession, conversation_id: str, window: list[Turn], *, limit: int) -> int:
+    """Completed turns in the conversation; read only when the bounded window is full and so cannot say."""
+    if len(window) < limit * HISTORY_WINDOW_MULTIPLIER:
+        return len(window)
+    counts = await db.scalars(
+        select(func.count(Turn.id)).where(Turn.conversation_id == conversation_id, Turn.status == "completed")
+    )
+    return int(counts.all()[0] or 0)
+
+
 async def _recent_turns(db: AsyncSession, conversation_id: str, *, limit: int) -> list[Turn]:
     """Deterministic recent window, returned in chronological model order."""
     rows = (
@@ -890,9 +914,10 @@ async def read_context_inputs(
             break
         blocked.update(more)
         blocked_tools.update(more_tools)
+    keep = history_keep(await _history_total(db, conversation_id, window, limit=history_limit), history_limit)
     history = tuple(
         ContextCandidate(id=turn.id, role=turn.role, text=turn.text, origin="history")
-        for turn in window[-history_limit:]
+        for turn in window[len(window) - min(keep, len(window)) :]
         if turn.id not in blocked
     )
     tool_results = tuple(
@@ -944,6 +969,7 @@ def location_evidence(entries: Sequence[dict]) -> tuple[LocationEvidence, ...]:
 __all__ = [
     "ContextInputs",
     "DEPENDENCY_CLOSURE_LIMIT",
+    "HISTORY_BLOCK",
     "HISTORY_LIMIT",
     "HISTORY_WINDOW_MULTIPLIER",
     "MEMORY_CANDIDATE_LIMIT",

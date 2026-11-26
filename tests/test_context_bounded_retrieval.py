@@ -32,6 +32,7 @@ from app.services.context_assembly import (
     MEMORY_CANDIDATE_LIMIT,
     TOOL_RESULT_LIMIT,
     _dependency_closure,
+    history_keep,
     read_context_inputs,
 )
 from app.services.context_operations import PREVIEW_SEARCH_ROW_LIMIT, keyword_search
@@ -231,10 +232,10 @@ def test_large_history_and_memory_sets_materialize_bounded_candidates(tmp_path):
                 candidate.id for candidate in readings[1].memories.included
             }, "the candidate bound must be deterministic across equal timestamps"
             assert all(candidate.id.startswith("mem-active-") for candidate in inputs.memories.included)
-            assert len(inputs.history) == HISTORY_LIMIT
+            assert len(inputs.history) == history_keep(3000)
             assert len(inputs.tool_results) <= TOOL_RESULT_LIMIT
             assert [candidate.id for candidate in inputs.history] == [
-                f"turn-{index:05d}" for index in range(2980, 3000)
+                f"turn-{index:05d}" for index in range(3000 - history_keep(3000), 3000)
             ]
             assert inputs.history[-1].id == "turn-02999", "the newest/current turn stays included"
             assert max(counted.counts("memories")) <= MEMORY_CANDIDATE_LIMIT
@@ -633,7 +634,9 @@ def test_equal_timestamp_ties_are_deterministic(tmp_path):
             memory_ids, history = reads[0]
             assert memory_ids == reads[1][0]
             assert memory_ids == {f"mem-active-{index:05d}" for index in range(100, 300)}
-            assert [candidate.id for candidate in history] == [f"turn-{index:05d}" for index in range(30, 50)]
+            assert [candidate.id for candidate in history] == [
+                f"turn-{index:05d}" for index in range(50 - history_keep(50), 50)
+            ]
         finally:
             await engine.dispose()
 
@@ -1273,3 +1276,18 @@ def test_reply_from_a_tool_outside_the_provider_window_is_blocked(tmp_path):
             await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_the_history_window_slides_in_blocks_so_the_prefix_stays_stable():
+    from app.services.context_assembly import HISTORY_BLOCK
+
+    starts = [total - history_keep(total) for total in range(1, 200)]
+    # Never more than the limit, never empty once there is history, and the start moves only in whole blocks.
+    assert all(history_keep(total) <= HISTORY_LIMIT for total in range(1, 200))
+    assert all(history_keep(total) >= HISTORY_LIMIT - HISTORY_BLOCK + 1 for total in range(HISTORY_LIMIT, 200))
+    assert all(start % HISTORY_BLOCK == 0 for start in starts)
+    changes = sum(1 for before, after in zip(starts, starts[1:], strict=False) if before != after)
+    # Sliding by one turn would change the start ~180 times over these 199 turns; blocks change it ~22 times.
+    assert changes <= 199 // HISTORY_BLOCK
+    assert history_keep(0) == 0 and history_keep(HISTORY_LIMIT) == HISTORY_LIMIT
+    assert history_keep(5, limit=4) >= 1
