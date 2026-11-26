@@ -118,7 +118,8 @@ def build_report(cases: Sequence[dict[str, Any]]) -> dict[str, Any]:
     # Two different failures to save a fact worth saving: the credential floor wrongly blocks it (a false
     # refusal), or the fixed-shape parser does not recognise the sentence at all (a missed save; the model
     # tools and the observer exist to cover these).
-    false_refusals = sum(1 for row in saves if row.sensitivity is Sensitivity.CREDENTIAL)
+    # Only a recognised fact can be blocked by the floor; an unrecognised sentence is a missed save, not a refusal.
+    false_refusals = sum(1 for row in saves if row.captured and row.sensitivity is Sensitivity.CREDENTIAL)
     missed_saves = sum(1 for row in saves if not row.captured)
 
     by_category: dict[str, dict[str, Any]] = {}

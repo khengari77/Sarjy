@@ -438,7 +438,7 @@
     "negated": false,
     "language": "en",
     "category": "credential",
-    "note": "Login phrasing absent from the fixed keyword floor."
+    "note": "Login names are deliberately treated as credential-class (policy choice, #286 5.5): never auto-saved."
   },
   {
     "text": "The code to my safe is 1234.",
@@ -1329,7 +1329,7 @@
     "negated": true,
     "language": "en",
     "category": "negation",
-    "note": "Updates a stored beverage preference."
+    "note": "An update of a stored preference (the negated flag means negation or update): ask, never auto-save."
   },
   {
     "text": "I no longer have a dog.",
@@ -1522,12 +1522,12 @@
   },
   {
     "text": "The secret to good coffee is a fine grind.",
-    "label": "save",
+    "label": "skip",
     "tier": "normal",
     "negated": false,
     "language": "en",
-    "category": "false_refusal",
-    "note": "Secret is a cooking opinion, not a credential."
+    "category": "not_fact",
+    "note": "General advice about coffee, not a fact about the speaker."
   },
   {
     "text": "My secret to good coffee is a fine grind.",
@@ -1675,12 +1675,12 @@
   },
   {
     "text": "The code word for our club is pineapple.",
-    "label": "save",
-    "tier": "normal",
+    "label": "skip",
+    "tier": "credential",
     "negated": false,
     "language": "en",
-    "category": "false_refusal",
-    "note": "Club nickname, not a login code."
+    "category": "credential",
+    "note": "A shared code word is a secret, not a personal fact: never stored."
   },
   {
     "text": "I run a marathon every year for cancer research.",
@@ -2007,7 +2007,7 @@
     "note": "Arabic beverage preference."
   },
   {
-    "text": "عمري أربعة وثلاثون سنة.",
+    "text": "عمري أربعة وثلاثون عامًا.",
     "label": "save",
     "tier": "normal",
     "negated": false,

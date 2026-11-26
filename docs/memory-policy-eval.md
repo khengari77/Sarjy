@@ -45,43 +45,46 @@ The script is offline: it reads the fixture, imports only `app.domain.memory_cap
 
 ## Current numbers
 
-Baseline: 250 cases (87 save, 104 ask, 59 skip).
+Baseline: 250 cases (85 save, 104 ask, 61 skip).
 
 | metric | n | hits | rate | 95% Wilson |
 | --- | ---: | ---: | ---: | --- |
-| credential recall (tier) | 32 | 15 | 46.9% | 30.9% – 63.5% |
-| false refusal (the credential floor blocks a save) | 87 | 3 | 3.5% | 1.2% – 9.7% |
-| missed save (the parser finds no fact) | 87 | 59 | 67.8% | 57.4% – 76.7% |
-| overall decision accuracy | 250 | 99 | 39.6% | 33.7% – 45.8% |
+| credential recall (tier) | 33 | 15 | 45.5% | 29.8% – 62.0% |
+| false refusal (the credential floor blocks a recognised save) | 85 | 1 | 1.2% | 0.2% – 6.4% |
+| missed save (the parser finds no fact) | 85 | 57 | 67.1% | 56.5% – 76.1% |
+| overall decision accuracy | 250 | 101 | 40.4% | 34.5% – 46.6% |
 
-Credential recall by language: English 15/20 (75.0%), Arabic 0/12 (0.0%).
+Credential recall by language: en 15/21 (71.4%), ar 0/12 (0.0%).
 
-How to read these. The keyword floor rarely blocks a fact it should keep (3.5%), but the fixed-shape parser recognises
+How to read these. The keyword floor rarely blocks a fact it should keep, but the fixed-shape parser recognises
 only about a third of the facts a user states (the rest are left to the model tools and the observer), and the floor
-misses over half of the credentials, every Arabic one included. The `credential` category's 90.6% decision accuracy
-is misleading for the same reason: an unrecognised credential also ends as `skip`, so recall is the number to watch.
+misses over half of the credentials, every Arabic one included. The `credential` category's decision accuracy is
+misleading for the same reason: an unrecognised credential also ends as `skip`, so recall is the number to watch.
+
+This section is generated from `docs/data/memory-policy-baseline.json`, and a test fails if that file and the fixture
+disagree.
 
 | category | n | correct | accuracy |
 | --- | ---: | ---: | ---: |
-| ordinary | 42 | 14 | 33.3% |
-| credential | 32 | 29 | 90.6% |
-| health | 26 | 1 | 3.9% |
-| finance | 20 | 5 | 25.0% |
-| third_party | 20 | 8 | 40.0% |
-| negation | 26 | 5 | 19.2% |
-| false_refusal | 25 | 12 | 48.0% |
-| not_fact | 27 | 25 | 92.6% |
 | arabic | 32 | 0 | 0.0% |
+| credential | 33 | 30 | 90.9% |
+| false_refusal | 23 | 12 | 52.2% |
+| finance | 20 | 5 | 25.0% |
+| health | 26 | 1 | 3.9% |
+| negation | 26 | 5 | 19.2% |
+| not_fact | 28 | 26 | 92.9% |
+| ordinary | 42 | 14 | 33.3% |
+| third_party | 20 | 8 | 40.0% |
 
-Decision accuracy by language: English 87/206 (42.2%), Arabic 12/44 (27.3%).
+Decision accuracy by language: en 89/206 (43.2%), ar 12/44 (27.3%).
 
 | true tier | normal | third_party | health | finance | credential |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| normal (139) | 130 | 1 | 3 | 0 | 5 |
+| normal (138) | 129 | 1 | 3 | 0 | 5 |
 | third_party (25) | 6 | 14 | 3 | 2 | 0 |
 | health (30) | 15 | 0 | 15 | 0 | 0 |
 | finance (24) | 12 | 1 | 0 | 11 | 0 |
-| credential (32) | 16 | 0 | 0 | 1 | 15 |
+| credential (33) | 17 | 0 | 0 | 1 | 15 |
 
 The low overall accuracy is the honest size of the keyword + parser gap, not a bug in the set: the English parser only
 recognises a few first-person shapes, the keyword floor misses most health and finance paraphrases, the fixed

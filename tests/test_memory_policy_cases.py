@@ -157,3 +157,9 @@ def test_the_baseline_runs_offline_and_reports_the_expected_keys(tmp_path):
         assert set(row) == TIERS
     assert set(report["decision_accuracy"]["by_language"]) == LANGUAGES
     assert set(report["decision_accuracy"]["by_category"]) == {case["category"] for case in CASES}
+
+
+def test_the_stored_baseline_matches_a_fresh_run_on_the_fixture():
+    # Editing the fixture or the scorer must regenerate docs/data/memory-policy-baseline.json.
+    stored = json.loads((ROOT / "docs/data/memory-policy-baseline.json").read_text())
+    assert memory_policy_baseline.build_report(memory_policy_baseline.load_cases(FIXTURE)) == stored
