@@ -818,6 +818,19 @@ async def _contradictions(db: AsyncSession, *, owner_id: str, capture: MemoryCap
     return matches
 
 
+async def proposal_conflicts(db: AsyncSession, *, token: str, secret: str, owner_id: str, conversation_id: str) -> bool:
+    """Whether a verified proposal contradicts a fact the owner already has saved.
+
+    A contradiction changes what is stored (the old fact is replaced, kept as past, or both stay), which only the user
+    can decide, so every mode asks. A scan that could not finish counts as a conflict: fail closed, ask.
+    """
+    capture, _ = _verified(token, secret, owner_id, conversation_id)
+    try:
+        return bool(await _contradictions(db, owner_id=owner_id, capture=capture))
+    except MemoryCaptureError:
+        return True
+
+
 async def _discard(
     db: AsyncSession,
     *,

@@ -611,3 +611,156 @@ def test_undo_scrubs_the_proposal_decision_and_prompt_copies_so_a_later_delete_h
         }
     finally:
         cm.__exit__(None, None, None)
+
+
+def propose_tool(client, headers, fact, request_id, turn_id):
+    return client.post(
+        PROPOSE, headers=headers, json={"turn_id": turn_id, "request_id": request_id, "fact": fact}
+    ).json()
+
+
+def test_in_auto_mode_the_propose_tool_saves_an_ordinary_fact_without_asking(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        body = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
+        # "saved" arms nothing in the worker: no question is spoken for it.
+        assert body["status"] == "saved" and "proposal" not in body and body["change_id"]
+        assert "undo" in body["message"].lower() and "do not ask" in body["message"].lower()
+        assert active_contents(file) == ["I live in Benghazi"]
+        assert operations(file) == [("memory_auto_save", "applied")]
+        # The same tool call replayed (a worker retry) is the same answer and writes nothing twice.
+        again = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
+        assert again == body and active_contents(file) == ["I live in Benghazi"]
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_in_ask_mode_and_for_facts_that_need_consent_the_propose_tool_still_only_proposes(tmp_path):
+    for mode, fact in (("ask", "I live in Benghazi"), ("auto", "I take metformin every day")):
+        sub = tmp_path / f"{mode}-{fact[:6]}"
+        sub.mkdir()
+        cm, client, file, headers = started(sub, mode)
+        try:
+            turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+            body = propose_tool(client, headers, fact, "p1", turn_id)
+            assert body["status"] == "proposed" and body["proposal"]["token"], (mode, fact)
+            assert active_contents(file) == [] and operations(file) == []
+        finally:
+            cm.__exit__(None, None, None)
+
+
+def test_auto_propose_asks_when_a_fact_contradicts_a_saved_one_and_changes_nothing(tmp_path):
+    """A contradiction is the user's decision in every mode: the proposal comes back and the app asks."""
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        first = propose_tool(client, headers, "I live in Cairo", "p1", turn_id)
+        assert first["status"] == "saved"
+        second = propose_tool(client, headers, "I live in Benghazi", "p2", turn_id)
+        assert second["status"] == "proposed" and second["proposal"]["token"]
+        assert active_contents(file) == ["I live in Cairo"]
+        assert operations(file) == [("memory_auto_save", "applied")]
+        # The journal entry of the first (non-conflicting) save still undoes it.
+        undone = client.post(f"/v1/changes/{first['change_id']}/undo")
+        assert undone.status_code == 200, undone.text
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_a_failed_auto_save_never_claims_a_save_and_never_falls_back_to_a_question(tmp_path, monkeypatch):
+    from app.routes import worker as worker_module
+    from app.services.memory_capture import MemoryCaptureError
+
+    async def refuse(*args, **kwargs):
+        raise MemoryCaptureError("MEMORY_CAPTURE_NOT_CONFIGURED", 503)
+
+    monkeypatch.setattr(worker_module, "auto_commit_memory", refuse)
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        body = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
+        assert body["status"] == "rejected" and body["error"] == "MEMORY_SAVE_FAILED"
+        assert "proposal" not in body and "do not claim" in body["message"].lower()
+        assert "could not confirm" in body["message"].lower()  # an attempted write is never reported as "nothing saved"
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_auto_propose_still_asks_for_a_third_party_fact_another_script_and_a_hidden_fact(tmp_path):
+    """A model proposal is never 'explicit'; the English keyword net cannot judge other scripts; a hidden fact stays hidden."""
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        third = propose_tool(client, headers, "My boss is getting divorced", "p1", turn_id)
+        assert third["status"] == "proposed", third
+        arabic = propose_tool(client, headers, "أنا أسكن في طرابلس", "p2", turn_id)
+        assert arabic["status"] == "proposed", arabic
+        assert active_contents(file) == [] and operations(file) == []
+
+        saved = propose_tool(client, headers, "I like green tea", "p3", turn_id)
+        assert saved["status"] == "saved"
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("UPDATE memories SET status = 'hidden' WHERE content = 'I like green tea'")
+        again = propose_tool(client, headers, "I like green tea", "p4", turn_id)
+        assert again["status"] == "proposed", again
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_auto_propose_never_re_adds_a_hidden_fact_even_where_lower_and_casefold_differ(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        assert propose_tool(client, headers, "I live in Straßburg", "p1", turn_id)["status"] == "saved"
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("UPDATE memories SET status = 'hidden' WHERE content = 'I live in Straßburg'")
+        # ß case-folds to "ss": SQL lower() would not match it, the Python comparison does.
+        again = propose_tool(client, headers, "I live in STRASSBURG", "p2", turn_id)
+        assert again["status"] == "proposed", again
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_auto_propose_asks_for_a_negated_fact_and_for_a_fact_with_no_letters(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        assert propose_tool(client, headers, "I live in Cairo", "p1", turn_id)["status"] == "saved"
+        negated = propose_tool(client, headers, "I no longer live in Cairo", "p2", turn_id)
+        assert negated["status"] == "proposed", negated
+        digits = propose_tool(client, headers, "My number is 4111 1111 1111 1111", "p3", turn_id)
+        assert digits["status"] == "proposed", digits  # nine or more digits in a row: a card, phone or ID number
+        assert propose_tool(client, headers, "I was born in 1999", "p4", turn_id)["status"] == "saved"
+        assert sorted(active_contents(file)) == ["I live in Cairo", "I was born in 1999"]
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_a_memory_turned_off_just_before_the_write_wins(tmp_path, monkeypatch):
+    """The mode is re-read right before the write: a concurrent 'turn memory off' is never overtaken."""
+    from app.routes import worker as worker_module
+
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        with closing(sqlite3.connect(file)) as db:
+            owner = db.execute("SELECT owner_id FROM user_settings").fetchone()[0]
+        original = worker_module.proposal_conflicts
+
+        async def conflicts_then_off(*args, **kwargs):
+            result = await original(*args, **kwargs)
+            with closing(sqlite3.connect(file)) as db, db:
+                db.execute("UPDATE user_settings SET memory_mode = 'off' WHERE owner_id = ?", (owner,))
+            return result
+
+        monkeypatch.setattr(worker_module, "proposal_conflicts", conflicts_then_off)
+        body = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
+        assert body["status"] == "rejected" and body["error"] == "MEMORY_OFF", body
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
