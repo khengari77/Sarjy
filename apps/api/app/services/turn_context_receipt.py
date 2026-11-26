@@ -7,6 +7,7 @@ instructions, the pipeline configuration, the provider request and excluded
 content are never read back from the snapshot.
 """
 
+import hashlib
 import json
 from dataclasses import dataclass
 
@@ -23,6 +24,9 @@ from app.infrastructure.database import Turn
 from app.services.authorization import owned_conversation
 from app.services.context_assembly import RETRACTION_PREFIX, _memory_rows_for_ids, read_context_inputs
 from app.services.context_blocks import BLOCK_TEXT_LIMIT, _active_exclusion_ids
+
+# How many preceding user turns are scanned for a compiled snapshot (legacy turns have none).
+SNAPSHOT_LOOKBACK = 25
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,7 @@ async def _user_snapshot_before(
                 ),
             )
             .order_by(Turn.created_at.desc(), Turn.id.desc())
+            .limit(SNAPSHOT_LOOKBACK)
         )
     ).all()
     for row_id, row_created_at, row_snapshot in rows:
@@ -94,15 +99,25 @@ def _included_text(record_id: str, content: str, kind: str | None) -> str:
 
 
 async def _redacted_memory_ids(
-    db: AsyncSession, *, owner_id: str, conversation_id: str, record_ids: set[str]
+    db: AsyncSession, *, owner_id: str, record_ids: set[str], exclusions: set[str]
 ) -> set[str]:
     """Included memories that are now hidden, deleted or excluded in this conversation."""
     rows = await _memory_rows_for_ids(db, owner_id, record_ids)
-    redacted = {row.id for row in rows if row.status in ("hidden", "deleted")}
-    return redacted | (await _active_exclusion_ids(db, owner_id, conversation_id))
+    return {row.id for row in rows if row.status in ("hidden", "deleted")} | exclusions
 
 
-def _included_entries(snapshot: dict, redacted_ids: set[str]) -> list[dict]:
+async def _turn_ids(db: AsyncSession, *, conversation_id: str, record_ids: set[str]) -> set[str]:
+    """Which included records are real turns of this conversation (history, whatever their text says)."""
+    if not record_ids:
+        return set()
+    return set(
+        await db.scalars(select(Turn.id).where(Turn.id.in_(record_ids), Turn.conversation_id == conversation_id))
+    )
+
+
+def _included_entries(
+    snapshot: dict, redacted_ids: set[str], *, turn_ids: set[str], blocked_turn_ids: set[str]
+) -> list[dict]:
     included_ids = [value for value in snapshot["included_record_ids"] if isinstance(value, str)]
     messages = snapshot["messages"]
     current_turn_id = _current_turn_id(snapshot)
@@ -119,9 +134,10 @@ def _included_entries(snapshot: dict, redacted_ids: set[str]) -> list[dict]:
         content = message.get("content")
         if not isinstance(content, str):
             continue
-        kind = untrusted_data_kind(record_id, content)
+        # A real turn is history whatever its text says; only other records carry an envelope kind.
+        kind = None if record_id in turn_ids else untrusted_data_kind(record_id, content)
         text = _included_text(record_id, content, kind)[:BLOCK_TEXT_LIMIT]
-        if kind == "memory" and record_id in redacted_ids:
+        if (kind == "memory" and record_id in redacted_ids) or (kind is None and record_id in blocked_turn_ids):
             text = ""
         entries.append(
             {
@@ -142,19 +158,15 @@ def _current_turn_id(snapshot: dict) -> str | None:
     return turn_id if isinstance(turn_id, str) else None
 
 
-async def _excluded_entries(db: AsyncSession, *, owner_id: str, conversation_id: str, snapshot: dict) -> list[dict]:
+async def _excluded_entries(
+    db: AsyncSession, *, owner_id: str, snapshot: dict, exclusions: set[str], inputs
+) -> list[dict]:
     record_ids = sorted({value for value in snapshot.get("excluded_record_ids", []) if isinstance(value, str)})
     if not record_ids:
         return []
     rows = await _memory_rows_for_ids(db, owner_id, record_ids)
     status_by_id = {row.id: row.status for row in rows}
-    active_exclusions = await _active_exclusion_ids(db, owner_id, conversation_id)
-    turn_reasons = await _turn_reasons(
-        db,
-        owner_id=owner_id,
-        conversation_id=conversation_id,
-        turn_ids=[i for i in record_ids if i not in status_by_id],
-    )
+    sources = inputs.memories.blocked_sources
     entries = []
     for record_id in record_ids:
         status = status_by_id.get(record_id)
@@ -162,33 +174,17 @@ async def _excluded_entries(db: AsyncSession, *, owner_id: str, conversation_id:
             reason = "hidden"
         elif status == "deleted":
             reason = "deleted"
-        elif record_id in active_exclusions:
+        elif record_id in exclusions:
             reason = "excluded_in_conversation"
+        elif record_id in sources:
+            # Same words as the context lens (as of now): a restored memory falls back to "derived".
+            reason = "source_of_blocked_memory"
+        elif record_id in inputs.restating_ids:
+            reason = "restates_forgotten_fact"
         else:
-            reason = turn_reasons.get(record_id, "derived")
+            reason = "derived"
         entries.append({"id": record_id, "reason": reason})
     return entries
-
-
-async def _turn_reasons(
-    db: AsyncSession, *, owner_id: str, conversation_id: str, turn_ids: list[str]
-) -> dict[str, str]:
-    """Why an excluded turn was dropped, in the same words as the context lens (as of now).
-
-    A turn that was the source of a blocked memory, or that restates a forgotten fact, says so; anything else
-    (including a record whose memory has since been restored) stays the generic ``derived``.
-    """
-    if not turn_ids:
-        return {}
-    inputs = await read_context_inputs(db, owner_id=owner_id, conversation_id=conversation_id, combined_read=True)
-    sources = inputs.memories.blocked_sources
-    reasons: dict[str, str] = {}
-    for turn_id in turn_ids:
-        if turn_id in sources:
-            reasons[turn_id] = "source_of_blocked_memory"
-        elif turn_id in inputs.restating_ids:
-            reasons[turn_id] = "restates_forgotten_fact"
-    return reasons
 
 
 def _included_record_ids(snapshot: dict) -> set[str]:
@@ -206,20 +202,21 @@ def _diff(current: dict, previous: _SnapshotTurn | None) -> dict:
     }
 
 
-def _prompt_sha256(snapshot: dict) -> str:
-    digest = snapshot.get("canonical_prompt_sha256")
-    if not isinstance(digest, str):
-        manifest = snapshot.get("manifest")
-        digest = manifest.get("canonical_prompt_sha256") if isinstance(manifest, dict) else None
-    return digest[:12] if isinstance(digest, str) else ""
+def _projection_sha256(revision: int, included: list[dict], excluded: list[dict]) -> str:
+    """A short digest of the receipt's own content, so two receipts can be told apart.
 
-
-def _used_chars(snapshot: dict) -> int:
-    return sum(
-        len(message["content"])
-        for message in snapshot["messages"]
-        if isinstance(message, dict) and isinstance(message.get("content"), str)
+    It covers only what the receipt returns. A digest of the compiled prompt would let a caller confirm guesses of
+    the system instructions and of redacted memory text, so the prompt's own hash is deliberately not exposed.
+    """
+    body = json.dumps(
+        {"revision": revision, "included": included, "excluded": excluded}, sort_keys=True, separators=(",", ":")
     )
+    return hashlib.sha256(body.encode()).hexdigest()[:12]
+
+
+def _used_chars(included: list[dict]) -> int:
+    """Characters of the records shown in the receipt (the instructions are not counted or revealed)."""
+    return sum(len(entry["text"]) for entry in included)
 
 
 async def get_turn_context_receipt(db: AsyncSession, *, owner_id: str, conversation_id: str, turn_id: str) -> dict:
@@ -241,19 +238,28 @@ async def get_turn_context_receipt(db: AsyncSession, *, owner_id: str, conversat
         db, conversation_id=conversation_id, created_at=source.created_at, turn_id=source.id
     )
     snapshot = source.snapshot
-    redacted_ids = await _redacted_memory_ids(
-        db, owner_id=owner_id, conversation_id=conversation_id, record_ids=_included_record_ids(snapshot)
+    exclusions = await _active_exclusion_ids(db, owner_id, conversation_id)
+    included_ids = _included_record_ids(snapshot)
+    # The lens's own inputs (as of now): which turns are blocked or restate a forgotten fact.
+    inputs = await read_context_inputs(db, owner_id=owner_id, conversation_id=conversation_id, combined_read=True)
+    redacted_ids = await _redacted_memory_ids(db, owner_id=owner_id, record_ids=included_ids, exclusions=exclusions)
+    included = _included_entries(
+        snapshot,
+        redacted_ids,
+        turn_ids=await _turn_ids(db, conversation_id=conversation_id, record_ids=included_ids),
+        blocked_turn_ids=set(inputs.blocked_ids),
     )
-    included = _included_entries(snapshot, redacted_ids)
+    excluded = await _excluded_entries(db, owner_id=owner_id, snapshot=snapshot, exclusions=exclusions, inputs=inputs)
     revision = snapshot.get("revision")
+    revision = revision if isinstance(revision, int) else 0
     return {
         "turn_id": turn.id,
-        "revision": revision if isinstance(revision, int) else 0,
-        "prompt_sha256": _prompt_sha256(snapshot),
+        "revision": revision,
+        "prompt_sha256": _projection_sha256(revision, included, excluded),
         "history_count": sum(1 for entry in included if entry["kind"] == "history"),
         "included": included,
-        "excluded": await _excluded_entries(db, owner_id=owner_id, conversation_id=conversation_id, snapshot=snapshot),
-        "budget": {"used_chars": _used_chars(snapshot), "limit_chars": DEFAULT_MAX_CHARS},
+        "excluded": excluded,
+        "budget": {"used_chars": _used_chars(included), "limit_chars": DEFAULT_MAX_CHARS},
         "previous_turn_id": previous.id if previous is not None else None,
         "diff": _diff(snapshot, previous),
     }

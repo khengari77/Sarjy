@@ -179,7 +179,6 @@ class TurnContextExcluded(BaseModel):
         "hidden",
         "excluded_in_conversation",
         "deleted",
-        "over_budget",
         "derived",
         "source_of_blocked_memory",
         "restates_forgotten_fact",

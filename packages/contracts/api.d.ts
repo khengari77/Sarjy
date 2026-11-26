@@ -1750,7 +1750,7 @@ export interface components {
              * Reason
              * @enum {string}
              */
-            reason: "hidden" | "excluded_in_conversation" | "deleted" | "over_budget" | "derived" | "source_of_blocked_memory" | "restates_forgotten_fact";
+            reason: "hidden" | "excluded_in_conversation" | "deleted" | "derived" | "source_of_blocked_memory" | "restates_forgotten_fact";
         };
         /** TurnContextIncluded */
         TurnContextIncluded: {

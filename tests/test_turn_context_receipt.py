@@ -105,12 +105,13 @@ def test_receipt_shape_truncation_and_prompt_hash(tmp_path):
         body = response.json()
         assert body["turn_id"] == turn_id
         assert body["revision"] == context["revision"]
-        assert body["prompt_sha256"] == context["canonical_prompt_sha256"][:12]
+        # The digest covers only the receipt's own content, never the compiled prompt.
+        assert body["prompt_sha256"] != context["canonical_prompt_sha256"][:12]
         assert len(body["prompt_sha256"]) == 12
         assert body["history_count"] == 0
         assert body["previous_turn_id"] is None
         assert body["budget"]["limit_chars"] == 16000
-        assert body["budget"]["used_chars"] == sum(len(message["content"]) for message in context["messages"])
+        assert body["budget"]["used_chars"] == sum(len(entry["text"]) for entry in body["included"])
         assert body["diff"] == {"added": sorted(context["included_record_ids"]), "removed": []}
         assert all(entry["id"] != "system" for entry in body["included"])
 
@@ -262,7 +263,7 @@ def test_assistant_turn_falls_back_to_the_preceding_user_snapshot(tmp_path):
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["turn_id"] == assistant_turn
-        assert body["prompt_sha256"] == context["canonical_prompt_sha256"][:12]
+        assert body["prompt_sha256"] != context["canonical_prompt_sha256"][:12] and len(body["prompt_sha256"]) == 12
         included_ids = {entry["id"] for entry in body["included"]}
         assert included_ids == {value for value in context["included_record_ids"] if value not in ("system", user_turn)}
         assert body["previous_turn_id"] is None
@@ -285,13 +286,17 @@ def test_any_hidden_memory_content_never_appears(contents):
         with TestClient(create_app(settings)) as client:
             chat = setup(client)
             for index, content in enumerate(contents):
-                add_memory(file, chat, f"hidden-{index}", content, status="hidden")
+                add_memory(file, chat, f"hidden-{index}", content)
             headers = add_session(file, chat)
             turn_id, _ = start_turn(client, headers, "r1", text="What do you know?")
+            # The memories are in the compiled snapshot; hiding them afterwards must blank them in the receipt.
+            assert any(content in json.dumps(snapshot_of(file, turn_id)) for content in contents)
+            sql(file, "UPDATE memories SET status='hidden'")
             body = receipt(client, chat, turn_id).json()
             serialised = json.dumps(body, ensure_ascii=False)
             for content in contents:
                 assert content not in serialised
+            assert {entry["id"] for entry in body["included"]} >= {f"hidden-{i}" for i in range(len(contents))}
 
 
 def test_a_turn_dropped_for_restating_a_forgotten_fact_says_so(tmp_path):
@@ -307,3 +312,70 @@ def test_a_turn_dropped_for_restating_a_forgotten_fact_says_so(tmp_path):
         assert reasons["home"] == "hidden"
         assert reasons[restating] == "restates_forgotten_fact"
         assert "Benghazi" not in json.dumps(receipt(client, chat, later).json())
+
+
+def test_a_memory_hidden_after_the_turn_is_blanked_and_its_restating_turn_too(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        add_memory(file, chat, "home", "I live in Benghazi")
+        restating, _ = start_turn(client, headers, "r0", text="Benghazi is where I live")
+        later, _ = start_turn(client, headers, "r1", text="What is the weather like?")
+        before = receipt(client, chat, later).json()
+        assert {"home", restating} <= {entry["id"] for entry in before["included"]}
+        sql(file, "UPDATE memories SET status='hidden' WHERE id='home'")
+        body = receipt(client, chat, later).json()
+        entries = {entry["id"]: entry for entry in body["included"]}
+        assert entries["home"]["text"] == "" and entries[restating]["text"] == ""
+        assert "Benghazi" not in json.dumps(body)
+        # Restoring the memory restores what the receipt may show.
+        sql(file, "UPDATE memories SET status='active' WHERE id='home'")
+        restored = {entry["id"]: entry for entry in receipt(client, chat, later).json()["included"]}
+        assert restored["home"]["text"] == "I live in Benghazi"
+        assert restored[restating]["text"] == "Benghazi is where I live"
+
+
+def test_the_receipt_carries_no_digest_or_length_of_the_hidden_prompt(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        add_memory(file, chat, "home", "I live in Benghazi")
+        turn_id, _ = start_turn(client, headers, "r1", text="What is the weather like?")
+        snapshot = snapshot_of(file, turn_id)
+        body = receipt(client, chat, turn_id).json()
+        assert body["prompt_sha256"] != str(snapshot.get("canonical_prompt_sha256", ""))[:12]
+        # The digest and the character count describe only what the receipt returns.
+        assert body["budget"]["used_chars"] == sum(len(entry["text"]) for entry in body["included"])
+        assert receipt(client, chat, turn_id).json()["prompt_sha256"] == body["prompt_sha256"]
+        sql(file, "UPDATE memories SET status='hidden' WHERE id='home'")
+        assert receipt(client, chat, turn_id).json()["prompt_sha256"] != body["prompt_sha256"]
+
+
+def test_an_unknown_turn_is_404_and_a_signed_out_caller_is_401(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        turn_id, _ = start_turn(client, headers, "r1")
+        missing = receipt(client, chat, "no-such-turn")
+        assert missing.status_code == 404 and missing.json()["detail"]["code"] == "TURN_NOT_FOUND"
+    with TestClient(create_app(settings)) as stranger:
+        assert receipt(stranger, chat, turn_id).status_code == 401
+
+
+def test_a_restored_forgotten_fact_stops_being_reported_as_restating(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        add_memory(file, chat, "home", "I live in Benghazi")
+        restating, _ = start_turn(client, headers, "r0", text="Benghazi is where I live")
+        sql(file, "UPDATE memories SET status='hidden' WHERE id='home'")
+        later, _ = start_turn(client, headers, "r1", text="What is the weather like?")
+        reasons = {entry["id"]: entry["reason"] for entry in receipt(client, chat, later).json()["excluded"]}
+        assert reasons[restating] == "restates_forgotten_fact"
+        sql(file, "UPDATE memories SET status='active' WHERE id='home'")
+        reasons = {entry["id"]: entry["reason"] for entry in receipt(client, chat, later).json()["excluded"]}
+        assert reasons[restating] == "derived"
