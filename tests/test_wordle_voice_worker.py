@@ -355,6 +355,10 @@ def test_a_stale_guess_flag_after_closing_never_claims_a_yes():
     apply_control(control("wordle.pending", "guess"), state)
     assert state.pending is False
     assert not is_wordle_command("yes", reveal_pending=state.pending, wordle_active=state.active)
+    # Reopening the popup does not revive the stale guess flag.
+    apply_control(control("wordle.active", True), state)
+    assert state.pending is False
+    apply_control(control("wordle.active", False), state)
     # A reveal asked with the popup closed is still the client's to answer.
     apply_control(control("wordle.pending", "reveal"), state)
     assert state.pending is True

@@ -1743,7 +1743,13 @@ class RevealState:
             self._kind = None
 
     def pending_kind(self, kind: str | None) -> None:
-        """Record which yes/no the client is waiting for (None clears it)."""
+        """Record which yes/no the client is waiting for (None clears it).
+
+        A guess confirmation only exists inside the open game, so one arriving while the popup is closed is
+        stale and is not kept (otherwise reopening the popup would revive it).
+        """
+        if kind == "guess" and not self._active:
+            kind = None
         self.pending = kind is not None
         self._kind = kind
 
@@ -1798,7 +1804,7 @@ def apply_control(packet, reveal: RevealState) -> None:
     if not isinstance(value, dict):
         return
     if value.get("type") == "wordle.reveal_pending":
-        reveal.pending = value.get("value") is True
+        reveal.pending_kind("reveal" if value.get("value") is True else None)
     elif value.get("type") == "wordle.pending":
         # A spoken yes/no is awaited for a pending action ("reveal" or "reset"); null clears it.
         kind = value.get("value")
