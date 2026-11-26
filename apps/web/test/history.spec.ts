@@ -216,7 +216,8 @@ test('the delete confirmation cannot be dismissed while the delete is in flight'
       return;
     }
     await gate;
-    await route.fulfill({ status: 204 });
+    // Hand over to the harness handler so it records the delete; the list then really loses the row.
+    await route.fallback();
   });
   try {
     await gotoHistory(page);
@@ -259,6 +260,7 @@ test('a refused or failed delete explains why and keeps the row', async ({ page 
   await menu.getByRole('menuitem', { name: 'Delete' }).click();
   await menu.getByRole('button', { name: 'Delete this chat' }).click();
   await expect(menu.getByText('End the call before deleting this chat')).toBeVisible();
+  await expect(menu.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await expect(page.getByRole('button', { name: 'Trip to Paris', exact: true })).toBeVisible();
 
   await page.keyboard.press('Escape');
@@ -267,5 +269,6 @@ test('a refused or failed delete explains why and keeps the row', async ({ page 
   await menu.getByRole('menuitem', { name: 'Delete' }).click();
   await menu.getByRole('button', { name: 'Delete this chat' }).click();
   await expect(menu.getByText('Could not delete this chat. Try again.')).toBeVisible();
+  await expect(menu.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await expect(page.getByRole('button', { name: 'Work ideas', exact: true })).toBeVisible();
 });

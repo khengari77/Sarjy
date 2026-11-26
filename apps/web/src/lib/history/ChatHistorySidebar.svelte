@@ -4,7 +4,7 @@
   import type { Conversation } from '../api';
   import { wordsFor } from '../chat/words';
   import DeleteConfirm from './DeleteConfirm.svelte';
-  import { deleteFocusIndex, focusAfterDelete } from './deleteFlow';
+  import { deleteFocusIndex, focusAfterDelete, focusConfirmAction } from './deleteFlow';
   import { filterConversations } from './chatSearch';
 
   interface Props {
@@ -83,7 +83,7 @@
     if (busy || deletingId || callConversation === id) return;
     confirmingDelete = id;
     deleteError = '';
-    void tick().then(() => menuElement?.querySelector<HTMLButtonElement>('.menu-actions button')?.focus());
+    void tick().then(() => focusConfirmAction(menuElement));
   }
 
   function cancelDelete() {
@@ -105,6 +105,7 @@
     deletingId = null;
     if (failure) {
       deleteError = failure === 'CONVERSATION_ACTIVE' ? words.deleteActive : words.deleteFailed;
+      void tick().then(() => focusConfirmAction(menuElement));
       return;
     }
     closeMenu();

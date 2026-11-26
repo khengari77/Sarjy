@@ -10,3 +10,8 @@ export function focusAfterDelete(root: ParentNode | null, index: number): void {
   const target = items[index] ?? items[index - 1] ?? root.querySelector<HTMLButtonElement>('.new-chat');
   target?.focus();
 }
+
+/** Put focus on the first action (Cancel) of the confirm row, e.g. after a failed delete disabled the button. */
+export function focusConfirmAction(menu: ParentNode | null): void {
+  menu?.querySelector<HTMLButtonElement>('.menu-actions button')?.focus();
+}
