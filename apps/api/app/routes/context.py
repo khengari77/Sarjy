@@ -170,6 +170,8 @@ class TurnContextIncluded(BaseModel):
     kind: Literal["memory", "tool", "history"]
     text: str
     trust: Literal["data", "conversation"]
+    # True when the live policy now blocks this record: its id stays, its text is not shown.
+    withheld: bool = False
 
 
 class TurnContextExcluded(BaseModel):
@@ -201,6 +203,7 @@ class TurnContextReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
     turn_id: str
     revision: int
+    # A digest of the receipt's own content (revision, ids, shown text), not of the compiled prompt.
     prompt_sha256: str
     history_count: int
     included: list[TurnContextIncluded]

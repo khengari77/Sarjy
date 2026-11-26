@@ -8,7 +8,6 @@ export interface ContextWords {
   missing: string;
   budget: string;
   characters: string;
-  overBudget: string;
   history: (count: number) => string;
   included: string;
   excluded: string;
@@ -21,6 +20,7 @@ export interface ContextWords {
   noDiff: string;
   firstTurn: string;
   retry: string;
+  withheld: string;
 }
 
 const EN: ContextWords = {
@@ -29,7 +29,6 @@ const EN: ContextWords = {
   missing: 'No context was recorded for this reply.',
   budget: 'Retrieved context',
   characters: 'characters',
-  overBudget: 'over budget',
   history: (count) => `${count} earlier ${count === 1 ? 'turn' : 'turns'} included as history.`,
   included: 'Included context',
   excluded: 'Left out',
@@ -42,6 +41,7 @@ const EN: ContextWords = {
   noDiff: 'No context ids changed from the previous turn.',
   firstTurn: 'This is the first recorded turn; there is nothing to compare.',
   retry: 'Retry',
+  withheld: 'Hidden since this reply, so its text is not shown.',
 };
 
 const AR: ContextWords = {
@@ -50,7 +50,6 @@ const AR: ContextWords = {
   missing: 'لم يُسجَّل سياق لهذه الإجابة.',
   budget: 'السياق المسترجع',
   characters: 'حرفًا',
-  overBudget: 'تجاوز الميزانية',
   history: (count) => `${count} ${count === 1 ? 'دور سابق' : 'أدوار سابقة'} مشمولة في السجل.`,
   included: 'السياق المشمول',
   excluded: 'ما استُبعد',
@@ -63,6 +62,7 @@ const AR: ContextWords = {
   noDiff: 'لم تتغيّر معرّفات السياق عن الدور السابق.',
   firstTurn: 'هذا أول دور مسجَّل، فلا شيء للمقارنة.',
   retry: 'إعادة المحاولة',
+  withheld: 'أُخفي منذ هذه الإجابة، فلا يُعرض نصه.',
 };
 
 export function contextWords(arabic: boolean): ContextWords {

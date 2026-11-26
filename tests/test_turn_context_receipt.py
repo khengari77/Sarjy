@@ -420,3 +420,58 @@ def test_blocked_records_of_every_kind_are_blanked(tmp_path):
     by_id = {entry["id"]: entry for entry in entries}
     assert by_id["call-1"]["kind"] == "tool" and by_id["call-1"]["text"] == ""
     assert by_id["turn-0"]["text"] == "an old turn"
+
+
+def test_a_tool_result_quoting_a_forgotten_fact_is_blanked(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        # The tool result's own turn predates the memory, so only the text can connect them.
+        first, _ = start_turn(client, headers, "r0", text="What is the weather like?")
+        add_memory(file, chat, "home", "I live in Benghazi")
+        sql(
+            file,
+            "INSERT INTO tool_calls (id,turn_id,request_id,name,state,result) "
+            "VALUES ('call1',?,'call1','get_current_weather','completed',?)",
+            (first, json.dumps({"city": "Benghazi", "temp_c": 21})),
+        )
+        later, _ = start_turn(client, headers, "r1", text="And tomorrow?")
+        before = {entry["id"]: entry for entry in receipt(client, chat, later).json()["included"]}
+        assert "Benghazi" in before["call1"]["text"] and before["call1"]["withheld"] is False
+
+        sql(file, "UPDATE memories SET status='hidden' WHERE id='home'")
+        body = receipt(client, chat, later).json()
+        entries = {entry["id"]: entry for entry in body["included"]}
+        assert entries["call1"]["text"] == "" and entries["call1"]["withheld"] is True
+        assert "Benghazi" not in json.dumps(body)
+
+
+def test_a_restating_turn_beyond_the_lens_window_is_still_blanked(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        add_memory(file, chat, "home", "I live in Benghazi")
+        restating, _ = start_turn(client, headers, "r0", text="Benghazi is where I live")
+        later, _ = start_turn(client, headers, "r1", text="What is the weather like?")
+        # More than the lens window (100 turns) now sits after this snapshot.
+        for index in range(110):
+            sql(
+                file,
+                "INSERT INTO turns (id,conversation_id,request_id,role,text,status,created_at) VALUES (?,?,?,?,?,?,?)",
+                (
+                    f"x{index}",
+                    chat,
+                    f"x{index}",
+                    "user",
+                    "Nothing to see",
+                    "completed",
+                    f"2099-01-01T00:{index // 60:02d}:{index % 60:02d}+00:00",
+                ),
+            )
+        sql(file, "UPDATE memories SET status='hidden' WHERE id='home'")
+        body = receipt(client, chat, later).json()
+        entries = {entry["id"]: entry for entry in body["included"]}
+        assert entries[restating]["text"] == "" and entries[restating]["withheld"] is True
+        assert "Benghazi" not in json.dumps(body)

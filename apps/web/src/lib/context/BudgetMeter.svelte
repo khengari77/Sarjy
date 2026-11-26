@@ -28,9 +28,7 @@
   </div>
   <p class="budget-text">
     {format(values.used)} / {format(values.limit)}
-    {arabic ? 'حرفًا' : 'characters'}{#if values.over}<span class="budget-over">
-        · {arabic ? 'تجاوز الميزانية' : 'over budget'}</span
-      >{/if}
+    {arabic ? 'حرفًا' : 'characters'}
   </p>
 </div>
 
@@ -65,10 +63,5 @@
     color: var(--text-muted);
     font-size: 11px;
     line-height: 1.35;
-  }
-
-  .budget-over {
-    color: var(--orb-confirmation);
-    font-weight: 600;
   }
 </style>

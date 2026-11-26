@@ -138,7 +138,8 @@ def _included_entries(snapshot: dict, blanked_ids: set[str], *, turn_ids: set[st
         # A real turn is history whatever its text says; only other records carry an envelope kind.
         kind = None if record_id in turn_ids else untrusted_data_kind(record_id, content)
         text = _included_text(record_id, content, kind)[:BLOCK_TEXT_LIMIT]
-        if record_id in blanked_ids:
+        withheld = record_id in blanked_ids
+        if withheld:
             text = ""
         entries.append(
             {
@@ -146,9 +147,23 @@ def _included_entries(snapshot: dict, blanked_ids: set[str], *, turn_ids: set[st
                 "kind": kind or "history",
                 "text": text,
                 "trust": "data" if kind else "conversation",
+                "withheld": withheld,
             }
         )
     return entries
+
+
+def _quoted_records(snapshot: dict, turn_ids: set[str]) -> list[tuple[str, str]]:
+    """``(id, full text)`` of every included record that is not a turn (tool results, memory envelopes)."""
+    included_ids = [value for value in snapshot["included_record_ids"] if isinstance(value, str)]
+    pairs: list[tuple[str, str]] = []
+    for record_id, message in zip(included_ids, snapshot["messages"], strict=False):
+        if record_id in turn_ids or record_id == "system" or record_id.startswith(RETRACTION_PREFIX):
+            continue
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str):
+            pairs.append((record_id, content))
+    return pairs
 
 
 def _current_turn_id(snapshot: dict) -> str | None:
@@ -247,7 +262,9 @@ async def get_turn_context_receipt(db: AsyncSession, *, owner_id: str, conversat
     turn_texts = await _turn_texts(db, conversation_id=conversation_id, record_ids=included_ids)
     # The lens window is bounded, so an old turn in this snapshot can fall outside it: test the snapshot's own
     # turns against every forgotten fact as well.
-    restating = restating_turn_ids(turn_texts.items(), (candidate.text for candidate in inputs.memories.denied))
+    # Tool results and other non-turn records are tested the same way: a weather result can quote a forgotten city.
+    candidates = [*turn_texts.items(), *_quoted_records(snapshot, set(turn_texts))]
+    restating = restating_turn_ids(candidates, (candidate.text for candidate in inputs.memories.denied))
     # Everything the live policy blocks now (lineage-blocked memories, blocked tool results, turns), whatever its kind.
     blanked_ids = redacted_ids | set(inputs.excluded_ids) | set(restating)
     included = _included_entries(snapshot, blanked_ids, turn_ids=set(turn_texts))

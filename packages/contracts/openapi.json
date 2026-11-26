@@ -4296,6 +4296,11 @@
               "conversation"
             ],
             "title": "Trust"
+          },
+          "withheld": {
+            "type": "boolean",
+            "title": "Withheld",
+            "default": false
           }
         },
         "additionalProperties": false,

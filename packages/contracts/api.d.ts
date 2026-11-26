@@ -1768,6 +1768,11 @@ export interface components {
              * @enum {string}
              */
             trust: "data" | "conversation";
+            /**
+             * Withheld
+             * @default false
+             */
+            withheld: boolean;
         };
         /** TurnContextReceipt */
         TurnContextReceipt: {
