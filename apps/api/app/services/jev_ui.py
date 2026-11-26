@@ -30,6 +30,9 @@ _ESTIMATED_INPUT_TOKENS: Final = 900
 
 # Seven questions per request run slower than the routing call (live p90 ~700-830 ms, outliers 2-3 s).
 UI_DEADLINE_SECONDS: Final = 1.2
+# The budget reservation is a database round trip, not provider time: it has its own short bound so a slow
+# database neither eats the provider deadline nor counts as a provider failure.
+RESERVATION_DEADLINE_SECONDS: Final = 0.3
 # Turns in a conversation are seconds apart; the library's default drops an idle connection after five.
 KEEP_ALIVE: Final = httpx.Limits(max_connections=20, max_keepalive_connections=4, keepalive_expiry=60)
 
@@ -78,21 +81,23 @@ class JevUiClient:
             estimated_input_tokens=_ESTIMATED_INPUT_TOKENS,
             estimated_cost_micro_usd=1,
         )
-        phase = "reservation"
         try:
-            async with asyncio.timeout(self._deadline):
+            async with asyncio.timeout(RESERVATION_DEADLINE_SECONDS):
                 try:
                     permitted = await self._reserve(reservation)
                 except Exception:
                     permitted = False
-                if not permitted:
-                    return None
-                phase = "network"
+        except TimeoutError:
+            logger.warning("jev ui classification failed: RESERVATION")
+            return None
+        if not permitted:
+            return None
+        try:
+            async with asyncio.timeout(self._deadline):
                 response = await self._post(instruction)
         except TimeoutError:
-            if phase == "network":
-                self._circuit.record_failure()
-            logger.warning("jev ui classification failed: %s", "TIMEOUT" if phase == "network" else "RESERVATION")
+            self._circuit.record_failure()
+            logger.warning("jev ui classification failed: TIMEOUT")
             return None
         except httpx.HTTPError:
             self._circuit.record_failure()

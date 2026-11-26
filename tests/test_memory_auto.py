@@ -102,6 +102,43 @@ def test_replaying_the_same_token_returns_the_same_change_and_writes_once(tmp_pa
         cm.__exit__(None, None, None)
 
 
+@pytest.mark.parametrize("blind_checks", [3, 4])
+def test_a_racing_replay_of_one_token_returns_the_same_change_instead_of_a_500(tmp_path, monkeypatch, blind_checks):
+    # 4 blind checks: the replay reaches the duplicate INSERT and recovers from the IntegrityError.
+    # 3 blind checks: the re-check under the owner lock sees the committed row and returns without inserting; the
+    # IntegrityError class is then replaced by one nothing raises, so the real error would escape if that
+    # re-check were removed.
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        proposal = proposal_of(client, headers, "My name is Sam", "fact-1")
+
+        from app.services import memory_auto
+
+        real_journalled = memory_auto._journalled
+        calls = 0
+
+        async def blind_for_both_checks(db, owner_id, key):
+            # Both requests passed the early check before either committed its journal row. The first four checks
+            # are the two early checks and the two re-checks under the owner lock; only the last re-read sees the row.
+            nonlocal calls
+            calls += 1
+            if calls <= blind_checks:
+                return None
+            return await real_journalled(db, owner_id, key)
+
+        monkeypatch.setattr(memory_auto, "_journalled", blind_for_both_checks)
+        if blind_checks == 3:
+            monkeypatch.setattr(memory_auto, "IntegrityError", type("NeverRaised", (Exception,), {}))
+        first = auto(client, headers, proposal["token"])
+        second = auto(client, headers, proposal["token"])
+        assert first.status_code == 200 and second.status_code == 200, second.text
+        assert second.json()["change"]["id"] == first.json()["change"]["id"]
+        assert second.json()["change"]["memory_id"] == first.json()["change"]["memory_id"]
+        assert count_rows(file, "context_operations") == 1
+    finally:
+        cm.__exit__(None, None, None)
+
+
 def test_a_conflicting_fact_replaces_the_earlier_one_in_auto(tmp_path):
     cm, client, file, headers = started(tmp_path, "auto")
     try:
@@ -529,31 +566,48 @@ def test_a_credential_cannot_be_confirmed_even_in_ask_mode(tmp_path):
         cm.__exit__(None, None, None)
 
 
+def turn_snapshots(file):
+    with closing(sqlite3.connect(file)) as db:
+        return [row[0] for row in db.execute("SELECT snapshot FROM turns") if row[0]]
+
+
 def _copies(file):
     """Where each table that can carry a copy of a fact still mentions it."""
     with closing(sqlite3.connect(file)) as db:
-        return {
+        copies = {
             table: any("Sam" in str(value) for row in db.execute(f"SELECT * FROM {table}") for value in row)
-            for table in ("memory_write_requests", "memory_capture_decisions", "context_operations", "turns")
+            for table in ("memory_write_requests", "memory_capture_decisions", "context_operations")
         }
+    copies["turns"] = any("Sam" in snapshot for snapshot in turn_snapshots(file))
+    return copies
 
 
 def test_undo_scrubs_the_proposal_decision_and_prompt_copies_so_a_later_delete_has_nothing_left(tmp_path):
     # Undo tombstones the row, so a later permanent delete returns early; the copies must already be gone.
     cm, client, file, headers = started(tmp_path, "auto")
     try:
-        change = save_via_auto(client, headers, "My name is Sam", "fact-1")
-        assert _copies(file)["memory_write_requests"]
+        # Propose from a turn that does not itself say the fact, so the transcript holds no "Sam" and the only
+        # snapshot copy is the one a later turn compiles from the saved memory.
+        proposal = forged_proposal(client, headers, file, "My name is Sam", "fact-1")
+        saved = auto(client, headers, proposal["token"])
+        assert saved.status_code == 200, saved.text
+        change = saved.json()["change"]
+        turn(client, headers, "what do you know about me", "fact-2")
+
+        before = _copies(file)
+        # Every copy the final assertion calls gone existed first, or that assertion proves nothing.
+        assert before["memory_write_requests"] and before["memory_capture_decisions"]
+        assert before["context_operations"] and before["turns"]
 
         assert client.post(f"/v1/changes/{change['id']}/undo").status_code == 200
         assert client.delete(f"/v1/memories/{change['memory_id']}").status_code == 200
 
-        # Only the user's own utterance in the transcript still says it; no memory copy does.
+        assert all("Sam" not in snapshot for snapshot in turn_snapshots(file))
         assert _copies(file) == {
             "memory_write_requests": False,
             "memory_capture_decisions": False,
             "context_operations": False,
-            "turns": True,
+            "turns": False,
         }
     finally:
         cm.__exit__(None, None, None)
