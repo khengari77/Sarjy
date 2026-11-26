@@ -78,6 +78,8 @@ test('asks for clarification on ambiguous speech without mutating anything', asy
   expect(await voice.spoken()).toContain('What would you like');
 });
 
+// Spelled guesses count at once; a spoken word is read back first (covered by the unit tests), so the
+// commit-path cases below spell the word.
 test('idempotent retries reuse the guess request id after a network failure', async ({ page }) => {
   await mockWordle(page);
   let fail = true;
@@ -90,12 +92,12 @@ test('idempotent retries reuse the guess request id after a network failure', as
   const voice = await wordleVoice(page);
   await voice.finalize({ text: 'play wordle', segmentId: 's1', epoch: 1 });
 
-  await voice.finalize({ text: 'guess crane', segmentId: 's2', epoch: 1 });
+  await voice.finalize({ text: 'guess c r a n e', segmentId: 's2', epoch: 1 });
   expect(await voice.spoken()).toContain("didn't go through");
   expect((await voice.state()).guesses).toBe(0);
 
   fail = false;
-  const retry = await voice.finalize({ text: 'guess crane', segmentId: 's3', epoch: 1 });
+  const retry = await voice.finalize({ text: 'guess c r a n e', segmentId: 's3', epoch: 1 });
   expect(retry.command).toBe('guess');
   expect(ids).toHaveLength(2);
   expect(ids[0]).toBe(ids[1]);
@@ -198,7 +200,7 @@ test('writes no guesses to conversation or memory endpoints', async ({ page }) =
   await mockWordle(page, { onGuess: () => ({ marks: ['correct', 'correct', 'correct', 'correct', 'correct'] }) });
   const voice = await wordleVoice(page);
   await voice.finalize({ text: 'play wordle', segmentId: 's1', epoch: 1 });
-  await voice.finalize({ text: 'guess crane', segmentId: 's2', epoch: 1 });
+  await voice.finalize({ text: 'guess c r a n e', segmentId: 's2', epoch: 1 });
   await voice.finalize({ text: 'quit wordle', segmentId: 's3', epoch: 1 });
   expect(writes.filter((path) => path.includes('/conversations') || path.includes('/memor'))).toEqual([]);
   expect(writes.filter((path) => path.includes('/wordle/'))).toEqual(['/api/v1/wordle/guesses']);
@@ -238,7 +240,7 @@ test('sends the exact command reply through the voice runtime say RPC', async ({
   const voice = await wordleVoice(page);
 
   await voice.finalize({ text: 'play wordle', segmentId: 's1', epoch: 1 });
-  await voice.finalize({ text: 'guess crane', segmentId: 's2', epoch: 1 });
+  await voice.finalize({ text: 'guess c r a n e', segmentId: 's2', epoch: 1 });
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __sarjySay: string[] }).__sarjySay))
     .toHaveLength(2);
@@ -255,10 +257,24 @@ test('sends the exact command reply through the voice runtime say RPC', async ({
       const events = await page.evaluate(
         () => (window as unknown as { __sarjyControl: { type: string }[] }).__sarjyControl,
       );
-      return events.filter((event) => event.type === 'wordle.pending');
+      // The flag is also re-sent with every status update; compare its changes, not the repeats.
+      const values = events
+        .filter((event) => event.type === 'wordle.pending')
+        .map((event) => (event as { value?: unknown }).value);
+      const changes = values.filter((value, index) => index === 0 || value !== values[index - 1]);
+      return changes[0] === null ? changes.slice(1) : changes;
     })
-    .toEqual([
-      { type: 'wordle.pending', value: 'reveal' },
-      { type: 'wordle.pending', value: null },
-    ]);
+    .toEqual(['reveal', null]);
+});
+
+test('closing the popup ends a pending reset, so a later yes never resets the game', async ({ page }) => {
+  const state = await mockWordle(page);
+  await openWordle(page);
+  const voice = await wordleVoice(page);
+  await voice.finalize({ text: 'reset the game', segmentId: 'r1', epoch: 1 });
+  await page.getByRole('button', { name: 'Close Wordle' }).click();
+  // An unrelated "yes" (for example to a memory question) after the popup closed.
+  const answer = await voice.finalize({ text: 'yes', segmentId: 'r2', epoch: 1 });
+  expect(answer.handled).toBe(false);
+  expect(state.resets).toBe(0);
 });

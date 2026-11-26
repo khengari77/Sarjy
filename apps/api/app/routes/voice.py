@@ -145,7 +145,9 @@ def register_voice_routes(
             async with api.LiveKitAPI(config.livekit_url, config.livekit_api_key, config.livekit_api_secret) as lk:
                 await lk.agent_dispatch.create_dispatch(
                     api.CreateAgentDispatchRequest(
-                        agent_name="sarjy", room=voice.room_name, metadata=json.dumps({"session_id": voice.id})
+                        agent_name=config.livekit_agent_name,
+                        room=voice.room_name,
+                        metadata=json.dumps({"session_id": voice.id}),
                     )
                 )
             token = (

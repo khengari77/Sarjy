@@ -96,6 +96,63 @@ def test_guess_is_idempotent_and_invalid_words_are_reported(tmp_path):
         assert bad["status"] == "error" and bad["code"] == "WORDLE_GUESS_INVALID"
 
 
+def test_not_in_list_guess_is_rejected_without_recording(tmp_path):
+    file, app = build(tmp_path)
+    with TestClient(app) as client:
+        headers, turn = begin(client, file)
+        call(client, headers, PLAY, turn, "p1")
+        rejected = call(client, headers, GUESS, turn, "not-listed", word="zzzzz").json()
+        assert rejected["status"] == "error" and rejected["code"] == "WORDLE_NOT_IN_LIST"
+        assert rejected["spoken"] == "ZZZZZ isn't in the word list. Try another word."
+        assert "not in the Wordle word list" in rejected["message"]
+        game = client.get("/v1/wordle/today").json()["game"]
+        assert game["guesses"] == [] and game["attempts_remaining"] == 6
+
+
+def test_todays_answer_is_accepted_when_absent_from_the_allowed_list(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.wordle.allowed_words", lambda: frozenset())
+    monkeypatch.setattr("app.services.wordle_tools.allowed_words", lambda: frozenset())
+    file, app = build(tmp_path)
+    with TestClient(app) as client:
+        headers, turn = begin(client, file)
+        won = call(client, headers, GUESS, turn, "answer-not-listed", word="crane").json()
+        assert won["status"] == "won"
+
+
+def test_confirm_guess_returns_the_payload_and_records_nothing(tmp_path):
+    file, app = build(tmp_path)
+    with TestClient(app) as client:
+        headers, turn = begin(client, file)
+        call(client, headers, PLAY, turn, "p1")
+        confirmed = call(client, headers, GUESS, turn, "c1", word="crane", confirm=True).json()
+        assert confirmed == {
+            "status": "confirm",
+            "ui": "confirm_guess",
+            "word": "CRANE",
+            "spoken": "C, R, A, N, E. Is that your guess?",
+            "message": "Asked the user to confirm CRANE. Nothing is recorded until they say yes.",
+        }
+        game = client.get("/v1/wordle/today").json()["game"]
+        assert game["guesses"] == [] and game["attempts_remaining"] == 6
+
+        call(client, headers, GUESS, turn, "g1", word="slate")
+        repeat = call(client, headers, GUESS, turn, "c2", word="slate", confirm=True).json()
+        assert repeat["status"] == "repeat" and "already tried SLATE" in repeat["message"]
+        assert len(client.get("/v1/wordle/today").json()["game"]["guesses"]) == 1
+
+
+def test_confirm_guess_rejects_a_not_in_list_word_without_recording(tmp_path):
+    file, app = build(tmp_path)
+    with TestClient(app) as client:
+        headers, turn = begin(client, file)
+        call(client, headers, PLAY, turn, "p1")
+        rejected = call(client, headers, GUESS, turn, "c1", word="zzzzz", confirm=True).json()
+        assert rejected["status"] == "error" and rejected["code"] == "WORDLE_NOT_IN_LIST"
+        assert rejected["spoken"] == "ZZZZZ isn't in the word list. Try another word."
+        game = client.get("/v1/wordle/today").json()["game"]
+        assert game["guesses"] == [] and game["attempts_remaining"] == 6
+
+
 def test_close_asks_the_client_to_close_and_disabled_reports_off(tmp_path):
     file, app = build(tmp_path)
     with TestClient(app) as client:

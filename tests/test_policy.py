@@ -15,6 +15,8 @@ from app.domain.policy import (
     LEGACY_OUTPUT_TOKENS,
     VOICE_RULES,
     WORDLE_CLOSED_RULE,
+    WORDLE_MODE_INSTRUCTIONS,
+    WORDLE_MODE_NUDGE,
     WORDLE_OPEN_RULES,
     compose_system_message,
     length_guidance,
@@ -261,19 +263,23 @@ def test_instructions_cover_every_capability(language):
 
 @pytest.mark.parametrize("language", ["en", "ar"])
 def test_wordle_rules_follow_the_popup_state(language):
-    policy = resolve_response_policy(ResponsePreference.AUTOMATIC, 2)
+    policy = resolve_response_policy(ResponsePreference.AUTOMATIC, 3)
     opened = compose_system_message(language, policy, wordle_open=True)
     closed = compose_system_message(language, policy, wordle_open=False)
-    assert WORDLE_OPEN_RULES[language] in opened and WORDLE_CLOSED_RULE[language] not in opened
+    legacy = compose_system_message(language, policy)
+    # Wordle mode: the game prompt replaces the assistant persona and replies use the shortest length.
+    assert opened.startswith(WORDLE_MODE_INSTRUCTIONS[language])
+    assert BASE_INSTRUCTIONS[language] not in opened and WORDLE_MODE_NUDGE[language] in opened
+    assert length_guidance(1, language) in opened
+    assert len(opened) < len(closed)
     assert WORDLE_CLOSED_RULE[language] in closed and WORDLE_OPEN_RULES[language] not in closed
     for tool in ("play_wordle", "submit_wordle_guess", "wordle_status", "close_wordle"):
         assert tool not in closed
     # An older worker sends no popup state: it keeps the full rules it was built for.
-    assert compose_system_message(language, policy) == opened
-    assert pipeline_instructions({"llm": {"language": language}}, wordle_open=False) == compose_system_message(
-        language, pipeline_policy({}), wordle_open=False
+    assert legacy.startswith(BASE_INSTRUCTIONS[language]) and WORDLE_OPEN_RULES[language] in legacy
+    assert pipeline_instructions({"llm": {"language": language}}, wordle_open=True) == compose_system_message(
+        language, pipeline_policy({}), wordle_open=True
     )
-    assert len(closed) < len(opened)
 
 
 def test_instructions_stay_compact_because_they_are_sent_every_turn():

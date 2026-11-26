@@ -30,16 +30,16 @@ describe('parseWordleCommand', () => {
   });
 
   it.each([
-    ['Guess CRANE', 'CRANE'],
-    ['guess crane', 'CRANE'],
-    ['C R A N E', 'CRANE'],
-    ['guess C R A N E', 'CRANE'],
-    ['guess c-r-a-n-e', 'CRANE'],
-    ['my guess is SLATE', 'SLATE'],
-    ['wordle guess slice please', 'SLICE'],
-    ['enter a guess: plant', 'PLANT'],
-  ])('normalizes a spoken guess: %s', (text, word) => {
-    expect(parseWordleCommand(text, { active: true })).toEqual({ kind: 'guess', word });
+    ['Guess CRANE', 'CRANE', false],
+    ['guess crane', 'CRANE', false],
+    ['C R A N E', 'CRANE', true],
+    ['guess C R A N E', 'CRANE', true],
+    ['guess c-r-a-n-e', 'CRANE', true],
+    ['my guess is SLATE', 'SLATE', false],
+    ['wordle guess slice please', 'SLICE', false],
+    ['enter a guess: plant', 'PLANT', false],
+  ])('normalizes a spoken guess: %s', (text, word, spelled) => {
+    expect(parseWordleCommand(text, { active: true })).toEqual({ kind: 'guess', word, spelled });
     expect(parseWordleCommand(text)).toBeNull();
   });
 

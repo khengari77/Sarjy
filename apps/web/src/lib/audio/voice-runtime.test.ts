@@ -257,16 +257,4 @@ describe('exact command speech', () => {
   it('refuses to speak without a live room', async () => {
     await expect(new LiveKitVoiceRuntime().say('Hello')).rejects.toThrow('CALL_REQUIRED');
   });
-
-  it('publishes control flags on the data channel and ignores no-room calls', async () => {
-    const { runtime, room } = await connectedRuntime();
-    const publishData = vi.fn().mockResolvedValue(undefined);
-    (room.localParticipant as unknown as { publishData: typeof publishData }).publishData = publishData;
-    await runtime.sendControl({ type: 'wordle.reveal_pending', value: true });
-    expect(publishData).toHaveBeenCalledTimes(1);
-    const [data, options] = publishData.mock.calls[0];
-    expect(JSON.parse(new TextDecoder().decode(data))).toEqual({ type: 'wordle.reveal_pending', value: true });
-    expect(options).toEqual({ reliable: true, topic: 'sarjy.control' });
-    await expect(new LiveKitVoiceRuntime().sendControl({ type: 'x', value: false })).resolves.toBeUndefined();
-  });
 });

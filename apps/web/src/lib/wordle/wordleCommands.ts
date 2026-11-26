@@ -14,7 +14,7 @@ import spec from '../../../../../packages/contracts/wordle_commands.json';
  */
 export type WordleCommand =
   | { kind: 'play' }
-  | { kind: 'guess'; word: string }
+  | { kind: 'guess'; word: string; spelled: boolean }
   | { kind: 'guess_invalid'; spoken: string }
   | { kind: 'remaining' }
   | { kind: 'guesses' }
@@ -84,7 +84,8 @@ function parseGuess(normalized: string): WordleCommand | null {
   if (/[^a-z\s.-]/.test(cleaned)) return { kind: 'guess_invalid', spoken: INVALID_GUESS_SPOKEN };
   const word = collapseSpelledLetters(cleaned);
   if (!/^[a-z]{5}$/.test(word)) return { kind: 'guess_invalid', spoken: INVALID_GUESS_SPOKEN };
-  return { kind: 'guess', word: word.toUpperCase() };
+  // Spelled letters cannot be misheard as another word, so only a spoken word is read back for a yes.
+  return { kind: 'guess', word: word.toUpperCase(), spelled: SPELLED.test(cleaned) };
 }
 
 /**
@@ -109,7 +110,7 @@ export function parseWordleCommand(text: string, options: { active?: boolean } =
   // without the word "guess"; a bare word is left to conversation.
   const spellable = normalized.replace(/\s+(?:please|for me)$/, '').trim();
   if (active && SPELLED.test(spellable)) {
-    return { kind: 'guess', word: spellable.replace(/[^a-z]/g, '').toUpperCase() };
+    return { kind: 'guess', word: spellable.replace(/[^a-z]/g, '').toUpperCase(), spelled: true };
   }
 
   if (RESET.test(normalized) || (active && RESET_ACTIVE.test(normalized))) return { kind: 'reset' };

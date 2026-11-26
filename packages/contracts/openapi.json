@@ -1927,6 +1927,43 @@
         }
       }
     },
+    "/v1/wordle/guesses/check": {
+      "post": {
+        "summary": "Check",
+        "description": "Report whether a word would be accepted as a guess; records nothing.",
+        "operationId": "check_v1_wordle_guesses_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuessCheckInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/wordle/refresh": {
       "post": {
         "summary": "Refresh",
@@ -3053,6 +3090,21 @@
           "diff"
         ],
         "title": "ContextUndoResult"
+      },
+      "GuessCheckInput": {
+        "properties": {
+          "word": {
+            "type": "string",
+            "maxLength": 20,
+            "title": "Word"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "word"
+        ],
+        "title": "GuessCheckInput"
       },
       "GuessInput": {
         "properties": {
@@ -4898,6 +4950,11 @@
               }
             ],
             "title": "Word"
+          },
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "default": false
           }
         },
         "type": "object",

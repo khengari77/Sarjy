@@ -11,9 +11,11 @@ from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.wordle import WordleValidationError, guess_allowed, normalize_guess
 from app.services.wordle import (
     WordleServiceError,
     WordleSource,
+    allowed_words,
     ensure_game,
     ensure_today,
     game_view,
@@ -28,6 +30,7 @@ DISABLED = {
 REVEAL_HINT = "State only these facts, never marks or outcomes from memory. If the user wants the answer, they should say 'reveal the answer' and confirm; you must not state it."
 ERROR_MESSAGES = {
     "WORDLE_GUESS_INVALID": "That is not a valid five-letter word guess. Ask the user for a five-letter word.",
+    "WORDLE_NOT_IN_LIST": "That word is not in the Wordle word list; no attempt was used. Ask the user for another word.",
     "WORDLE_GAME_OVER": "Today's game is already finished, so no more guesses are possible.",
     "WORDLE_GUESS_CONFLICT": "The guess could not be recorded; ask the user to try again.",
     "WORDLE_REQUEST_CONFLICT": "The guess could not be recorded; ask the user to try again.",
@@ -92,11 +95,13 @@ async def _today(db: AsyncSession, owner_id: str, source: WordleSource, timezone
     return puzzle, day, await game_view(db, game, answer=puzzle.answer)
 
 
-def _error(code: str) -> dict:
+def _error(code: str, *, word: str | None = None) -> dict:
     spoken = {
         "WORDLE_GUESS_INVALID": "I need a five-letter word.",
         "WORDLE_GAME_OVER": "Today's game is already finished.",
     }.get(code, "Today's Wordle isn't available right now.")
+    if code == "WORDLE_NOT_IN_LIST" and word:
+        spoken = f"{word} isn't in the word list. Try another word."
     return {"status": "error", "code": code, "message": ERROR_MESSAGES.get(code, UNAVAILABLE), "spoken": spoken}
 
 
@@ -110,6 +115,7 @@ async def wordle_tool(
     timezone: str,
     word: str | None = None,
     request_id: str = "",
+    confirm: bool = False,
 ) -> dict:
     """Run ``play``, ``guess``, ``status`` or ``close`` for the conversation owner."""
     if not enabled:
@@ -148,6 +154,21 @@ async def wordle_tool(
                     "spoken": spoken_for(view, prefix=f"You already tried {tried}. No attempt used. ", scope="count"),
                     "message": f"The user already tried {tried}; no attempt was used. " + describe_game(view),
                 }
+            if confirm:
+                try:
+                    normalized = normalize_guess(word or "")
+                except WordleValidationError as exc:
+                    return _error(exc.code)
+                if not guess_allowed(normalized, puzzle.answer, allowed_words()):
+                    return _error("WORDLE_NOT_IN_LIST", word=normalized)
+                letters = ", ".join(normalized)
+                return {
+                    "status": "confirm",
+                    "ui": "confirm_guess",
+                    "word": normalized,
+                    "spoken": f"{letters}. Is that your guess?",
+                    "message": f"Asked the user to confirm {normalized}. Nothing is recorded until they say yes.",
+                }
             outcome = await submit_guess(
                 db,
                 owner_id=owner_id,
@@ -158,7 +179,7 @@ async def wordle_tool(
             )
             view = outcome.game
     except WordleServiceError as exc:
-        return _error(exc.code)
+        return _error(exc.code, word=(word or "").strip().upper())
     prefix = ""
     if action == "play":
         prefix = (

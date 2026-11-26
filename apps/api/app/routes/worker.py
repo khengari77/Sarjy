@@ -645,7 +645,10 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
         instructions, proposal = _context_instructions(
             config,
             pipeline,
-            memory_mode=settings_row.memory_mode if settings_row is not None else "auto",
+            # Wordle mode: a guess such as "crane" is never a fact about the user, so nothing is proposed.
+            memory_mode="off"
+            if body.wordle_open
+            else (settings_row.memory_mode if settings_row is not None else "auto"),
             owner_id=conversation.owner_id,
             conversation_id=voice.conversation_id,
             turn=turn,

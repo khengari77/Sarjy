@@ -17,6 +17,7 @@ class WordleToolInput(BaseModel):
     turn_id: str = Field(min_length=1, max_length=100)
     request_id: str = Field(min_length=1, max_length=100)
     word: str | None = Field(default=None, max_length=40)
+    confirm: bool = False
 
 
 ROUTES = {
@@ -42,6 +43,7 @@ def register_wordle_tool_routes(app, *, config: Settings, database, run_tool, so
                     timezone=config.wordle_timezone,
                     word=body.word,
                     request_id=body.request_id,
+                    confirm=body.confirm,
                 )
 
             return await run_tool(
