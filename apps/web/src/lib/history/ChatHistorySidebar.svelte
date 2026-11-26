@@ -3,6 +3,8 @@
   import './history.css';
   import type { Conversation } from '../api';
   import { wordsFor } from '../chat/words';
+  import DeleteConfirm from './DeleteConfirm.svelte';
+  import { deleteFocusIndex, focusAfterDelete } from './deleteFlow';
   import { filterConversations } from './chatSearch';
 
   interface Props {
@@ -38,6 +40,7 @@
   let query = $state('');
   let menuOpenFor = $state<string | null>(null);
   let menuTrigger: HTMLButtonElement | null = null;
+  let listElement = $state<HTMLElement | null>(null);
   let menuElement = $state<HTMLElement | null>(null);
   let confirmingDelete = $state<string | null>(null);
   let deletingId = $state<string | null>(null);
@@ -65,6 +68,7 @@
   }
 
   function toggleMenu(id: string, event: MouseEvent) {
+    if (deletingId) return;
     if (menuOpenFor === id) {
       closeMenu();
       return;
@@ -91,6 +95,10 @@
   async function confirmDelete() {
     if (!confirmingDelete || deletingId) return;
     const id = confirmingDelete;
+    const focusIndex = deleteFocusIndex(
+      filtered.map((chat) => chat.id),
+      id,
+    );
     deletingId = id;
     deleteError = '';
     const failure = await ondelete(id);
@@ -100,6 +108,7 @@
       return;
     }
     closeMenu();
+    void tick().then(() => focusAfterDelete(listElement, focusIndex));
   }
 
   // Dismiss on Escape (returning focus to the trigger) or on any outside
@@ -107,13 +116,14 @@
   $effect(() => {
     if (!menuOpenFor) return;
     const onPointerDown = (event: PointerEvent) => {
+      if (deletingId) return;
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (menuElement?.contains(target) || menuTrigger?.contains(target)) return;
       closeMenu();
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || deletingId) return;
       event.preventDefault();
       event.stopPropagation();
       closeMenu(true);
@@ -129,7 +139,7 @@
   const searchLabel = $derived(arabic ? 'البحث في المحادثات' : 'Search conversations');
 </script>
 
-<div class="sidebar-inner chat-history" dir={arabic ? 'rtl' : 'ltr'}>
+<div class="sidebar-inner chat-history" dir={arabic ? 'rtl' : 'ltr'} bind:this={listElement}>
   <button class="new-chat" disabled={busy} onclick={oncreate}>
     <svg class="new-chat-icon" aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none">
       <path d="M12 5.5v13M5.5 12h13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -214,34 +224,26 @@
           >
             ⋯
           </button>
+          {#if callConversation === chat.id}
+            <p class="sr-only" id={`delete-active-${chat.id}`}>{words.deleteActive}</p>
+          {/if}
           {#if menuOpenFor === chat.id}
             <div class="menu" role="menu" bind:this={menuElement}>
               <button role="menuitem" disabled>{words.rename}</button>
               {#if confirmingDelete === chat.id}
-                <div class="menu-confirm" role="group" aria-label={words.deleteConfirm}>
-                  <p class="menu-confirm-title">{words.deleteConfirm}</p>
-                  <p>{words.deleteWarning}</p>
-                  <div class="menu-actions">
-                    <button type="button" disabled={deletingId === chat.id} onclick={cancelDelete}>
-                      {words.cancel}
-                    </button>
-                    <button
-                      type="button"
-                      class="danger"
-                      disabled={busy || deletingId === chat.id}
-                      onclick={() => void confirmDelete()}
-                    >
-                      {deletingId === chat.id ? words.deleting : words.delete}
-                    </button>
-                  </div>
-                  {#if deleteError}
-                    <p class="menu-error" role="alert">{deleteError}</p>
-                  {/if}
-                </div>
+                <DeleteConfirm
+                  {words}
+                  {busy}
+                  deleting={deletingId === chat.id}
+                  error={deleteError}
+                  oncancel={cancelDelete}
+                  onconfirm={() => void confirmDelete()}
+                />
               {:else}
                 <button
                   role="menuitem"
                   disabled={busy || callConversation === chat.id}
+                  aria-describedby={callConversation === chat.id ? `delete-active-${chat.id}` : undefined}
                   onclick={() => askDelete(chat.id)}
                 >
                   {words.delete}

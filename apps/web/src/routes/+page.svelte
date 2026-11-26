@@ -185,7 +185,7 @@
       {busy}
       loading={conversation.loading}
       error={conversation.listError}
-      callConversation={voice.live ? conversation.current : null}
+      callConversation={voice.live || voice.connecting ? conversation.current : null}
       onselect={selection.requestSelect}
       oncreate={selection.create}
       onretry={() => run(() => conversations!.reload())}

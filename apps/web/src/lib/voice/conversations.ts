@@ -21,6 +21,7 @@ export function createConversationStore(
   deps: { getLive(): boolean; endVoice(): Promise<void> },
 ) {
   let selectionEpoch = 0;
+  let listEpoch = 0;
 
   async function refresh() {
     const id = state.current;
@@ -30,6 +31,8 @@ export function createConversationStore(
     // while this conversation still carries the sentinel, then stop.
     const selected = state.conversations.find((chat) => chat.id === id);
     const needsTitle = !selected || selected.title === UNTITLED_TITLE;
+    // Only a refresh that fetches the list supersedes an earlier list request.
+    const listEpochAtStart = needsTitle ? ++listEpoch : listEpoch;
     const [history, list] = await Promise.all([
       fetchConversation(id),
       needsTitle ? request<Conversation[]>('conversations') : Promise.resolve(null),
@@ -37,15 +40,17 @@ export function createConversationStore(
     if (state.current === id && epoch === selectionEpoch) {
       state.turns = history.turns;
       state.toolCalls = history.toolCalls;
-      if (list) state.conversations = list;
+      if (list && listEpochAtStart === listEpoch) state.conversations = list;
     }
   }
 
   async function reload() {
+    const epoch = ++listEpoch;
     state.listError = '';
     state.loading = true;
     try {
-      state.conversations = await request<Conversation[]>('conversations');
+      const list = await request<Conversation[]>('conversations');
+      if (epoch === listEpoch) state.conversations = list;
     } finally {
       state.loading = false;
     }
@@ -71,6 +76,8 @@ export function createConversationStore(
   }
 
   async function remove(id: string) {
+    // Invalidate any list request started before this deletion.
+    listEpoch += 1;
     await deleteConversation(id);
     state.conversations = state.conversations.filter((chat) => chat.id !== id);
     if (state.current === id) {

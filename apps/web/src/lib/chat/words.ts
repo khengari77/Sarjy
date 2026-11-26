@@ -27,6 +27,7 @@ export type Words = {
   rename: string;
   renameNeedsBackend: string;
   delete: string;
+  deleteAction: string;
   deleteConfirm: string;
   deleteWarning: string;
   deleteActive: string;
@@ -64,6 +65,7 @@ const EN: Words = {
   rename: 'Rename',
   renameNeedsBackend: 'Rename needs backend support.',
   delete: 'Delete',
+  deleteAction: 'Delete this chat',
   deleteConfirm: 'Delete this chat?',
   deleteWarning: 'It and its temporary memories are erased permanently. Permanent memories are kept.',
   deleteActive: 'End the call before deleting this chat',
@@ -101,6 +103,7 @@ const AR: Words = {
   rename: 'إعادة التسمية',
   renameNeedsBackend: 'تتوفّر إعادة التسمية بعد دعم الخادم.',
   delete: 'حذف',
+  deleteAction: 'حذف هذه المحادثة',
   deleteConfirm: 'حذف هذه المحادثة؟',
   deleteWarning: 'ستُحذف المحادثة وذكرياتها المؤقتة نهائيًا. تُحفظ الذكريات الدائمة.',
   deleteActive: 'أنهِ المكالمة قبل حذف هذه المحادثة',

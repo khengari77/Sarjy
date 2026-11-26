@@ -192,7 +192,7 @@ test('delete confirms inline, removes the chat and refreshes the list', async ({
     'It and its temporary memories are erased permanently. Permanent memories are kept.',
   );
 
-  await menu.getByRole('button', { name: 'Delete', exact: true }).click();
+  await menu.getByRole('button', { name: 'Delete this chat' }).click();
 
   await expect(page.getByRole('button', { name: 'Trip to Paris', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Work ideas', exact: true })).not.toHaveAttribute(
@@ -201,4 +201,71 @@ test('delete confirms inline, removes the chat and refreshes the list', async ({
   );
   expect(mocked.deleted()).toEqual(['c1']);
   await expect.poll(() => mocked.listCalls()).toBe(2);
+  // Deleting unmounts the focused menu; focus must land on the next row, never <body>.
+  await expect(page.getByRole('button', { name: 'ميزانية Tripoli', exact: true })).toBeFocused();
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
+});
+
+test('the delete confirmation cannot be dismissed while the delete is in flight', async ({ page }) => {
+  await mockHistory(page);
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  await page.route(/\/api\/v1\/conversations\/[^/?]+(\?.*)?$/, async (route) => {
+    if (route.request().method() !== 'DELETE') {
+      await route.fallback();
+      return;
+    }
+    await gate;
+    await route.fulfill({ status: 204 });
+  });
+  try {
+    await gotoHistory(page);
+    await page.getByRole('button', { name: 'Conversation actions for Trip to Paris' }).click();
+    const menu = page.getByRole('menu');
+    await menu.getByRole('menuitem', { name: 'Delete' }).click();
+    await menu.getByRole('button', { name: 'Delete this chat' }).click();
+    await expect(menu.getByText('Deleting…')).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await page.getByRole('searchbox', { name: 'Search conversations' }).click();
+    await expect(menu).toBeVisible();
+    await expect(menu.getByText('Deleting…')).toBeVisible();
+
+    release?.();
+    await expect(page.getByRole('button', { name: 'Trip to Paris', exact: true })).toHaveCount(0);
+  } finally {
+    release?.();
+  }
+});
+
+test('a refused or failed delete explains why and keeps the row', async ({ page }) => {
+  await mockHistory(page);
+  await page.route(/\/api\/v1\/conversations\/[^/?]+(\?.*)?$/, async (route) => {
+    if (route.request().method() !== 'DELETE') {
+      await route.fallback();
+      return;
+    }
+    const id = new URL(route.request().url()).pathname.split('/').pop();
+    if (id === 'c1') {
+      await route.fulfill({ status: 409, json: { detail: { code: 'CONVERSATION_ACTIVE' } } });
+    } else {
+      await route.fulfill({ status: 500, json: { detail: { code: 'INTERNAL_ERROR' } } });
+    }
+  });
+  await gotoHistory(page);
+
+  await page.getByRole('button', { name: 'Conversation actions for Trip to Paris' }).click();
+  const menu = page.getByRole('menu');
+  await menu.getByRole('menuitem', { name: 'Delete' }).click();
+  await menu.getByRole('button', { name: 'Delete this chat' }).click();
+  await expect(menu.getByText('End the call before deleting this chat')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Trip to Paris', exact: true })).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await page.getByRole('button', { name: 'Conversation actions for Work ideas' }).click();
+  await menu.getByRole('menuitem', { name: 'Delete' }).click();
+  await menu.getByRole('button', { name: 'Delete this chat' }).click();
+  await expect(menu.getByText('Could not delete this chat. Try again.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Work ideas', exact: true })).toBeVisible();
 });
