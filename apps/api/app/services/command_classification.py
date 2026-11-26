@@ -12,6 +12,7 @@ classifies for itself, exactly as before.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import time
 from collections import OrderedDict
@@ -30,6 +31,7 @@ from app.domain.commands import (
     parse_voice_selection,
 )
 from app.domain.ui_routing import UiClassification, ui_text_is_eligible
+from app.infrastructure.timing import current_statement_timing
 from app.services.jev_ui import UiClassifier
 
 CAPACITY: Final = 128
@@ -94,7 +96,11 @@ class ClassificationStore:
         while len(self._entries) >= self._capacity:
             self._discard(next(iter(self._entries)))
         request_id = "ui-early:" + hashlib.sha256(key.encode()).hexdigest()[:32]
-        task = asyncio.create_task(_classify(classifier, request_id, text))
+        # A task inherits its creator's context. This one outlives the request that started it, and its budget writes
+        # must not count toward that request's ``x-db-ms`` / ``x-db-statements``: detach the statement timer.
+        context = contextvars.copy_context()
+        context.run(current_statement_timing.set, None)
+        task = asyncio.create_task(_classify(classifier, request_id, text), context=context)
         self._running.add(task)
         task.add_done_callback(self._running.discard)
         self._entries[key] = _Entry(text, task, self._clock())
