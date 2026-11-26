@@ -158,7 +158,6 @@ def register_action_routes(app, database, identity, owned, catalog, approved_voi
                 request_id=body.request_id,
                 expected_revision=body.expected_revision,
                 action=action,
-                catalog=catalog,
                 handlers=app.state.action_handlers,
             )
         except (VoiceCatalogError, ContextOperationError) as exc:

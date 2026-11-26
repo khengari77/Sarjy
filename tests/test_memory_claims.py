@@ -228,7 +228,7 @@ def test_budget_denial_and_invalid_provider_response_cannot_create_memory(tmp_pa
     asyncio.run(run())
 
 
-def test_corrections_preserve_scoped_exclusion_lineage_and_sources_until_undo(tmp_path):
+def test_corrections_preserve_scoped_exclusion_lineage_until_undo(tmp_path):
     async def run():
         engine, sessions = await setup(tmp_path / "lineage.db")
         fake = FakeEmbedder()

@@ -365,7 +365,6 @@ async def _run_navigation(
             request_id=request_id,
             expected_revision=expected_revision,
             action=action,
-            catalog=catalog,
             handlers=handlers,
         )
     except (VoiceCatalogError, ContextOperationError) as exc:

@@ -138,7 +138,7 @@ class EffectSession:
         raise HTTPException(503, detail={"code": "ACTION_TRANSACTION_OWNED"})
 
 
-async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected_revision, action, catalog, handlers):
+async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected_revision, action, handlers):
     """Own a fresh short transaction, independent of authentication reads."""
     bind = db.bind
     factory = async_sessionmaker(bind.engine if isinstance(bind, AsyncConnection) else bind, expire_on_commit=False)
