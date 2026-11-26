@@ -371,16 +371,19 @@ async def _resolved_proposal_response(
         )
     )
     stored = dict(row.result or {}) if row is not None else {}
+    if stored.get("scrubbed"):
+        # The memory behind the proposal was deleted, so the token can only report a discarded outcome.
+        return {"status": "discarded", "memory": None, "idempotent": True}
     if stored.get("decision") == decision and isinstance(stored.get("response"), dict):
         return {**stored["response"], "idempotent": True}
     raise MemoryCaptureError("MEMORY_PROPOSAL_RESOLVED", 409, confirmation_id=confirmation_id)
 
 
-async def _decision(db: AsyncSession, confirmation_id: str, revision: int, owner_id: str):
-    """Read one decision revision, owner-scoped and refreshed from the database."""
+async def _decision(db: AsyncSession, confirmation_id: str, revision: int, owner_id: str, *, lock: bool = False):
+    """Read one decision revision, owner-scoped and refreshed from the database (optionally row-locked)."""
     from app.infrastructure.database import MemoryCaptureDecision
 
-    return await db.scalar(
+    query = (
         select(MemoryCaptureDecision)
         .where(
             MemoryCaptureDecision.confirmation_id == confirmation_id,
@@ -389,6 +392,7 @@ async def _decision(db: AsyncSession, confirmation_id: str, revision: int, owner
         )
         .execution_options(populate_existing=True)
     )
+    return await db.scalar(query.with_for_update() if lock else query)
 
 
 def _decision_values(
@@ -547,9 +551,14 @@ async def _claim_decision(
     raise MemoryCaptureError("MEMORY_DECISION_IN_PROGRESS", 409, decision=decision)
 
 
-async def _require_lease(db: AsyncSession, payload: dict, lease_id: str | None) -> None:
-    """Refuse an effect unless this worker still owns the live claim lease."""
-    row = await _decision(db, payload["confirmation_id"], int(payload["revision"]), payload["owner_id"])
+async def _require_lease(db: AsyncSession, payload: dict, lease_id: str | None, *, lock: bool = False) -> None:
+    """Refuse an effect unless this worker still owns the live claim lease.
+
+    ``lock=True`` takes the decision row lock so a concurrent delete (which discards the decision) serializes with
+    the effect. Only the transaction that commits the effect may lock: the caller's own session stays open across
+    the nested write transaction, and locking the same row from both would wait on itself.
+    """
+    row = await _decision(db, payload["confirmation_id"], int(payload["revision"]), payload["owner_id"], lock=lock)
     if (
         lease_id is None
         or row is None
@@ -558,6 +567,18 @@ async def _require_lease(db: AsyncSession, payload: dict, lease_id: str | None) 
         or lease_expired(row.lease_expires_at)
     ):
         raise MemoryCaptureError("MEMORY_LEASE_LOST", 409, confirmation_id=payload["confirmation_id"])
+    if lock:
+        # A delete that ran before this transaction started has already committed its tombstone of the proposal.
+        proposal = await db.scalar(
+            select(MemoryWriteRequest).where(
+                MemoryWriteRequest.owner_id == payload["owner_id"],
+                MemoryWriteRequest.request_key == payload["confirmation_id"],
+            )
+        )
+        if proposal is not None and (
+            proposal.state == "discarded" or (isinstance(proposal.result, dict) and proposal.result.get("scrubbed"))
+        ):
+            raise MemoryCaptureError("MEMORY_LEASE_LOST", 409, confirmation_id=payload["confirmation_id"])
 
 
 async def _release_claim(
@@ -1273,7 +1294,7 @@ async def _write_consented(
             source_turn_id or proposed_turn,
             capture.text,
             key,
-            guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id),
+            guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id, lock=True),
         )
     except Exception:
         # No memory effect was observed; release the claim so a retry can
@@ -1443,7 +1464,7 @@ async def _replace_target(
                 key,
                 source_turn_id=source_turn_id or proposed_turn,
                 conversation_id=conversation_id,
-                guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id),
+                guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id, lock=True),
             )
         except HTTPException as exc:
             if (
