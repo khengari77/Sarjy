@@ -239,7 +239,7 @@ def test_a_held_tool_call_is_not_handed_over_on_a_command_turn(monkeypatch):
     asyncio.run(main())
 
 
-@pytest.mark.parametrize("change", ["wordle", "outcome"])
+@pytest.mark.parametrize("change", ["outcome"])
 def test_a_reply_asked_for_too_early_is_asked_for_again(monkeypatch, change):
     async def main():
         worker = Worker(monkeypatch, {"command": None})
@@ -252,14 +252,27 @@ def test_a_reply_asked_for_too_early_is_asked_for_again(monkeypatch, change):
             else:
                 agent.memory_outcome = "save"
             worker.gate.set()
-            if change == "wordle":
-                # The popup opened mid-turn: Wordle mode answers "Hello there." with the nudge, and the
-                # early reply (asked for before the popup opened) is closed and never heard.
-                assert await reply == [WORDLE_MODE_NUDGE]
-                assert len(worker.choices) == 1 and worker.closed == 1
-                return
             assert await reply == ["hello", "world"]
             assert len(worker.choices) == 2 and worker.closed == 2
+
+        await worker.run(scenario)
+
+    asyncio.run(main())
+
+
+def test_a_popup_opened_mid_reply_gets_the_wordle_nudge_and_the_early_reply_is_never_heard(monkeypatch):
+    async def main():
+        worker = Worker(monkeypatch, {"command": None})
+
+        async def scenario(agent, context):
+            reply = asyncio.create_task(heard(agent, context))
+            await worker.model_started.wait()
+            agent.wordle_active = lambda: True
+            worker.gate.set()
+            # "Hello there." has no guess candidate, so Wordle mode answers with the nudge; the early
+            # reply asked for before the popup opened is closed, never heard and never asked for again.
+            assert await reply == [WORDLE_MODE_NUDGE]
+            assert len(worker.choices) == 1 and worker.closed == 1
 
         await worker.run(scenario)
 

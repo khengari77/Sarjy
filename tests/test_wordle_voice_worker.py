@@ -111,7 +111,9 @@ def test_ordinary_speech_is_not_suppressed_when_no_game_is_open():
         assert is_wordle_command(text) is False, text
 
 
-def test_control_messages_only_flip_the_human_reveal_flag():
+def test_control_messages_only_flip_the_human_reveal_flag(monkeypatch):
+    # These cases check the flag itself; the grace window after a clear has its own test.
+    monkeypatch.setattr("main.PENDING_GRACE_SECONDS", 0.0)
     reveal = RevealState()
     packet = SimpleNamespace(
         topic="sarjy.control",
@@ -271,7 +273,9 @@ def test_reset_phrases_are_suppressed_without_a_model_call_and_confirmation_foll
     asyncio.run(run())
 
 
-def test_pending_action_control_accepts_reveal_and_reset_from_humans_only():
+def test_pending_action_control_accepts_reveal_and_reset_from_humans_only(monkeypatch):
+    # These cases check the flag itself; the grace window after a clear has its own test.
+    monkeypatch.setattr("main.PENDING_GRACE_SECONDS", 0.0)
     state = RevealState()
 
     def packet(participant, value):
@@ -290,7 +294,9 @@ def test_pending_action_control_accepts_reveal_and_reset_from_humans_only():
     assert state.pending is False
 
 
-def test_a_pending_guess_hands_yes_and_no_to_the_client():
+def test_a_pending_guess_hands_yes_and_no_to_the_client(monkeypatch):
+    # These cases check the flag itself; the grace window after a clear has its own test.
+    monkeypatch.setattr("main.PENDING_GRACE_SECONDS", 0.0)
     state = RevealState()
     state.active = True
     pending = lambda value: SimpleNamespace(  # noqa: E731
@@ -300,4 +306,22 @@ def test_a_pending_guess_hands_yes_and_no_to_the_client():
     assert state.pending is True
     assert is_wordle_command("yes", reveal_pending=state.pending, wordle_active=True)
     apply_control(pending(None), state)
+    assert state.pending is False
+
+
+def test_yes_stays_with_the_client_briefly_after_it_clears_the_pending_flag(monkeypatch):
+    clock = {"now": 100.0}
+    monkeypatch.setattr("main.time.monotonic", lambda: clock["now"])
+    state = RevealState()
+    state.active = True
+    pending = lambda value: SimpleNamespace(  # noqa: E731
+        topic="sarjy.control", participant=HUMAN, data=json.dumps({"type": "wordle.pending", "value": value}).encode()
+    )
+    apply_control(pending("guess"), state)
+    # The client handles "yes" and clears its flag before the worker classifies the same turn.
+    apply_control(pending(None), state)
+    clock["now"] += 1.0
+    assert state.pending is True
+    assert is_wordle_command("yes", reveal_pending=state.pending, wordle_active=True)
+    clock["now"] += 5.0
     assert state.pending is False

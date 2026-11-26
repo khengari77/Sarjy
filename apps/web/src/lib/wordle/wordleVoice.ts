@@ -256,7 +256,9 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
 
     const command = parseWordleCommand(input.text, { active: deps.game.state.open });
     if (!command) {
-      if (pending) setPending(null);
+      // A guess awaiting its yes survives noise or an unrelated remark (the worker nudges back to the game);
+      // only a new guess or a no replaces it. A spoken word the worker reads back re-arms it with that word.
+      if (pending && pending !== 'guess') setPending(null);
       return { handled: false, ignored: 'unrecognized' };
     }
     // Any new instruction supersedes a pending confirmation, unless it restates the pending question.

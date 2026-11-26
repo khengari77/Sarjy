@@ -691,8 +691,6 @@ async def submit_guess(
         word = normalize_guess(guess)
     except WordleValidationError as exc:
         raise WordleServiceError(exc.code, 422) from exc
-    if not guess_allowed(word, answer, allowed_words()):
-        raise WordleServiceError("WORDLE_NOT_IN_LIST", 422)
     instant = now or datetime.now(UTC)
     now_iso = _iso(instant)
     key = day.isoformat()
@@ -706,6 +704,11 @@ async def submit_guess(
         if game.status != WordleStatus.IN_PROGRESS.value:
             await db.rollback()
             raise WordleServiceError("WORDLE_GAME_OVER", 409)
+        # After the replay and game-over checks, so a committed request still replays and a finished game
+        # still says so; the rollback discards everything this attempt touched, so no attempt is used.
+        if not guess_allowed(word, answer, allowed_words()):
+            await db.rollback()
+            raise WordleServiceError("WORDLE_NOT_IN_LIST", 422)
         if _race_hook is not None:
             await _race_hook()
 

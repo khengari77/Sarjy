@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from collections.abc import Mapping
 from contextlib import aclosing
@@ -936,7 +937,8 @@ class SarjyAgent(WordleTools, Agent):
             _, forced = self.forced_speech
             self.forced_speech = None
             return forced
-        if self.wordle_active() and not has_guess_candidate(user.text_content or ""):
+        # A consent question armed before the popup opened is still asked; the nudge never swallows it.
+        if self.wordle_active() and not self._question_due() and not has_guess_candidate(user.text_content or ""):
             return WORDLE_MODE_NUDGE
         return None
 
@@ -1687,11 +1689,31 @@ async def publish_command(room, command: Mapping[str, Any]) -> None:
     await room.local_participant.publish_data(json.dumps(dict(command)).encode(), reliable=True, topic="sarjy.command")
 
 
-class RevealState:
-    """Whether the client is waiting for a spoken spoiler confirmation."""
+# The client clears its pending yes/no the moment it handles the user's "yes", which can land before the
+# worker classifies that same turn; for this long after a clear, yes/no still belongs to the client.
+PENDING_GRACE_SECONDS = 3.0
 
-    pending: bool = False
+
+class RevealState:
+    """Whether the client is waiting for a spoken yes/no (reveal, reset or a guess) and the popup is open."""
+
     active: bool = False
+
+    def __init__(self) -> None:
+        self._pending = False
+        self._cleared_at: float | None = None
+
+    @property
+    def pending(self) -> bool:
+        if self._pending:
+            return True
+        return self._cleared_at is not None and time.monotonic() - self._cleared_at < PENDING_GRACE_SECONDS
+
+    @pending.setter
+    def pending(self, value: bool) -> None:
+        if self._pending and not value:
+            self._cleared_at = time.monotonic()
+        self._pending = value
 
 
 def resolve_say_request(data, participants) -> tuple[str | None, str | None]:
@@ -1793,7 +1815,8 @@ def backend_client(base_url: str, headers: dict[str, str]) -> httpx.AsyncClient:
     )
 
 
-@server.rtc_session(agent_name="sarjy")
+# A local test worker registers under its own name (LIVEKIT_AGENT_NAME) so hosted calls never reach it.
+@server.rtc_session(agent_name=os.environ.get("LIVEKIT_AGENT_NAME", "sarjy"))
 async def entrypoint(ctx: JobContext):
     global FIRST_EVENT_SECONDS
     values = read_worker_environment()

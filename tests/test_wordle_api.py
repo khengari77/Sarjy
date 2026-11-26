@@ -129,6 +129,19 @@ def test_not_in_list_word_is_rejected_without_consuming_an_attempt(tmp_path):
         assert game["attempts_remaining"] == 6
 
 
+def test_a_committed_guess_still_replays_after_its_word_leaves_the_list(tmp_path, monkeypatch):
+    source = FixtureSource()
+    with TestClient(create_app(settings(tmp_path), wordle_source=source)) as client:
+        client.post("/v1/demo-session")
+        client.get("/v1/wordle/today")
+        first = client.post("/v1/wordle/guesses", json={"guess": "SLATE", "request_id": "replay-1"})
+        assert first.status_code == 200, first.text
+        monkeypatch.setattr("app.services.wordle.allowed_words", lambda: frozenset())
+        again = client.post("/v1/wordle/guesses", json={"guess": "SLATE", "request_id": "replay-1"})
+        assert again.status_code == 200, again.text
+        assert again.json() == first.json()
+
+
 def test_todays_answer_is_accepted_when_absent_from_the_allowed_list(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.wordle.allowed_words", lambda: frozenset())
     source = FixtureSource()

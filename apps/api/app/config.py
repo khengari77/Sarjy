@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     default_voice_id: str = Field(default="", pattern=r"^$|^[A-Za-z0-9_-]{1,100}$")
     default_voice_language: Literal["ar", "en"] = "en"
     livekit_url: str = ""
+    # Worker name the API dispatches to; a local test worker uses its own so it never takes hosted calls.
+    livekit_agent_name: str = "sarjy"
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     agent_service_secret: str = ""

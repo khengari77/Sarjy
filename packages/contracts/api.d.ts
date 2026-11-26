@@ -911,6 +911,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/wordle/guesses/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check
+         * @description Report whether a word would be accepted as a guess; records nothing.
+         */
+        post: operations["check_v1_wordle_guesses_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/wordle/refresh": {
         parameters: {
             query?: never;
@@ -1289,6 +1309,11 @@ export interface components {
             /** Revision After */
             revision_after: number;
             diff: components["schemas"]["ContextDiff"];
+        };
+        /** GuessCheckInput */
+        GuessCheckInput: {
+            /** Word */
+            word: string;
         };
         /** GuessInput */
         GuessInput: {
@@ -1871,6 +1896,11 @@ export interface components {
             request_id: string;
             /** Word */
             word?: string | null;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
         };
         /**
          * ResponsePolicy
@@ -3687,6 +3717,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    check_v1_wordle_guesses_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GuessCheckInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

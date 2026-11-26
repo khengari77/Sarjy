@@ -1,4 +1,4 @@
-import type { Participant, Room } from 'livekit-client';
+import { ConnectionState, type Participant, type Room } from 'livekit-client';
 
 /**
  * User-facing RPCs that are not part of the conversational pipeline.
@@ -44,7 +44,10 @@ export async function sendChatText(room: Room | null, text: string): Promise<voi
  * Without a live room the flag is dropped: it describes a transient UI state.
  */
 export async function publishControlFlag(room: Room | null, event: Record<string, unknown>): Promise<void> {
-  if (!room) return;
+  // Publishing while the room is still connecting left livekit-client unable to send any data for the rest
+  // of the call ("PC manager is closed"), so control flags wait for a connected room. They are re-sent on
+  // every later status event, so nothing is lost.
+  if (!room || room.state !== ConnectionState.Connected) return;
   await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(event)), {
     reliable: true,
     topic: 'sarjy.control',

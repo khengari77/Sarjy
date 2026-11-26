@@ -58,6 +58,15 @@ describe('Wordle voice adapter: spoken guesses are confirmed', () => {
     expect(fake.spoken.at(-1)).toBe(confirmGuessPrompt('CRANE'));
   });
 
+  it('keeps the pending guess through noise or an unrelated remark', async () => {
+    const { fake, voice } = setup();
+    await voice.handleEvent(transcript('guess crane', 's1'));
+    await voice.handleEvent(transcript('hmm', 's2'));
+    expect(voice.pendingWord()).toBe('CRANE');
+    await voice.handleEvent(transcript('yes', 's3'));
+    expect(fake.calls.guesses.map((guess) => guess.word)).toEqual(['CRANE']);
+  });
+
   it('arms the yes/no for a word the worker read back', async () => {
     const { fake, voice } = setup();
     applyWordleToolEvent(fake.port, { type: 'wordle', action: 'confirm_guess', word: 'SLATE', epoch: 1 }, voice);
