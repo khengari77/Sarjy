@@ -212,7 +212,7 @@ async def _derived_ids(
             for reference in references or ()
             if reference not in examined and reference != "system" and reference not in blocked
         }
-        if len(examined) + len(frontier) > _CLOSURE_LIMIT:
+        if len(examined - included_ids) + len(frontier) > _CLOSURE_LIMIT:
             over_bound = True
             break
     if over_bound:

@@ -685,7 +685,6 @@ def test_the_closure_ends_when_non_turn_ids_appear_at_different_depths(tmp_path)
 def test_a_closure_larger_than_its_bound_fails_closed(tmp_path, monkeypatch):
     from app.services import turn_context_receipt
 
-    monkeypatch.setattr(turn_context_receipt, "_CLOSURE_LIMIT", 1)
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         chat = setup(client)
@@ -694,5 +693,15 @@ def test_a_closure_larger_than_its_bound_fails_closed(tmp_path, monkeypatch):
         _chain_with_leaves(file, chat)
         later, _ = start_turn(client, headers, "r9", text="What is the weather like?")
         _trim_snapshot(file, later, {"r1", "q1", "q2"})
-        entries = {entry["id"]: entry for entry in receipt(client, chat, later).json()["included"]}
-        assert entries["a1"]["text"] == "" and entries["a1"]["withheld"] is True
+
+        def entries():
+            return {entry["id"]: entry for entry in receipt(client, chat, later).json()["included"]}
+
+        # Control: the same snapshot inside the bound keeps the reply, so the bound is what withholds it below.
+        assert entries()["a1"]["withheld"] is False
+        # The bound counts records the walk loads beyond the snapshot, not the snapshot's own ids: a limit above
+        # the walk's own size but below the snapshot's id count must not trip it.
+        monkeypatch.setattr(turn_context_receipt, "_CLOSURE_LIMIT", 6)
+        assert entries()["a1"]["withheld"] is False
+        monkeypatch.setattr(turn_context_receipt, "_CLOSURE_LIMIT", 0)
+        assert entries()["a1"]["text"] == "" and entries()["a1"]["withheld"] is True
