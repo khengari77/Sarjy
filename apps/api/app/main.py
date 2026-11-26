@@ -287,9 +287,9 @@ def create_app(
         openapi_url=None if config.development_protected else "/openapi.json",
     )
 
-    # The reviewer gate is added first so the web-service-secret middleware
-    # stays outermost and the proxy boundary is checked before admission.
-    # Registered first, so it sits inside the gates: the web-service gate stays outermost.
+    # Middleware runs in reverse registration order: the web-service gate is
+    # registered last and stays outermost, then the account and reviewer gates,
+    # with the timing middleware (registered first) innermost.
     app.add_middleware(InternalTimingMiddleware)
     app.middleware("http")(_reviewer_gate(config, sessions, now))
     app.middleware("http")(_account_gate(config, sessions, now))
