@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "generated_by": "scripts/memory_policy_baseline.py",
+  "case_count": 250,
+  "label_counts": {
+    "save": 84,
+    "skip": 62,
+    "ask": 104
+  },
+  "language_counts": {
+    "en": 206,
+    "ar": 44
+  },
+  "credential_recall": {
+    "n": 33,
+    "hits": 15,
+    "rate": 0.4545,
+    "low": 0.2984,
+    "high": 0.6201
+  },
+  "credential_recall_by_language": {
+    "en": {
+      "n": 21,
+      "hits": 15,
+      "rate": 0.7143,
+      "low": 0.5004,
+      "high": 0.8619
+    },
+    "ar": {
+      "n": 12,
+      "hits": 0,
+      "rate": 0.0,
+      "low": 0.0,
+      "high": 0.2425
+    }
+  },
+  "false_refusal": {
+    "n": 84,
+    "hits": 1,
+    "rate": 0.0119,
+    "low": 0.0021,
+    "high": 0.0644
+  },
+  "missed_save": {
+    "n": 84,
+    "hits": 57,
+    "rate": 0.6786,
+    "low": 0.5728,
+    "high": 0.7687
+  },
+  "decision_accuracy": {
+    "overall": {
+      "n": 250,
+      "hits": 101,
+      "rate": 0.404,
+      "low": 0.3451,
+      "high": 0.4658
+    },
+    "by_category": {
+      "arabic": {
+        "n": 32,
+        "hits": 0,
+        "rate": 0.0,
+        "low": 0.0,
+        "high": 0.1072
+      },
+      "credential": {
+        "n": 33,
+        "hits": 30,
+        "rate": 0.9091,
+        "low": 0.7643,
+        "high": 0.9686
+      },
+      "false_refusal": {
+        "n": 22,
+        "hits": 12,
+        "rate": 0.5455,
+        "low": 0.3466,
+        "high": 0.7308
+      },
+      "finance": {
+        "n": 20,
+        "hits": 5,
+        "rate": 0.25,
+        "low": 0.1119,
+        "high": 0.4687
+      },
+      "health": {
+        "n": 26,
+        "hits": 1,
+        "rate": 0.0385,
+        "low": 0.0068,
+        "high": 0.1889
+      },
+      "negation": {
+        "n": 26,
+        "hits": 5,
+        "rate": 0.1923,
+        "low": 0.0851,
+        "high": 0.3788
+      },
+      "not_fact": {
+        "n": 29,
+        "hits": 26,
+        "rate": 0.8966,
+        "low": 0.7361,
+        "high": 0.9642
+      },
+      "ordinary": {
+        "n": 42,
+        "hits": 14,
+        "rate": 0.3333,
+        "low": 0.2101,
+        "high": 0.4845
+      },
+      "third_party": {
+        "n": 20,
+        "hits": 8,
+        "rate": 0.4,
+        "low": 0.2188,
+        "high": 0.6134
+      }
+    },
+    "by_language": {
+      "en": {
+        "n": 206,
+        "hits": 89,
+        "rate": 0.432,
+        "low": 0.3662,
+        "high": 0.5003
+      },
+      "ar": {
+        "n": 44,
+        "hits": 12,
+        "rate": 0.2727,
+        "low": 0.1635,
+        "high": 0.4185
+      }
+    }
+  },
+  "tier_confusion": {
+    "normal": {
+      "normal": 129,
+      "third_party": 1,
+      "health": 3,
+      "finance": 0,
+      "credential": 5
+    },
+    "third_party": {
+      "normal": 6,
+      "third_party": 14,
+      "health": 3,
+      "finance": 2,
+      "credential": 0
+    },
+    "health": {
+      "normal": 15,
+      "third_party": 0,
+      "health": 15,
+      "finance": 0,
+      "credential": 0
+    },
+    "finance": {
+      "normal": 12,
+      "third_party": 1,
+      "health": 0,
+      "finance": 11,
+      "credential": 0
+    },
+    "credential": {
+      "normal": 17,
+      "third_party": 0,
+      "health": 0,
+      "finance": 1,
+      "credential": 15
+    }
+  }
+}

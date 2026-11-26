@@ -6,6 +6,8 @@ export interface ContextIncluded {
   kind: ContextKind;
   text: string;
   trust: ContextTrust;
+  /** The live policy now blocks this record, so its text is not shown. */
+  withheld: boolean;
 }
 
 export interface ContextExcluded {
@@ -107,7 +109,13 @@ function parseIncluded(value: unknown, path: string): ContextIncluded {
   const trust = text(item.trust, `${path}.trust`);
   if (kind !== 'memory' && kind !== 'tool' && kind !== 'history') throw invalid(`${path}.kind`);
   if (trust !== 'data' && trust !== 'conversation') throw invalid(`${path}.trust`);
-  return { id: text(item.id, `${path}.id`), kind, text: text(item.text, `${path}.text`), trust };
+  return {
+    id: text(item.id, `${path}.id`),
+    kind,
+    text: text(item.text, `${path}.text`),
+    trust,
+    withheld: item.withheld === true,
+  };
 }
 
 /** Excluded entries intentionally carry only an id and a reason; any text is dropped. */

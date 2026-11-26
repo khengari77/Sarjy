@@ -1,0 +1,2252 @@
+[
+  {
+    "text": "My name is Sam.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Tells the assistant the speaker's name."
+  },
+  {
+    "text": "Call me Sam.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Preferred form of address."
+  },
+  {
+    "text": "I live in Paris.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Home city."
+  },
+  {
+    "text": "I work at Acme Corp.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Employer."
+  },
+  {
+    "text": "I prefer tea over coffee.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Beverage preference."
+  },
+  {
+    "text": "I love jazz.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Music preference."
+  },
+  {
+    "text": "I'm from Benghazi.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Place of origin."
+  },
+  {
+    "text": "I am vegetarian.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Dietary fact."
+  },
+  {
+    "text": "My favourite colour is green.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Colour preference."
+  },
+  {
+    "text": "My birthday is in March.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Birth month."
+  },
+  {
+    "text": "My dog's name is Rex.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Pet name."
+  },
+  {
+    "text": "I work for a small charity.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Employer type."
+  },
+  {
+    "text": "I'm a nurse at the city hospital.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Occupation in a natural unlisted shape."
+  },
+  {
+    "text": "I have two kids, a boy and a girl.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Family structure at normal sensitivity."
+  },
+  {
+    "text": "I'm thirty-four years old.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Age."
+  },
+  {
+    "text": "I drive a blue Toyota.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Car the speaker owns."
+  },
+  {
+    "text": "My apartment is on the fifth floor.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Home detail."
+  },
+  {
+    "text": "I speak three languages.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Language ability."
+  },
+  {
+    "text": "I play the guitar badly.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Hobby."
+  },
+  {
+    "text": "I grew up in Tripoli.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Childhood city."
+  },
+  {
+    "text": "My morning routine starts with a run.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Daily habit."
+  },
+  {
+    "text": "I'm the oldest of four siblings.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Family structure at normal sensitivity."
+  },
+  {
+    "text": "I studied history at university.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Education."
+  },
+  {
+    "text": "My favourite season is autumn.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Season preference."
+  },
+  {
+    "text": "I usually shop at the market on Saturdays.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Weekly routine."
+  },
+  {
+    "text": "I'm learning Italian.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Ongoing interest."
+  },
+  {
+    "text": "My commute takes about twenty minutes.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Commute detail."
+  },
+  {
+    "text": "I have a cat called Luna.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Pet name."
+  },
+  {
+    "text": "I'm left-handed.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Personal trait."
+  },
+  {
+    "text": "I live alone.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Household structure."
+  },
+  {
+    "text": "I work from home on Fridays.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Work pattern."
+  },
+  {
+    "text": "I drink my coffee black.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Preference."
+  },
+  {
+    "text": "I'm a morning person.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Personal trait."
+  },
+  {
+    "text": "I'm married with two children.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Family structure at normal sensitivity."
+  },
+  {
+    "text": "I have one older sister.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Family structure at normal sensitivity."
+  },
+  {
+    "text": "I'm an only child.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Family structure at normal sensitivity."
+  },
+  {
+    "text": "I have three brothers and no sisters.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Family structure at normal sensitivity."
+  },
+  {
+    "text": "My family lives in Cairo.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Family location at normal sensitivity."
+  },
+  {
+    "text": "I'm a software engineer by trade.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Occupation in a natural unlisted shape."
+  },
+  {
+    "text": "I collect stamps from every country I visit.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Hobby in a natural unlisted shape."
+  },
+  {
+    "text": "My favourite film is Casablanca.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Film preference."
+  },
+  {
+    "text": "Remember that I'm a nurse.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "ordinary",
+    "note": "Explicit request to store an ordinary fact."
+  },
+  {
+    "text": "My password is hunter2.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword password; obvious fake value."
+  },
+  {
+    "text": "The password for my email is Sunshine123.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword password."
+  },
+  {
+    "text": "My PIN is 0000.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword pin with digits; fake PIN."
+  },
+  {
+    "text": "My pin number is 1234.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword pin number."
+  },
+  {
+    "text": "My API key is sk_test_example_123.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword API key; example key."
+  },
+  {
+    "text": "My github token is ghp_example1234567890.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Token phrasing absent from the fixed keyword floor."
+  },
+  {
+    "text": "My login is ada.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Login names are deliberately treated as credential-class (policy choice, #286 5.5): never auto-saved."
+  },
+  {
+    "text": "The code to my safe is 1234.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Safe code phrasing absent from the fixed keyword floor."
+  },
+  {
+    "text": "My wifi password is examplewifi.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword password; example value."
+  },
+  {
+    "text": "The pin for my card is 0000.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Card PIN phrasing absent from the fixed keyword floor."
+  },
+  {
+    "text": "My bank card PIN is 4321.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword PIN with digits; fake PIN."
+  },
+  {
+    "text": "My recovery code is example-recovery.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword recovery code."
+  },
+  {
+    "text": "My seed phrase is apple banana cherry example.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword seed phrase; example words."
+  },
+  {
+    "text": "My ssh key passphrase is examplepass.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword ssh key/passphrase."
+  },
+  {
+    "text": "My CVV is 000.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword CVV; fake value."
+  },
+  {
+    "text": "My one-time code is 654321.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword one-time code."
+  },
+  {
+    "text": "The passcode to my phone is 0000.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword passcode."
+  },
+  {
+    "text": "My debit card number is 0000 0000 0000 0000.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Card number is a secret; the keyword floor files it under finance instead."
+  },
+  {
+    "text": "My password manager master password is examplemaster.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword password; example value."
+  },
+  {
+    "text": "My work login password is Example2024.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "Keyword password; example value."
+  },
+  {
+    "text": "كلمة المرور الخاصة بي هي 0000.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "Password statement in Arabic; fixed floor is English-only."
+  },
+  {
+    "text": "رمز الدخول إلى هاتفي هو 1234.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "Phone login code in Arabic."
+  },
+  {
+    "text": "الرقم السري لبطاقتي هو 0000.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "Card secret number in Arabic."
+  },
+  {
+    "text": "مفتاح الواي فاي هو examplewifi.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "Wifi key in Arabic; example value."
+  },
+  {
+    "text": "رمز الأمان لحسابي هو 654321.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "Account security code in Arabic."
+  },
+  {
+    "text": "عبارة الاسترداد الخاصة بي هي مثال تجريبي.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "Recovery phrase in Arabic; example words."
+  },
+  {
+    "text": "الرقم السري لخزنتي هو 1234.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "Safe combination in Arabic; fake digits."
+  },
+  {
+    "text": "كلمة سر بريدي الإلكتروني هي Example123.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "Email password in Arabic; example value."
+  },
+  {
+    "text": "رمز التحقق لمرة واحدة هو 000000.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "One-time verification code in Arabic."
+  },
+  {
+    "text": "مفتاح SSH الخاص بي هو examplekey.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "SSH key in Arabic; example value."
+  },
+  {
+    "text": "الرمز السري لبطاقتي المصرفية هو 4321.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "Bank card PIN in Arabic; fake digits."
+  },
+  {
+    "text": "كلمة مرور جهاز اللابتوب هي 0000.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "ar",
+    "category": "credential",
+    "note": "Laptop password in Arabic; fake PIN."
+  },
+  {
+    "text": "My doctor put me on metformin last month.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Medical treatment."
+  },
+  {
+    "text": "I was diagnosed with type two diabetes.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Diagnosis."
+  },
+  {
+    "text": "I take medication for high blood pressure every morning.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Medication."
+  },
+  {
+    "text": "I see a therapist on Tuesdays.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Mental-health care."
+  },
+  {
+    "text": "I've been struggling with anxiety lately.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Mental health."
+  },
+  {
+    "text": "I had surgery on my knee last year.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Surgery."
+  },
+  {
+    "text": "I'm allergic to peanuts.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Allergy."
+  },
+  {
+    "text": "I get migraines when the weather changes.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Recurring condition without a keyword."
+  },
+  {
+    "text": "I'm pregnant, about twelve weeks along.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Pregnancy."
+  },
+  {
+    "text": "My prescription runs out next week.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Prescription."
+  },
+  {
+    "text": "I have asthma and carry an inhaler.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Chronic condition."
+  },
+  {
+    "text": "I'm recovering from pneumonia.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Illness."
+  },
+  {
+    "text": "My blood pressure is finally normal.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Vital-sign health detail."
+  },
+  {
+    "text": "I was diagnosed with coeliac disease.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Diagnosis."
+  },
+  {
+    "text": "I take insulin twice a day.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Medication."
+  },
+  {
+    "text": "I'm on antidepressants.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Medication for mental health."
+  },
+  {
+    "text": "I have a history of depression.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Mental health."
+  },
+  {
+    "text": "My cholesterol is a bit high.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Health measurement without a keyword."
+  },
+  {
+    "text": "I broke my wrist in a fall.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Injury without a keyword."
+  },
+  {
+    "text": "I'm seeing a specialist about my back.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Ongoing care without a keyword."
+  },
+  {
+    "text": "I have a peanut allergy.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Allergy."
+  },
+  {
+    "text": "I'm getting a scan at the hospital tomorrow.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Medical appointment without a keyword."
+  },
+  {
+    "text": "My therapist thinks I should sleep more.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Therapy."
+  },
+  {
+    "text": "I tested positive for covid last week.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Illness without a keyword."
+  },
+  {
+    "text": "I'm doing physiotherapy for my shoulder.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Treatment without a keyword."
+  },
+  {
+    "text": "I take a daily pill for my thyroid.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "en",
+    "category": "health",
+    "note": "Medication without a keyword."
+  },
+  {
+    "text": "I make a salary of ninety thousand a year.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Salary."
+  },
+  {
+    "text": "My mortgage is almost paid off.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Mortgage."
+  },
+  {
+    "text": "I have about fifteen thousand in savings.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Savings."
+  },
+  {
+    "text": "I'm in debt up to my ears.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Debt."
+  },
+  {
+    "text": "I got a pay rise last month.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Income without a keyword."
+  },
+  {
+    "text": "My credit card bill is huge this month.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Credit card."
+  },
+  {
+    "text": "I invest in index funds every month.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Investments."
+  },
+  {
+    "text": "I'm saving for a house deposit.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Savings goal without a keyword."
+  },
+  {
+    "text": "My net worth is mostly in my flat.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Net worth."
+  },
+  {
+    "text": "I had to declare bankruptcy two years ago.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Bankruptcy."
+  },
+  {
+    "text": "My bank account is with a local credit union.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Bank account."
+  },
+  {
+    "text": "I pay about a thousand in rent.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Rent without a keyword."
+  },
+  {
+    "text": "I got a small inheritance from my grandmother.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Inheritance without a keyword."
+  },
+  {
+    "text": "I'm applying for a loan for a new car.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Loan."
+  },
+  {
+    "text": "My taxes are a nightmare to file.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Taxes."
+  },
+  {
+    "text": "I'm on a tight budget this month.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Budget without a keyword."
+  },
+  {
+    "text": "My credit score dropped after the move.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Credit score without a keyword."
+  },
+  {
+    "text": "I owe my brother five hundred pounds.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Personal debt."
+  },
+  {
+    "text": "My pension is with the same company I work for.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Pension without a keyword."
+  },
+  {
+    "text": "I have a small crypto portfolio.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "en",
+    "category": "finance",
+    "note": "Investments without a keyword."
+  },
+  {
+    "text": "My boss is going through a divorce.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's private family matter."
+  },
+  {
+    "text": "My sister is pregnant.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's health news."
+  },
+  {
+    "text": "My neighbour lost his job last month.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's employment."
+  },
+  {
+    "text": "My colleague is being treated for cancer.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's health."
+  },
+  {
+    "text": "My brother's marriage is falling apart.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's private family matter."
+  },
+  {
+    "text": "My friend Ada has just been diagnosed with MS.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Named friend's health diagnosis."
+  },
+  {
+    "text": "My landlord wants to sell the building.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's financial decision."
+  },
+  {
+    "text": "My ex is moving to Berlin with someone new.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's private life."
+  },
+  {
+    "text": "My coworker earns more than the manager.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's pay."
+  },
+  {
+    "text": "My father has dementia and lives with us.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's health."
+  },
+  {
+    "text": "My sister-in-law is struggling with her mental health.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's health."
+  },
+  {
+    "text": "My business partner is filing for bankruptcy.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's finances."
+  },
+  {
+    "text": "My friend Sam is in rehab for alcohol.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Named friend's health."
+  },
+  {
+    "text": "My boss's salary is confidential.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's pay."
+  },
+  {
+    "text": "My cousin's wife is having twins.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's health news."
+  },
+  {
+    "text": "My neighbour's son was arrested last week.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's legal trouble."
+  },
+  {
+    "text": "My teammate is on sick leave for stress.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's health."
+  },
+  {
+    "text": "My girlfriend's family doesn't know about us.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's private family matter."
+  },
+  {
+    "text": "My father-in-law owes a lot of money.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's finances."
+  },
+  {
+    "text": "My colleague is quietly looking for another job.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "third_party",
+    "note": "Another person's private plans."
+  },
+  {
+    "text": "I'm not vegetarian.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Retracts a stored diet fact."
+  },
+  {
+    "text": "I no longer live in Paris.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored home city."
+  },
+  {
+    "text": "I stopped working at Acme.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Retracts a stored employer."
+  },
+  {
+    "text": "I don't work at Acme anymore.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Retracts a stored employer."
+  },
+  {
+    "text": "I'm not allergic to peanuts anymore.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Retracts a stored allergy."
+  },
+  {
+    "text": "I don't drink coffee anymore.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Retracts a stored preference."
+  },
+  {
+    "text": "I've changed my mind about jazz.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored music preference."
+  },
+  {
+    "text": "Actually, I prefer tea now.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "An update of a stored preference (the negated flag means negation or update): ask, never auto-save."
+  },
+  {
+    "text": "I no longer have a dog.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Retracts a stored pet fact."
+  },
+  {
+    "text": "I'm not married anymore.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored family fact."
+  },
+  {
+    "text": "I moved out of my parents' house.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored household fact."
+  },
+  {
+    "text": "I don't live in Tripoli now.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored home city."
+  },
+  {
+    "text": "I never liked horror films, actually.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Retracts a stored preference."
+  },
+  {
+    "text": "I'm no longer a student.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored occupation."
+  },
+  {
+    "text": "I don't drive to work these days.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored commute habit."
+  },
+  {
+    "text": "I stopped playing the guitar.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Retracts a stored hobby."
+  },
+  {
+    "text": "I'm not left-handed, I'm right-handed.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Corrects a stored personal trait."
+  },
+  {
+    "text": "My favourite colour isn't green anymore.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored colour preference."
+  },
+  {
+    "text": "I don't work from home on Fridays now.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored work pattern."
+  },
+  {
+    "text": "I no longer work for the charity.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Retracts a stored employer."
+  },
+  {
+    "text": "I'm not a morning person anymore.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored personal trait."
+  },
+  {
+    "text": "I gave up coffee last month.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored habit."
+  },
+  {
+    "text": "I don't have two kids, I have three.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Corrects a stored family fact."
+  },
+  {
+    "text": "I stopped living alone in March.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Updates a stored household fact."
+  },
+  {
+    "text": "I'm not from Benghazi originally.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Corrects a stored origin."
+  },
+  {
+    "text": "I no longer play tennis on Sundays.",
+    "label": "ask",
+    "tier": "normal",
+    "negated": true,
+    "language": "en",
+    "category": "negation",
+    "note": "Retracts a stored routine."
+  },
+  {
+    "text": "I collect pin badges from every city I visit.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Contains pin but is a hobby, not a PIN."
+  },
+  {
+    "text": "My hobby is collecting pin badges.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Contains pin but is a hobby, not a PIN."
+  },
+  {
+    "text": "I love collecting pin badges.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Contains pin but is a preference, not a PIN."
+  },
+  {
+    "text": "The secret to good coffee is a fine grind.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "General advice about coffee, not a fact about the speaker."
+  },
+  {
+    "text": "My secret to good coffee is a fine grind.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Secret is a cooking opinion, not a credential."
+  },
+  {
+    "text": "My passport is blue and I love it.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Passport colour is not a passport number."
+  },
+  {
+    "text": "I love the colour of my passport.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Passport colour is not a passport number."
+  },
+  {
+    "text": "My password manager is called Dashlane.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Names software, contains no secret value."
+  },
+  {
+    "text": "I always forget my passwords.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Personal habit, contains no secret value."
+  },
+  {
+    "text": "I use a paper password book at home.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Personal habit, contains no secret value."
+  },
+  {
+    "text": "My house key is silver.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Key colour is not an API, private or SSH key."
+  },
+  {
+    "text": "I keep my keys in a blue bowl.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Household habit, contains no key material."
+  },
+  {
+    "text": "I collect old telephone cards.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Cards are collectables, not card numbers."
+  },
+  {
+    "text": "My favourite card game is bridge.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Card game is not a payment card."
+  },
+  {
+    "text": "My security blanket is a grey hoodie.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Security blanket is a comfort object."
+  },
+  {
+    "text": "I work in cybersecurity.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Occupation, not a security code."
+  },
+  {
+    "text": "My childhood nickname was Secret.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "A nickname, not a secret value."
+  },
+  {
+    "text": "I love spy novels about secret agents.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Fiction preference, not a secret."
+  },
+  {
+    "text": "My passport photo makes me laugh.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Passport photo is not a passport number."
+  },
+  {
+    "text": "I have a PIN pad on my front door.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "A door device, not a PIN value."
+  },
+  {
+    "text": "The code word for our club is pineapple.",
+    "label": "skip",
+    "tier": "credential",
+    "negated": false,
+    "language": "en",
+    "category": "credential",
+    "note": "A shared code word is a secret, not a personal fact: never stored."
+  },
+  {
+    "text": "I run a marathon every year for cancer research.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Charity activity, not the speaker's health."
+  },
+  {
+    "text": "I am allergic to bad jokes.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "A joke about taste, not a medical allergy."
+  },
+  {
+    "text": "My piggy bank is shaped like a dinosaur.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "A toy, not a bank account."
+  },
+  {
+    "text": "I love watching heist movies about bank vaults.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "false_refusal",
+    "note": "Film preference, not a bank account."
+  },
+  {
+    "text": "Remember to buy milk.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Task, not a lasting fact."
+  },
+  {
+    "text": "Remind me to call the dentist tomorrow.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Reminder, not a lasting fact."
+  },
+  {
+    "text": "Don't forget to pick up the dry cleaning.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Task, not a lasting fact."
+  },
+  {
+    "text": "I need to book a flight to Rome.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Task, not a lasting fact."
+  },
+  {
+    "text": "Put a reminder to water the plants on Sunday.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Reminder, not a lasting fact."
+  },
+  {
+    "text": "Remember when we talked about Rome?",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Recollection question, not a new fact."
+  },
+  {
+    "text": "What's the weather like today?",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Question, not a fact."
+  },
+  {
+    "text": "Do you remember my name?",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Question, not a fact."
+  },
+  {
+    "text": "What do you know about my job?",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Question, not a fact."
+  },
+  {
+    "text": "Can you set a timer for ten minutes?",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Request, not a fact."
+  },
+  {
+    "text": "Is it going to rain this afternoon?",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Question, not a fact."
+  },
+  {
+    "text": "How tall is the Eiffel Tower?",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Question, not a fact."
+  },
+  {
+    "text": "That was a great film, wasn't it?",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Chit-chat, not a lasting fact."
+  },
+  {
+    "text": "Nice to meet you, how are you?",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Chit-chat, not a lasting fact."
+  },
+  {
+    "text": "The traffic was awful this morning.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Passing remark, not a lasting fact."
+  },
+  {
+    "text": "I had a lovely time at the party, thanks.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Chit-chat, not a lasting fact."
+  },
+  {
+    "text": "Good morning, it's a beautiful day.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Chit-chat, not a lasting fact."
+  },
+  {
+    "text": "\"My name is Sam,\" she said.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Quotation, not the speaker's own fact."
+  },
+  {
+    "text": "\"I live in Paris,\" he told me.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Quotation, not the speaker's own fact."
+  },
+  {
+    "text": "The sign said \"my password is 0000\" as a joke.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Quoted joke credential, not a real secret."
+  },
+  {
+    "text": "My friend kept saying \"remember to buy milk\" all day.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Quotation of a task, not a fact."
+  },
+  {
+    "text": "If I lived in Paris, I would go to the Louvre every week.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Hypothetical, not a fact."
+  },
+  {
+    "text": "Imagine my name was Napoleon.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Hypothetical, not a fact."
+  },
+  {
+    "text": "Supposing I worked at a bank, would I earn more?",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Hypothetical, not a fact."
+  },
+  {
+    "text": "Maybe I'll move to Berlin someday.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Uncertain plan, not a lasting fact."
+  },
+  {
+    "text": "My boss's favourite colour is blue.",
+    "label": "skip",
+    "tier": "third_party",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "Other people's trivia, not the speaker's fact."
+  },
+  {
+    "text": "The password policy at work is strict.",
+    "label": "skip",
+    "tier": "normal",
+    "negated": false,
+    "language": "en",
+    "category": "not_fact",
+    "note": "General workplace policy, not a personal fact and no secret value; skip rather than ask."
+  },
+  {
+    "text": "اسمي سام.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic name statement; ordinary fact."
+  },
+  {
+    "text": "أعيش في طرابلس.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic home city."
+  },
+  {
+    "text": "أعمل مهندسًا في شركة صغيرة.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic occupation."
+  },
+  {
+    "text": "أحب القهوة السادة.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic drink preference."
+  },
+  {
+    "text": "أفضل الشاي على القهوة.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic beverage preference."
+  },
+  {
+    "text": "عمري أربعة وثلاثون عامًا.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic age."
+  },
+  {
+    "text": "لدي طفلان، ولد وبنت.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic family structure."
+  },
+  {
+    "text": "أنا من بنغازي.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic place of origin."
+  },
+  {
+    "text": "أدرس التاريخ في الجامعة.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic education."
+  },
+  {
+    "text": "ألعب الجيتار قليلًا.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic hobby."
+  },
+  {
+    "text": "أستيقظ مبكرًا كل يوم.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic daily habit."
+  },
+  {
+    "text": "أذهب إلى العمل سيرًا على الأقدام.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic commute habit."
+  },
+  {
+    "text": "أحب قراءة الروايات البوليسية.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic reading preference."
+  },
+  {
+    "text": "طعامي المفضل هو الكسكس.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic food preference."
+  },
+  {
+    "text": "أتكلم العربية والإنجليزية.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic language ability."
+  },
+  {
+    "text": "أعيش وحدي في شقة صغيرة.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic household structure."
+  },
+  {
+    "text": "لوني المفضل هو الأزرق.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic colour preference."
+  },
+  {
+    "text": "أشتري الخبز من المخبز كل صباح.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic morning routine."
+  },
+  {
+    "text": "أحب المشي على الشاطئ في المساء.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic leisure preference."
+  },
+  {
+    "text": "أعمل من المنزل يوم الخميس.",
+    "label": "save",
+    "tier": "normal",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic work pattern."
+  },
+  {
+    "text": "أعاني من مرض السكري.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic diagnosis."
+  },
+  {
+    "text": "أتابع طبيبي كل شهر.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic medical care."
+  },
+  {
+    "text": "أتناول دواء لضغط الدم.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic medication."
+  },
+  {
+    "text": "عندي حساسية من الفول السوداني.",
+    "label": "ask",
+    "tier": "health",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic allergy."
+  },
+  {
+    "text": "راتبي حوالي خمسة آلاف دينار.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic salary."
+  },
+  {
+    "text": "علي دين كبير للبنك.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic debt."
+  },
+  {
+    "text": "أدفع إيجار الشقة كل شهر.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic rent."
+  },
+  {
+    "text": "أدخر جزءًا من راتبي كل شهر.",
+    "label": "ask",
+    "tier": "finance",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic savings."
+  },
+  {
+    "text": "زوجتي تعمل في مستشفى.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic third-party employment detail."
+  },
+  {
+    "text": "مديري ينتقل إلى مدينة أخرى.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic third-party private plan."
+  },
+  {
+    "text": "أخي يمر بطلاق صعب.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic third-party family matter."
+  },
+  {
+    "text": "جارتي تعيش وحدها بعد وفاة زوجها.",
+    "label": "ask",
+    "tier": "third_party",
+    "negated": false,
+    "language": "ar",
+    "category": "arabic",
+    "note": "Arabic third-party private family matter."
+  }
+]

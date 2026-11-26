@@ -13,13 +13,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.contracts import MemoryMode
 from app.domain.memory_changes import AUTO_SAVE, MemoryChange, Revert, RowState, revert_decision
 from app.domain.memory_policy import Decision, plan_for_proposal
-from app.infrastructure.database import ContextOperation, Memory, MemoryWriteRequest, now
+from app.infrastructure.database import ContextOperation, Memory, now
 from app.services.memory import MemoryService
 from app.services.memory_capture import (
     MemoryCaptureError,
     confirm_memory,
     proposal_summary,
 )
+from app.services.memory_erasure_lock import lock_owner_memories
+from app.services.memory_visibility import Erased, scrub_copies
 
 APPLIED = "applied"
 UNDONE = "undone"
@@ -124,6 +126,17 @@ async def auto_commit_memory(
     if superseded_id:
         old = await db.get(Memory, superseded_id)
         superseded_version = old.version if old is not None else None
+    # The journal quotes the fact. Write it under the owner lock, so a permanent delete either finished first (the
+    # row is gone and the label stays empty) or waits for this commit and then scrubs the journal entry.
+    await lock_owner_memories(db, owner_id)
+    current = await db.scalar(
+        select(Memory.status).where(Memory.id == memory["id"]).execution_options(populate_existing=True)
+    )
+    label = (
+        _label("Updated" if kind == "memory_updated" else "Remembered", memory["content"])
+        if current == "active"
+        else ""
+    )
     operation = ContextOperation(
         id=str(uuid4()),
         owner_id=owner_id,
@@ -131,7 +144,7 @@ async def auto_commit_memory(
         command_type=AUTO_SAVE,
         payload={
             "kind": kind,
-            "label": _label("Updated" if kind == "memory_updated" else "Remembered", memory["content"]),
+            "label": label,
             "memory_id": memory["id"],
             "version": memory["version"],
             "superseded_id": superseded_id,
@@ -147,6 +160,7 @@ async def auto_commit_memory(
 
 async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dict:
     """Undo one auto-saved change by id. Idempotent; refuses (``ChangeConflict``) if the rows moved on."""
+    await lock_owner_memories(db, owner_id)
     operation = await db.scalar(
         select(ContextOperation).where(
             ContextOperation.id == change_id,
@@ -170,6 +184,7 @@ async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dic
         superseded_version=payload.get("superseded_version"),
     )
     new = await db.get(Memory, change.memory_id)
+    erased = Erased.of(new) if new is not None and new.owner_id == owner_id else None
     old = await db.get(Memory, change.superseded_id) if change.superseded_id else None
     decision = revert_decision(
         change,
@@ -224,12 +239,10 @@ async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dic
     if withdrawn.rowcount != 1 or (restored is not None and restored.rowcount != 1):
         await db.rollback()
         raise ChangeConflict
-    if new is not None and new.request_key:
-        await db.execute(
-            update(MemoryWriteRequest)
-            .where(MemoryWriteRequest.owner_id == owner_id, MemoryWriteRequest.request_key == new.request_key)
-            .values(embedding=None, result=None)
-        )
+    if erased is not None:
+        # The withdrawn fact must leave the proposal, decision and prompt copies too, or a later permanent delete
+        # (which finds the row already tombstoned) could never reach them.
+        await scrub_copies(db, owner_id, [erased])
     operation.outcome = UNDONE
     # The label quotes the fact the user just withdrew; keep the id for audit and drop the text.
     operation.payload = {"kind": payload.get("kind"), "label": "", "memory_id": change.memory_id, "scrubbed": True}
