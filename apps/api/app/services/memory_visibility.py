@@ -12,6 +12,7 @@ voice or a model tool.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 from fastapi import HTTPException
@@ -147,7 +148,9 @@ async def _scrub_proposals(db: AsyncSession, owner_id: str, deleted: set[str], t
             continue
         stored = result.get("proposal")
         proposed_text = _norm(stored.get("text")) if isinstance(stored, dict) else ""
-        if _request_memory_id(result) not in deleted and proposed_text not in wanted:
+        bound = _request_memory_id(result)
+        # Text alone matches only a row that never recorded a memory; one bound to another live memory is kept.
+        if bound not in deleted and (bound is not None or proposed_text not in wanted):
             continue
         if isinstance(stored, dict) and isinstance(stored.get("confirmation_id"), str):
             proposal_keys.add(stored["confirmation_id"])
@@ -173,13 +176,24 @@ async def _scrub_decisions(db: AsyncSession, owner_id: str, deleted: set[str], p
         )
         if belongs:
             decision.result = {"status": "discarded", "memory": None, "scrubbed": True}
+            # A confirm already past its claim must lose the lease, or it would write the fact back.
+            decision.outcome = "discarded"
+            decision.lease_id = None
+            decision.lease_expires_at = None
 
 
-async def _scrub_turns(db: AsyncSession, chain: list[Memory], proposal_keys: set[str]) -> None:
+async def _scrub_turns(db: AsyncSession, owner_id: str, chain: list[Memory], proposal_keys: set[str]) -> None:
     source_turns = [item.source_turn_id for item in chain if item.source_turn_id]
     if not source_turns:
         return
-    turns = (await db.scalars(select(Turn).where(Turn.id.in_(source_turns)))).all()
+    turns = (
+        await db.scalars(
+            select(Turn).where(
+                Turn.id.in_(source_turns),
+                Turn.conversation_id.in_(select(Conversation.id).where(Conversation.owner_id == owner_id)),
+            )
+        )
+    ).all()
     for turn in turns:
         snapshot = dict(turn.snapshot or {})
         proposal = snapshot.get("memory_proposal")
@@ -192,16 +206,18 @@ def _text_variants(texts: set[str]) -> set[str]:
     """The fact as it can appear in a stored prompt: plain, and JSON-escaped (inside a memory envelope)."""
     variants: set[str] = set()
     for text in texts:
-        if len(text.strip()) < 4:
-            continue  # too short to remove by substring without damaging unrelated text
+        if not text.strip():
+            continue
         variants |= {text, json.dumps(text)[1:-1], json.dumps(text, ensure_ascii=False)[1:-1]}
+        variants |= {f'"text":{json.dumps(text)}', f'"text":{json.dumps(text, ensure_ascii=False)}'}
     return {variant for variant in variants if variant}
 
 
 def _without(value: object, needles: set[str]) -> object:
+    """Remove each needle as a whole run (never from inside a longer word, so 'male' leaves 'female' alone)."""
     if isinstance(value, str):
-        for needle in needles:
-            value = value.replace(needle, "") if isinstance(value, str) else value
+        for needle in sorted(needles, key=len, reverse=True):
+            value = re.sub(rf"(?<!\w){re.escape(needle)}(?!\w)", "", value)
         return value
     if isinstance(value, list):
         return [_without(item, needles) for item in value]
@@ -253,7 +269,7 @@ async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> Visi
         )
     proposal_keys = await _scrub_proposals(db, owner_id, deleted, texts)
     await _scrub_decisions(db, owner_id, deleted, proposal_keys)
-    await _scrub_turns(db, chain, proposal_keys)
+    await _scrub_turns(db, owner_id, chain, proposal_keys)
     await _scrub_snapshots(db, owner_id, deleted, texts)
     operations = (
         await db.scalars(

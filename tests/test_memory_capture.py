@@ -2340,3 +2340,36 @@ def test_deleting_a_memory_removes_it_from_stored_compiled_prompts(tmp_path):
         assert {key: stable(value) for key, value in after.items() if key != later} == {
             key: stable(value) for key, value in before.items() if key != later
         }
+
+
+def test_deleting_a_memory_ends_the_lease_of_its_capture_decision(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        set_mode(file, owner, "ask")
+        proposal, memory_id = _confirm_save(client, headers, "fact-1", "I prefer tea with mint")
+        # Put the decision back mid-flight: claimed by a live worker that has not written yet.
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute(
+                "UPDATE memory_capture_decisions SET outcome='applying', lease_id='lease', "
+                "lease_expires_at='2999-01-01T00:00:00+00:00' WHERE confirmation_id=?",
+                (proposal["confirmation_id"],),
+            )
+        assert client.delete(f"/v1/memories/{memory_id}").status_code == 200
+        with closing(sqlite3.connect(file)) as db:
+            outcome, lease = db.execute(
+                "SELECT outcome, lease_id FROM memory_capture_decisions WHERE confirmation_id=?",
+                (proposal["confirmation_id"],),
+            ).fetchone()
+        # With no live lease the late confirm raises MEMORY_LEASE_LOST instead of writing the fact back.
+        assert outcome == "discarded" and lease is None
+
+
+def test_stored_prompt_scrub_matches_whole_words_and_short_facts():
+    from app.services.memory_visibility import _text_variants, _without
+
+    assert _without("I am female, not male", _text_variants({"male"})) == "I am female, not "
+    assert _without("tea instead", _text_variants({"tea"})) == " instead"
+    assert _without({"a": ["12", '{"text":"12"}']}, _text_variants({"12"})) == {"a": ["", "{}"]}
