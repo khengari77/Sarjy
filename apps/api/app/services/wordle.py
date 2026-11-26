@@ -9,12 +9,14 @@ Everyone else waits briefly for the stored answer instead of calling out.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -28,6 +30,7 @@ from app.domain.wordle import (
     MAX_ATTEMPTS,
     WordleStatus,
     WordleValidationError,
+    guess_allowed,
     normalize_guess,
     resolve_puzzle_date,
     score_guess,
@@ -60,6 +63,17 @@ def validate_claim_lease(lease: timedelta, retry_budget: timedelta) -> None:
 CLAIM_LEASE = timedelta(seconds=CLAIM_LEASE_SECONDS)
 validate_claim_lease(CLAIM_LEASE, timedelta(seconds=RETRY_BUDGET_SECONDS))
 RETRY_COOLDOWN = timedelta(seconds=60)
+WORDLE_ALLOWED_WORDS_PATH = Path(__file__).resolve().parent.parent / "data" / "wordle_allowed_words.txt"
+
+
+@functools.cache
+def allowed_words() -> frozenset[str]:
+    """The Wordle allowed-guess list, canonicalised to uppercase."""
+    return frozenset(
+        line.strip().upper() for line in WORDLE_ALLOWED_WORDS_PATH.read_text().splitlines() if line.strip()
+    )
+
+
 # A loser must wait out the full lease: returning 503 while the winner is still
 # inside its bounded fetch makes every concurrent tab fail during network lag.
 CLAIM_WAIT_SECONDS = CLAIM_LEASE_SECONDS + 5.0
@@ -677,6 +691,8 @@ async def submit_guess(
         word = normalize_guess(guess)
     except WordleValidationError as exc:
         raise WordleServiceError(exc.code, 422) from exc
+    if not guess_allowed(word, answer, allowed_words()):
+        raise WordleServiceError("WORDLE_NOT_IN_LIST", 422)
     instant = now or datetime.now(UTC)
     now_iso = _iso(instant)
     key = day.isoformat()
@@ -833,6 +849,7 @@ __all__ = [
     "WordleSource",
     "WordleSourceError",
     "WordleStats",
+    "allowed_words",
     "ensure_game",
     "ensure_puzzle",
     "ensure_today",
