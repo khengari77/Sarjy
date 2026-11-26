@@ -99,6 +99,20 @@ def dialogue_role(role: CandidateRole) -> Literal["user", "assistant"]:
     return "user"
 
 
+def untrusted_data_prefix(origin: Literal["memory", "tool"], record_id: str) -> str:
+    label = "Memory" if origin == "memory" else "Tool result"
+    return f"{label} (untrusted {origin} data, id={record_id}): "
+
+
+def untrusted_data_kind(record_id: str, content: str) -> Literal["memory", "tool"] | None:
+    """Identify an inert envelope without trusting its payload or the message role."""
+    if content.startswith(untrusted_data_prefix("memory", record_id)):
+        return "memory"
+    if content.startswith(untrusted_data_prefix("tool", record_id)):
+        return "tool"
+    return None
+
+
 def untrusted_data_message(
     record_id: str, origin: Literal["memory", "tool"], text: str, source: str | None = None
 ) -> str:
@@ -109,12 +123,11 @@ def untrusted_data_message(
     message readable while the envelope carries provenance, the source id and,
     for tool output, the tool name.
     """
-    label = "Memory" if origin == "memory" else "Tool result"
     payload: dict[str, Any] = {"id": record_id, "origin": origin, "text": text, "trust": "untrusted"}
     if source:
         payload["source"] = source
     envelope = canonical_json(payload)
-    return f"{label} (untrusted {origin} data, id={record_id}): {envelope}"
+    return f"{untrusted_data_prefix(origin, record_id)}{envelope}"
 
 
 @dataclass(frozen=True)
@@ -428,6 +441,8 @@ __all__ = [
     "dialogue_role",
     "prompt_sha256",
     "provider_role",
+    "untrusted_data_kind",
     "untrusted_data_message",
+    "untrusted_data_prefix",
     "validate_assembly",
 ]
