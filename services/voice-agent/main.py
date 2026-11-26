@@ -317,7 +317,6 @@ class SarjyAgent(WordleTools, Agent):
         self.retired_turns: set[str] = set()  # early turns closed as failed; never finalized again
         self.recent_finals = RecentFinals()
         self.wordle_spoken: dict[str, list[str]] = {}
-        self.wordle_touched = False
         self.wordle_calls: set[str] = set()
         self.current_text = ""
         self.backend = backend

@@ -162,7 +162,7 @@ def test_open_game_withdraws_play_unless_it_was_called_this_turn():
     assert "play_wordle" in {tool.info.name for tool in agent._wordle_tools(agent.tools)}
 
 
-def test_bare_guess_is_recorded_and_spoken_without_the_model(monkeypatch):
+def test_bare_guess_is_recorded_and_spoken_without_the_model():
     seen: list[str] = []
 
     def handler(request):
@@ -239,7 +239,7 @@ def test_submit_without_a_guess_in_the_utterance_is_refused():
     assert "t1" not in agent.wordle_calls
 
 
-def _guard(active: bool, reply: str, touched: bool = True):
+def _guard(active: bool, reply: str):
     """Run the prose guard over a model reply with no tool call."""
     from livekit.agents import llm as _llm
 
@@ -248,7 +248,6 @@ def _guard(active: bool, reply: str, touched: bool = True):
 
     async def run():
         _, agent = build(lambda request: httpx.Response(200, json={"spoken": "Real board."}), [], active=active)
-        agent.wordle_touched = touched
         agent.current_turn = "turn-1"
         return "".join([c.delta.content or "" async for c in agent._guard_wordle_prose(stream())])
 

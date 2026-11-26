@@ -215,7 +215,7 @@ def test_the_threshold_is_configured_safely():
     assert "REASSURANCE_AFTER_SECONDS" in WORKER_KEYS
 
 
-def test_the_filler_is_stripped_from_the_persisted_turn(monkeypatch):
+def test_the_filler_is_stripped_from_the_persisted_turn():
     async def main():
         persisted = []
 
