@@ -42,6 +42,7 @@ from app.services.memory_capture import (
     MemoryCaptureError,
     confirm_memory,
     load_proposal,
+    proposal_conflicts,
     proposal_summary,
     propose_memory,
     record_proposal,
@@ -1085,13 +1086,19 @@ async def _save_without_asking(db, config: Settings, embedder, proposed: dict, *
     """``auto`` mode: a fact the policy says to save is saved now, not asked about.
 
     The proposal is the signed record the policy is re-checked against (``auto_commit_memory`` refuses a credential or
-    a fact that needs consent). A fact that needs consent keeps its proposal, so the app asks once as before. Once a
-    save was attempted a failure never falls back to a question or to a claim that it was saved.
+    a fact that needs consent). A fact that needs consent, or that contradicts a saved fact, keeps its proposal, so the
+    app asks as before. Once a save was attempted a failure never falls back to a question or to a claim that it was
+    saved.
     """
     proposal = proposed["proposal"]
     secret = _memory_secret(config)
     _, text, explicit, negated = proposal_summary(proposal["token"], secret, owner_id, conversation_id)
     if plan_for_proposal("auto", text, explicit=explicit, negated=negated) is not Decision.SAVE:
+        return proposed
+    if await proposal_conflicts(
+        db, token=proposal["token"], secret=secret, owner_id=owner_id, conversation_id=conversation_id
+    ):
+        # A contradiction is the user's call in every mode: keep the proposal so the app asks.
         return proposed
     try:
         saved = await auto_commit_memory(

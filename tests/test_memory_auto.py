@@ -650,17 +650,21 @@ def test_in_ask_mode_and_for_facts_that_need_consent_the_propose_tool_still_only
             cm.__exit__(None, None, None)
 
 
-def test_auto_propose_replaces_a_conflicting_fact_and_the_journal_can_undo_it(tmp_path):
+def test_auto_propose_asks_when_a_fact_contradicts_a_saved_one_and_changes_nothing(tmp_path):
+    """A contradiction is the user's decision in every mode: the proposal comes back and the app asks."""
     cm, client, file, headers = started(tmp_path, "auto")
     try:
         turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
-        assert propose_tool(client, headers, "I live in Cairo", "p1", turn_id)["status"] == "saved"
+        first = propose_tool(client, headers, "I live in Cairo", "p1", turn_id)
+        assert first["status"] == "saved"
         second = propose_tool(client, headers, "I live in Benghazi", "p2", turn_id)
-        assert second["status"] == "saved"
-        assert active_contents(file) == ["I live in Benghazi"]
-        undone = client.post(f"/v1/changes/{second['change_id']}/undo")
-        assert undone.status_code == 200, undone.text
+        assert second["status"] == "proposed" and second["proposal"]["token"]
         assert active_contents(file) == ["I live in Cairo"]
+        assert operations(file) == [("memory_auto_save", "applied")]
+        # The journal entry of the first (non-conflicting) save still undoes it.
+        undone = client.post(f"/v1/changes/{first['change_id']}/undo")
+        assert undone.status_code == 200, undone.text
+        assert active_contents(file) == []
     finally:
         cm.__exit__(None, None, None)
 
