@@ -167,8 +167,11 @@ async def _derived_ids(
     calls: dict[str, ToolCall] = {}
     dependencies: dict[str, set[str] | None] = {}
     frontier = set(included_ids)
+    # Every id ever queried: grows monotonically, so the walk ends even when ids (superseded memories) never load.
+    examined: set[str] = set()
     over_bound = False
     while frontier:
+        examined |= frontier
         found_turns = (
             await db.scalars(
                 select(Turn).options(columns).where(Turn.id.in_(frontier), Turn.conversation_id == conversation_id)
@@ -203,18 +206,17 @@ async def _derived_ids(
             parent = turns.get(call.turn_id)
             inherited = _record_ids(parent.snapshot, "included_record_ids") if parent is not None else None
             dependencies[call.id] = None if inherited is None or parent is None else inherited | {parent.id}
-        seen = set(turns) | set(calls) | frontier
         frontier = {
             reference
             for references in dependencies.values()
             for reference in references or ()
-            if reference not in seen and reference != "system" and reference not in blocked
+            if reference not in examined and reference != "system" and reference not in blocked
         }
-        if len(seen) > _CLOSURE_LIMIT:
+        if len(examined) + len(frontier) > _CLOSURE_LIMIT:
             over_bound = True
             break
     if over_bound:
-        return set(dependencies)
+        return set(dependencies) & included_ids
     derived: set[str] = set()
     while True:
         more = {

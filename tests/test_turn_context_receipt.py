@@ -624,3 +624,75 @@ def test_a_reply_derived_through_an_ancestor_outside_the_snapshot_is_blanked(tmp
         body = receipt(client, chat, later).json()
         entries = {entry["id"]: entry for entry in body["included"]}
         assert entries["a1"]["text"] == "" and entries["a1"]["withheld"] is True
+
+
+def _chain_with_leaves(file, chat, *, extra_leaves=()):
+    """a1 (in the snapshot) <- r1 (outside it); each prompt also carried a different corrected (superseded) memory."""
+    add_memory(file, chat, "m_old", "I like soup", status="superseded")
+    add_memory(file, chat, "m_new", "I like stew", status="superseded")
+    for turn_id, role, text, at, request, snapshot in (
+        ("q1", "user", "What do I like?", "2026-11-12T00:00:01+00:00", "q1", {"included_record_ids": ["system", "q1"]}),
+        (
+            "r1",
+            "assistant",
+            "You like soup.",
+            "2026-11-12T00:00:02+00:00",
+            "reply:q1",
+            {"derivation": {"turn_id": "q1", "record_ids": ["system", "m_old", "q1", *extra_leaves]}},
+        ),
+        ("q2", "user", "And now?", "2026-11-12T00:00:03+00:00", "q2", {"included_record_ids": ["system", "q2"]}),
+        (
+            "a1",
+            "assistant",
+            "Now stew.",
+            "2026-11-12T00:00:04+00:00",
+            "reply:q2",
+            {"derivation": {"turn_id": "q2", "record_ids": ["system", "m_new", "r1", "q2"]}},
+        ),
+    ):
+        sql(
+            file,
+            "INSERT INTO turns (id,conversation_id,request_id,role,text,status,created_at,snapshot) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (turn_id, chat, request, role, text, "completed", at, json.dumps(snapshot)),
+        )
+
+
+def _trim_snapshot(file, turn_id, drop):
+    snap = snapshot_of(file, turn_id)
+    keep = [(i, m) for i, m in zip(snap["included_record_ids"], snap["messages"], strict=False) if i not in drop]
+    snap["included_record_ids"] = [i for i, _ in keep]
+    snap["messages"] = [m for _, m in keep]
+    sql(file, "UPDATE turns SET snapshot=? WHERE id=?", (json.dumps(snap), turn_id))
+
+
+def test_the_closure_ends_when_non_turn_ids_appear_at_different_depths(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        add_memory(file, chat, "gone", "I live in Benghazi", status="hidden")
+        _chain_with_leaves(file, chat)
+        later, _ = start_turn(client, headers, "r9", text="What is the weather like?")
+        _trim_snapshot(file, later, {"r1", "q1", "q2"})
+        # A forgotten memory exists, so the closure runs; two superseded memory ids sit at different depths.
+        response = receipt(client, chat, later)
+        assert response.status_code == 200
+        entries = {entry["id"]: entry for entry in response.json()["included"]}
+        assert entries["a1"]["withheld"] is False
+
+
+def test_a_closure_larger_than_its_bound_fails_closed(tmp_path, monkeypatch):
+    from app.services import turn_context_receipt
+
+    monkeypatch.setattr(turn_context_receipt, "_CLOSURE_LIMIT", 1)
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        add_memory(file, chat, "gone", "I live in Benghazi", status="hidden")
+        _chain_with_leaves(file, chat)
+        later, _ = start_turn(client, headers, "r9", text="What is the weather like?")
+        _trim_snapshot(file, later, {"r1", "q1", "q2"})
+        entries = {entry["id"]: entry for entry in receipt(client, chat, later).json()["included"]}
+        assert entries["a1"]["text"] == "" and entries["a1"]["withheld"] is True
