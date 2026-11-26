@@ -48,7 +48,10 @@ class VisibilityResult:
 
 async def _owned(db: AsyncSession, owner_id: str, memory_id: str, *, lock: bool = False) -> Memory:
     query = select(Memory).where(Memory.id == memory_id, Memory.owner_id == owner_id)
-    row = await db.scalar(query.with_for_update() if lock else query)
+    if lock:
+        # populate_existing: the row may have changed while this transaction waited for its lock.
+        query = query.with_for_update().execution_options(populate_existing=True)
+    row = await db.scalar(query)
     if row is None:
         raise HTTPException(404, detail={"code": "MEMORY_NOT_FOUND"})
     return row
@@ -279,7 +282,12 @@ async def _live_ids_with_text(db: AsyncSession, owner_id: str, texts: set[str]) 
 
 
 async def _wait_for_in_flight_writes(db: AsyncSession, owner_id: str) -> None:
-    """Block until every confirm already committing for this owner has finished (its guard holds the row lock)."""
+    """Block until every confirm already committing for this owner has finished.
+
+    Lock order is the one the confirm's committing transaction uses: write-request rows, then decision rows, then
+    memory rows. Taking them in another order would let a delete and a correction wait on each other.
+    """
+    await db.execute(select(MemoryWriteRequest.id).where(MemoryWriteRequest.owner_id == owner_id).with_for_update())
     await db.execute(
         select(MemoryCaptureDecision.confirmation_id)
         .where(MemoryCaptureDecision.owner_id == owner_id)
@@ -289,17 +297,22 @@ async def _wait_for_in_flight_writes(db: AsyncSession, owner_id: str) -> None:
 
 async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> VisibilityResult:
     """Idempotent permanent tombstone; wipes content everywhere this service stores it."""
-    # Locked, so a correction that is superseding this row commits first and the lineage below includes it.
+    row = await _owned(db, owner_id, memory_id)
+    if row.status == DELETED:
+        return VisibilityResult(row.id, DELETED, False)
+    chain_texts = {item.content for item in await _lineage(db, owner_id, row) if item.content}
+    before = await _live_ids_with_text(db, owner_id, chain_texts)
+    # A confirm past its claim holds its rows while it commits a memory. Wait for it (and fence any that start
+    # later: their guard refuses a discarded proposal), then take the memory row, so a correction that is
+    # superseding it has committed and the lineage below includes it.
+    await _wait_for_in_flight_writes(db, owner_id)
     row = await _owned(db, owner_id, memory_id, lock=True)
     if row.status == DELETED:
         return VisibilityResult(row.id, DELETED, False)
     chain = await _lineage(db, owner_id, row)
-    # A confirm past its claim holds its decision row while it commits a memory. Wait for it, then tombstone what
-    # it saved with the deleted text, or the fact would be written back as a new row this delete never saw.
-    chain_texts = {item.content for item in chain if item.content}
-    before = await _live_ids_with_text(db, owner_id, chain_texts)
-    await _wait_for_in_flight_writes(db, owner_id)
-    raced = await _live_ids_with_text(db, owner_id, chain_texts) - before
+    # Whatever the confirm saved with the deleted text meanwhile is the fact written back as a new row.
+    raced = await _live_ids_with_text(db, owner_id, chain_texts | {item.content for item in chain if item.content})
+    raced -= before | {item.id for item in chain}
     if raced:
         chain = [*chain, *(await db.scalars(select(Memory).where(Memory.id.in_(raced), Memory.owner_id == owner_id)))]
     ids = [item.id for item in chain]

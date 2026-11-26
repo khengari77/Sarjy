@@ -2434,3 +2434,73 @@ def test_scrub_keeps_arabic_combining_marks_with_their_word():
 
     assert _without("مُحَمَّدٌ", _text_variants({"مُحَمَّد"})) == "مُحَمَّدٌ"
     assert _without("اسمي مُحَمَّد", _text_variants({"مُحَمَّد"})) == "اسمي "
+
+
+def test_the_commit_guard_refuses_a_proposal_a_delete_already_discarded(tmp_path):
+    """A confirm parked before it owned a decision row is fenced by the proposal's tombstone, not a row lock."""
+    import asyncio
+
+    from app.infrastructure.database import MemoryCaptureDecision, MemoryWriteRequest
+    from app.services.memory_capture import MemoryCaptureError, _decision_values, _require_lease
+
+    _asyncio, open_store, _proposal, _decision, _rows, _error = _capture_harness(tmp_path)
+    payload = {"confirmation_id": "conf-1", "revision": 1, "owner_id": "owner", "exp": 4_000_000_000}
+
+    async def attempt(state, result):
+        engine, sessions = await open_store(f"guard-{state}.db", ["I prefer tea"])
+        async with sessions() as db:
+            db.add(
+                MemoryCaptureDecision(
+                    **_decision_values(
+                        payload=payload,
+                        owner_id="owner",
+                        conversation_id="chat",
+                        token="t",
+                        decision="save",
+                        outcome="applying",
+                        lease_id="lease",
+                    )
+                )
+            )
+            db.add(
+                MemoryWriteRequest(
+                    id="w1",
+                    owner_id="owner",
+                    conversation_id="chat",
+                    request_key="conf-1",
+                    fingerprint="f",
+                    state=state,
+                    result=result,
+                )
+            )
+            await db.commit()
+        try:
+            async with sessions() as db:
+                try:
+                    await _require_lease(db, payload, "lease", lock=True)
+                except MemoryCaptureError as exc:
+                    return exc.code
+            return "ok"
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(attempt("claimed", {"proposal": {"text": "I prefer tea"}})) == "ok"
+    assert asyncio.run(attempt("discarded", None)) == "MEMORY_LEASE_LOST"
+    assert asyncio.run(attempt("claimed2", {"scrubbed": True})) == "MEMORY_LEASE_LOST"
+
+
+def test_a_scrubbed_snapshot_keeps_a_consistent_prompt_digest():
+    from app.domain.context import prompt_sha256
+    from app.services.memory_visibility import _rehashed, _text_variants, _without
+
+    messages = [{"role": "system", "content": "rules"}, {"role": "user", "content": "I prefer tea with mint"}]
+    snapshot = {
+        "messages": messages,
+        "canonical_prompt_sha256": prompt_sha256(messages),
+        "manifest": {"canonical_prompt_sha256": prompt_sha256(messages)},
+    }
+    scrubbed = _rehashed(_without(snapshot, _text_variants({"tea with mint"})))
+    digest = prompt_sha256(scrubbed["messages"])
+    assert "tea with mint" not in json.dumps(scrubbed)
+    assert scrubbed["canonical_prompt_sha256"] == digest == scrubbed["manifest"]["canonical_prompt_sha256"]
+    assert digest != prompt_sha256(messages)

@@ -567,6 +567,18 @@ async def _require_lease(db: AsyncSession, payload: dict, lease_id: str | None, 
         or lease_expired(row.lease_expires_at)
     ):
         raise MemoryCaptureError("MEMORY_LEASE_LOST", 409, confirmation_id=payload["confirmation_id"])
+    if lock:
+        # A delete that ran before this transaction started has already committed its tombstone of the proposal.
+        proposal = await db.scalar(
+            select(MemoryWriteRequest).where(
+                MemoryWriteRequest.owner_id == payload["owner_id"],
+                MemoryWriteRequest.request_key == payload["confirmation_id"],
+            )
+        )
+        if proposal is not None and (
+            proposal.state == "discarded" or (isinstance(proposal.result, dict) and proposal.result.get("scrubbed"))
+        ):
+            raise MemoryCaptureError("MEMORY_LEASE_LOST", 409, confirmation_id=payload["confirmation_id"])
 
 
 async def _release_claim(
