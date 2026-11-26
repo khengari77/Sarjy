@@ -288,3 +288,16 @@ def test_pending_action_control_accepts_reveal_and_reset_from_humans_only():
     assert state.pending is True
     apply_control(packet(HUMAN, "delete_everything"), state)
     assert state.pending is False
+
+
+def test_a_pending_guess_hands_yes_and_no_to_the_client():
+    state = RevealState()
+    state.active = True
+    pending = lambda value: SimpleNamespace(  # noqa: E731
+        topic="sarjy.control", participant=HUMAN, data=json.dumps({"type": "wordle.pending", "value": value}).encode()
+    )
+    apply_control(pending("guess"), state)
+    assert state.pending is True
+    assert is_wordle_command("yes", reveal_pending=state.pending, wordle_active=True)
+    apply_control(pending(None), state)
+    assert state.pending is False

@@ -18,6 +18,8 @@ export interface FakeWordle {
   };
   state: WordleGameState;
   guessResult: (word: string, requestId: string) => GuessOutcome;
+  /** Word-list answer for checkWord; every word is allowed unless a test says otherwise. */
+  allowed: (word: string) => boolean | null;
   pendingFlags: (string | null)[];
 }
 
@@ -75,11 +77,13 @@ export function fakeGame(overrides: Partial<WordleGameState> = {}, guess?: FakeW
         if (outcome.status === 'ok') state.guesses = [...state.guesses, outcome.guess];
         return outcome;
       },
+      checkWord: async (word: string) => fake.allowed(word),
     },
     spoken,
     calls,
     state,
     guessResult: guess ?? ((word) => ({ status: 'ok', guess: { word, marks: ZERO_MARKS } })),
+    allowed: () => true,
     pendingFlags: [],
   };
   return fake;

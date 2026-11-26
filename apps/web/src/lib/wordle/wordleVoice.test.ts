@@ -71,17 +71,17 @@ describe('Wordle voice adapter: commands', () => {
       guesses: [{ word: 'CRANE', marks: ZERO_MARKS }],
       attemptsRemaining: 5,
     });
-    await voice.handleEvent(transcript('guess crane', 's1'));
+    await voice.handleEvent(transcript('guess c r a n e', 's1'));
     expect(fake.calls.guesses).toEqual([]);
     expect(fake.spoken[0]).toContain('already guessed CRANE');
   });
 
   it('does not duplicate a successful guess when the same command is retried', async () => {
     const { fake, voice } = setup();
-    await voice.handleEvent(transcript('guess crane', 's1'));
-    await voice.handleEvent(transcript('guess crane', 's1'));
+    await voice.handleEvent(transcript('guess c r a n e', 's1'));
+    await voice.handleEvent(transcript('guess c r a n e', 's1'));
     expect(fake.calls.guesses).toHaveLength(1);
-    await voice.handleEvent(transcript('guess crane', 's2'));
+    await voice.handleEvent(transcript('guess c r a n e', 's2'));
     expect(fake.calls.guesses).toHaveLength(1);
     expect(fake.spoken.at(-1)).toContain('already guessed CRANE');
   });
@@ -137,23 +137,23 @@ describe('Wordle voice adapter: failure paths', () => {
         ? { status: 'error', code: 'WORDLE_RATE_LIMITED' }
         : { status: 'ok', guess: { word, marks: ZERO_MARKS } };
     });
-    await voice.handleEvent(transcript('guess crane', 's1'));
+    await voice.handleEvent(transcript('guess c r a n e', 's1'));
     expect(fake.spoken[0]).toContain('Too many guesses');
-    await voice.handleEvent(transcript('guess crane', 's2'));
+    await voice.handleEvent(transcript('guess c r a n e', 's2'));
     expect(fake.calls.guesses.map((guess) => guess.id)).toEqual(['scope1-2026-11-14-CRANE', 'scope1-2026-11-14-CRANE']);
     expect(fake.state.guesses).toHaveLength(1);
   });
 
   it('surfaces an unavailable puzzle as recoverable speech without a guess', async () => {
     const { fake, voice } = setup({ view: 'unavailable', notice: "Today's Wordle isn't available right now." });
-    await voice.handleEvent(transcript('guess crane', 's1'));
+    await voice.handleEvent(transcript('guess c r a n e', 's1'));
     expect(fake.calls.guesses).toEqual([]);
     expect(fake.spoken[0]).toContain("isn't available");
   });
 
   it('surfaces a server error without inventing a result', async () => {
     const { fake, voice } = setup({}, () => ({ status: 'error', code: 'WORDLE_GUESS_INVALID' }));
-    await voice.handleEvent(transcript('guess crane', 's1'));
+    await voice.handleEvent(transcript('guess c r a n e', 's1'));
     expect(fake.spoken[0]).toContain('five-letter word');
     expect(fake.state.guesses).toEqual([]);
   });
@@ -161,7 +161,7 @@ describe('Wordle voice adapter: failure paths', () => {
   it('reports a busy guess instead of racing a second submission', async () => {
     const { fake, voice } = setup();
     fake.state.busy = true;
-    await voice.handleEvent(transcript('guess crane', 's1'));
+    await voice.handleEvent(transcript('guess c r a n e', 's1'));
     expect(fake.calls.guesses).toEqual([]);
     expect(fake.spoken[0]).toContain('still saving');
   });

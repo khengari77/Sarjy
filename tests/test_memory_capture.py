@@ -2180,3 +2180,26 @@ def test_decision_turn_does_not_adopt_a_proposal_offered_by_the_server():
 
     asyncio.run(run())
     assert confirms == [{"token": "signed", "decision": "save"}]
+
+
+def test_wordle_mode_proposes_no_memory_and_uses_the_game_prompt(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        set_mode(file, owner, "ask")
+        started = client.post(
+            "/internal/agent/turn/start",
+            headers=headers,
+            json={"request_id": "game-1", "text": "I prefer tea with mint", "wordle_open": True},
+        ).json()
+        assert started["memory_proposal"] is None
+        assert "playing the daily Wordle" in started["context"]["model_request"]["instructions"]
+        # The same sentence outside the game still asks to remember it.
+        closed = client.post(
+            "/internal/agent/turn/start",
+            headers=headers,
+            json={"request_id": "chat-1", "text": "I prefer tea with mint", "wordle_open": False},
+        ).json()
+        assert closed["memory_proposal"] is not None

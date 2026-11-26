@@ -60,12 +60,15 @@ from wordle_commands import is_wordle_command, parse_say_payload
 from wordle_tools import (
     WORDLE_ALREADY_OPEN,
     WORDLE_GAME_TOOLS,
+    WORDLE_MODE_NUDGE,
     WORDLE_OPEN_DETAIL,
     WordleTools,
     claims_game_state,
     extract_guess,
+    has_guess_candidate,
     is_close_request,
     publish_wordle,
+    spelled_out,
 )
 
 
@@ -923,6 +926,20 @@ class SarjyAgent(WordleTools, Agent):
             self._record_offset(turn_id, "t_command_end_ms", time.perf_counter(), first_only=True)
         return self.commands[message.id]
 
+    def _fixed_reply(self, user, turn_id: str) -> str | None:
+        """A deterministic line that replaces the model this turn, if any.
+
+        A forced question is delivered once. In Wordle mode an utterance with no guess candidate is
+        unrelated to the game and gets the nudge back to it, with no model call.
+        """
+        if self.forced_speech is not None and self.forced_speech[0] == turn_id:
+            _, forced = self.forced_speech
+            self.forced_speech = None
+            return forced
+        if self.wordle_active() and not has_guess_candidate(user.text_content or ""):
+            return WORDLE_MODE_NUDGE
+        return None
+
     async def _command_speech(self, command: Mapping[str, Any], turn_id: str) -> str:
         """Apply a command result for ``turn_id`` and return the line to speak.
 
@@ -1164,11 +1181,10 @@ class SarjyAgent(WordleTools, Agent):
             handle = self._speech_handle()
             self._schedule_persistence(user, handle)
             return
-        if self.forced_speech is not None and self.forced_speech[0] == turn_id:
-            _, forced = self.forced_speech
-            self.forced_speech = None
+        fixed = self._fixed_reply(user, turn_id)
+        if fixed is not None:
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
-            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=forced))
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=fixed))
             handle = self._speech_handle()
             self._schedule_persistence(user, handle)
             return
@@ -1288,7 +1304,8 @@ class SarjyAgent(WordleTools, Agent):
         word = extract_guess(text)
         if word is None:
             return None
-        return await self._wordle_direct("wordle-guess", word=word)
+        # Spelled letters count straight away; a spoken word is read back and counts only after a yes.
+        return await self._wordle_direct("wordle-guess", word=word, confirm=not spelled_out(text))
 
     def _wordle_tools(self, tools):
         """Offer Wordle tools only while the popup is open, and then only the ones that fit.
@@ -1301,8 +1318,11 @@ class SarjyAgent(WordleTools, Agent):
         """
         if self.current_turn in self.wordle_calls:
             return tools
-        drop = {"play_wordle"} if self.wordle_active() else WORDLE_GAME_TOOLS
-        return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") not in drop]
+        if self.wordle_active():
+            # Wordle mode: the game tools only (memory and weather wait until the popup closes).
+            keep = WORDLE_GAME_TOOLS - {"play_wordle"}
+            return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") in keep]
+        return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") not in WORDLE_GAME_TOOLS]
 
     def _forced_memory_choice(self, message_id: str, available: set[str]) -> dict | None:
         """Force the memory tool Jev named for the FIRST inference of a turn only.
@@ -1727,7 +1747,7 @@ def apply_control(packet, reveal: RevealState) -> None:
         reveal.pending = value.get("value") is True
     elif value.get("type") == "wordle.pending":
         # A spoken yes/no is awaited for a pending action ("reveal" or "reset"); null clears it.
-        reveal.pending = value.get("value") in {"reveal", "reset"}
+        reveal.pending = value.get("value") in {"reveal", "reset", "guess"}
     elif value.get("type") == "wordle.active":
         reveal.active = value.get("value") is True
         if not reveal.active:
