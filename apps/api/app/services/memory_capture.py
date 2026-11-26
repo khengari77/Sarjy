@@ -551,10 +551,14 @@ async def _claim_decision(
     raise MemoryCaptureError("MEMORY_DECISION_IN_PROGRESS", 409, decision=decision)
 
 
-async def _require_lease(db: AsyncSession, payload: dict, lease_id: str | None) -> None:
-    """Refuse an effect unless this worker still owns the live claim lease."""
-    # Locked, so a concurrent delete (which discards the decision) serializes with this effect.
-    row = await _decision(db, payload["confirmation_id"], int(payload["revision"]), payload["owner_id"], lock=True)
+async def _require_lease(db: AsyncSession, payload: dict, lease_id: str | None, *, lock: bool = False) -> None:
+    """Refuse an effect unless this worker still owns the live claim lease.
+
+    ``lock=True`` takes the decision row lock so a concurrent delete (which discards the decision) serializes with
+    the effect. Only the transaction that commits the effect may lock: the caller's own session stays open across
+    the nested write transaction, and locking the same row from both would wait on itself.
+    """
+    row = await _decision(db, payload["confirmation_id"], int(payload["revision"]), payload["owner_id"], lock=lock)
     if (
         lease_id is None
         or row is None
@@ -1278,7 +1282,7 @@ async def _write_consented(
             source_turn_id or proposed_turn,
             capture.text,
             key,
-            guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id),
+            guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id, lock=True),
         )
     except Exception:
         # No memory effect was observed; release the claim so a retry can
@@ -1448,7 +1452,7 @@ async def _replace_target(
                 key,
                 source_turn_id=source_turn_id or proposed_turn,
                 conversation_id=conversation_id,
-                guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id),
+                guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id, lock=True),
             )
         except HTTPException as exc:
             if (

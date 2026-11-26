@@ -1869,12 +1869,12 @@ def test_memory_write_is_aborted_after_a_lease_takeover(tmp_path, monkeypatch):
         # takeover comes from a different process, so give each call its own.
         monkeypatch.setattr(memory_capture, "_subject_lock", lambda owner_id, subject: asyncio.Lock())
 
-        async def gated_require(db, payload, lease_id):
+        async def gated_require(db, payload, lease_id, **kwargs):
             calls["count"] += 1
             if calls["count"] == 1:
                 entered.set()
                 await release.wait()
-            return await original(db, payload, lease_id)
+            return await original(db, payload, lease_id, **kwargs)
 
         monkeypatch.setattr(memory_capture, "_require_lease", gated_require)
         try:
@@ -2363,8 +2363,48 @@ def test_deleting_a_memory_ends_the_lease_of_its_capture_decision(tmp_path):
                 "SELECT outcome, lease_id FROM memory_capture_decisions WHERE confirmation_id=?",
                 (proposal["confirmation_id"],),
             ).fetchone()
-        # With no live lease the late confirm raises MEMORY_LEASE_LOST instead of writing the fact back.
+        # With no live lease the late confirm cannot write the fact back.
         assert outcome == "discarded" and lease is None
+        late = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "save"}
+        )
+        assert late.json().get("status") != "saved", late.text
+        assert not _active_texts(file, "tea with mint")
+
+
+def _active_texts(file, text):
+    with closing(sqlite3.connect(file)) as db:
+        return db.execute(
+            "SELECT id FROM memories WHERE content LIKE ? AND status != 'deleted'", (f"%{text}%",)
+        ).fetchall()
+
+
+def test_a_memory_committed_by_a_confirm_racing_the_delete_is_erased_too(tmp_path, monkeypatch):
+    from app.services import memory_visibility
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        set_mode(file, owner, "ask")
+        _proposal, memory_id = _confirm_save(client, headers, "fact-1", "I prefer tea with mint")
+        wait = memory_visibility._wait_for_in_flight_writes
+
+        async def racing(db, owner_id):
+            # The in-flight confirm commits while the delete waits for its row lock.
+            with closing(sqlite3.connect(file)) as other, other:
+                other.execute(
+                    "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,created_at,updated_at) "
+                    "VALUES ('raced',?,'I prefer tea with mint','m',?,1,'active','2026-11-26T00:00:00+00:00',"
+                    "'2026-11-26T00:00:00+00:00')",
+                    (owner_id, chat),
+                )
+            await wait(db, owner_id)
+
+        monkeypatch.setattr(memory_visibility, "_wait_for_in_flight_writes", racing)
+        assert client.delete(f"/v1/memories/{memory_id}").status_code == 200
+        assert not _active_texts(file, "tea with mint")
 
 
 def test_stored_prompt_scrub_matches_whole_words_and_short_facts():
