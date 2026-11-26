@@ -1693,11 +1693,11 @@
   },
   {
     "text": "I am allergic to bad jokes.",
-    "label": "save",
+    "label": "skip",
     "tier": "normal",
     "negated": false,
     "language": "en",
-    "category": "false_refusal",
+    "category": "not_fact",
     "note": "A joke about taste, not a medical allergy."
   },
   {

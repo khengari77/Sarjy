@@ -3,8 +3,8 @@
   "generated_by": "scripts/memory_policy_baseline.py",
   "case_count": 250,
   "label_counts": {
-    "save": 85,
-    "skip": 61,
+    "save": 84,
+    "skip": 62,
     "ask": 104
   },
   "language_counts": {
@@ -35,18 +35,18 @@
     }
   },
   "false_refusal": {
-    "n": 85,
+    "n": 84,
     "hits": 1,
-    "rate": 0.0118,
+    "rate": 0.0119,
     "low": 0.0021,
-    "high": 0.0637
+    "high": 0.0644
   },
   "missed_save": {
-    "n": 85,
+    "n": 84,
     "hits": 57,
-    "rate": 0.6706,
-    "low": 0.5652,
-    "high": 0.7612
+    "rate": 0.6786,
+    "low": 0.5728,
+    "high": 0.7687
   },
   "decision_accuracy": {
     "overall": {
@@ -72,11 +72,11 @@
         "high": 0.9686
       },
       "false_refusal": {
-        "n": 23,
+        "n": 22,
         "hits": 12,
-        "rate": 0.5217,
-        "low": 0.3296,
-        "high": 0.7076
+        "rate": 0.5455,
+        "low": 0.3466,
+        "high": 0.7308
       },
       "finance": {
         "n": 20,
@@ -100,11 +100,11 @@
         "high": 0.3788
       },
       "not_fact": {
-        "n": 28,
+        "n": 29,
         "hits": 26,
-        "rate": 0.9286,
-        "low": 0.7735,
-        "high": 0.9802
+        "rate": 0.8966,
+        "low": 0.7361,
+        "high": 0.9642
       },
       "ordinary": {
         "n": 42,

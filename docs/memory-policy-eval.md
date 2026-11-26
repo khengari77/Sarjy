@@ -29,9 +29,9 @@ Each case carries `tier` (`normal`, `third_party`, `health`, `finance`, `credent
 | not_fact | 25 | tasks, questions, chit-chat, quotes, hypotheticals |
 | arabic | 30 | ordinary and sensitive Arabic facts |
 
-The one deliberate ambiguity is "The password policy at work is strict." It is tagged **skip** in `not_fact`: it is a
-general workplace statement, not a personal fact, and it contains no secret value, so it should not be stored or
-treated as a credential. The note records that reasoning.
+A few labels are deliberate policy choices, each explained in the case's `note`: "The password policy at work is
+strict." is **skip** (a general workplace statement with no secret value); a login name and a shared club code word are
+**skip** as credentials; "I am allergic to bad jokes." is **skip** (a joke, not a health fact).
 
 ## Running the baseline
 
@@ -45,13 +45,13 @@ The script is offline: it reads the fixture, imports only `app.domain.memory_cap
 
 ## Current numbers
 
-Baseline: 250 cases (85 save, 104 ask, 61 skip).
+Baseline: 250 cases (84 save, 104 ask, 62 skip).
 
 | metric | n | hits | rate | 95% Wilson |
 | --- | ---: | ---: | ---: | --- |
 | credential recall (tier) | 33 | 15 | 45.5% | 29.8% – 62.0% |
-| false refusal (the credential floor blocks a recognised save) | 85 | 1 | 1.2% | 0.2% – 6.4% |
-| missed save (the parser finds no fact) | 85 | 57 | 67.1% | 56.5% – 76.1% |
+| false refusal (the credential floor blocks a recognised save; of all 84 must-save facts) | 84 | 1 | 1.2% | 0.2% – 6.4% |
+| missed save (the parser finds no fact) | 84 | 57 | 67.9% | 57.3% – 76.9% |
 | overall decision accuracy | 250 | 101 | 40.4% | 34.5% – 46.6% |
 
 Credential recall by language: en 15/21 (71.4%), ar 0/12 (0.0%).
@@ -61,18 +61,18 @@ only about a third of the facts a user states (the rest are left to the model to
 misses over half of the credentials, every Arabic one included. The `credential` category's decision accuracy is
 misleading for the same reason: an unrecognised credential also ends as `skip`, so recall is the number to watch.
 
-This section is generated from `docs/data/memory-policy-baseline.json`, and a test fails if that file and the fixture
-disagree.
+The numbers in this section are copied by hand from `docs/data/memory-policy-baseline.json`. A test pins that JSON to
+the fixture and the scorer, but nothing checks this page, so update both together.
 
 | category | n | correct | accuracy |
 | --- | ---: | ---: | ---: |
 | arabic | 32 | 0 | 0.0% |
 | credential | 33 | 30 | 90.9% |
-| false_refusal | 23 | 12 | 52.2% |
+| false_refusal | 22 | 12 | 54.5% |
 | finance | 20 | 5 | 25.0% |
 | health | 26 | 1 | 3.9% |
 | negation | 26 | 5 | 19.2% |
-| not_fact | 28 | 26 | 92.9% |
+| not_fact | 29 | 26 | 89.7% |
 | ordinary | 42 | 14 | 33.3% |
 | third_party | 20 | 8 | 40.0% |
 
