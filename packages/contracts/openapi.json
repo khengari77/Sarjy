@@ -4325,7 +4325,8 @@
           },
           "prompt_sha256": {
             "type": "string",
-            "title": "Prompt Sha256"
+            "title": "Prompt Sha256",
+            "description": "Digest of this receipt's own content (revision, ids, shown text), not of the compiled prompt."
           },
           "history_count": {
             "type": "integer",

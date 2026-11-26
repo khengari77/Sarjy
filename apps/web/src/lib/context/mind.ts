@@ -138,7 +138,9 @@ export function diffLabel(
   excluded: readonly ContextExcluded[],
 ): string {
   const found = included.find((item) => item.id === id);
-  if (found) return `${contextKindLabel(found.kind)}: ${excerpt(found.text, 48)}`;
+  if (found) {
+    return `${contextKindLabel(found.kind)}: ${found.withheld ? 'hidden since this reply' : excerpt(found.text, 48)}`;
+  }
   const denied = excluded.find((item) => item.id === id);
   if (denied) return `Excluded: ${humanReason(denied.reason)}`;
   return shortId(id);

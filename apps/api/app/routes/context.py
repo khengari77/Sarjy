@@ -203,8 +203,9 @@ class TurnContextReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
     turn_id: str
     revision: int
-    # A digest of the receipt's own content (revision, ids, shown text), not of the compiled prompt.
-    prompt_sha256: str
+    prompt_sha256: str = Field(
+        description="Digest of this receipt's own content (revision, ids, shown text), not of the compiled prompt."
+    )
     history_count: int
     included: list[TurnContextIncluded]
     excluded: list[TurnContextExcluded]

@@ -475,3 +475,51 @@ def test_a_restating_turn_beyond_the_lens_window_is_still_blanked(tmp_path):
         entries = {entry["id"]: entry for entry in body["included"]}
         assert entries[restating]["text"] == "" and entries[restating]["withheld"] is True
         assert "Benghazi" not in json.dumps(body)
+
+
+def test_a_reply_derived_from_a_forgotten_fact_is_blanked_beyond_the_lens_window(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        for turn_id, role, text, at, request, snapshot in (
+            ("fact-user", "user", "my favorite color is blue", "2026-11-12T00:00:01+00:00", "fact-user", None),
+            (
+                "fact-echo",
+                "assistant",
+                "Nice, blue it is",
+                "2026-11-12T00:00:02+00:00",
+                "reply:fact-user",
+                {"derivation": {"turn_id": "fact-user", "record_ids": ["fact-user"]}},
+            ),
+        ):
+            sql(
+                file,
+                "INSERT INTO turns (id,conversation_id,request_id,role,text,status,created_at,snapshot) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (turn_id, chat, request, role, text, "completed", at, json.dumps(snapshot) if snapshot else None),
+            )
+        add_memory(file, chat, "color", "My favorite color is blue")
+        later, _ = start_turn(client, headers, "r1", text="What is the weather like?")
+        for index in range(110):
+            sql(
+                file,
+                "INSERT INTO turns (id,conversation_id,request_id,role,text,status,created_at) VALUES (?,?,?,?,?,?,?)",
+                (
+                    f"x{index}",
+                    chat,
+                    f"x{index}",
+                    "user",
+                    "Nothing to see",
+                    "completed",
+                    f"2099-01-01T00:{index // 60:02d}:{index % 60:02d}+00:00",
+                ),
+            )
+        before = {entry["id"]: entry for entry in receipt(client, chat, later).json()["included"]}
+        assert before["fact-echo"]["text"] == "Nice, blue it is"
+
+        sql(file, "UPDATE memories SET status='hidden' WHERE id='color'")
+        body = receipt(client, chat, later).json()
+        entries = {entry["id"]: entry for entry in body["included"]}
+        assert entries["fact-echo"]["text"] == "" and entries["fact-echo"]["withheld"] is True
+        assert "blue" not in json.dumps(body).lower()

@@ -21,9 +21,14 @@ from app.domain.context import (
     untrusted_data_prefix,
 )
 from app.domain.restatement import restating_turn_ids
-from app.infrastructure.database import Turn
+from app.infrastructure.database import ToolCall, Turn
 from app.services.authorization import owned_conversation
-from app.services.context_assembly import RETRACTION_PREFIX, _memory_rows_for_ids, read_context_inputs
+from app.services.context_assembly import (
+    RETRACTION_PREFIX,
+    _dependency_ids,
+    _memory_rows_for_ids,
+    read_context_inputs,
+)
 from app.services.context_blocks import BLOCK_TEXT_LIMIT, _active_exclusion_ids
 
 # How many preceding user turns are scanned for a compiled snapshot (legacy turns have none).
@@ -115,6 +120,54 @@ async def _turn_texts(db: AsyncSession, *, conversation_id: str, record_ids: set
         select(Turn.id, Turn.text).where(Turn.id.in_(record_ids), Turn.conversation_id == conversation_id)
     )
     return {row_id: text or "" for row_id, text in rows.all()}
+
+
+async def _derived_ids(
+    db: AsyncSession, *, conversation_id: str, included_ids: set[str], blocked: set[str]
+) -> set[str]:
+    """Included assistant replies and tool results that inherit a blocked record, however old they are.
+
+    The lens only follows derivation inside its bounded window, so the receipt repeats it for the snapshot's own
+    records: a reply (or tool result) derived from something now blocked can paraphrase a forgotten fact without
+    sharing enough words to be caught as a restatement. Unknown provenance fails closed while anything is blocked.
+    """
+    if not blocked or not included_ids:
+        return set()
+    turns = (
+        await db.scalars(select(Turn).where(Turn.id.in_(included_ids), Turn.conversation_id == conversation_id))
+    ).all()
+    calls = (await db.scalars(select(ToolCall).where(ToolCall.id.in_(included_ids)))).all()
+    tool_turns = {
+        turn.id: turn
+        for turn in (
+            await db.scalars(
+                select(Turn).where(
+                    Turn.id.in_({call.turn_id for call in calls}), Turn.conversation_id == conversation_id
+                )
+            )
+        ).all()
+    }
+    dependencies: dict[str, set[str] | None] = {}
+    for turn in turns:
+        if turn.role == "assistant":
+            references = _dependency_ids(turn)
+            dependencies[turn.id] = references or None
+    for call in calls:
+        parent = tool_turns.get(call.turn_id)
+        if parent is None:
+            dependencies[call.id] = None
+        else:
+            dependencies[call.id] = {parent.id, *_dependency_ids(parent)}
+    derived: set[str] = set()
+    while True:
+        more = {
+            record_id
+            for record_id, references in dependencies.items()
+            if record_id not in derived and (references is None or references & (blocked | derived))
+        }
+        if not more:
+            return derived
+        derived |= more
 
 
 def _included_entries(snapshot: dict, blanked_ids: set[str], *, turn_ids: set[str]) -> list[dict]:
@@ -267,6 +320,9 @@ async def get_turn_context_receipt(db: AsyncSession, *, owner_id: str, conversat
     restating = restating_turn_ids(candidates, (candidate.text for candidate in inputs.memories.denied))
     # Everything the live policy blocks now (lineage-blocked memories, blocked tool results, turns), whatever its kind.
     blanked_ids = redacted_ids | set(inputs.excluded_ids) | set(restating)
+    blanked_ids |= await _derived_ids(
+        db, conversation_id=conversation_id, included_ids=included_ids, blocked=blanked_ids
+    )
     included = _included_entries(snapshot, blanked_ids, turn_ids=set(turn_texts))
     excluded = await _excluded_entries(db, owner_id=owner_id, snapshot=snapshot, exclusions=exclusions, inputs=inputs)
     revision = snapshot.get("revision")

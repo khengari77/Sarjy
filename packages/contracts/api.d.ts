@@ -1780,7 +1780,10 @@ export interface components {
             turn_id: string;
             /** Revision */
             revision: number;
-            /** Prompt Sha256 */
+            /**
+             * Prompt Sha256
+             * @description Digest of this receipt's own content (revision, ids, shown text), not of the compiled prompt.
+             */
             prompt_sha256: string;
             /** History Count */
             history_count: number;
