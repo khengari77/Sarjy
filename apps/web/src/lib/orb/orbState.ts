@@ -105,9 +105,6 @@ export const VOICE_PHASES: readonly VoicePhase[] = [
 
 export const ORB_OVERLAYS: readonly OrbOverlay[] = ['none', 'memory_work', 'confirming', 'muted', 'error'];
 
-/** Phases that represent a live voice session (not idle/disconnected). */
-export const LIVE_VOICE_PHASES: readonly VoicePhase[] = ['connecting', 'listening', 'thinking', 'speaking'];
-
 /**
  * Priority rank of the state that wins presentation. Error outranks
  * disconnected, which outranks a live phase. Accents (confirming, memory_work,
@@ -277,24 +274,6 @@ export function deriveOrbPresentation(state: VoiceUiState, theme: ThemeName): Or
     showMicSlash,
     accentOnly,
   };
-}
-
-/* ------------------------------------------------------------------ */
-/* Session epoch guard                                                 */
-/* ------------------------------------------------------------------ */
-
-export interface SessionTag {
-  sessionId: string | null;
-  epoch: number;
-}
-
-export function isCurrentTag(current: SessionTag, incoming: SessionTag): boolean {
-  if (incoming.epoch !== current.epoch) return incoming.epoch > current.epoch;
-  return incoming.sessionId === current.sessionId;
-}
-
-export function nextEpoch(current: number): number {
-  return current + 1;
 }
 
 export * from './rendererTier';

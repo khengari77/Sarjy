@@ -196,6 +196,13 @@ export function createWordleClient(send: RequestFn = request) {
     async guess(word: string, requestId: string): Promise<WordleGuessResult> {
       return normalizeGuessResult(await send('wordle/guesses', { guess: word, request_id: requestId }));
     },
+    /** Whether the word is in the Wordle word list (today's answer always is); records nothing. */
+    async check(word: string): Promise<boolean> {
+      const body = await send('wordle/guesses/check', { word });
+      const allowed = (body as { allowed?: unknown } | null)?.allowed;
+      if (typeof allowed !== 'boolean') throw invalid();
+      return allowed;
+    },
     async reset(): Promise<WordleToday> {
       return normalizeToday(await send('wordle/reset', {}));
     },

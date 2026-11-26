@@ -113,10 +113,3 @@ export async function undoChange(id: string): Promise<ChangeUndoResult> {
 export async function endVoiceSession(session: SessionConfig | null): Promise<void> {
   if (session) await request('voice/sessions/' + session.id + '/end', {});
 }
-
-export async function bootstrapConversations(): Promise<Conversation[]> {
-  await request('demo-session', {});
-  const conversations = await request<Conversation[]>('conversations');
-  if (conversations.length) return conversations;
-  return [await createConversation()];
-}

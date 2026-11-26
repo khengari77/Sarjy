@@ -12,13 +12,12 @@ from __future__ import annotations
 import json
 import re
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Final
 
 import httpx
 from app.domain.tool_operations import operation_key
 from livekit.agents import RunContext, function_tool
 
-SPELLED_RUN = re.compile(r"(?:^|\s)(?:[a-z]\s+){4}[a-z](?:\s|$)")
 # Common five-letter words that are ordinary speech, not guesses.
 NOT_GUESSES = frozenset(
     [
@@ -73,11 +72,24 @@ CLOSE_REQUEST = re.compile(
 WORDLE_FAILED = "The Wordle tool failed. Tell the user you could not do that right now; do not guess the outcome."
 
 
-async def publish_wordle(room, action: str) -> None:
-    """Tell the web client to open, refresh or close the Wordle popup."""
-    await room.local_participant.publish_data(
-        json.dumps({"action": action}).encode(), reliable=True, topic="sarjy.wordle"
-    )
+async def publish_wordle(room, action: str, word: str | None = None) -> None:
+    """Tell the web client to open, refresh or close the Wordle popup, or to await a yes for ``word``."""
+    payload = {"action": action} if word is None else {"action": action, "word": word}
+    await room.local_participant.publish_data(json.dumps(payload).encode(), reliable=True, topic="sarjy.wordle")
+
+
+# The five model-facing Wordle tools; none is offered while the popup is closed.
+WORDLE_GAME_TOOLS: Final = frozenset(
+    {"play_wordle", "submit_wordle_guess", "wordle_status", "reset_wordle", "close_wordle"}
+)
+# Command detail the API returns when Jev hears a loose request to play (app.domain.ui_routing.WORDLE_OPEN_DETAIL).
+WORDLE_OPEN_DETAIL: Final = "WORDLE_OPEN"
+POPUP_FAILED: Final = "The popup could not be updated; the game state is saved."
+# Spoken when Jev hears "let's play Wordle" while the popup is already open and the board cannot be read.
+WORDLE_ALREADY_OPEN: Final = "Your Wordle is already open. Go ahead and say your guess."
+# Spoken without a model call for anything unrelated while the popup is open (app.domain.policy.WORDLE_MODE_NUDGE).
+WORDLE_MODE_NUDGE: Final = "We're playing Wordle. Say a five-letter guess, or say close Wordle to chat."
+WORDLE_UI_ACTIONS: Final = frozenset({"open", "refresh", "close", "confirm_reset", "confirm_guess"})
 
 
 class WordleTools:
@@ -85,20 +97,25 @@ class WordleTools:
     current_turn: str | None
     publish_wordle: Any
     wordle_spoken: dict[str, list[str]]
-    wordle_touched: bool
     wordle_calls: set[str]
     current_text: str
     wordle_active: Any
 
-    async def _wordle_direct(self, path: str, **arguments: str) -> str | None:
-        """Run a Wordle tool without the model; returns the exact line to speak (None on failure)."""
+    async def _wordle_direct(self, path: str, *, turn: str | None = None, **arguments: Any) -> str | None:
+        """Run a Wordle tool without the model; returns the exact line to speak (None on failure).
+
+        ``turn`` is the turn being answered; it defaults to ``current_turn``, which a later
+        utterance may already have moved, so callers that know their turn must pass it.
+        """
+        turn = turn or self.current_turn
         stub = SimpleNamespace(function_call=SimpleNamespace(call_id=f"direct-{path}"))
-        await self._wordle_tool(path, stub, **arguments)  # type: ignore[arg-type]
-        spoken = self.wordle_spoken.pop(self.current_turn or "", [])
+        await self._wordle_tool(path, stub, turn=turn, **arguments)  # type: ignore[arg-type]
+        spoken = self.wordle_spoken.pop(turn or "", [])
         return " ".join(spoken) or None
 
-    async def _wordle_tool(self, path: str, ctx: RunContext, **arguments: str) -> str:
-        if not self.current_turn:
+    async def _wordle_tool(self, path: str, ctx: RunContext, *, turn: str | None = None, **arguments: Any) -> str:
+        turn = turn or self.current_turn
+        if not turn:
             raise ValueError("TOOL_TURN_REQUIRED")
         word = arguments.get("word")
         if (
@@ -112,14 +129,14 @@ class WordleTools:
         ):
             return NOT_SAID
         call_id = getattr(ctx.function_call, "call_id", "")
-        self.wordle_calls.add(self.current_turn)
+        self.wordle_calls.add(turn)
         try:
             response = await self.backend.post(
                 f"/internal/agent/tool/{path}",
                 json={
                     **arguments,
-                    "turn_id": self.current_turn,
-                    "request_id": operation_key(self.current_turn, call_id),
+                    "turn_id": turn,
+                    "request_id": operation_key(turn, call_id),
                 },
             )
             response.raise_for_status()
@@ -129,15 +146,22 @@ class WordleTools:
         if not isinstance(body, dict):
             return WORDLE_FAILED
         spoken = body.get("spoken")
-        if isinstance(spoken, str) and spoken:
-            self.wordle_spoken.setdefault(self.current_turn, []).append(spoken)
-            self.wordle_touched = True
+        spoken_lines = self.wordle_spoken.setdefault(turn, []) if isinstance(spoken, str) and spoken else None
+        if spoken_lines is not None:
+            spoken_lines.append(spoken)
         ui = body.get("ui")
-        if self.publish_wordle is not None and ui in {"open", "refresh", "close", "confirm_reset"}:
+        if self.publish_wordle is not None and ui in WORDLE_UI_ACTIONS:
             try:
-                await self.publish_wordle(ui)
+                if ui == "confirm_guess":
+                    # The client arms the spoken yes/no for this word; nothing is recorded until the user says yes.
+                    await self.publish_wordle(ui, str(body.get("word") or ""))
+                else:
+                    await self.publish_wordle(ui)
             except Exception:
-                return f"{body.get('message', '')} (The popup could not be updated; the game state is saved.)"
+                # The spoken line must not claim a popup the user cannot see.
+                if spoken_lines is not None:
+                    spoken_lines.append(POPUP_FAILED)
+                return f"{body.get('message', '')} ({POPUP_FAILED})"
         return str(body.get("message") or WORDLE_FAILED)
 
     @function_tool()
@@ -150,7 +174,8 @@ class WordleTools:
     @function_tool()
     async def submit_wordle_guess(self, ctx: RunContext, word: str):
         """Submit a Wordle guess that the user embedded in a longer sentence (for example "I think the word might be crane"). Call it only when the user's latest message contains a five-letter word or spelled-out letters meant as a guess, and pass exactly those letters as one word. Never call it for anything else (questions, chat, greetings, hints, closing) and never reuse an earlier word. Marks, guesses left and outcomes come only from this tool's result."""
-        return await self._wordle_tool("wordle-guess", ctx, word=word)
+        # A word that was spoken (not spelled) is read back for a yes first: speech-to-text mishears words.
+        return await self._wordle_tool("wordle-guess", ctx, word=word, confirm=not spelled_out(self.current_text))
 
     @function_tool()
     async def wordle_status(self, ctx: RunContext):
@@ -233,6 +258,16 @@ def extract_guess(text: str) -> str | None:
 def is_close_request(text: str) -> bool:
     """A whole-utterance request to close the Wordle popup."""
     return bool(CLOSE_REQUEST.match(re.sub(r"[^a-z' ]", " ", text.lower()).strip()))
+
+
+def spelled_out(text: str) -> bool:
+    """True when the utterance spells five letters in a row ("C R A N E"): nothing to mishear, no confirmation."""
+    run = 0
+    for token in re.findall(r"[a-z']+", text.lower().replace("-", " ").replace(".", " ")):
+        run = run + 1 if len(token) == 1 else 0
+        if run >= 5:
+            return True
+    return False
 
 
 def has_guess_candidate(text: str) -> bool:

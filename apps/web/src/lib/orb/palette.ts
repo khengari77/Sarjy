@@ -41,17 +41,6 @@ export function orbPalette(theme: ThemeName): readonly string[] {
   return ORB_PALETTES[theme];
 }
 
-/** Dominant pair used for the cloud body; the remainder are accents. */
-export function orbDominant(theme: ThemeName): readonly [string, string] {
-  const palette = ORB_PALETTES[theme];
-  return [palette[0], palette[1]];
-}
-
-/** Accent colours, in stable order, for wisps and highlights. */
-export function orbAccents(theme: ThemeName): readonly string[] {
-  return ORB_PALETTES[theme].slice(2);
-}
-
 /** Voice phases that carry a Living Cloud palette weighting. */
 export type LivingPhase = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'disconnected';
 

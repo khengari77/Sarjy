@@ -79,7 +79,6 @@ def test_postgres_lease_resume_and_fencing():
                     request_id="r1",
                     expected_revision=0,
                     action=action,
-                    catalog=None,
                     handlers={"ProposeContextExclusion": effect},
                 )
                 assert result == {"proposal_id": "cached"}
@@ -118,7 +117,6 @@ def test_postgres_lease_resume_and_fencing():
                             request_id="r2",
                             expected_revision=0,
                             action=action,
-                            catalog=None,
                             handlers={"ProposeContextExclusion": forbidden},
                             prepared={"ok": True},
                             prepared_operation_id="fenced",

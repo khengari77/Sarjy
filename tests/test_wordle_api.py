@@ -116,6 +116,66 @@ def test_invalid_word_is_rejected_without_consuming_an_attempt(tmp_path):
         assert client.get("/v1/wordle/today").json()["game"]["guesses"] == []
 
 
+def test_not_in_list_word_is_rejected_without_consuming_an_attempt(tmp_path):
+    source = FixtureSource()
+    with TestClient(create_app(settings(tmp_path), wordle_source=source)) as client:
+        client.post("/v1/demo-session")
+        client.get("/v1/wordle/today")
+        response = client.post("/v1/wordle/guesses", json={"guess": "ZZZZZ", "request_id": "not-listed"})
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "WORDLE_NOT_IN_LIST"
+        game = client.get("/v1/wordle/today").json()["game"]
+        assert game["guesses"] == []
+        assert game["attempts_remaining"] == 6
+
+
+def test_a_committed_guess_still_replays_after_its_word_leaves_the_list(tmp_path, monkeypatch):
+    source = FixtureSource()
+    with TestClient(create_app(settings(tmp_path), wordle_source=source)) as client:
+        client.post("/v1/demo-session")
+        client.get("/v1/wordle/today")
+        first = client.post("/v1/wordle/guesses", json={"guess": "SLATE", "request_id": "replay-1"})
+        assert first.status_code == 200, first.text
+        monkeypatch.setattr("app.services.wordle.allowed_words", lambda: frozenset())
+        again = client.post("/v1/wordle/guesses", json={"guess": "SLATE", "request_id": "replay-1"})
+        assert again.status_code == 200, again.text
+        assert again.json() == first.json()
+
+
+def test_todays_answer_is_accepted_when_absent_from_the_allowed_list(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.wordle.allowed_words", lambda: frozenset())
+    source = FixtureSource()
+    with TestClient(create_app(settings(tmp_path), wordle_source=source)) as client:
+        client.post("/v1/demo-session")
+        client.get("/v1/wordle/today")
+        won = client.post("/v1/wordle/guesses", json={"guess": "CRANE", "request_id": "answer-not-listed"})
+        assert won.status_code == 200, won.text
+        assert won.json()["status"] == "won"
+        assert won.json()["answer"] == CRANE
+
+
+def test_check_endpoint_reports_allowed_without_recording(tmp_path, monkeypatch):
+    source = FixtureSource()
+    with TestClient(create_app(settings(tmp_path), wordle_source=source)) as client:
+        client.post("/v1/demo-session")
+        client.get("/v1/wordle/today")
+        listed = client.post("/v1/wordle/guesses/check", json={"word": "slate"})
+        assert listed.status_code == 200
+        assert listed.json() == {"word": "SLATE", "allowed": True}
+        unlisted = client.post("/v1/wordle/guesses/check", json={"word": "zzzzz"})
+        assert unlisted.json() == {"word": "ZZZZZ", "allowed": False}
+        malformed = client.post("/v1/wordle/guesses/check", json={"word": "cat"})
+        assert malformed.json() == {"word": "CAT", "allowed": False}
+        game = client.get("/v1/wordle/today").json()["game"]
+        assert game["guesses"] == []
+        assert game["attempts_remaining"] == 6
+
+        # The check never compares against today's answer, so it cannot be used to probe for it.
+        monkeypatch.setattr("app.routes.wordle.allowed_words", lambda: frozenset())
+        answer = client.post("/v1/wordle/guesses/check", json={"word": "CRANE"})
+        assert answer.json() == {"word": "CRANE", "allowed": False}
+
+
 def test_six_wrong_guesses_reveal_answer_once_and_block_more(tmp_path):
     source = FixtureSource()
     with TestClient(create_app(settings(tmp_path), wordle_source=source)) as client:
@@ -254,6 +314,9 @@ def test_kill_switch_prevents_any_source_call(tmp_path):
         body = client.get("/v1/wordle/today").json()
         assert body["available"] is False and body["code"] == "WORDLE_DISABLED"
         assert client.post("/v1/wordle/guesses", json={"guess": "SLATE", "request_id": "off"}).status_code == 503
+        check = client.post("/v1/wordle/guesses/check", json={"word": "SLATE"})
+        assert check.status_code == 503
+        assert check.json()["detail"]["code"] == "WORDLE_DISABLED"
         assert client.get("/v1/wordle/stats").status_code == 503
         assert client.post("/internal/wordle/refresh", headers={"x-agent-secret": "refresh-secret"}).status_code == 503
     assert source.calls == []

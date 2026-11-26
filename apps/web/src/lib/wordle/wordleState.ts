@@ -118,6 +118,8 @@ export function friendlyError(code: string): string {
     case 'INVALID_WORD':
     case 'INVALID_GUESS':
       return 'Enter a five-letter word using A–Z letters.';
+    case 'WORDLE_NOT_IN_LIST':
+      return "That word isn't in the word list. Try another word.";
     case 'ALREADY_GUESSED':
       return "You've already guessed that word.";
     case 'WORDLE_GAME_OVER':

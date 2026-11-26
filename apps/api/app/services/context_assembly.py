@@ -70,7 +70,6 @@ _TOOL_READ_COLUMNS = (
     ToolCall.error_code,
     ToolCall.arguments_hash,
 )
-DENIED_STATUSES = frozenset({"superseded", "inactive", "excluded"})
 # Retraction lines: one bounded, non-privileged reminder per hidden memory that
 # originated in this conversation, so restatements of a forgotten fact in the
 # history window are not confirmed back to the user.

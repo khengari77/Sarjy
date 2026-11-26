@@ -7,10 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "artifacts/deployment/worker"
 # The worker loads the same authoritative Wordle allowlist as the web app.
-CONTRACT_FILES = (
-    "packages/contracts/wordle_commands.json",
-    "packages/contracts/wordle_command_fixtures.json",
-)
+CONTRACT_FILES = ("packages/contracts/wordle_commands.json",)
 
 
 def _copy_file(source: Path, target: Path) -> None:

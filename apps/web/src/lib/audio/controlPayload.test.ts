@@ -47,6 +47,14 @@ describe('sarjy.wordle control events', () => {
     expect(controlEvent('sarjy.wordle', bytes({ action: 'refresh' }))).toEqual({ type: 'wordle', action: 'refresh' });
     expect(controlEvent('sarjy.wordle', bytes({ action: 'close' }))).toEqual({ type: 'wordle', action: 'close' });
     expect(controlEvent('sarjy.wordle', bytes({ action: 'reveal' }))).toBeNull();
+    expect(controlEvent('sarjy.wordle', bytes({ action: 'confirm_guess', word: 'CRANE' }))).toEqual({
+      type: 'wordle',
+      action: 'confirm_guess',
+      word: 'CRANE',
+    });
+    // Only a five-letter uppercase word is accepted; anything else is dropped.
+    expect(controlEvent('sarjy.wordle', bytes({ action: 'confirm_guess', word: 'crane!' }))).toBeNull();
+    expect(controlEvent('sarjy.wordle', bytes({ action: 'confirm_guess' }))).toBeNull();
     expect(controlEvent('sarjy.wordle', bytes([]))).toBeNull();
   });
 });

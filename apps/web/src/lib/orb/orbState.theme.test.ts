@@ -5,7 +5,6 @@ import {
   ORB_OVERLAYS,
   VOICE_PHASES,
   deriveOrbPresentation,
-  nextEpoch,
   resolvePhaseColor,
   type OrbPresentation,
   type VoiceUiState,
@@ -110,13 +109,10 @@ describe('theme-change invariance', () => {
     }
   });
 
-  it('keeps session identity and epoch untouched by a theme change', () => {
+  it('keeps session identity untouched by a theme change', () => {
     const input = state({ phase: 'speaking', overlay: 'none', sessionId: 'session-7' });
-    const tag = { sessionId: input.sessionId, epoch: 4 };
     deriveOrbPresentation(input, 'dark');
     expect(input.sessionId).toBe('session-7');
-    expect(tag).toEqual({ sessionId: 'session-7', epoch: 4 });
-    expect(nextEpoch(tag.epoch)).toBe(5);
   });
 });
 

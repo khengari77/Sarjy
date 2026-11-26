@@ -17,7 +17,7 @@ Authors add tests with their fixes in their existing PRs. Coordinator reviews ex
 
 ## Follow-up after prerequisites merge
 
-A separate issue/worktree implements generated state machines (Hypothesis backend, fast-check frontend), PR profile 25 sequences/15 operations, nightly 200/50, and replayable seeds/minimized traces. Scoped mutmut and Stryker/Vitest run nightly/manual with two workers and 30-minute timeout; narrow reviewed equivalent-mutant exclusions only. Tool versions must be locked without upgrading existing SDK/test runners. Feature-dependent models remain explicitly pending until their production paths land.
+These gates are planned, not implemented. Only the Hypothesis backend property tests run today; fast-check, mutmut and Stryker are not in the dependencies or CI configuration. A separate issue/worktree covers generated state machines (Hypothesis backend, fast-check frontend), PR profile 25 sequences/15 operations, nightly 200/50, replayable seeds/minimized traces, and scoped mutmut and Stryker/Vitest with two workers and 30-minute timeout; narrow reviewed equivalent-mutant exclusions only. Tool versions must be locked without upgrading existing SDK/test runners. Feature-dependent models remain explicitly pending until their production paths land.
 
 ## Smoke tooling
 

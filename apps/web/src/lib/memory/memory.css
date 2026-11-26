@@ -204,12 +204,6 @@
   overflow-wrap: anywhere;
 }
 
-.memory-kind {
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.memory-row-actions,
 .memory-actions {
   display: flex;
   align-items: center;

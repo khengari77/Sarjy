@@ -19,6 +19,7 @@ from app.domain.wordle import WordleValidationError, resolve_puzzle_date
 from app.services.wordle import (
     WordleServiceError,
     WordleSource,
+    allowed_words,
     ensure_game,
     ensure_today,
     game_view,
@@ -35,6 +36,11 @@ class GuessInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     guess: str = Field(min_length=1, max_length=20)
     request_id: str = Field(min_length=1, max_length=100)
+
+
+class GuessCheckInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    word: str = Field(max_length=20)
 
 
 class GuessRateLimiter:
@@ -110,20 +116,25 @@ def _register_reset_route(app, *, config: Settings, database, identity, source: 
         }
 
 
+async def _ensure_today(db: AsyncSession, *, config: Settings, source: WordleSource):
+    try:
+        return await ensure_today(db, source=source, timezone=config.wordle_timezone)
+    except WordleServiceError as exc:
+        raise HTTPException(exc.status, detail={"code": exc.code}) from exc
+
+
 def register_wordle_routes(app, *, config: Settings, database, identity, source: WordleSource):
     limiter = GuessRateLimiter()
     _register_reset_route(app, config=config, database=database, identity=identity, source=source, limiter=limiter)
     _register_player_routes(app, config=config, database=database, identity=identity, source=source, limiter=limiter)
+    _register_check_route(app, config=config, database=database, identity=identity, source=source)
     _register_refresh_route(app, config=config, database=database, source=source)
     return limiter
 
 
 def _register_player_routes(app, *, config: Settings, database, identity, source: WordleSource, limiter):
     async def ensure(db: AsyncSession):
-        try:
-            return await ensure_today(db, source=source, timezone=config.wordle_timezone)
-        except WordleServiceError as exc:
-            raise HTTPException(exc.status, detail={"code": exc.code}) from exc
+        return await _ensure_today(db, config=config, source=source)
 
     @app.get("/v1/wordle/today")
     async def today(user=Depends(identity), db: AsyncSession = Depends(database)):
@@ -176,6 +187,19 @@ def _register_player_routes(app, *, config: Settings, database, identity, source
             "current_streak": result.current_streak,
             "max_streak": result.max_streak,
         }
+
+
+def _register_check_route(app, *, config: Settings, database, identity, source: WordleSource):
+    @app.post("/v1/wordle/guesses/check")
+    async def check(body: GuessCheckInput, user=Depends(identity), db: AsyncSession = Depends(database)):
+        """Report whether a word would be accepted as a guess; records nothing."""
+        if not config.wordle_enabled:
+            raise HTTPException(503, detail={"code": "WORDLE_DISABLED"})
+        await _ensure_today(db, config=config, source=source)
+        word = body.word.strip().upper()
+        # List membership only: comparing against today's answer here would let a caller probe for it.
+        # A real guess still always accepts the answer (submit_guess).
+        return {"word": word, "allowed": word in allowed_words()}
 
 
 def _register_refresh_route(app, *, config: Settings, database, source: WordleSource):

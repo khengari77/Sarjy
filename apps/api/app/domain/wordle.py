@@ -70,6 +70,16 @@ def normalize_guess(value: object) -> str:
     return normalized
 
 
+def guess_allowed(word: str, answer: str, allowed: frozenset[str]) -> bool:
+    """Return whether ``word`` may be submitted: a listed guess or today's answer."""
+    try:
+        normalized = normalize_guess(word)
+        validated_answer = validate_answer(answer)
+    except WordleValidationError:
+        return False
+    return normalized in allowed or normalized == validated_answer
+
+
 def score_guess(answer: str, guess: str) -> tuple[WordleMark, ...]:
     """Score one guess with the two-pass duplicate-letter rule.
 

@@ -45,4 +45,6 @@ export interface WordleGamePort {
   /** Re-read the server game in place (no loading flash) and reveal any new row. */
   refresh(): Promise<void>;
   guessWord(word: string, requestId: string): Promise<GuessOutcome>;
+  /** True/false from the server word list; null when it could not be checked (the guess itself still is). */
+  checkWord(word: string): Promise<boolean | null>;
 }

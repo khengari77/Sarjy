@@ -37,6 +37,9 @@ from app.services.voices import DeepgramVoices, VoiceProvider, approved_voice_id
 from app.services.weather import close_weather_client
 from app.services.wordle import HttpWordleSource, wordle_refresh_loop
 
+REFRESH_TASK_SHUTDOWN_TIMEOUT_SECONDS = 5
+POOL_WARM_TIMEOUT_SECONDS = 3
+
 
 def _wordle_refresh_task(config: Settings, sessions, source):
     if not config.wordle_enabled or config.wordle_refresh_hour is None:
@@ -56,7 +59,7 @@ async def _stop_refresh_task(task) -> None:
         return
     task.cancel()
     try:
-        await asyncio.wait_for(task, timeout=5)
+        await asyncio.wait_for(task, timeout=REFRESH_TASK_SHUTDOWN_TIMEOUT_SECONDS)
     except (asyncio.CancelledError, TimeoutError):
         pass
     except Exception:  # noqa: BLE001 - a failed refresh task must not block shutdown
@@ -214,7 +217,10 @@ async def _warm_pool(engine) -> None:
             await connection.execute(text("SELECT 1"))
 
     try:
-        outcomes = await asyncio.wait_for(asyncio.gather(*(warm() for _ in range(3)), return_exceptions=True), 3)
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(*(warm() for _ in range(3)), return_exceptions=True),
+            POOL_WARM_TIMEOUT_SECONDS,
+        )
     except TimeoutError:
         logging.getLogger(__name__).warning("Database pool warm-up timed out")
         return
@@ -287,9 +293,9 @@ def create_app(
         openapi_url=None if config.development_protected else "/openapi.json",
     )
 
-    # The reviewer gate is added first so the web-service-secret middleware
-    # stays outermost and the proxy boundary is checked before admission.
-    # Registered first, so it sits inside the gates: the web-service gate stays outermost.
+    # Middleware runs in reverse registration order: the web-service gate is
+    # registered last and stays outermost, then the account and reviewer gates,
+    # with the timing middleware (registered first) innermost.
     app.add_middleware(InternalTimingMiddleware)
     app.middleware("http")(_reviewer_gate(config, sessions, now))
     app.middleware("http")(_account_gate(config, sessions, now))

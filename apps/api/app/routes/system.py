@@ -123,7 +123,7 @@ def _register_conversation_routes(app, *, database, identity, owned):
 def _register_catalog_routes(app, *, config: Settings, catalog: VoiceProvider, identity):
     @app.get("/v1/pipelines/providers")
     def providers():
-        choices = PRESET | {"llm": default_llm(config), "tts": default_tts(config)}
+        choices = PRESET | {"llm": default_llm(config), "tts": default_tts()}
         return {
             role: {
                 "provider": provider,

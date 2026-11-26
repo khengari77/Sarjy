@@ -8,18 +8,24 @@ import httpx
 from livekit.agents import llm
 from main import SarjyAgent
 from wordle_tools import (
+    POPUP_FAILED,
+    WORDLE_ALREADY_OPEN,
     WORDLE_FAILED,
+    WORDLE_GAME_TOOLS,
+    WORDLE_MODE_NUDGE,
+    WORDLE_OPEN_DETAIL,
     claims_game_state,
     extract_guess,
     has_guess_candidate,
     is_close_request,
     publish_wordle,
+    spelled_out,
 )
 
 
 def build(handler, published, active=False):
-    async def publish(action):
-        published.append(action)
+    async def publish(action, word=None):
+        published.append(action if word is None else (action, word))
 
     client = httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(handler))
     agent = SarjyAgent(
@@ -160,7 +166,7 @@ def test_open_game_withdraws_play_unless_it_was_called_this_turn():
     assert "play_wordle" in {tool.info.name for tool in agent._wordle_tools(agent.tools)}
 
 
-def test_bare_guess_is_recorded_and_spoken_without_the_model(monkeypatch):
+def test_bare_guess_is_recorded_and_spoken_without_the_model():
     seen: list[str] = []
 
     def handler(request):
@@ -186,9 +192,14 @@ def test_bare_guess_is_recorded_and_spoken_without_the_model(monkeypatch):
     assert seen == ["/internal/agent/tool/wordle-guess"]
 
 
-def test_closed_game_keeps_play_and_never_records_a_bare_word():
+def test_closed_popup_offers_no_wordle_tool_and_never_records_a_bare_word():
     _, agent = build(lambda request: httpx.Response(200, json={}), [], active=False)
-    assert "play_wordle" in {tool.info.name for tool in agent._wordle_tools(agent.tools)}
+    agent.current_turn = "t1"
+    names = {tool.info.name for tool in agent._wordle_tools(agent.tools)}
+    assert names.isdisjoint(WORDLE_GAME_TOOLS)
+    # Non-Wordle tools are untouched.
+    assert {"propose_memory", "recall"} <= names
+    assert {tool.info.name for tool in agent.tools} >= WORDLE_GAME_TOOLS
     message = llm.ChatMessage(id="m1", role="user", content=["false"])
     assert asyncio.run(agent._wordle_turn_speech(message)) is None
 
@@ -232,7 +243,7 @@ def test_submit_without_a_guess_in_the_utterance_is_refused():
     assert "t1" not in agent.wordle_calls
 
 
-def _guard(active: bool, reply: str, touched: bool = True):
+def _guard(active: bool, reply: str):
     """Run the prose guard over a model reply with no tool call."""
     from livekit.agents import llm as _llm
 
@@ -241,7 +252,6 @@ def _guard(active: bool, reply: str, touched: bool = True):
 
     async def run():
         _, agent = build(lambda request: httpx.Response(200, json={"spoken": "Real board."}), [], active=active)
-        agent.wordle_touched = touched
         agent.current_turn = "turn-1"
         return "".join([c.delta.content or "" async for c in agent._guard_wordle_prose(stream())])
 
@@ -286,3 +296,179 @@ def test_reset_tool_asks_for_confirmation_through_the_client_and_never_resets():
 
     asyncio.run(run())
     assert seen == ["/internal/agent/tool/wordle-reset"] and published == ["confirm_reset"]
+
+
+def test_turn_start_reports_the_popup_state():
+    bodies: list[dict] = []
+
+    def handler(request):
+        if request.url.path == "/internal/agent/turn/start":
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"turn_id": f"turn-{len(bodies)}", "context": {}})
+        return httpx.Response(200, json={})
+
+    async def run():
+        state = {"open": False}
+        client, agent = build(handler, [])
+        agent.wordle_active = lambda: state["open"]
+        async with client:
+            await agent.on_user_turn_completed(None, llm.ChatMessage(id="m1", role="user", content=["Hi there."]))
+            state["open"] = True
+            await agent.on_user_turn_completed(None, llm.ChatMessage(id="m2", role="user", content=["Crane."]))
+
+    asyncio.run(run())
+    assert [body["wordle_open"] for body in bodies] == [False, True]
+
+
+def test_jev_wordle_open_command_runs_the_real_play_for_the_answered_turn():
+    seen: list[tuple[str, dict]] = []
+    published: list[str] = []
+
+    def handler(request):
+        seen.append((request.url.path, json.loads(request.content)))
+        if request.url.path.endswith("wordle-status"):
+            return httpx.Response(200, json={"status": "in_progress", "spoken": "Two guesses so far, four left."})
+        return httpx.Response(200, json={"status": "in_progress", "ui": "open", "spoken": "Today's Wordle is open."})
+
+    command = {"detail": WORDLE_OPEN_DETAIL, "kind": "unsupported", "spoken": 'Say "play Wordle".'}
+
+    async def run():
+        client, agent = build(handler, published)
+        async with client:
+            # A later utterance has already moved current_turn; the play belongs to turn A.
+            agent.current_turn = "turn-B"
+            assert await agent._command_speech(command, "turn-A") == "Today's Wordle is open."
+            assert "turn-B" not in agent.wordle_spoken
+            # Already open: the board is read back instead of telling the user to open it.
+            agent.wordle_active = lambda: True
+            assert await agent._command_speech(command, "turn-C") == "Two guesses so far, four left."
+
+    asyncio.run(run())
+    assert [path for path, _ in seen] == ["/internal/agent/tool/wordle-play", "/internal/agent/tool/wordle-status"]
+    assert seen[0][1]["turn_id"] == "turn-A" and seen[1][1]["turn_id"] == "turn-C"
+    assert published == ["open"]
+
+
+def test_already_open_falls_back_to_an_honest_line_when_the_board_cannot_be_read():
+    def handler(request):
+        return httpx.Response(503)
+
+    command = {"detail": WORDLE_OPEN_DETAIL, "kind": "unsupported", "spoken": 'Say "play Wordle".'}
+
+    async def run():
+        client, agent = build(handler, [], active=True)
+        async with client:
+            return await agent._command_speech(command, "turn-1")
+
+    assert asyncio.run(run()) == WORDLE_ALREADY_OPEN
+
+
+def test_a_failed_popup_update_is_spoken_not_hidden():
+    async def failing_publish(_action):
+        raise RuntimeError("data channel closed")
+
+    def handler(request):
+        return httpx.Response(200, json={"status": "in_progress", "ui": "open", "spoken": "Today's Wordle is open."})
+
+    async def run():
+        client, agent = build(handler, [])
+        agent.publish_wordle = failing_publish
+        async with client:
+            return await agent._wordle_direct("wordle-play", turn="turn-1")
+
+    assert asyncio.run(run()) == f"Today's Wordle is open. {POPUP_FAILED}"
+
+
+def test_worker_and_api_agree_on_the_wordle_open_detail():
+    from app.domain.ui_routing import WORDLE_OPEN_DETAIL as API_DETAIL
+
+    assert WORDLE_OPEN_DETAIL == API_DETAIL
+
+
+def test_spoken_words_are_read_back_but_spelled_letters_count_at_once():
+    bodies: list[dict] = []
+    published: list = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if body.get("confirm"):
+            return httpx.Response(
+                200,
+                json={
+                    "status": "confirm",
+                    "ui": "confirm_guess",
+                    "word": body["word"],
+                    "spoken": "C, R, A, N, E. Is that your guess?",
+                },
+            )
+        return httpx.Response(200, json={"status": "in_progress", "ui": "refresh", "spoken": "CRANE: C gray. 5 left."})
+
+    async def run():
+        client, agent = build(handler, published, active=True)
+        async with client:
+            agent.current_turn, agent.current_text = "turn-1", "crane"
+            spoken = await agent._wordle_turn_speech(llm.ChatMessage(id="m1", role="user", content=["crane"]))
+            assert spoken == "C, R, A, N, E. Is that your guess?"
+            agent.current_turn, agent.current_text = "turn-2", "C R A N E"
+            spoken = await agent._wordle_turn_speech(llm.ChatMessage(id="m2", role="user", content=["C R A N E"]))
+            assert spoken == "CRANE: C gray. 5 left."
+
+    asyncio.run(run())
+    assert [body["confirm"] for body in bodies] == [True, False]
+    # The popup is asked to await a yes for exactly that word; a recorded guess just refreshes it.
+    assert published == [("confirm_guess", "CRANE"), "refresh"]
+
+
+def test_embedded_guess_tool_confirms_unless_the_user_spelled_it():
+    bodies: list[dict] = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"status": "confirm", "word": "CRANE", "spoken": "C, R, A, N, E. Is that your guess?"}
+        )
+
+    async def run():
+        client, agent = build(handler, [], active=True)
+        async with client:
+            agent.current_turn = "t1"
+            agent.current_text = "I think it might be crane"
+            await agent.submit_wordle_guess._func(agent, ctx("c1"), word="crane")
+            agent.current_text = "I think it's c r a n e"
+            await agent.submit_wordle_guess._func(agent, ctx("c2"), word="crane")
+
+    asyncio.run(run())
+    assert [body["confirm"] for body in bodies] == [True, False]
+
+
+def test_spelled_out_needs_five_letters_in_a_row():
+    assert spelled_out("C R A N E") and spelled_out("it's c-r-a-n-e please") and spelled_out("c. r. a. n. e.")
+    assert not spelled_out("crane") and not spelled_out("I think a crane") and not spelled_out("a b c d")
+
+
+def test_wordle_mode_offers_only_the_game_tools():
+    _, agent = build(lambda request: httpx.Response(200, json={}), [], active=True)
+    agent.current_turn = "t1"
+    names = {tool.info.name for tool in agent._wordle_tools(agent.tools)}
+    assert names == WORDLE_GAME_TOOLS - {"play_wordle"}
+
+
+def test_wordle_mode_nudges_unrelated_speech_without_the_model():
+    _, agent = build(lambda request: httpx.Response(200, json={}), [], active=True)
+    weather = llm.ChatMessage(id="m1", role="user", content=["What's the weather in Tripoli?"])
+    assert agent._fixed_reply(weather, "t1") == WORDLE_MODE_NUDGE
+    embedded = llm.ChatMessage(id="m2", role="user", content=["I think the word might be crane"])
+    assert agent._fixed_reply(embedded, "t2") is None
+    # The answer to a consent question asked before the game is spoken, not nudged.
+    agent.memory_outcome = "save"
+    assert agent._fixed_reply(llm.ChatMessage(id="m3", role="user", content=["Yes."]), "t3") is None
+    agent.memory_outcome = None
+    agent.wordle_active = lambda: False
+    assert agent._fixed_reply(weather, "t4") is None
+
+
+def test_worker_and_api_agree_on_the_wordle_mode_nudge():
+    from app.domain.policy import WORDLE_MODE_NUDGE as API_NUDGE
+
+    assert API_NUDGE["en"] == WORDLE_MODE_NUDGE
