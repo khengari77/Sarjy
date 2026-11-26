@@ -683,6 +683,29 @@ def test_a_failed_auto_save_never_claims_a_save_and_never_falls_back_to_a_questi
         body = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
         assert body["status"] == "rejected" and body["error"] == "MEMORY_SAVE_FAILED"
         assert "proposal" not in body and "do not claim" in body["message"].lower()
+        assert "could not confirm" in body["message"].lower()  # an attempted write is never reported as "nothing saved"
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_auto_propose_still_asks_for_a_third_party_fact_another_script_and_a_hidden_fact(tmp_path):
+    """A model proposal is never 'explicit'; the English keyword net cannot judge other scripts; a hidden fact stays hidden."""
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        third = propose_tool(client, headers, "My boss is getting divorced", "p1", turn_id)
+        assert third["status"] == "proposed", third
+        arabic = propose_tool(client, headers, "أنا أسكن في طرابلس", "p2", turn_id)
+        assert arabic["status"] == "proposed", arabic
+        assert active_contents(file) == [] and operations(file) == []
+
+        saved = propose_tool(client, headers, "I like green tea", "p3", turn_id)
+        assert saved["status"] == "saved"
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("UPDATE memories SET status = 'hidden' WHERE content = 'I like green tea'")
+        again = propose_tool(client, headers, "I like green tea", "p4", turn_id)
+        assert again["status"] == "proposed", again
         assert active_contents(file) == []
     finally:
         cm.__exit__(None, None, None)
