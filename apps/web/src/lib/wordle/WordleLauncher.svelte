@@ -64,6 +64,7 @@
   const activeSync = createActiveSync(
     (event) => (runtime ? runtime.sendControl(event) : Promise.resolve()),
     () => game.state.open,
+    () => voice.pending(),
   );
 
   $effect(() => {

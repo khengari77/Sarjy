@@ -170,9 +170,10 @@ def test_check_endpoint_reports_allowed_without_recording(tmp_path, monkeypatch)
         assert game["guesses"] == []
         assert game["attempts_remaining"] == 6
 
+        # The check never compares against today's answer, so it cannot be used to probe for it.
         monkeypatch.setattr("app.routes.wordle.allowed_words", lambda: frozenset())
         answer = client.post("/v1/wordle/guesses/check", json={"word": "CRANE"})
-        assert answer.json() == {"word": "CRANE", "allowed": True}
+        assert answer.json() == {"word": "CRANE", "allowed": False}
 
 
 def test_six_wrong_guesses_reveal_answer_once_and_block_more(tmp_path):

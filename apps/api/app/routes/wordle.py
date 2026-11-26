@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.domain.secrets import secret_matches
-from app.domain.wordle import WordleValidationError, guess_allowed, resolve_puzzle_date
+from app.domain.wordle import WordleValidationError, resolve_puzzle_date
 from app.services.wordle import (
     WordleServiceError,
     WordleSource,
@@ -195,9 +195,11 @@ def _register_check_route(app, *, config: Settings, database, identity, source: 
         """Report whether a word would be accepted as a guess; records nothing."""
         if not config.wordle_enabled:
             raise HTTPException(503, detail={"code": "WORDLE_DISABLED"})
-        puzzle = await _ensure_today(db, config=config, source=source)
+        await _ensure_today(db, config=config, source=source)
         word = body.word.strip().upper()
-        return {"word": word, "allowed": guess_allowed(word, puzzle.answer, allowed_words())}
+        # List membership only: comparing against today's answer here would let a caller probe for it.
+        # A real guess still always accepts the answer (submit_guess).
+        return {"word": word, "allowed": word in allowed_words()}
 
 
 def _register_refresh_route(app, *, config: Settings, database, source: WordleSource):

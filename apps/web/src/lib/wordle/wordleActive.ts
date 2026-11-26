@@ -6,10 +6,16 @@ import type { WordleGamePort } from './wordleGamePort';
  * may not exist (or the worker may not have joined) when the game opens, so the
  * current value is re-sent whenever the transport or the agent reports a status.
  */
-export function createActiveSync(send: (event: Record<string, unknown>) => Promise<void>, isOpen: () => boolean) {
+export function createActiveSync(
+  send: (event: Record<string, unknown>) => Promise<void>,
+  isOpen: () => boolean,
+  pending: () => string | null = () => null,
+) {
   function publish(): void {
     try {
       void send({ type: 'wordle.active', value: isOpen() }).catch(() => {});
+      // The pending yes/no is re-sent too: a flag dropped while the room was not connected is re-armed here.
+      void send({ type: 'wordle.pending', value: pending() }).catch(() => {});
     } catch {
       // A runtime without control support (or a torn-down one) must never break the page.
     }

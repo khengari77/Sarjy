@@ -323,5 +323,21 @@ def test_yes_stays_with_the_client_briefly_after_it_clears_the_pending_flag(monk
     clock["now"] += 1.0
     assert state.pending is True
     assert is_wordle_command("yes", reveal_pending=state.pending, wordle_active=True)
-    clock["now"] += 5.0
+    clock["now"] += 1.0
     assert state.pending is False
+
+
+def test_closing_the_popup_ends_the_yes_no_grace_at_once(monkeypatch):
+    clock = {"now": 100.0}
+    monkeypatch.setattr("main.time.monotonic", lambda: clock["now"])
+    state = RevealState()
+    state.active = True
+    control = lambda kind, value: SimpleNamespace(  # noqa: E731
+        topic="sarjy.control", participant=HUMAN, data=json.dumps({"type": kind, "value": value}).encode()
+    )
+    apply_control(control("wordle.pending", "guess"), state)
+    apply_control(control("wordle.pending", None), state)
+    apply_control(control("wordle.active", False), state)
+    # A "yes" right after closing Wordle is conversation again (e.g. answering a memory question).
+    assert state.pending is False
+    assert not is_wordle_command("yes", reveal_pending=state.pending, wordle_active=state.active)

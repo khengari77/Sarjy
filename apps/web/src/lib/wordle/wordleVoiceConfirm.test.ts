@@ -67,6 +67,23 @@ describe('Wordle voice adapter: spoken guesses are confirmed', () => {
     expect(fake.calls.guesses.map((guess) => guess.word)).toEqual(['CRANE']);
   });
 
+  it('drops a pending guess once the game is closed, so a later yes is not a guess', async () => {
+    const { fake, voice } = setup();
+    await voice.handleEvent(transcript('guess crane', 's1'));
+    fake.port.close();
+    const result = await voice.handleEvent(transcript('yes', 's2'));
+    expect(result).toEqual({ handled: false, ignored: 'nothing-pending' });
+    expect(fake.calls.guesses).toEqual([]);
+  });
+
+  it('quitting by voice clears the pending guess', async () => {
+    const { fake, voice } = setup();
+    await voice.handleEvent(transcript('guess crane', 's1'));
+    await voice.handleEvent(transcript('quit wordle', 's2'));
+    expect(voice.pending()).toBeNull();
+    expect(fake.calls.guesses).toEqual([]);
+  });
+
   it('arms the yes/no for a word the worker read back', async () => {
     const { fake, voice } = setup();
     applyWordleToolEvent(fake.port, { type: 'wordle', action: 'confirm_guess', word: 'SLATE', epoch: 1 }, voice);

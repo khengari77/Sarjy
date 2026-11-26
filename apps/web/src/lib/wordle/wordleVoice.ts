@@ -184,6 +184,11 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
     deps.onPending?.(kind);
   }
 
+  /** A guess waits for its yes only while the game is open and still being played. */
+  function dropStaleGuess() {
+    if (pending === 'guess' && (!deps.game.state.open || deps.game.state.view !== 'playing')) setPending(null);
+  }
+
   async function askGuess(word: string): Promise<string> {
     // Check the word list first so a mishear that is not a word never costs a confirmation turn.
     if ((await deps.game.checkWord(word)) === false) {
@@ -225,6 +230,8 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
       case 'guesses':
         return { handled: true, command: command.kind, spoken: await guessesCommand(deps, say) };
       case 'quit':
+        // Closing the game drops any yes/no it was waiting for; a later "yes" belongs to the conversation.
+        if (pending) setPending(null);
         deps.game.close();
         return {
           handled: true,
@@ -235,9 +242,11 @@ export function createWordleVoice(deps: WordleVoiceDeps) {
       case 'reset':
         return { handled: true, command: command.kind, spoken: ask(command.kind) };
       case 'confirm':
+        dropStaleGuess();
         if (!pending) return { handled: false, ignored: 'nothing-pending' };
         return { handled: true, command: command.kind, spoken: await confirm() };
       case 'cancel': {
+        dropStaleGuess();
         if (!pending) return { handled: false, ignored: 'nothing-pending' };
         const kind = pending;
         setPending(null);

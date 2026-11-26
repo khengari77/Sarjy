@@ -938,7 +938,12 @@ class SarjyAgent(WordleTools, Agent):
             self.forced_speech = None
             return forced
         # A consent question armed before the popup opened is still asked; the nudge never swallows it.
-        if self.wordle_active() and not self._question_due() and not has_guess_candidate(user.text_content or ""):
+        if (
+            self.wordle_active()
+            and not self._question_due()
+            and self.memory_outcome is None  # the answer to a consent question is still spoken
+            and not has_guess_candidate(user.text_content or "")
+        ):
             return WORDLE_MODE_NUDGE
         return None
 
@@ -1689,25 +1694,42 @@ async def publish_command(room, command: Mapping[str, Any]) -> None:
     await room.local_participant.publish_data(json.dumps(dict(command)).encode(), reliable=True, topic="sarjy.command")
 
 
-# The client clears its pending yes/no the moment it handles the user's "yes", which can land before the
-# worker classifies that same turn; for this long after a clear, yes/no still belongs to the client.
-PENDING_GRACE_SECONDS = 3.0
+# The client clears its pending yes/no the moment it handles the user's "yes", which can land (about 0.1 s
+# in a live call) before the worker classifies that same turn. For this long after a clear, and only while
+# the popup is open, yes/no still belongs to the client. Short enough that a second spoken yes/no (speech
+# plus end-of-turn) cannot fall inside it.
+PENDING_GRACE_SECONDS = 1.5
 
 
 class RevealState:
     """Whether the client is waiting for a spoken yes/no (reveal, reset or a guess) and the popup is open."""
 
-    active: bool = False
-
     def __init__(self) -> None:
         self._pending = False
+        self._active = False
         self._cleared_at: float | None = None
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    @active.setter
+    def active(self, value: bool) -> None:
+        self._active = value
+        if not value:
+            # A closed popup ends every Wordle yes/no at once, grace included.
+            self._pending = False
+            self._cleared_at = None
 
     @property
     def pending(self) -> bool:
         if self._pending:
             return True
-        return self._cleared_at is not None and time.monotonic() - self._cleared_at < PENDING_GRACE_SECONDS
+        return (
+            self._active
+            and self._cleared_at is not None
+            and time.monotonic() - self._cleared_at < PENDING_GRACE_SECONDS
+        )
 
     @pending.setter
     def pending(self, value: bool) -> None:
@@ -1772,8 +1794,6 @@ def apply_control(packet, reveal: RevealState) -> None:
         reveal.pending = value.get("value") in {"reveal", "reset", "guess"}
     elif value.get("type") == "wordle.active":
         reveal.active = value.get("value") is True
-        if not reveal.active:
-            reveal.pending = False
 
 
 INTRO_WAIT_SECONDS = 15
