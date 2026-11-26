@@ -8,6 +8,7 @@ change is journalled as a ``ContextOperation`` so it can be shown ("Remembered: 
 from uuid import uuid4
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.contracts import MemoryMode
@@ -129,6 +130,11 @@ async def auto_commit_memory(
     # The journal quotes the fact. Write it under the owner lock, so a permanent delete either finished first (the
     # row is gone and the label stays empty) or waits for this commit and then scrubs the journal entry.
     await lock_owner_memories(db, owner_id)
+    # Two concurrent replays can both pass the check at the top before either commits its journal row. The token's
+    # idempotency key is unique, so re-read under the owner lock and return the row that won instead of inserting.
+    replayed = await _journalled(db, owner_id, key)
+    if replayed is not None:
+        return {"status": "saved", "change": _change_payload(replayed)}
     current = await db.scalar(
         select(Memory.status).where(Memory.id == memory["id"]).execution_options(populate_existing=True)
     )
@@ -154,7 +160,16 @@ async def auto_commit_memory(
         outcome=APPLIED,
     )
     db.add(operation)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # A concurrent replay committed the journal row after the check above; the fact is already saved, so answer
+        # with its change instead of turning an idempotent replay into a 500.
+        await db.rollback()
+        replayed = await _journalled(db, owner_id, key)
+        if replayed is None:
+            raise
+        return {"status": "saved", "change": _change_payload(replayed)}
     return {"status": result.get("status", "saved"), "change": _change_payload(operation)}
 
 
