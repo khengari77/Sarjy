@@ -163,10 +163,9 @@ without a reload.
 
 ### Merge overlap
 
-This change adds `say`/`sendControl` to `apps/web/src/lib/audio/voice-runtime.ts`
-and moves the remote-audio analyser bookkeeping into
-`apps/web/src/lib/audio/remoteAudio.ts`. #115/#116 also touch the runtime's
-teardown and transcription paths: keep their teardown ordering and re-apply
-`analysers.detach`/`analysers.close` to the new helper when resolving conflicts.
+This change adds `say`/`sendControl` to `apps/web/src/lib/audio/voice-runtime.ts`;
+the remote-audio analyser bookkeeping stays inline in that file. #115/#116 also
+touch the runtime's teardown and transcription paths: keep their teardown ordering
+when resolving conflicts.
 `voice/connection.ts`, `voice/sessionAttempt.ts`, `orb/*` and the shell are not
 changed by this slice.

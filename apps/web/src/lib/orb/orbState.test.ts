@@ -4,8 +4,6 @@ import {
   ORB_OVERLAYS,
   VOICE_PHASES,
   deriveOrbPresentation,
-  isCurrentTag,
-  nextEpoch,
   nextRendererTier,
   resolveEffectivePhase,
   resolveOrbPriority,
@@ -230,16 +228,6 @@ describe('motion', () => {
     const silent = deriveOrbPresentation(state({ phase: 'speaking', outputLevel: 0 }), 'light');
     expect(silent.effectivePhase).toBe('speaking');
     expect(silent.motionPreset.radialPulse).toBeLessThan(0.5);
-  });
-});
-
-describe('session epoch guard', () => {
-  it('accepts the current tag and newer epochs only', () => {
-    const current = { sessionId: 'a', epoch: 2 };
-    expect(isCurrentTag(current, { sessionId: 'a', epoch: 2 })).toBe(true);
-    expect(isCurrentTag(current, { sessionId: 'old', epoch: 1 })).toBe(false);
-    expect(isCurrentTag(current, { sessionId: 'b', epoch: 3 })).toBe(true);
-    expect(nextEpoch(2)).toBe(3);
   });
 });
 

@@ -42,28 +42,6 @@ export function phaseFromAgentState(state: string | undefined | null): VoicePhas
   }
 }
 
-/** Errors that make the current voice session unusable. */
-const FATAL = new Set([
-  'PIPELINE_NOT_CONFIGURED',
-  'AGENT_START_TIMEOUT',
-  'CONVERSATION_REQUIRED',
-  'API_UNAVAILABLE',
-  'CALL_LIMIT_REACHED',
-  'DAILY_BUDGET_EXHAUSTED',
-  'BUDGET_SERVICE_UNAVAILABLE',
-  'VOICE_DEFAULT_UNCONFIGURED',
-  'VOICE_DEFAULT_UNAVAILABLE',
-  'VOICE_NOT_APPROVED',
-  'VOICE_UNAVAILABLE',
-  'VOICE_CATALOG_UNAVAILABLE',
-  'VOICE_CATALOG_ACCESS_DENIED',
-  'VOICE_PROVIDER_NOT_CONFIGURED',
-]);
-
-export function isFatalVoiceError(code: string): boolean {
-  return FATAL.has(code);
-}
-
 const FRIENDLY: Record<string, { en: string; ar: string }> = {
   MICROPHONE_UNAVAILABLE: {
     en: 'Microphone unavailable. Allow microphone access in your browser settings, then try again.',

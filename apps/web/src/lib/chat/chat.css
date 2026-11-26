@@ -296,13 +296,6 @@ h1 {
   max-width: 46ch;
 }
 
-.trace-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-}
-
 .toggle-row {
   display: flex;
   align-items: center;
@@ -360,26 +353,6 @@ h1 {
   justify-content: center;
   padding: 8px 20px;
   flex-wrap: wrap;
-}
-
-.end-button {
-  font: inherit;
-  border-radius: var(--radius-control);
-  min-height: var(--control-height);
-  padding: 10px 18px;
-  border: 1px solid color-mix(in srgb, var(--orb-error) 70%, transparent);
-  background: color-mix(in srgb, var(--orb-error) 82%, var(--surface-elevated));
-  color: #fff;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background var(--transition-quick),
-    border-color var(--transition-quick),
-    opacity var(--transition-quick);
-}
-
-.end-button:hover:enabled {
-  background: color-mix(in srgb, var(--orb-error) 92%, var(--surface-elevated));
 }
 
 /* The quoted caption is a round-cornered control that opens the transcript. */
@@ -461,14 +434,6 @@ textarea {
   background: var(--surface-elevated);
   color: var(--text-primary);
   font: inherit;
-}
-
-.attribution {
-  display: block;
-  text-align: center;
-  padding-bottom: calc(12px + env(safe-area-inset-bottom));
-  color: var(--text-muted);
-  font-size: 11px;
 }
 
 a {
