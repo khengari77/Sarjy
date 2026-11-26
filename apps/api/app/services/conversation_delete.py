@@ -108,7 +108,9 @@ async def _blank_conversation_text(db: AsyncSession, owner_id: str, conversation
 
 async def delete_conversation(db: AsyncSession, *, owner_id: str, conversation_id: str) -> None:
     """Idempotently tombstone one owned conversation; one transaction, no caller commit."""
-    conversation = await owned_conversation(db, owner_id, conversation_id, lock=True, include_deleted=True)
+    conversation = await owned_conversation(
+        db, owner_id, conversation_id, lock=True, include_deleted=True, key_share=True
+    )
     await lock_owner_memories(db, owner_id)
     if conversation.deleted_at is not None:
         return

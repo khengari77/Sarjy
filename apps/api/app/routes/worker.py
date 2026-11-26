@@ -194,9 +194,13 @@ def _session_is_active(voice: VoiceSession | None, room_name: str | None, *, all
 async def _live_conversation(db: AsyncSession, conversation_id: str, *, share: bool = False):
     """The conversation, or 404 when it is missing or tombstoned; late worker writes must not repopulate text.
 
-    ``share`` takes a shared row lock held to the end of the request: a delete (which locks the row exclusively) either
+    ``share`` takes a shared row lock held to the end of the request: a delete (which locks the row for update) either
     finished first, so this 404s, or waits until this write has committed and then erases it. Writers may overlap each
-    other; only a delete is held off. Used where a write can arrive after the call ended.
+    other; only a delete is held off. Only valid where the request session itself commits the write (``finalize``).
+    ``memory/confirm`` and ``memory/auto`` commit the request session early and write through separate sessions, so a
+    lock here would be released too soon: they only get this check. A fact they save in the instant of a delete is a
+    global one (it outlives the chat by design); when temporary memories get a producer, the live check must move into
+    the writing transaction (tracked in issue #302).
     """
     statement = select(Conversation).where(Conversation.id == conversation_id)
     if share:
@@ -373,7 +377,7 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
     @app.post("/internal/agent/memory/confirm")
     async def confirm_memory_route(body: MemoryConfirm, request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db, allow_ended=True)
-        conversation = await _live_conversation(db, voice.conversation_id, share=True)
+        conversation = await _live_conversation(db, voice.conversation_id)
         if body.decision != "discard":
             # A proposal armed before the user turned memory off must not be savable afterwards.
             row = await db.get(UserSetting, conversation.owner_id)
@@ -404,7 +408,7 @@ def _register_auto_memory_route(app, *, config: Settings, database, guard, embed
     async def auto_memory_route(body: MemoryAuto, request: Request, db: AsyncSession = Depends(database)):
         """Commit a proposal without a spoken question. Only valid in ``auto`` mode and only when the policy says save."""
         voice = await guard(request, db, allow_ended=True)
-        conversation = await _live_conversation(db, voice.conversation_id, share=True)
+        conversation = await _live_conversation(db, voice.conversation_id)
         row = await db.get(UserSetting, conversation.owner_id)
         mode = row.memory_mode if row is not None else "auto"
         if mode == "off":

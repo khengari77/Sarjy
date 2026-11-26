@@ -294,9 +294,14 @@ def test_delete_takes_the_conversation_row_lock_then_the_owner_lock(tmp_path, mo
                 calls = []
                 real_owned = conversation_delete.owned_conversation
 
-                async def owned_spy(db, owner_id, conversation_id, *, lock=False, include_deleted=False):
+                async def owned_spy(
+                    db, owner_id, conversation_id, *, lock=False, include_deleted=False, key_share=False
+                ):
                     calls.append(("conversation", lock, include_deleted))
-                    return await real_owned(db, owner_id, conversation_id, lock=lock, include_deleted=include_deleted)
+                    assert key_share, "the delete must use FOR NO KEY UPDATE so memory inserts are not blocked"
+                    return await real_owned(
+                        db, owner_id, conversation_id, lock=lock, include_deleted=include_deleted, key_share=key_share
+                    )
 
                 async def owner_lock_spy(db, owner_id):
                     calls.append(("owner", owner_id))
@@ -449,8 +454,8 @@ def test_the_journal_entry_of_a_surviving_global_memory_stays_undoable_and_a_tem
     asyncio.run(main())
 
 
-def test_routes_that_can_arrive_after_the_call_ended_take_the_shared_conversation_lock(tmp_path, monkeypatch):
-    """finalize, memory/confirm and memory/auto are accepted for 60 s after a call ends; a delete must wait for them."""
+def test_finalize_takes_the_shared_conversation_lock(tmp_path, monkeypatch):
+    """finalize is accepted for 60 s after a call ends and commits its own write: a delete must wait for it."""
     from app.routes import worker
 
     seen = []
@@ -467,11 +472,10 @@ def test_routes_that_can_arrive_after_the_call_ended_take_the_shared_conversatio
         chat = client.post("/v1/conversations").json()["id"]
         headers = add_turn_session(file, chat, owner)
         turn_id = turn(client, headers, "hello there", "lock-1").json()["turn_id"]
-        for path, body in (
-            ("/internal/agent/turn/finalize", {"turn_id": turn_id, "text": "hi", "status": "completed"}),
-            ("/internal/agent/memory/confirm", {"token": "x", "decision": "save"}),
-            ("/internal/agent/memory/auto", {"token": "x"}),
-        ):
-            seen.clear()
-            client.post(path, headers=headers, json=body)
-            assert seen and all(seen), f"{path} must hold the shared lock: {seen}"
+        seen.clear()
+        done = client.post(
+            "/internal/agent/turn/finalize",
+            headers=headers,
+            json={"turn_id": turn_id, "text": "hi", "status": "completed"},
+        )
+        assert done.status_code == 200 and seen == [True]
