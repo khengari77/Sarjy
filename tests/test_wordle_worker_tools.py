@@ -160,7 +160,7 @@ def test_open_game_withdraws_play_unless_it_was_called_this_turn():
     assert "play_wordle" in {tool.info.name for tool in agent._wordle_tools(agent.tools)}
 
 
-def test_bare_guess_is_recorded_and_spoken_without_the_model(monkeypatch):
+def test_bare_guess_is_recorded_and_spoken_without_the_model():
     seen: list[str] = []
 
     def handler(request):

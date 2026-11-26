@@ -35,6 +35,29 @@ def _tests(root: Path, *paths: str) -> tuple[str, ...]:
     return _select(root, *paths).tests
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _reuse_real_tree_index():
+    """Build the repository index once for the many cases that select against ROOT."""
+    index = select_tests._TestIndex(ROOT)
+    modules = select_tests._module_index(ROOT)
+    original_index = select_tests._TestIndex
+    original_module_index = select_tests._module_index
+
+    def cached_index(root: Path):
+        return index if Path(root) == ROOT else original_index(root)
+
+    def cached_module_index(root: Path):
+        return modules if Path(root) == ROOT else original_module_index(root)
+
+    select_tests._TestIndex = cached_index
+    select_tests._module_index = cached_module_index
+    try:
+        yield
+    finally:
+        select_tests._TestIndex = original_index
+        select_tests._module_index = original_module_index
+
+
 def test_changed_test_selects_itself(tmp_path):
     _write(tmp_path, "tests/test_alpha.py")
     assert _tests(tmp_path, "tests/test_alpha.py") == ("tests/test_alpha.py",)

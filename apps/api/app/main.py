@@ -37,6 +37,9 @@ from app.services.voices import DeepgramVoices, VoiceProvider, approved_voice_id
 from app.services.weather import close_weather_client
 from app.services.wordle import HttpWordleSource, wordle_refresh_loop
 
+REFRESH_TASK_SHUTDOWN_TIMEOUT_SECONDS = 5
+POOL_WARM_TIMEOUT_SECONDS = 3
+
 
 def _wordle_refresh_task(config: Settings, sessions, source):
     if not config.wordle_enabled or config.wordle_refresh_hour is None:
@@ -56,7 +59,7 @@ async def _stop_refresh_task(task) -> None:
         return
     task.cancel()
     try:
-        await asyncio.wait_for(task, timeout=5)
+        await asyncio.wait_for(task, timeout=REFRESH_TASK_SHUTDOWN_TIMEOUT_SECONDS)
     except (asyncio.CancelledError, TimeoutError):
         pass
     except Exception:  # noqa: BLE001 - a failed refresh task must not block shutdown
@@ -214,7 +217,10 @@ async def _warm_pool(engine) -> None:
             await connection.execute(text("SELECT 1"))
 
     try:
-        outcomes = await asyncio.wait_for(asyncio.gather(*(warm() for _ in range(3)), return_exceptions=True), 3)
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(*(warm() for _ in range(3)), return_exceptions=True),
+            POOL_WARM_TIMEOUT_SECONDS,
+        )
     except TimeoutError:
         logging.getLogger(__name__).warning("Database pool warm-up timed out")
         return

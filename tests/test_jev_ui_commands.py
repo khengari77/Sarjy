@@ -191,8 +191,8 @@ RECORDED = [
 ]
 
 
-@pytest.mark.parametrize(("text", "result", "expected"), RECORDED, ids=[row[0] for row in RECORDED])
-def test_recorded_live_answers(text, result, expected):
+@pytest.mark.parametrize(("result", "expected"), [row[1:] for row in RECORDED], ids=[row[0] for row in RECORDED])
+def test_recorded_live_answers(result, expected):
     assert evaluate_ui_classification(result) == expected
 
 
@@ -358,13 +358,15 @@ def test_ui_deadline_is_its_own_constant_above_the_routing_deadline():
 
     assert UI_DEADLINE_SECONDS == 1.2
     assert DEFAULT_DEADLINE_SECONDS == 0.75
+    # A default client really uses the UI deadline, not the shorter routing one.
+    assert JevUiClient("k", allow)._deadline == UI_DEADLINE_SECONDS
 
     async def scenario():
         async def slowish(_request):
-            await asyncio.sleep(0.9)
+            await asyncio.sleep(0.05)
             return httpx.Response(200, json=payload())
 
-        client = JevUiClient("k", allow, transport=httpx.MockTransport(slowish))
+        client = JevUiClient("k", allow, transport=httpx.MockTransport(slowish), deadline_seconds=0.5)
         return await client.classify(request_id="r", instruction="x")
 
     assert asyncio.run(scenario()) is not None
