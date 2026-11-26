@@ -341,6 +341,8 @@ class MemoryService:
         if claim["fingerprint"] != fingerprint:
             raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
         if claim["state"] == "completed":
+            if claim["result"] is None:  # the memory was permanently deleted, which wipes the ledger result
+                raise HTTPException(409, detail={"code": "MEMORY_ERASED"})
             return MemoryResult(**claim["result"])
         if claim["state"] in {"failed", "unknown"}:
             raise HTTPException(

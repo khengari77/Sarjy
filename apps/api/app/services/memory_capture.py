@@ -379,11 +379,11 @@ async def _resolved_proposal_response(
     raise MemoryCaptureError("MEMORY_PROPOSAL_RESOLVED", 409, confirmation_id=confirmation_id)
 
 
-async def _decision(db: AsyncSession, confirmation_id: str, revision: int, owner_id: str):
-    """Read one decision revision, owner-scoped and refreshed from the database."""
+async def _decision(db: AsyncSession, confirmation_id: str, revision: int, owner_id: str, *, lock: bool = False):
+    """Read one decision revision, owner-scoped and refreshed from the database (optionally row-locked)."""
     from app.infrastructure.database import MemoryCaptureDecision
 
-    return await db.scalar(
+    query = (
         select(MemoryCaptureDecision)
         .where(
             MemoryCaptureDecision.confirmation_id == confirmation_id,
@@ -392,6 +392,7 @@ async def _decision(db: AsyncSession, confirmation_id: str, revision: int, owner
         )
         .execution_options(populate_existing=True)
     )
+    return await db.scalar(query.with_for_update() if lock else query)
 
 
 def _decision_values(
@@ -552,7 +553,8 @@ async def _claim_decision(
 
 async def _require_lease(db: AsyncSession, payload: dict, lease_id: str | None) -> None:
     """Refuse an effect unless this worker still owns the live claim lease."""
-    row = await _decision(db, payload["confirmation_id"], int(payload["revision"]), payload["owner_id"])
+    # Locked, so a concurrent delete (which discards the decision) serializes with this effect.
+    row = await _decision(db, payload["confirmation_id"], int(payload["revision"]), payload["owner_id"], lock=True)
     if (
         lease_id is None
         or row is None

@@ -168,18 +168,18 @@ async def _scrub_decisions(db: AsyncSession, owner_id: str, deleted: set[str], p
     ).all()
     for decision in decisions:
         result = decision.result
-        if not isinstance(result, dict):
-            continue
-        memory = result.get("memory")
+        memory = result.get("memory") if isinstance(result, dict) else None
         belongs = decision.confirmation_id in proposal_keys or (
             isinstance(memory, dict) and memory.get("id") in deleted
         )
-        if belongs:
-            decision.result = {"status": "discarded", "memory": None, "scrubbed": True}
-            # A confirm already past its claim must lose the lease, or it would write the fact back.
-            decision.outcome = "discarded"
-            decision.lease_id = None
-            decision.lease_expires_at = None
+        if not belongs:
+            continue
+        # A decision still applying has no result yet (result is NULL), so test it before looking at the result.
+        decision.result = {"status": "discarded", "memory": None, "scrubbed": True}
+        # A confirm already past its claim must lose the lease, or it would write the fact back.
+        decision.outcome = "discarded"
+        decision.lease_id = None
+        decision.lease_expires_at = None
 
 
 async def _scrub_turns(db: AsyncSession, owner_id: str, chain: list[Memory], proposal_keys: set[str]) -> None:
@@ -202,6 +202,10 @@ async def _scrub_turns(db: AsyncSession, owner_id: str, chain: list[Memory], pro
             turn.snapshot = snapshot
 
 
+# Word characters, plus Arabic combining marks (harakat), which Python's \\w does not count.
+_WORD = r"\w\u0610-\u061a\u064b-\u065f"
+
+
 def _text_variants(texts: set[str]) -> set[str]:
     """The fact as it can appear in a stored prompt: plain, and JSON-escaped (inside a memory envelope)."""
     variants: set[str] = set()
@@ -217,7 +221,7 @@ def _without(value: object, needles: set[str]) -> object:
     """Remove each needle as a whole run (never from inside a longer word, so 'male' leaves 'female' alone)."""
     if isinstance(value, str):
         for needle in sorted(needles, key=len, reverse=True):
-            value = re.sub(rf"(?<!\w){re.escape(needle)}(?!\w)", "", value)
+            value = re.sub(rf"(?<![{_WORD}]){re.escape(needle)}(?![{_WORD}])", "", value)
         return value
     if isinstance(value, list):
         return [_without(item, needles) for item in value]

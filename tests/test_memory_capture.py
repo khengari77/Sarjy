@@ -2353,7 +2353,7 @@ def test_deleting_a_memory_ends_the_lease_of_its_capture_decision(tmp_path):
         # Put the decision back mid-flight: claimed by a live worker that has not written yet.
         with closing(sqlite3.connect(file)) as db, db:
             db.execute(
-                "UPDATE memory_capture_decisions SET outcome='applying', lease_id='lease', "
+                "UPDATE memory_capture_decisions SET outcome='applying', lease_id='lease', result=NULL, "
                 "lease_expires_at='2999-01-01T00:00:00+00:00' WHERE confirmation_id=?",
                 (proposal["confirmation_id"],),
             )
@@ -2373,3 +2373,24 @@ def test_stored_prompt_scrub_matches_whole_words_and_short_facts():
     assert _without("I am female, not male", _text_variants({"male"})) == "I am female, not "
     assert _without("tea instead", _text_variants({"tea"})) == " instead"
     assert _without({"a": ["12", '{"text":"12"}']}, _text_variants({"12"})) == {"a": ["", "{}"]}
+
+
+def test_a_retry_of_a_deleted_memory_request_is_refused_not_a_500(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        add_turn_session(file, chat, owner)
+        body = {"content": "I prefer green tea", "idempotency_key": "k1"}
+        created = client.post(f"/v1/conversations/{chat}/memories", json=body)
+        assert created.status_code == 201
+        assert client.delete(f"/v1/memories/{created.json()['id']}").status_code == 200
+        retry = client.post(f"/v1/conversations/{chat}/memories", json=body)
+        assert retry.status_code == 409
+
+
+def test_scrub_keeps_arabic_combining_marks_with_their_word():
+    from app.services.memory_visibility import _text_variants, _without
+
+    assert _without("مُحَمَّدٌ", _text_variants({"مُحَمَّد"})) == "مُحَمَّدٌ"
+    assert _without("اسمي مُحَمَّد", _text_variants({"مُحَمَّد"})) == "اسمي "
