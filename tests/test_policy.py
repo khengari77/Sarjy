@@ -14,6 +14,8 @@ from app.domain.policy import (
     BASE_INSTRUCTIONS,
     LEGACY_OUTPUT_TOKENS,
     VOICE_RULES,
+    WORDLE_CLOSED_RULE,
+    WORDLE_OPEN_RULES,
     compose_system_message,
     length_guidance,
     normalize_language,
@@ -251,9 +253,27 @@ CAPABILITY_KEYWORDS = {
 @pytest.mark.parametrize("language", ["en", "ar"])
 def test_instructions_cover_every_capability(language):
     # A capability added or removed in code must change this list and the persona together.
-    text = BASE_INSTRUCTIONS[language]
+    # The Wordle rules are part of the prompt while the popup is open.
+    text = BASE_INSTRUCTIONS[language] + WORDLE_OPEN_RULES[language]
     for keyword in CAPABILITY_KEYWORDS[language]:
         assert keyword in text, keyword
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_wordle_rules_follow_the_popup_state(language):
+    policy = resolve_response_policy(ResponsePreference.AUTOMATIC, 2)
+    opened = compose_system_message(language, policy, wordle_open=True)
+    closed = compose_system_message(language, policy, wordle_open=False)
+    assert WORDLE_OPEN_RULES[language] in opened and WORDLE_CLOSED_RULE[language] not in opened
+    assert WORDLE_CLOSED_RULE[language] in closed and WORDLE_OPEN_RULES[language] not in closed
+    for tool in ("play_wordle", "submit_wordle_guess", "wordle_status", "close_wordle"):
+        assert tool not in closed
+    # An older worker sends no popup state: it keeps the full rules it was built for.
+    assert compose_system_message(language, policy) == opened
+    assert pipeline_instructions({"llm": {"language": language}}, wordle_open=False) == compose_system_message(
+        language, pipeline_policy({}), wordle_open=False
+    )
+    assert len(closed) < len(opened)
 
 
 def test_instructions_stay_compact_because_they_are_sent_every_turn():

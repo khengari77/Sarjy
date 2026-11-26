@@ -13,11 +13,13 @@ from app.domain.routing import JEV_MODEL
 from app.domain.ui_routing import (
     CONFIDENCE_THRESHOLD,
     QUESTION_OPTIONS,
+    WORDLE_OPEN_DETAIL,
     UiActionDecision,
     UiAnswer,
     UiClarificationDecision,
     UiClassification,
     UiVoiceGenderDecision,
+    UiWordleOpenDecision,
     build_ui_request,
     evaluate_ui_classification,
     parse_ui_response,
@@ -100,6 +102,9 @@ TABLE = [
     (classification(family="voice", voice="named"), None),
     (classification(family="voice", voice="other"), None),
     (classification(family="speed", speed="none"), None),
+    (classification(family="wordle"), UiWordleOpenDecision()),
+    (classification(route="conversation", family="wordle"), None),  # "I played Wordle yesterday"
+    (classification(family="wordle", p=CONFIDENCE_THRESHOLD - 0.01), None),
 ]
 
 
@@ -624,7 +629,7 @@ def test_live_fixture_is_valid_and_has_no_duplicate_texts():
     path = Path(__file__).resolve().parents[1] / "tests/fixtures/jev_ui_live_cases.json"
     cases = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(cases, list)
-    action = re.compile(r"^(theme:(light|dark|system)|captions:(on|off)|speed:[+-]|voice:(male|female))$")
+    action = re.compile(r"^(theme:(light|dark|system)|captions:(on|off)|speed:[+-]|voice:(male|female)|wordle:open)$")
     for case in cases:
         assert isinstance(case, dict)
         assert isinstance(case.get("text"), str) and case["text"].strip()
@@ -633,3 +638,21 @@ def test_live_fixture_is_valid_and_has_no_duplicate_texts():
         assert expected in {"NONE", "MULTI"} or action.fullmatch(expected)
     texts = [case["text"].casefold() for case in cases]
     assert len(texts) == len(set(texts))
+
+
+def test_wordle_open_is_a_worker_command_only_when_wordle_is_enabled():
+    from app.services.commands import _jev_ui_action
+
+    fake = FakeClassifier(classification(family="wordle"))
+    text = "could we do today's wordle together"
+    enabled = asyncio.run(_jev_ui_action(fake, text, "command:1", None, None, True))
+    assert enabled.detail == WORDLE_OPEN_DETAIL and enabled.kind == "unsupported"
+    # An older worker that does not intercept WORDLE_OPEN still speaks an honest hint.
+    assert "play Wordle" in enabled.spoken
+    assert asyncio.run(_jev_ui_action(fake, text, "command:1", None, None, False)) is None
+
+
+def test_wordle_family_does_not_open_through_the_public_actions_route(tmp_path):
+    fake = FakeClassifier(classification(family="wordle"))
+    body, _ = speak(tmp_path, fake, "could we do today's wordle together", wordle_enabled=True)
+    assert body == {"handled": False}

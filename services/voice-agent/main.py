@@ -58,6 +58,9 @@ from turn_metrics import assistant_metrics, build_payload, elapsed_ms
 from warm import ConnectionWarmup
 from wordle_commands import is_wordle_command, parse_say_payload
 from wordle_tools import (
+    WORDLE_ALREADY_OPEN,
+    WORDLE_GAME_TOOLS,
+    WORDLE_OPEN_DETAIL,
     WordleTools,
     claims_game_state,
     extract_guess,
@@ -418,7 +421,9 @@ class SarjyAgent(WordleTools, Agent):
             token = api_phase_state.set(attempt_phase)
             try:
                 response = await self.backend.post(
-                    "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
+                    "/internal/agent/turn/start",
+                    # The API includes the Wordle rules only while the popup is open (the tools follow the same flag).
+                    json={"request_id": message.id, "text": message.text_content, "wordle_open": self.wordle_active()},
                 )
                 response.raise_for_status()
             except STALE_CONNECTION_ERRORS:
@@ -918,6 +923,20 @@ class SarjyAgent(WordleTools, Agent):
             self._record_offset(turn_id, "t_command_end_ms", time.perf_counter(), first_only=True)
         return self.commands[message.id]
 
+    async def _command_speech(self, command: Mapping[str, Any], turn_id: str) -> str:
+        """Apply a command result for ``turn_id`` and return the line to speak.
+
+        WORDLE_OPEN (Jev heard a loose "let's play Wordle") runs the same server play as the play_wordle
+        tool, which opens the popup; the command is not published and its spoken hint covers a failed play.
+        With the popup already open it reads the board instead, so the user is never told to open it.
+        """
+        if command.get("detail") == WORDLE_OPEN_DETAIL:
+            if self.wordle_active():
+                return await self._wordle_direct("wordle-status", turn=turn_id) or WORDLE_ALREADY_OPEN
+            return await self._wordle_direct("wordle-play", turn=turn_id) or command["spoken"]
+        await self._publish_command(command)
+        return command["spoken"]
+
     async def _publish_command(self, command: Mapping[str, Any]) -> None:
         if self.publish is None:
             return
@@ -1137,11 +1156,11 @@ class SarjyAgent(WordleTools, Agent):
         if command is not None:
             if early is not None:
                 early.cancel()
-            await self._publish_command(command)
+            spoken = await self._command_speech(command, turn_id)
             # Nothing the model says is heard on a command turn; TTS remains budgeted
             # and the deterministic spoken line is the whole assistant turn.
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
-            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=command["spoken"]))
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=spoken))
             handle = self._speech_handle()
             self._schedule_persistence(user, handle)
             return
@@ -1272,20 +1291,17 @@ class SarjyAgent(WordleTools, Agent):
         return await self._wordle_direct("wordle-guess", word=word)
 
     def _wordle_tools(self, tools):
-        """Offer only the Wordle tools that make sense for the game state.
+        """Offer Wordle tools only while the popup is open, and then only the ones that fit.
 
-        play_wordle is withdrawn while a game is open and submit_wordle_guess while none is, so the offered
-        list depends only on the game state rather than the utterance and the provider's cached prefix
-        survives. The shared guard still refuses a guess that was not said. A tool already called this turn
-        stays listed so the continuation request remains valid.
+        With the popup closed no Wordle tool is sent at all: opening the game belongs to the exact "play
+        Wordle" grammar and the Jev UI classifier. While it is open play_wordle is withdrawn. The offered
+        list depends only on the popup state rather than the utterance, so the provider's cached prefix
+        survives between transitions. The shared guard still refuses a guess that was not said. A tool
+        already called this turn stays listed so the continuation request remains valid.
         """
         if self.current_turn in self.wordle_calls:
             return tools
-        drop = set()
-        if self.wordle_active():
-            drop.add("play_wordle")
-        else:
-            drop.add("submit_wordle_guess")
+        drop = {"play_wordle"} if self.wordle_active() else WORDLE_GAME_TOOLS
         return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") not in drop]
 
     def _forced_memory_choice(self, message_id: str, available: set[str]) -> dict | None:

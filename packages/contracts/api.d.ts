@@ -174,6 +174,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/changes/{change_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo
+         * @description Undo one auto-saved change by id. Idempotent; 409 if the memory was changed since.
+         */
+        post: operations["undo_v1_changes__change_id__undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -596,6 +616,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/agent/memory/auto": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auto Memory Route
+         * @description Commit a proposal without a spoken question. Only valid in ``auto`` mode and only when the policy says save.
+         */
+        post: operations["auto_memory_route_internal_agent_memory_auto_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/agent/tool/wordle-play": {
         parameters: {
             query?: never;
@@ -932,6 +972,8 @@ export interface components {
             request_id: string;
             /** Text */
             text: string;
+            /** Wordle Open */
+            wordle_open?: boolean | null;
         };
         /** AgentOutput */
         AgentOutput: {
@@ -957,6 +999,21 @@ export interface components {
              * @default 0
              */
             characters: number;
+        };
+        /** ChangeUndone */
+        ChangeUndone: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Undoable */
+            undoable: boolean;
+            /** Memory Id */
+            memory_id: string | null;
+            /** Changed */
+            changed: boolean;
         };
         /** CommandInput */
         CommandInput: {
@@ -1258,6 +1315,11 @@ export interface components {
             };
         };
         JsonValue: unknown;
+        /** MemoryAuto */
+        MemoryAuto: {
+            /** Token */
+            token: string;
+        };
         /** MemoryConfirm */
         MemoryConfirm: {
             /** Token */
@@ -2358,6 +2420,37 @@ export interface operations {
             };
         };
     };
+    undo_v1_changes__change_id__undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeUndone"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_healthz_get: {
         parameters: {
             query?: never;
@@ -3048,6 +3141,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["MemoryConfirm"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auto_memory_route_internal_agent_memory_auto_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryAuto"];
             };
         };
         responses: {

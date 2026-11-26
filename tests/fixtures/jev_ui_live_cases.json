@@ -278,5 +278,53 @@
  {
   "text": "Use a female voice",
   "expected": "voice:female"
+ },
+ {
+  "text": "Can we play the daily Wordle?",
+  "expected": "wordle:open"
+ },
+ {
+  "text": "I want to do today's Wordle.",
+  "expected": "wordle:open"
+ },
+ {
+  "text": "Let's have a go at Wordle.",
+  "expected": "wordle:open"
+ },
+ {
+  "text": "Could you open the Wordle game for me?",
+  "expected": "wordle:open"
+ },
+ {
+  "text": "Time for some Wordle!",
+  "expected": "wordle:open"
+ },
+ {
+  "text": "Can I continue my Wordle?",
+  "expected": "wordle:open"
+ },
+ {
+  "text": "I played Wordle yesterday.",
+  "expected": "NONE"
+ },
+ {
+  "text": "Is Wordle hard?",
+  "expected": "NONE"
+ },
+ {
+  "text": "My mom loves Wordle.",
+  "expected": "NONE"
+ },
+ {
+  "text": "What's the history of Wordle?",
+  "expected": "NONE"
+ },
+ {
+  "text": "I don't want to play Wordle right now.",
+  "expected": "NONE"
+ },
+ {
+  "text": "Who invented Wordle?",
+  "expected": "NONE"
  }
 ]

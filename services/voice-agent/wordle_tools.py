@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Final
 
 import httpx
 from app.domain.tool_operations import operation_key
@@ -79,6 +79,17 @@ async def publish_wordle(room, action: str) -> None:
     )
 
 
+# The five model-facing Wordle tools; none is offered while the popup is closed.
+WORDLE_GAME_TOOLS: Final = frozenset(
+    {"play_wordle", "submit_wordle_guess", "wordle_status", "reset_wordle", "close_wordle"}
+)
+# Command detail the API returns when Jev hears a loose request to play (app.domain.ui_routing.WORDLE_OPEN_DETAIL).
+WORDLE_OPEN_DETAIL: Final = "WORDLE_OPEN"
+POPUP_FAILED: Final = "The popup could not be updated; the game state is saved."
+# Spoken when Jev hears "let's play Wordle" while the popup is already open and the board cannot be read.
+WORDLE_ALREADY_OPEN: Final = "Your Wordle is already open. Go ahead and say your guess."
+
+
 class WordleTools:
     backend: httpx.AsyncClient
     current_turn: str | None
@@ -88,15 +99,21 @@ class WordleTools:
     current_text: str
     wordle_active: Any
 
-    async def _wordle_direct(self, path: str, **arguments: str) -> str | None:
-        """Run a Wordle tool without the model; returns the exact line to speak (None on failure)."""
+    async def _wordle_direct(self, path: str, *, turn: str | None = None, **arguments: str) -> str | None:
+        """Run a Wordle tool without the model; returns the exact line to speak (None on failure).
+
+        ``turn`` is the turn being answered; it defaults to ``current_turn``, which a later
+        utterance may already have moved, so callers that know their turn must pass it.
+        """
+        turn = turn or self.current_turn
         stub = SimpleNamespace(function_call=SimpleNamespace(call_id=f"direct-{path}"))
-        await self._wordle_tool(path, stub, **arguments)  # type: ignore[arg-type]
-        spoken = self.wordle_spoken.pop(self.current_turn or "", [])
+        await self._wordle_tool(path, stub, turn=turn, **arguments)  # type: ignore[arg-type]
+        spoken = self.wordle_spoken.pop(turn or "", [])
         return " ".join(spoken) or None
 
-    async def _wordle_tool(self, path: str, ctx: RunContext, **arguments: str) -> str:
-        if not self.current_turn:
+    async def _wordle_tool(self, path: str, ctx: RunContext, *, turn: str | None = None, **arguments: str) -> str:
+        turn = turn or self.current_turn
+        if not turn:
             raise ValueError("TOOL_TURN_REQUIRED")
         word = arguments.get("word")
         if (
@@ -110,14 +127,14 @@ class WordleTools:
         ):
             return NOT_SAID
         call_id = getattr(ctx.function_call, "call_id", "")
-        self.wordle_calls.add(self.current_turn)
+        self.wordle_calls.add(turn)
         try:
             response = await self.backend.post(
                 f"/internal/agent/tool/{path}",
                 json={
                     **arguments,
-                    "turn_id": self.current_turn,
-                    "request_id": operation_key(self.current_turn, call_id),
+                    "turn_id": turn,
+                    "request_id": operation_key(turn, call_id),
                 },
             )
             response.raise_for_status()
@@ -127,14 +144,18 @@ class WordleTools:
         if not isinstance(body, dict):
             return WORDLE_FAILED
         spoken = body.get("spoken")
-        if isinstance(spoken, str) and spoken:
-            self.wordle_spoken.setdefault(self.current_turn, []).append(spoken)
+        spoken_lines = self.wordle_spoken.setdefault(turn, []) if isinstance(spoken, str) and spoken else None
+        if spoken_lines is not None:
+            spoken_lines.append(spoken)
         ui = body.get("ui")
         if self.publish_wordle is not None and ui in {"open", "refresh", "close", "confirm_reset"}:
             try:
                 await self.publish_wordle(ui)
             except Exception:
-                return f"{body.get('message', '')} (The popup could not be updated; the game state is saved.)"
+                # The spoken line must not claim a popup the user cannot see.
+                if spoken_lines is not None:
+                    spoken_lines.append(POPUP_FAILED)
+                return f"{body.get('message', '')} ({POPUP_FAILED})"
         return str(body.get("message") or WORDLE_FAILED)
 
     @function_tool()
