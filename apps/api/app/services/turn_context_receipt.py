@@ -20,6 +20,7 @@ from app.domain.context import (
     untrusted_data_kind,
     untrusted_data_prefix,
 )
+from app.domain.restatement import restating_turn_ids
 from app.infrastructure.database import Turn
 from app.services.authorization import owned_conversation
 from app.services.context_assembly import RETRACTION_PREFIX, _memory_rows_for_ids, read_context_inputs
@@ -106,18 +107,18 @@ async def _redacted_memory_ids(
     return {row.id for row in rows if row.status in ("hidden", "deleted")} | exclusions
 
 
-async def _turn_ids(db: AsyncSession, *, conversation_id: str, record_ids: set[str]) -> set[str]:
-    """Which included records are real turns of this conversation (history, whatever their text says)."""
+async def _turn_texts(db: AsyncSession, *, conversation_id: str, record_ids: set[str]) -> dict[str, str]:
+    """The included records that are real turns of this conversation (history, whatever their text says)."""
     if not record_ids:
-        return set()
-    return set(
-        await db.scalars(select(Turn.id).where(Turn.id.in_(record_ids), Turn.conversation_id == conversation_id))
+        return {}
+    rows = await db.execute(
+        select(Turn.id, Turn.text).where(Turn.id.in_(record_ids), Turn.conversation_id == conversation_id)
     )
+    return {row_id: text or "" for row_id, text in rows.all()}
 
 
-def _included_entries(
-    snapshot: dict, redacted_ids: set[str], *, turn_ids: set[str], blocked_turn_ids: set[str]
-) -> list[dict]:
+def _included_entries(snapshot: dict, blanked_ids: set[str], *, turn_ids: set[str]) -> list[dict]:
+    """Project the included records; any record the live policy now blocks keeps its id but loses its text."""
     included_ids = [value for value in snapshot["included_record_ids"] if isinstance(value, str)]
     messages = snapshot["messages"]
     current_turn_id = _current_turn_id(snapshot)
@@ -137,7 +138,7 @@ def _included_entries(
         # A real turn is history whatever its text says; only other records carry an envelope kind.
         kind = None if record_id in turn_ids else untrusted_data_kind(record_id, content)
         text = _included_text(record_id, content, kind)[:BLOCK_TEXT_LIMIT]
-        if (kind == "memory" and record_id in redacted_ids) or (kind is None and record_id in blocked_turn_ids):
+        if record_id in blanked_ids:
             text = ""
         entries.append(
             {
@@ -215,7 +216,7 @@ def _projection_sha256(revision: int, included: list[dict], excluded: list[dict]
 
 
 def _used_chars(included: list[dict]) -> int:
-    """Characters of the records shown in the receipt (the instructions are not counted or revealed)."""
+    """Characters of the retrieved records shown (the instructions are not counted or revealed)."""
     return sum(len(entry["text"]) for entry in included)
 
 
@@ -243,12 +244,13 @@ async def get_turn_context_receipt(db: AsyncSession, *, owner_id: str, conversat
     # The lens's own inputs (as of now): which turns are blocked or restate a forgotten fact.
     inputs = await read_context_inputs(db, owner_id=owner_id, conversation_id=conversation_id, combined_read=True)
     redacted_ids = await _redacted_memory_ids(db, owner_id=owner_id, record_ids=included_ids, exclusions=exclusions)
-    included = _included_entries(
-        snapshot,
-        redacted_ids,
-        turn_ids=await _turn_ids(db, conversation_id=conversation_id, record_ids=included_ids),
-        blocked_turn_ids=set(inputs.blocked_ids),
-    )
+    turn_texts = await _turn_texts(db, conversation_id=conversation_id, record_ids=included_ids)
+    # The lens window is bounded, so an old turn in this snapshot can fall outside it: test the snapshot's own
+    # turns against every forgotten fact as well.
+    restating = restating_turn_ids(turn_texts.items(), (candidate.text for candidate in inputs.memories.denied))
+    # Everything the live policy blocks now (lineage-blocked memories, blocked tool results, turns), whatever its kind.
+    blanked_ids = redacted_ids | set(inputs.excluded_ids) | set(restating)
+    included = _included_entries(snapshot, blanked_ids, turn_ids=set(turn_texts))
     excluded = await _excluded_entries(db, owner_id=owner_id, snapshot=snapshot, exclusions=exclusions, inputs=inputs)
     revision = snapshot.get("revision")
     revision = revision if isinstance(revision, int) else 0

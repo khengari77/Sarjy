@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.config import Settings
+from app.domain.context import untrusted_data_prefix
 from app.main import create_app as real_create_app
 from fastapi.testclient import TestClient
 from hypothesis import given
@@ -379,3 +380,43 @@ def test_a_restored_forgotten_fact_stops_being_reported_as_restating(tmp_path):
         sql(file, "UPDATE memories SET status='active' WHERE id='home'")
         reasons = {entry["id"]: entry["reason"] for entry in receipt(client, chat, later).json()["excluded"]}
         assert reasons[restating] == "derived"
+
+
+def test_a_memory_derived_from_a_hidden_one_is_blanked_too(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        add_memory(file, chat, "old", "I live in Benghazi")
+        add_memory(file, chat, "new", "I live in Benghazi near the sea")
+        turn_id, _ = start_turn(client, headers, "r1", text="What is the weather like?")
+        before = {entry["id"]: entry for entry in receipt(client, chat, turn_id).json()["included"]}
+        assert before["new"]["text"] and before["old"]["text"]
+        sql(file, "UPDATE memories SET supersedes_id='old' WHERE id='new'")
+        sql(file, "UPDATE memories SET status='hidden' WHERE id='old'")
+        body = receipt(client, chat, turn_id).json()
+        entries = {entry["id"]: entry for entry in body["included"]}
+        assert entries["old"]["text"] == "" and entries["new"]["text"] == ""
+        assert "Benghazi" not in json.dumps(body)
+
+
+def test_blocked_records_of_every_kind_are_blanked(tmp_path):
+    from app.services.turn_context_receipt import _included_entries
+
+    # A tool result the live policy blocks must lose its text just like a memory or a turn.
+    snapshot = {
+        "included_record_ids": ["system", "call-1", "turn-0"],
+        "messages": [
+            {"role": "system", "content": "rules"},
+            {
+                "role": "user",
+                "content": untrusted_data_prefix("tool", "call-1") + json.dumps({"text": "secret result"}),
+            },
+            {"role": "user", "content": "an old turn"},
+        ],
+        "manifest": {"turn_id": "now"},
+    }
+    entries = _included_entries(snapshot, {"call-1"}, turn_ids={"turn-0"})
+    by_id = {entry["id"]: entry for entry in entries}
+    assert by_id["call-1"]["kind"] == "tool" and by_id["call-1"]["text"] == ""
+    assert by_id["turn-0"]["text"] == "an old turn"
