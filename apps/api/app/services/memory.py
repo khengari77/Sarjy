@@ -26,6 +26,7 @@ from app.services.authorization import owned_conversation, owned_memory
 from app.services.budget import guarded_openai_request, reserve_in_transaction
 from app.services.context_assembly import orm_memory_candidates
 from app.services.memory_eligibility import blocked_memory_ids
+from app.services.memory_erasure_lock import lock_owner_memories
 
 EMBEDDING_TIMEOUT_SECONDS = 20
 CLAIM_TIMEOUT_SECONDS = 30
@@ -384,6 +385,8 @@ class MemoryService:
         guard=None,
     ):
         async with self.sessions() as db, db.begin():
+            # First in the transaction: a delete of this owner's memories cannot interleave with this write.
+            await lock_owner_memories(db, owner_id)
             # Short row-local write lock (also effective on SQLite), never held across inference.
             await db.execute(
                 update(MemoryWriteRequest).where(MemoryWriteRequest.id == identifier).values(updated_at=now())

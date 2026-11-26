@@ -2379,9 +2379,18 @@ def _active_texts(file, text):
         ).fetchall()
 
 
-def test_a_memory_committed_by_a_confirm_racing_the_delete_is_erased_too(tmp_path, monkeypatch):
-    from app.services import memory_visibility
+def test_delete_and_every_committing_write_take_the_per_owner_lock_first(tmp_path, monkeypatch):
+    from app.services import memory, memory_visibility
 
+    calls = []
+    real = memory_visibility.lock_owner_memories
+
+    async def spy(db, owner_id):
+        calls.append(owner_id)
+        await real(db, owner_id)
+
+    monkeypatch.setattr(memory_visibility, "lock_owner_memories", spy)
+    monkeypatch.setattr(memory, "lock_owner_memories", spy)
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
         owner = client.post("/v1/demo-session").json()["id"]
@@ -2389,22 +2398,9 @@ def test_a_memory_committed_by_a_confirm_racing_the_delete_is_erased_too(tmp_pat
         headers = add_turn_session(file, chat, owner)
         set_mode(file, owner, "ask")
         _proposal, memory_id = _confirm_save(client, headers, "fact-1", "I prefer tea with mint")
-        wait = memory_visibility._wait_for_in_flight_writes
-
-        async def racing(db, owner_id):
-            # The in-flight confirm commits while the delete waits for its row lock.
-            with closing(sqlite3.connect(file)) as other, other:
-                other.execute(
-                    "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,created_at,updated_at) "
-                    "VALUES ('raced',?,'I prefer tea with mint','m',?,1,'active','2026-11-26T00:00:00+00:00',"
-                    "'2026-11-26T00:00:00+00:00')",
-                    (owner_id, chat),
-                )
-            await wait(db, owner_id)
-
-        monkeypatch.setattr(memory_visibility, "_wait_for_in_flight_writes", racing)
+        assert calls == [owner], "the committing write takes the lock"
         assert client.delete(f"/v1/memories/{memory_id}").status_code == 200
-        assert not _active_texts(file, "tea with mint")
+        assert calls == [owner, owner], "the delete takes it too"
 
 
 def test_stored_prompt_scrub_matches_whole_words_and_short_facts():
