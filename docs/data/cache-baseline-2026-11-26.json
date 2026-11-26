@@ -1,0 +1,146 @@
+{
+  "date": "2026-11-26",
+  "tool": "scripts/cache_probe.py run --live --conversations 10 --turns 10",
+  "setup": "local API on SQLite (memory off, Wordle popup closed) streamed straight to DeepSeek deepseek-flash from the dev machine; TTFT excludes our STT/TTS/LiveKit",
+  "isolation": "every conversation opens with a unique nonce so no earlier run or conversation can have cached it; turn-1 hit tokens are 896 in every conversation, i.e. only the shared system+tools prefix. A first run without the nonce repeated openings but gave the same 84.1%.",
+  "overall": {
+    "n": 100,
+    "hit_pct": 84.1,
+    "mean_miss_tokens": 197,
+    "mean_prompt_tokens": 1235,
+    "ttft_p50_ms": 692,
+    "ttft_p95_ms": 908
+  },
+  "by_turn": {
+    "1": {
+      "n": 10,
+      "hit_pct": 84.8,
+      "mean_miss_tokens": 161,
+      "mean_prompt_tokens": 1057,
+      "ttft_p50_ms": 794,
+      "ttft_p95_ms": 979
+    },
+    "2": {
+      "n": 10,
+      "hit_pct": 82.0,
+      "mean_miss_tokens": 197,
+      "mean_prompt_tokens": 1093,
+      "ttft_p50_ms": 661,
+      "ttft_p95_ms": 713
+    },
+    "3": {
+      "n": 10,
+      "hit_pct": 79.3,
+      "mean_miss_tokens": 234,
+      "mean_prompt_tokens": 1130,
+      "ttft_p50_ms": 577,
+      "ttft_p95_ms": 814
+    },
+    "4": {
+      "n": 10,
+      "hit_pct": 85.2,
+      "mean_miss_tokens": 173,
+      "mean_prompt_tokens": 1172,
+      "ttft_p50_ms": 578,
+      "ttft_p95_ms": 738
+    },
+    "5": {
+      "n": 10,
+      "hit_pct": 83.5,
+      "mean_miss_tokens": 200,
+      "mean_prompt_tokens": 1212,
+      "ttft_p50_ms": 724,
+      "ttft_p95_ms": 863
+    },
+    "6": {
+      "n": 10,
+      "hit_pct": 81.9,
+      "mean_miss_tokens": 227,
+      "mean_prompt_tokens": 1251,
+      "ttft_p50_ms": 721,
+      "ttft_p95_ms": 796
+    },
+    "7": {
+      "n": 10,
+      "hit_pct": 87.1,
+      "mean_miss_tokens": 167,
+      "mean_prompt_tokens": 1294,
+      "ttft_p50_ms": 677,
+      "ttft_p95_ms": 821
+    },
+    "8": {
+      "n": 10,
+      "hit_pct": 85.0,
+      "mean_miss_tokens": 200,
+      "mean_prompt_tokens": 1340,
+      "ttft_p50_ms": 748,
+      "ttft_p95_ms": 856
+    },
+    "9": {
+      "n": 10,
+      "hit_pct": 84.4,
+      "mean_miss_tokens": 215,
+      "mean_prompt_tokens": 1379,
+      "ttft_p50_ms": 589,
+      "ttft_p95_ms": 724
+    },
+    "10": {
+      "n": 10,
+      "hit_pct": 86.5,
+      "mean_miss_tokens": 191,
+      "mean_prompt_tokens": 1420,
+      "ttft_p50_ms": 750,
+      "ttft_p95_ms": 864
+    }
+  },
+  "window_slide_16_turns": {
+    "main": "turns 11-16: hit 71.6%, 424 miss tokens/turn",
+    "block_window": "turns 11-16: hit 83.3%, 236 miss tokens/turn",
+    "note": "3 conversations x 16 turns each, unique nonces"
+  },
+  "granularity_sweep": {
+    "finding": "an identical repeated request hits floor128(prompt_tokens)-128 tokens, immediately; each prompt used a fresh salt",
+    "prompt_vs_hit": [
+      [
+        138,
+        0
+      ],
+      [
+        287,
+        128
+      ],
+      [
+        437,
+        256
+      ],
+      [
+        617,
+        384
+      ],
+      [
+        857,
+        640
+      ],
+      [
+        1133,
+        896
+      ],
+      [
+        1485,
+        1280
+      ],
+      [
+        1973,
+        1792
+      ],
+      [
+        2674,
+        2432
+      ],
+      [
+        3515,
+        3328
+      ]
+    ]
+  }
+}
