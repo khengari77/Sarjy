@@ -555,3 +555,72 @@ def test_a_reply_of_unknown_provenance_fails_closed_beyond_the_lens_window(tmp_p
         sql(file, "UPDATE memories SET status='hidden' WHERE id='color'")
         entries = {entry["id"]: entry for entry in receipt(client, chat, later).json()["included"]}
         assert entries["old-reply"]["text"] == "" and entries["old-reply"]["withheld"] is True
+
+
+def test_a_reply_derived_through_an_ancestor_outside_the_snapshot_is_blanked(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        add_memory(file, chat, "color", "My favorite color is blue")
+        # R was built from the memory; A was built from a prompt containing R (not the memory). The later turn's
+        # snapshot contains A but not R, so only following A -> R -> memory reaches the forgotten fact.
+        for turn_id, role, text, at, request, snapshot in (
+            (
+                "q1",
+                "user",
+                "What shade do I like most?",
+                "2026-11-12T00:00:01+00:00",
+                "q1",
+                {"included_record_ids": ["system", "color", "q1"]},
+            ),
+            (
+                "r1",
+                "assistant",
+                "You like cerulean best.",
+                "2026-11-12T00:00:02+00:00",
+                "reply:q1",
+                {"derivation": {"turn_id": "q1", "record_ids": ["system", "color", "q1"]}},
+            ),
+            (
+                "q2",
+                "user",
+                "And what else is there?",
+                "2026-11-12T00:00:03+00:00",
+                "q2",
+                {"included_record_ids": ["system", "r1", "q2"]},
+            ),
+            (
+                "a1",
+                "assistant",
+                "Mostly sea shades, as you said.",
+                "2026-11-12T00:00:04+00:00",
+                "reply:q2",
+                {"derivation": {"turn_id": "q2", "record_ids": ["system", "r1", "q2"]}},
+            ),
+        ):
+            sql(
+                file,
+                "INSERT INTO turns (id,conversation_id,request_id,role,text,status,created_at,snapshot) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (turn_id, chat, request, role, text, "completed", at, json.dumps(snapshot)),
+            )
+        later, _ = start_turn(client, headers, "r9", text="What is the weather like?")
+        # Make the compiled snapshot of the later turn carry A without R, as an older conversation would.
+        snap = snapshot_of(file, later)
+        keep = [
+            (i, m)
+            for i, m in zip(snap["included_record_ids"], snap["messages"], strict=False)
+            if i not in ("r1", "q1", "q2")
+        ]
+        snap["included_record_ids"] = [i for i, _ in keep]
+        snap["messages"] = [m for _, m in keep]
+        sql(file, "UPDATE turns SET snapshot=? WHERE id=?", (json.dumps(snap), later))
+        _push_out_of_the_lens_window(file, chat)
+        before = {entry["id"]: entry for entry in receipt(client, chat, later).json()["included"]}
+        assert before["a1"]["text"] == "Mostly sea shades, as you said."
+
+        sql(file, "UPDATE memories SET status='hidden' WHERE id='color'")
+        body = receipt(client, chat, later).json()
+        entries = {entry["id"]: entry for entry in body["included"]}
+        assert entries["a1"]["text"] == "" and entries["a1"]["withheld"] is True

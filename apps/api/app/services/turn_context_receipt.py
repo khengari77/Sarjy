@@ -145,45 +145,76 @@ def _reply_dependencies(turn: Turn, parent: Turn | None) -> set[str] | None:
     return None if inherited is None else inherited | {parent.id}
 
 
+# Records the closure may load beyond the snapshot's own; past this it fails closed, like the lens.
+_CLOSURE_LIMIT = 200
+
+
 async def _derived_ids(
     db: AsyncSession, *, conversation_id: str, included_ids: set[str], blocked: set[str]
 ) -> set[str]:
     """Included assistant replies and tool results that inherit a blocked record, however old they are.
 
-    The lens only follows derivation inside its bounded window, so the receipt repeats it for the snapshot's own
-    records: a reply (or tool result) derived from something now blocked can paraphrase a forgotten fact without
-    sharing enough words to be caught as a restatement. Unknown provenance fails closed while anything is blocked.
+    The lens only follows derivation inside its bounded window, so the receipt repeats it: a reply (or tool result)
+    derived from something now blocked can paraphrase a forgotten fact without sharing enough words to be caught as
+    a restatement. The walk continues through ancestors that are not in the snapshot (a reply derived from an older
+    reply derived from the fact). An id that is no turn or tool result is a leaf: a memory is already in ``blocked``
+    when forgotten. Unknown provenance, or a closure past its bound, fails closed while anything is blocked.
     """
     if not blocked or not included_ids:
         return set()
     columns = load_only(Turn.id, Turn.conversation_id, Turn.request_id, Turn.role, Turn.snapshot)
-    turns = (
-        await db.scalars(
-            select(Turn).options(columns).where(Turn.id.in_(included_ids), Turn.conversation_id == conversation_id)
-        )
-    ).all()
-    calls = (await db.scalars(select(ToolCall).where(ToolCall.id.in_(included_ids)))).all()
-    reply_parents = {turn.request_id.removeprefix("reply:") for turn in turns if turn.request_id.startswith("reply:")}
-    parent_ids = reply_parents | {call.turn_id for call in calls}
-    parents = {
-        turn.id: turn
-        for turn in (
+    turns: dict[str, Turn] = {}
+    calls: dict[str, ToolCall] = {}
+    dependencies: dict[str, set[str] | None] = {}
+    frontier = set(included_ids)
+    over_bound = False
+    while frontier:
+        found_turns = (
             await db.scalars(
-                select(Turn).options(columns).where(Turn.id.in_(parent_ids), Turn.conversation_id == conversation_id)
+                select(Turn).options(columns).where(Turn.id.in_(frontier), Turn.conversation_id == conversation_id)
             )
         ).all()
-    }
-    dependencies: dict[str, set[str] | None] = {}
-    for turn in turns:
-        if turn.role == "assistant":
-            parent = (
-                parents.get(turn.request_id.removeprefix("reply:")) if turn.request_id.startswith("reply:") else None
+        found_calls = (
+            await db.scalars(
+                select(ToolCall)
+                .join(Turn, ToolCall.turn_id == Turn.id)
+                .where(ToolCall.id.in_(frontier), Turn.conversation_id == conversation_id)
             )
-            dependencies[turn.id] = _reply_dependencies(turn, parent)
-    for call in calls:
-        parent = parents.get(call.turn_id)
-        inherited = _record_ids(parent.snapshot, "included_record_ids") if parent is not None else None
-        dependencies[call.id] = None if inherited is None or parent is None else inherited | {parent.id}
+        ).all()
+        turns.update({turn.id: turn for turn in found_turns})
+        calls.update({call.id: call for call in found_calls})
+        wanted = {
+            turn.request_id.removeprefix("reply:") for turn in found_turns if turn.request_id.startswith("reply:")
+        }
+        wanted |= {call.turn_id for call in found_calls}
+        missing = wanted - turns.keys()
+        if missing:
+            parents = (
+                await db.scalars(
+                    select(Turn).options(columns).where(Turn.id.in_(missing), Turn.conversation_id == conversation_id)
+                )
+            ).all()
+            turns.update({turn.id: turn for turn in parents})
+        for turn in found_turns:
+            if turn.role == "assistant":
+                parent_id = turn.request_id.removeprefix("reply:") if turn.request_id.startswith("reply:") else None
+                dependencies[turn.id] = _reply_dependencies(turn, turns.get(parent_id) if parent_id else None)
+        for call in found_calls:
+            parent = turns.get(call.turn_id)
+            inherited = _record_ids(parent.snapshot, "included_record_ids") if parent is not None else None
+            dependencies[call.id] = None if inherited is None or parent is None else inherited | {parent.id}
+        seen = set(turns) | set(calls) | frontier
+        frontier = {
+            reference
+            for references in dependencies.values()
+            for reference in references or ()
+            if reference not in seen and reference != "system" and reference not in blocked
+        }
+        if len(seen) > _CLOSURE_LIMIT:
+            over_bound = True
+            break
+    if over_bound:
+        return set(dependencies)
     derived: set[str] = set()
     while True:
         more = {
@@ -192,7 +223,7 @@ async def _derived_ids(
             if record_id not in derived and (references is None or references & (blocked | derived))
         }
         if not more:
-            return derived
+            return derived & included_ids
         derived |= more
 
 
