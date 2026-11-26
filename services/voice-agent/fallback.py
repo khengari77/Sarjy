@@ -68,19 +68,6 @@ def fallback_decision(
     return FallbackDecision(False, "INELIGIBLE_FAILURE")
 
 
-def fallback_eligible(
-    failure: GenerationEvent,
-    *,
-    emitted_output: bool,
-    fallback_configured: bool,
-) -> bool:
-    return fallback_decision(
-        failure,
-        emitted_output=emitted_output,
-        fallback_configured=fallback_configured,
-    ).allowed
-
-
 def next_attempt(request: ModelRequest, attempt_id: str) -> ModelRequest:
     """Return a copied request with a fresh attempt identity, unchanged otherwise."""
     return request.model_copy(update={"attempt_id": attempt_id})
@@ -92,6 +79,5 @@ __all__ = [
     "TRANSIENT_ERROR_CODES",
     "TRANSIENT_STATUS_CODES",
     "fallback_decision",
-    "fallback_eligible",
     "next_attempt",
 ]

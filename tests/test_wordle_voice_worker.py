@@ -2,14 +2,16 @@
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 from livekit import rtc
 from livekit.agents import llm
 from main import RevealState, SarjyAgent, apply_control, perform_say, resolve_say_request
-from wordle_commands import FIXTURES_PATH, command_kind, is_wordle_command
+from wordle_commands import command_kind, is_wordle_command
 
+FIXTURES_PATH = Path(__file__).resolve().parents[1] / "packages/contracts/wordle_command_fixtures.json"
 HUMAN = SimpleNamespace(kind=rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD)
 AGENT = SimpleNamespace(kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT)
 
