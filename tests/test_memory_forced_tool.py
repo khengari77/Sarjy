@@ -76,7 +76,9 @@ def test_turn_start_with_classifier_makes_no_free_form_proposal_but_keeps_exact_
         started = turn(client, headers, "Remember that I like green tea", "exact").json()
         assert started["memory_proposal"] is not None
         assert started["memory_proposal"]["text"] == "I like green tea"
-    assert fake.calls == []
+    # Turn start now begins the turn's one classification early for /command to reuse (issue #227); it never
+    # proposes anything from it. Five eligible turns, five early calls, no repeats.
+    assert len(fake.calls) == 5
 
 
 def test_turn_start_without_classifier_is_unchanged(tmp_path):

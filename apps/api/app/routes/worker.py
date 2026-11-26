@@ -32,6 +32,7 @@ from app.infrastructure.database import Conversation, Memory, Turn, TurnMetric, 
 from app.infrastructure.upsert import insert_ignore
 from app.routes.wordle_tools import register_wordle_tool_routes
 from app.services.budget import reserve as reserve_development_budget
+from app.services.command_classification import StoredClassifier, classification_key
 from app.services.commands import command_request_id, handle_finalized_utterance
 from app.services.context_assembly import location_evidence, read_context_inputs
 from app.services.memory import MemoryService
@@ -636,6 +637,10 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
                 owner_id=conversation.owner_id,
                 turn=existing,
             )
+        # Authorized and not a replay: Jev needs only the text, so it runs while the rest of this handler compiles.
+        app.state.classification_store.start(
+            classification_key(voice.conversation_id, body.request_id), body.text, app.state.ui_classifier
+        )
         turn = Turn(
             id=str(uuid4()),
             conversation_id=voice.conversation_id,
@@ -857,7 +862,12 @@ def _register_command_routes(app, *, config, database, guard, catalog, approved_
         if not isinstance(settings_revision, int):
             settings_row = await db.get(UserSetting, conversation.owner_id)
             settings_revision = settings_row.revision if settings_row is not None else 0
-        classifier = _RecordingClassifier(getattr(app.state, "ui_classifier", None))
+        inner = getattr(app.state, "ui_classifier", None)
+        if inner is not None:
+            inner = StoredClassifier(
+                inner, app.state.classification_store, classification_key(turn.conversation_id, turn.request_id)
+            )
+        classifier = _RecordingClassifier(inner)
         result = await handle_finalized_utterance(
             db,
             owner_id=conversation.owner_id,
