@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 SPEC_PATH = Path(__file__).resolve().parents[2] / "packages/contracts/wordle_commands.json"
-FIXTURES_PATH = Path(__file__).resolve().parents[2] / "packages/contracts/wordle_command_fixtures.json"
 MAX_SAY_CHARS = 300
 
 _SPEC: dict[str, Any] = json.loads(SPEC_PATH.read_text(encoding="utf-8"))

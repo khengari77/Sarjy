@@ -27,8 +27,14 @@ export function controlEvent(topic: string | undefined, payload: Uint8Array): Co
   }
   if (topic === 'sarjy.wordle') {
     // A signal only: the client refetches the authoritative board, so this
-    // message can never carry (or leak) game state.
-    const action = decode(payload)?.action;
+    // message can never carry (or leak) game state. confirm_guess carries only
+    // the user's own spoken guess, which the client reads back for a yes.
+    const data = decode(payload);
+    const action = data?.action;
+    if (action === 'confirm_guess') {
+      const word = data?.word;
+      return typeof word === 'string' && /^[A-Z]{5}$/.test(word) ? { type: 'wordle', action, word } : null;
+    }
     return action === 'open' || action === 'refresh' || action === 'close' || action === 'confirm_reset'
       ? { type: 'wordle', action }
       : null;

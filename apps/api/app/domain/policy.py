@@ -41,14 +41,6 @@ BASE_INSTRUCTIONS: Final[dict[str, str]] = {
         "ask or confirm it yourself. Forgetting hides a memory everywhere and saying undo brings it back. "
         "Deleting a memory permanently is never done by voice: say plainly that it is only possible with "
         "the trash icon in the Memories panel. "
-        "Wordle: call play_wordle only to start or resume when no game is open. While a "
-        "game is open the application itself records a guess when the user says just a "
-        "word or its letters; call submit_wordle_guess only when a guess is embedded in "
-        "a longer sentence, wordle_status for questions about the board, close_wordle "
-        "to stop and reset_wordle to start over (it only asks the user to confirm). "
-        "Never state Wordle marks, attempts left, a win or a loss except from "
-        "a Wordle tool result this turn, never correct yourself from memory, and never "
-        "state the answer. Spelling a guess out letter by letter works best. "
         "The application, not you, performs spoken settings commands: dark or light "
         "mode, speaking speed, captions on or off, and a man's or woman's voice. If a "
         "user asks for one and it reaches you as ordinary chat, do not say it is "
@@ -68,13 +60,69 @@ BASE_INSTRUCTIONS: Final[dict[str, str]] = {
         "ولا تدّعِ الحفظ أو النسيان قبل تأكيد المستخدم، ولا تعلن الإخفاء بنفسك فالتطبيق هو من ينطق به. "
         "النسيان يخفي الذكرى في كل مكان، وقول undo يعيدها. الحذف النهائي لا يتم بالصوت أبدًا: "
         "قل بوضوح إنه ممكن فقط بأيقونة سلة المهملات في لوحة الذكريات. "
-        "ووردل: استخدم play_wordle للبدء فقط عند عدم وجود لعبة مفتوحة؛ يسجّل التطبيق التخمين "
-        "تلقائيًا عندما يقول المستخدم الكلمة وحدها، وsubmit_wordle_guess فقط لتخمين داخل جملة أطول، "
-        "وwordle_status للاستفسار وclose_wordle للإغلاق. لا تذكر النتائج أو المحاولات المتبقية إلا من "
-        "نتيجة أداة في هذا الدور ولا تذكر الإجابة أبدًا. تهجئة التخمين حرفًا حرفًا أفضل. "
         "التطبيق وليس أنت هو من ينفّذ أوامر الإعدادات المنطوقة: الوضع الداكن أو الفاتح، وسرعة الكلام، "
         "والترجمة النصية، وصوت رجل أو امرأة. إذا طُلب منك أحدها كمحادثة عادية فلا تقل إنه مستحيل ولا تدّعِ تنفيذه، "
         "بل قل إنك لم تفهمه كأمر واقترح عبارة قصيرة مثل «الوضع الداكن» أو «تكلّم أبطأ»."
+    ),
+}
+
+# Wordle rules reach the model only while the Wordle popup is open (the worker reports it per turn and
+# offers the Wordle tools only then). While it is closed the model gets one line instead: opening the
+# game is the application's job (the exact "play Wordle" grammar or the Jev UI classifier).
+WORDLE_OPEN_RULES: Final[dict[str, str]] = {
+    "en": (
+        "Wordle: call play_wordle only to start or resume when no game is open. While a "
+        "game is open the application itself records a guess when the user says just a "
+        "word or its letters; call submit_wordle_guess only when a guess is embedded in "
+        "a longer sentence, wordle_status for questions about the board, close_wordle "
+        "to stop and reset_wordle to start over (it only asks the user to confirm). "
+        "Never state Wordle marks, attempts left, a win or a loss except from "
+        "a Wordle tool result this turn, never correct yourself from memory, and never "
+        "state the answer. Spelling a guess out letter by letter works best."
+    ),
+    "ar": (
+        "ووردل: استخدم play_wordle للبدء فقط عند عدم وجود لعبة مفتوحة؛ يسجّل التطبيق التخمين "
+        "تلقائيًا عندما يقول المستخدم الكلمة وحدها، وsubmit_wordle_guess فقط لتخمين داخل جملة أطول، "
+        "وwordle_status للاستفسار وclose_wordle للإغلاق. لا تذكر النتائج أو المحاولات المتبقية إلا من "
+        "نتيجة أداة في هذا الدور ولا تذكر الإجابة أبدًا. تهجئة التخمين حرفًا حرفًا أفضل."
+    ),
+}
+# Wordle mode: while the popup is open the whole persona is replaced by this short game prompt, so every
+# reply is about the game. The application answers bare and spelled guesses, yes/no confirmations and
+# unrelated speech itself; the model only sees utterances that hold a guess candidate.
+WORDLE_MODE_NUDGE: Final[dict[str, str]] = {
+    "en": "We're playing Wordle. Say a five-letter guess, or say close Wordle to chat.",
+    "ar": "نحن نلعب وردل. قل تخمينًا من خمسة أحرف، أو قل أغلق وردل لنتحدث.",
+}
+WORDLE_MODE_INSTRUCTIONS: Final[dict[str, str]] = {
+    "en": (
+        "You are Sarjy, playing the daily Wordle with the user by voice; the Wordle popup is open and the "
+        "game is the only topic. The application itself handles a guess the user says as just a word or "
+        "spells out, and asks them to confirm a spoken word before it counts. Call submit_wordle_guess only "
+        "when a five-letter guess is embedded in a longer sentence, passing exactly those letters; "
+        "wordle_status for questions about the board; close_wordle when they want to stop; reset_wordle to "
+        "start over (it only asks the user to confirm). Never state Wordle marks, attempts left, a win or a "
+        "loss except from a Wordle tool result this turn, never correct yourself from memory, never state "
+        "the answer, and never give hints that name letters of the answer. For anything unrelated to the "
+        f"game, reply exactly: {WORDLE_MODE_NUDGE['en']}"
+    ),
+    "ar": (
+        "أنت سارجي، تلعب وردل اليومية مع المستخدم بالصوت؛ نافذة وردل مفتوحة واللعبة هي الموضوع الوحيد. "
+        "التطبيق نفسه يسجّل التخمين عندما يقول المستخدم الكلمة وحدها أو يتهجّاها، ويطلب تأكيد الكلمة المنطوقة قبل احتسابها. "
+        "استخدم submit_wordle_guess فقط لتخمين من خمسة أحرف داخل جملة أطول، وwordle_status للاستفسار عن اللوحة، "
+        "وclose_wordle للإغلاق، وreset_wordle للبدء من جديد (يطلب التأكيد فقط). لا تذكر النتائج أو المحاولات المتبقية "
+        "إلا من نتيجة أداة في هذا الدور، ولا تذكر الإجابة أو حروفها أبدًا. لأي أمر خارج اللعبة قل بالضبط: "
+        f"{WORDLE_MODE_NUDGE['ar']}"
+    ),
+}
+WORDLE_CLOSED_RULE: Final[dict[str, str]] = {
+    "en": (
+        "The application opens Wordle itself when the user asks to play it. If such a request reaches you "
+        'as ordinary chat, do not claim to have opened it: suggest saying "play Wordle".'
+    ),
+    "ar": (
+        "التطبيق هو من يفتح وردل عندما يطلب المستخدم اللعب. إذا وصلك هذا الطلب كمحادثة عادية فلا تدّعِ فتحها، "
+        "بل اقترح أن يقول «play Wordle»."
     ),
 }
 
@@ -123,11 +171,24 @@ def length_guidance(tier: int, language: str = "en") -> str:
     return LENGTH_GUIDANCE[normalize_language(language)][tier]
 
 
-def compose_system_message(language: str, policy: ResponsePolicy) -> str:
-    """Build the exact system text for one resolved policy. Deterministic and total."""
+def wordle_rules(language: str, wordle_open: bool | None) -> str:
+    """The Wordle instructions for a closed popup or an older worker (``None`` keeps the full rules)."""
     language = normalize_language(language)
+    return WORDLE_CLOSED_RULE[language] if wordle_open is False else WORDLE_OPEN_RULES[language]
+
+
+def compose_system_message(language: str, policy: ResponsePolicy, *, wordle_open: bool | None = None) -> str:
+    """Build the exact system text for one resolved policy. Deterministic and total.
+
+    ``wordle_open=True`` is Wordle mode: the game prompt replaces the assistant persona and replies are
+    held to the shortest length.
+    """
+    language = normalize_language(language)
+    if wordle_open is True:
+        return " ".join((WORDLE_MODE_INSTRUCTIONS[language], length_guidance(1, language), VOICE_RULES[language]))
     parts = (
         BASE_INSTRUCTIONS[language],
+        wordle_rules(language, wordle_open),
         length_guidance(policy.tier, language),
         VOICE_RULES[language],
     )
@@ -161,10 +222,10 @@ def _stored_tier(pipeline: Mapping[str, Any]) -> int:
     return min(max(tier, 1), len(TIER_CAPS))
 
 
-def pipeline_instructions(pipeline: Mapping[str, Any]) -> str:
+def pipeline_instructions(pipeline: Mapping[str, Any], *, wordle_open: bool | None = None) -> str:
     """System instructions for a stored pipeline, independent of provider code."""
     language = pipeline.get("llm", {}).get("language", LANGUAGE_FALLBACK)
-    return compose_system_message(language, pipeline_policy(pipeline))
+    return compose_system_message(language, pipeline_policy(pipeline), wordle_open=wordle_open)
 
 
 __all__ = [
@@ -174,11 +235,16 @@ __all__ = [
     "LEGACY_TIER",
     "LENGTH_GUIDANCE",
     "VOICE_RULES",
+    "WORDLE_CLOSED_RULE",
+    "WORDLE_MODE_INSTRUCTIONS",
+    "WORDLE_MODE_NUDGE",
+    "WORDLE_OPEN_RULES",
     "compose_system_message",
     "length_guidance",
     "normalize_language",
     "pipeline_instructions",
     "pipeline_policy",
+    "wordle_rules",
 ]
 
 

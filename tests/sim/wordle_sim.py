@@ -64,6 +64,28 @@ def record_game() -> int:
     return used
 
 
+class PlayOnlyClassifier:
+    """Offline stand-in for the Jev UI classifier: only the sim's own play request is a Wordle command."""
+
+    async def classify(self, *, request_id: str, instruction: str):
+        from app.domain.ui_routing import UiAnswer, UiClassification
+
+        play = instruction == "Can we play the daily Wordle?"
+
+        def answer(choice: str) -> UiAnswer:
+            return UiAnswer(choice=choice, probability=0.97)
+
+        return UiClassification(
+            route=answer("ui_command" if play else "conversation"),
+            family=answer("wordle" if play else "none"),
+            theme=answer("none"),
+            captions=answer("none"),
+            speed=answer("none"),
+            voice=answer("none"),
+            memory_op=answer("none"),
+        )
+
+
 class Handle:
     def __init__(self, ident: str):
         self.id = ident
@@ -194,7 +216,12 @@ class Game:
             _env_file=None,
         )
         app = create_app(
-            settings, embedding_adapter=FakeEmbedder(), wordle_source=FixtureSource(default_answer=self.answer)
+            settings,
+            embedding_adapter=FakeEmbedder(),
+            wordle_source=FixtureSource(default_answer=self.answer),
+            # With the popup closed no Wordle tool is offered: a loose "play" request opens the game through
+            # the Jev UI classifier, which this offline sim replaces with a deterministic stand-in.
+            ui_classifier=PlayOnlyClassifier(),
         )
         async with app.router.lifespan_context(app):
             web = httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test")
@@ -406,7 +433,7 @@ def score(record: dict, answer: str) -> dict:
     if open_game and kind in EXPECT_NONE:
         flags["over_tool"] = "submit_wordle_guess" in record["tools"]
     if kind == "play":
-        flags["no_play_tool"] = "play_wordle" not in record["tools"]
+        flags["no_play_tool"] = "play_wordle" not in record["tools"] and "wordle-play" not in record.get("direct", [])
     elif "play_wordle" in record["tools"]:
         flags["play_while_open"] = open_game
     if kind == "close":

@@ -59,7 +59,6 @@ def test_replay_does_not_leave_owned_transaction_open(tmp_path):
                     request_id="same",
                     expected_revision=0,
                     action=SetCaptionsVisible(visible=False),
-                    catalog=None,
                     handlers={},
                 )
                 first = await dispatch_action(db, **values)

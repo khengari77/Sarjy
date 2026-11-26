@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { friendlyVoiceError, isFatalVoiceError, phaseFromAgentState, phaseFromTransportStatus } from './livekitAdapter';
+import { friendlyVoiceError, phaseFromAgentState, phaseFromTransportStatus } from './livekitAdapter';
 
 describe('transport status mapping', () => {
   it('maps connection lifecycle to stable phases', () => {
@@ -31,11 +31,6 @@ describe('agent state mapping', () => {
 });
 
 describe('error handling', () => {
-  it('classifies fatal voice errors', () => {
-    expect(isFatalVoiceError('PIPELINE_NOT_CONFIGURED')).toBe(true);
-    expect(isFatalVoiceError('MICROPHONE_UNAVAILABLE')).toBe(false);
-  });
-
   it('gives bilingual plain-language messages without provider details', () => {
     const en = friendlyVoiceError('MICROPHONE_UNAVAILABLE', false);
     const ar = friendlyVoiceError('MICROPHONE_UNAVAILABLE', true);

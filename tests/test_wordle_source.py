@@ -612,22 +612,23 @@ def test_slow_but_bounded_fetch_is_served_to_a_late_concurrent_waiter(tmp_path):
         await _create_schema(engine)
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         started = asyncio.Event()
+        release = asyncio.Event()
 
-        class FiveSecondSource:
+        class SlowSource:
             label = "fixture://slow"
             calls = 0
 
             async def fetch(self, puzzle_date):
                 self.calls += 1
                 started.set()
-                await asyncio.sleep(5)
+                await release.wait()
                 return parse_source_payload(
                     {"solution": "CRANE", "print_date": puzzle_date.isoformat()},
                     puzzle_date,
                     source=self.label,
                 )
 
-        source = FiveSecondSource()
+        source = SlowSource()
         try:
 
             async def request():
@@ -640,6 +641,10 @@ def test_slow_but_bounded_fetch_is_served_to_a_late_concurrent_waiter(tmp_path):
             # The second tab arrives after the fetch is already in flight; it
             # must wait for the stored answer instead of returning 503.
             second = asyncio.create_task(request())
+            # Hold the fetch past CLAIM_POLL_MAX_SECONDS (1 s) so the waiter really polls with backoff
+            # before the stored answer appears, as the original 5 s fetch did.
+            await asyncio.sleep(1.5)
+            release.set()
             results = await asyncio.wait_for(asyncio.gather(first, second), timeout=15)
             assert results[0] == results[1] == ("2026-11-13", "CRANE")
             assert source.calls == 1

@@ -148,6 +148,28 @@ LiveKit room; it is compiled out of production builds. Those tests also inject
 a fake runtime through `window.__SARJY_VOICE_RUNTIME_FACTORY__` to observe the
 exact `say`/`sendControl` payloads.
 
+### Wordle mode and spoken-guess confirmation
+
+While the popup is open the worker reports `wordle_open` on every `turn/start` and the call is in
+**Wordle mode**:
+
+- The model gets a short game prompt (`WORDLE_MODE_INSTRUCTIONS`) instead of the assistant persona,
+  the shortest reply length, and only the Wordle tools; memory proposals are paused.
+- Anything with no five-letter guess candidate gets a fixed nudge back to the game
+  ("We're playing Wordle. Say a five-letter guess, or say close Wordle to chat.") with no model call.
+  App commands (theme, speed, captions, voice) still run first.
+- A guess that was **spelled** ("C R A N E", "guess c-r-a-n-e") counts at once.
+- A **spoken** word ("crane", "guess crane", "I think it's crane") is read back
+  ("C, R, A, N, E. Is that your guess?") and counts only after "yes". "No" drops it, and a new
+  spelled or spoken guess replaces it. The pending word lives in the web client
+  (`wordle.pending` = `guess`), so yes/no never reach the model.
+- Guesses must be in the Wordle allowed list (`apps/api/app/data/wordle_allowed_words.txt`) or be today's
+  answer. Other words get `WORDLE_NOT_IN_LIST` and use no attempt; the client checks spoken words with
+  `POST /v1/wordle/guesses/check` before asking for a confirmation.
+
+With the popup closed no Wordle tool or rule is sent; asking to play goes through the exact grammar or
+the Jev UI `wordle` family.
+
 ### Reset
 
 The popup header has a reset button (confirmation dialog first). By voice, "reset wordle", "restart wordle"
@@ -163,10 +185,9 @@ without a reload.
 
 ### Merge overlap
 
-This change adds `say`/`sendControl` to `apps/web/src/lib/audio/voice-runtime.ts`
-and moves the remote-audio analyser bookkeeping into
-`apps/web/src/lib/audio/remoteAudio.ts`. #115/#116 also touch the runtime's
-teardown and transcription paths: keep their teardown ordering and re-apply
-`analysers.detach`/`analysers.close` to the new helper when resolving conflicts.
+This change adds `say`/`sendControl` to `apps/web/src/lib/audio/voice-runtime.ts`;
+the remote-audio analyser bookkeeping stays inline in that file. #115/#116 also
+touch the runtime's teardown and transcription paths: keep their teardown ordering
+when resolving conflicts.
 `voice/connection.ts`, `voice/sessionAttempt.ts`, `orb/*` and the shell are not
 changed by this slice.

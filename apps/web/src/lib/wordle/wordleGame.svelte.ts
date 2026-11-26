@@ -221,6 +221,13 @@ export function createWordleGame(options: WordleGameOptions = {}): WordleGame {
     refresh,
     ensureLoaded,
     guessWord: actions.guessWord,
+    async checkWord(word: string): Promise<boolean | null> {
+      try {
+        return await client.check(word);
+      } catch {
+        return null;
+      }
+    },
     pressKey,
     submitDraft: actions.submitDraft,
     statusLine: () => statusLineFor(state),

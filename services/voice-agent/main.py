@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from collections.abc import Mapping
 from contextlib import aclosing
@@ -58,11 +59,17 @@ from turn_metrics import assistant_metrics, build_payload, elapsed_ms
 from warm import ConnectionWarmup
 from wordle_commands import is_wordle_command, parse_say_payload
 from wordle_tools import (
+    WORDLE_ALREADY_OPEN,
+    WORDLE_GAME_TOOLS,
+    WORDLE_MODE_NUDGE,
+    WORDLE_OPEN_DETAIL,
     WordleTools,
     claims_game_state,
     extract_guess,
+    has_guess_candidate,
     is_close_request,
     publish_wordle,
+    spelled_out,
 )
 
 
@@ -315,7 +322,6 @@ class SarjyAgent(WordleTools, Agent):
         self.retired_turns: set[str] = set()  # early turns closed as failed; never finalized again
         self.recent_finals = RecentFinals()
         self.wordle_spoken: dict[str, list[str]] = {}
-        self.wordle_touched = False
         self.wordle_calls: set[str] = set()
         self.current_text = ""
         self.backend = backend
@@ -419,7 +425,9 @@ class SarjyAgent(WordleTools, Agent):
             token = api_phase_state.set(attempt_phase)
             try:
                 response = await self.backend.post(
-                    "/internal/agent/turn/start", json={"request_id": message.id, "text": message.text_content}
+                    "/internal/agent/turn/start",
+                    # The API includes the Wordle rules only while the popup is open (the tools follow the same flag).
+                    json={"request_id": message.id, "text": message.text_content, "wordle_open": self.wordle_active()},
                 )
                 response.raise_for_status()
             except STALE_CONNECTION_ERRORS:
@@ -919,6 +927,40 @@ class SarjyAgent(WordleTools, Agent):
             self._record_offset(turn_id, "t_command_end_ms", time.perf_counter(), first_only=True)
         return self.commands[message.id]
 
+    def _fixed_reply(self, user, turn_id: str) -> str | None:
+        """A deterministic line that replaces the model this turn, if any.
+
+        A forced question is delivered once. In Wordle mode an utterance with no guess candidate is
+        unrelated to the game and gets the nudge back to it, with no model call.
+        """
+        if self.forced_speech is not None and self.forced_speech[0] == turn_id:
+            _, forced = self.forced_speech
+            self.forced_speech = None
+            return forced
+        # A consent question armed before the popup opened is still asked; the nudge never swallows it.
+        if (
+            self.wordle_active()
+            and not self._question_due()
+            and self.memory_outcome is None  # the answer to a consent question is still spoken
+            and not has_guess_candidate(user.text_content or "")
+        ):
+            return WORDLE_MODE_NUDGE
+        return None
+
+    async def _command_speech(self, command: Mapping[str, Any], turn_id: str) -> str:
+        """Apply a command result for ``turn_id`` and return the line to speak.
+
+        WORDLE_OPEN (Jev heard a loose "let's play Wordle") runs the same server play as the play_wordle
+        tool, which opens the popup; the command is not published and its spoken hint covers a failed play.
+        With the popup already open it reads the board instead, so the user is never told to open it.
+        """
+        if command.get("detail") == WORDLE_OPEN_DETAIL:
+            if self.wordle_active():
+                return await self._wordle_direct("wordle-status", turn=turn_id) or WORDLE_ALREADY_OPEN
+            return await self._wordle_direct("wordle-play", turn=turn_id) or command["spoken"]
+        await self._publish_command(command)
+        return command["spoken"]
+
     async def _publish_command(self, command: Mapping[str, Any]) -> None:
         if self.publish is None:
             return
@@ -1138,19 +1180,18 @@ class SarjyAgent(WordleTools, Agent):
         if command is not None:
             if early is not None:
                 early.cancel()
-            await self._publish_command(command)
+            spoken = await self._command_speech(command, turn_id)
             # Nothing the model says is heard on a command turn; TTS remains budgeted
             # and the deterministic spoken line is the whole assistant turn.
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
-            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=command["spoken"]))
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=spoken))
             handle = self._speech_handle()
             self._schedule_persistence(user, handle)
             return
-        if self.forced_speech is not None and self.forced_speech[0] == turn_id:
-            _, forced = self.forced_speech
-            self.forced_speech = None
+        fixed = self._fixed_reply(user, turn_id)
+        if fixed is not None:
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)
-            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=forced))
+            yield llm.ChatChunk(id=str(uuid4()), delta=llm.ChoiceDelta(content=fixed))
             handle = self._speech_handle()
             self._schedule_persistence(user, handle)
             return
@@ -1270,24 +1311,25 @@ class SarjyAgent(WordleTools, Agent):
         word = extract_guess(text)
         if word is None:
             return None
-        return await self._wordle_direct("wordle-guess", word=word)
+        # Spelled letters count straight away; a spoken word is read back and counts only after a yes.
+        return await self._wordle_direct("wordle-guess", word=word, confirm=not spelled_out(text))
 
     def _wordle_tools(self, tools):
-        """Offer only the Wordle tools that make sense for the game state.
+        """Offer Wordle tools only while the popup is open, and then only the ones that fit.
 
-        play_wordle is withdrawn while a game is open and submit_wordle_guess while none is, so the offered
-        list depends only on the game state rather than the utterance and the provider's cached prefix
-        survives. The shared guard still refuses a guess that was not said. A tool already called this turn
-        stays listed so the continuation request remains valid.
+        With the popup closed no Wordle tool is sent at all: opening the game belongs to the exact "play
+        Wordle" grammar and the Jev UI classifier. While it is open play_wordle is withdrawn. The offered
+        list depends only on the popup state rather than the utterance, so the provider's cached prefix
+        survives between transitions. The shared guard still refuses a guess that was not said. A tool
+        already called this turn stays listed so the continuation request remains valid.
         """
         if self.current_turn in self.wordle_calls:
             return tools
-        drop = set()
         if self.wordle_active():
-            drop.add("play_wordle")
-        else:
-            drop.add("submit_wordle_guess")
-        return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") not in drop]
+            # Wordle mode: the game tools only (memory and weather wait until the popup closes).
+            keep = WORDLE_GAME_TOOLS - {"play_wordle"}
+            return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") in keep]
+        return [tool for tool in tools if getattr(getattr(tool, "info", None), "name", "") not in WORDLE_GAME_TOOLS]
 
     def _forced_memory_choice(self, message_id: str, available: set[str]) -> dict | None:
         """Force the memory tool Jev named for the FIRST inference of a turn only.
@@ -1652,11 +1694,64 @@ async def publish_command(room, command: Mapping[str, Any]) -> None:
     await room.local_participant.publish_data(json.dumps(dict(command)).encode(), reliable=True, topic="sarjy.command")
 
 
-class RevealState:
-    """Whether the client is waiting for a spoken spoiler confirmation."""
+# The client clears its pending yes/no the moment it handles the user's "yes", which can land (about 0.1 s
+# in a live call) before the worker classifies that same turn. For this long after a clear, and only while
+# the popup is open, yes/no still belongs to the client. Short enough that a second spoken yes/no (speech
+# plus end-of-turn) cannot fall inside it.
+PENDING_GRACE_SECONDS = 1.5
 
-    pending: bool = False
-    active: bool = False
+
+class RevealState:
+    """Whether the client is waiting for a spoken yes/no (reveal, reset or a guess) and the popup is open."""
+
+    def __init__(self) -> None:
+        self._pending = False
+        self._kind: str | None = None
+        self._active = False
+        self._cleared_at: float | None = None
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    @active.setter
+    def active(self, value: bool) -> None:
+        self._active = value
+        if not value:
+            # A closed popup ends every Wordle yes/no at once, grace included.
+            self._pending = False
+            self._kind = None
+            self._cleared_at = None
+
+    @property
+    def pending(self) -> bool:
+        if self._pending:
+            # A spoken-guess confirmation only exists inside the open game; reveal/reset may be asked without it.
+            return self._active or self._kind != "guess"
+        return (
+            self._active
+            and self._cleared_at is not None
+            and time.monotonic() - self._cleared_at < PENDING_GRACE_SECONDS
+        )
+
+    @pending.setter
+    def pending(self, value: bool) -> None:
+        if self._pending and not value:
+            self._cleared_at = time.monotonic()
+        self._pending = value
+        if not value:
+            self._kind = None
+
+    def pending_kind(self, kind: str | None) -> None:
+        """Record which yes/no the client is waiting for (None clears it).
+
+        A guess confirmation only exists inside the open game, so one arriving while the popup is closed is
+        stale and is not kept (otherwise reopening the popup would revive it).
+        """
+        if kind == "guess" and not self._active:
+            kind = None
+        self.pending = kind is not None
+        self._kind = kind
 
 
 def resolve_say_request(data, participants) -> tuple[str | None, str | None]:
@@ -1709,14 +1804,13 @@ def apply_control(packet, reveal: RevealState) -> None:
     if not isinstance(value, dict):
         return
     if value.get("type") == "wordle.reveal_pending":
-        reveal.pending = value.get("value") is True
+        reveal.pending_kind("reveal" if value.get("value") is True else None)
     elif value.get("type") == "wordle.pending":
         # A spoken yes/no is awaited for a pending action ("reveal" or "reset"); null clears it.
-        reveal.pending = value.get("value") in {"reveal", "reset"}
+        kind = value.get("value")
+        reveal.pending_kind(kind if kind in {"reveal", "reset", "guess"} else None)
     elif value.get("type") == "wordle.active":
         reveal.active = value.get("value") is True
-        if not reveal.active:
-            reveal.pending = False
 
 
 INTRO_WAIT_SECONDS = 15
@@ -1758,7 +1852,8 @@ def backend_client(base_url: str, headers: dict[str, str]) -> httpx.AsyncClient:
     )
 
 
-@server.rtc_session(agent_name="sarjy")
+# A local test worker registers under its own name (LIVEKIT_AGENT_NAME) so hosted calls never reach it.
+@server.rtc_session(agent_name=os.environ.get("LIVEKIT_AGENT_NAME", "sarjy"))
 async def entrypoint(ctx: JobContext):
     global FIRST_EVENT_SECONDS
     values = read_worker_environment()

@@ -46,10 +46,6 @@ class ReviewerAccessDenied(Exception):
     """The identity or submitted invitation is not authorized."""
 
 
-class ReviewerUnavailable(Exception):
-    """Authoritative persistence could not be read; fail closed."""
-
-
 class ReviewerLimitExceeded(Exception):
     def __init__(self, retry_after: int):
         super().__init__("REVIEWER_ADMISSION_LIMIT")

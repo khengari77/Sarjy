@@ -174,6 +174,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/changes/{change_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo
+         * @description Undo one auto-saved change by id. Idempotent; 409 if the memory was changed since.
+         */
+        post: operations["undo_v1_changes__change_id__undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -596,6 +616,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/agent/memory/auto": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auto Memory Route
+         * @description Commit a proposal without a spoken question. Only valid in ``auto`` mode and only when the policy says save.
+         */
+        post: operations["auto_memory_route_internal_agent_memory_auto_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/agent/tool/wordle-play": {
         parameters: {
             query?: never;
@@ -871,6 +911,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/wordle/guesses/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check
+         * @description Report whether a word would be accepted as a guess; records nothing.
+         */
+        post: operations["check_v1_wordle_guesses_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/wordle/refresh": {
         parameters: {
             query?: never;
@@ -932,6 +992,8 @@ export interface components {
             request_id: string;
             /** Text */
             text: string;
+            /** Wordle Open */
+            wordle_open?: boolean | null;
         };
         /** AgentOutput */
         AgentOutput: {
@@ -957,6 +1019,21 @@ export interface components {
              * @default 0
              */
             characters: number;
+        };
+        /** ChangeUndone */
+        ChangeUndone: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Undoable */
+            undoable: boolean;
+            /** Memory Id */
+            memory_id: string | null;
+            /** Changed */
+            changed: boolean;
         };
         /** CommandInput */
         CommandInput: {
@@ -1233,6 +1310,11 @@ export interface components {
             revision_after: number;
             diff: components["schemas"]["ContextDiff"];
         };
+        /** GuessCheckInput */
+        GuessCheckInput: {
+            /** Word */
+            word: string;
+        };
         /** GuessInput */
         GuessInput: {
             /** Guess */
@@ -1258,6 +1340,11 @@ export interface components {
             };
         };
         JsonValue: unknown;
+        /** MemoryAuto */
+        MemoryAuto: {
+            /** Token */
+            token: string;
+        };
         /** MemoryConfirm */
         MemoryConfirm: {
             /** Token */
@@ -1809,6 +1896,11 @@ export interface components {
             request_id: string;
             /** Word */
             word?: string | null;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
         };
         /**
          * ResponsePolicy
@@ -2345,6 +2437,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemoryVisibility"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    undo_v1_changes__change_id__undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeUndone"];
                 };
             };
             /** @description Validation Error */
@@ -3071,6 +3194,39 @@ export interface operations {
             };
         };
     };
+    auto_memory_route_internal_agent_memory_auto_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryAuto"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     agent_play_wordle_internal_agent_tool_wordle_play_post: {
         parameters: {
             query?: never;
@@ -3561,6 +3717,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    check_v1_wordle_guesses_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GuessCheckInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -154,10 +154,12 @@ def test_the_default_provider_transport_keeps_idle_connections_shorter_than_serv
     assert ObservedTransport().transport._pool._keepalive_expiry == 50
 
 
-def test_pool_warm_up_is_bounded_and_never_raises():
+def test_pool_warm_up_is_bounded_and_never_raises(monkeypatch):
     import time
 
     from app.main import _warm_pool
+
+    monkeypatch.setattr("app.main.POOL_WARM_TIMEOUT_SECONDS", 0.1)
 
     class Hung:
         def connect(self):

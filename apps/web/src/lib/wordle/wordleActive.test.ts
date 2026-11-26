@@ -2,16 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { applyWordleToolEvent, createActiveSync } from './wordleActive';
 import { fakeGame } from './wordleVoiceSupport';
 
-function harness(open: boolean) {
-  const sent: unknown[] = [];
-  const state = { open };
+function harness(open: boolean, pending: string | null = null) {
+  const all: { type?: unknown }[] = [];
+  const state = { open, pending };
   const sync = createActiveSync(
     async (event) => {
-      sent.push(event);
+      all.push(event);
     },
     () => state.open,
+    () => state.pending,
   );
-  return { sent, state, sync };
+  // Most cases check the popup flag; the pending flag that rides along has its own test.
+  const sent = { filter: () => all.filter((event) => event.type === 'wordle.active') };
+  return { sent: all, active: sent, state, sync };
 }
 
 const status = (text: string, source: 'transport' | 'agent' = 'transport') =>
@@ -19,28 +22,37 @@ const status = (text: string, source: 'transport' | 'agent' = 'transport') =>
 
 describe('wordle.active sync', () => {
   it('sends true when the voice room connects with a game already open', () => {
-    const { sent, sync } = harness(true);
+    const { active, sync } = harness(true);
     sync.handleEvent(status('connected'));
-    expect(sent).toEqual([{ type: 'wordle.active', value: true }]);
+    expect(active.filter()).toEqual([{ type: 'wordle.active', value: true }]);
   });
 
   it('sends false when the game is closed at connect', () => {
-    const { sent, sync } = harness(false);
+    const { active, sync } = harness(false);
     sync.handleEvent(status('connected'));
-    expect(sent).toEqual([{ type: 'wordle.active', value: false }]);
+    expect(active.filter()).toEqual([{ type: 'wordle.active', value: false }]);
   });
 
   it('re-sends after a reconnect and when the agent joins, but not on disconnect', () => {
-    const { sent, state, sync } = harness(true);
+    const { sent, active, state, sync } = harness(true);
     sync.handleEvent(status('disconnected'));
     sync.handleEvent(status('reconnecting'));
     expect(sent).toEqual([]);
     state.open = false;
     sync.handleEvent(status('connected'));
     sync.handleEvent(status('listening', 'agent'));
+    expect(active.filter()).toEqual([
+      { type: 'wordle.active', value: false },
+      { type: 'wordle.active', value: false },
+    ]);
+  });
+
+  it('re-sends the pending yes/no with the popup state so a dropped flag is re-armed', () => {
+    const { sent, sync } = harness(true, 'guess');
+    sync.handleEvent(status('connected'));
     expect(sent).toEqual([
-      { type: 'wordle.active', value: false },
-      { type: 'wordle.active', value: false },
+      { type: 'wordle.active', value: true },
+      { type: 'wordle.pending', value: 'guess' },
     ]);
   });
 

@@ -85,7 +85,7 @@ def build_tts(config: dict, credentials: dict[str, str]):
     choice = config["tts"]
     voice_id = choice.get("voice_id")
     if choice.get("provider") != "deepgram_direct" or deepgram_voice(voice_id) is None:
-        # An unknown or previously saved ElevenLabs provider/voice falls back
+        # An unknown or previously saved non-Deepgram provider/voice falls back
         # rather than sending an unsupported model string to Deepgram.
         voice_id = DEFAULT_DEEPGRAM_VOICE_ID
     if choice.get("language", "en") != "en":

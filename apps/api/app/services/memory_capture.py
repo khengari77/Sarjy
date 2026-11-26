@@ -358,7 +358,7 @@ async def _release_proposal(db: AsyncSession, *, owner_id: str, confirmation_id:
 
 
 async def _resolved_proposal_response(
-    db: AsyncSession, *, owner_id: str, confirmation_id: str, revision: int, decision: str
+    db: AsyncSession, *, owner_id: str, confirmation_id: str, decision: str
 ) -> dict | None:
     """Replay a matching terminal decision, otherwise refuse a resolved proposal."""
     _, state = await load_proposal(db, owner_id=owner_id, confirmation_id=confirmation_id)
@@ -876,7 +876,7 @@ async def confirm_memory(
     revision = int(payload["revision"])
 
     replayed = await _resolved_proposal_response(
-        db, owner_id=owner_id, confirmation_id=confirmation_id, revision=revision, decision=decision
+        db, owner_id=owner_id, confirmation_id=confirmation_id, decision=decision
     )
     if replayed is not None:
         return replayed
@@ -1161,7 +1161,6 @@ async def _clarify(
     conversation_id: str,
     capture: MemoryCapture,
     payload: dict,
-    token: str,
     secret: str,
     target: Memory,
 ) -> None:
@@ -1251,7 +1250,6 @@ async def _write_consented(
             conversation_id=conversation_id,
             capture=capture,
             payload=payload,
-            token=token,
             secret=secret,
             target=conflicting[0],
         )

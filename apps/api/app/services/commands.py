@@ -41,9 +41,12 @@ from app.domain.contracts import (
     UserSettings,
 )
 from app.domain.ui_routing import (
+    WORDLE_OPEN_DETAIL,
+    WORDLE_OPEN_SPOKEN,
     UiActionDecision,
     UiClarificationDecision,
     UiVoiceGenderDecision,
+    UiWordleOpenDecision,
     evaluate_ui_classification,
     ui_text_is_eligible,
 )
@@ -82,6 +85,7 @@ async def handle_finalized_utterance(
     secret: str = "",
     search: MemorySearcher = keyword_search,
     ui_classifier: UiClassifier | None = None,
+    wordle_enabled: bool = False,
 ) -> CommandResult | None:
     """Interpret and, when deterministic, execute exactly one action.
 
@@ -114,7 +118,7 @@ async def handle_finalized_utterance(
     # later "yes" to some other question can never apply it.
     await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
 
-    resolved = await _resolve_action(text, request_id, catalog, approved_voice_ids, ui_classifier)
+    resolved = await _resolve_action(text, request_id, catalog, approved_voice_ids, ui_classifier, wordle_enabled)
     if isinstance(resolved, CommandResult):
         return resolved
     action, voice_name = resolved
@@ -198,7 +202,12 @@ async def handle_finalized_utterance(
 
 
 async def _resolve_action(
-    text: str, request_id: str, catalog, approved: frozenset[str] | None, ui_classifier: UiClassifier | None
+    text: str,
+    request_id: str,
+    catalog,
+    approved: frozenset[str] | None,
+    ui_classifier: UiClassifier | None,
+    wordle_enabled: bool = False,
 ) -> tuple[Action | None, str | None] | CommandResult:
     """Exact grammar first, then voice names, then Jev (only on a full miss)."""
     action = parse_exact_command(text)
@@ -206,14 +215,19 @@ async def _resolve_action(
         return action, None
     voice = await _voice_selection(text, request_id, catalog, approved)
     if voice is None and ui_classifier is not None:
-        voice = await _jev_ui_action(ui_classifier, text, request_id, catalog, approved)
+        voice = await _jev_ui_action(ui_classifier, text, request_id, catalog, approved, wordle_enabled)
     if voice is None or isinstance(voice, CommandResult):
         return voice if voice is not None else (None, None)
     return voice
 
 
 async def _jev_ui_action(
-    classifier: UiClassifier, text: str, request_id: str, catalog, approved: frozenset[str] | None
+    classifier: UiClassifier,
+    text: str,
+    request_id: str,
+    catalog,
+    approved: frozenset[str] | None,
+    wordle_enabled: bool = False,
 ) -> tuple[Action, str | None] | CommandResult | None:
     """Ask Jev only after every deterministic path missed; any failure is a miss."""
     if not ui_text_is_eligible(text) or parse_exclusion_confirmation(text) is not None:
@@ -231,6 +245,9 @@ async def _jev_ui_action(
         return decision.action, None
     if isinstance(decision, UiVoiceGenderDecision):
         return await _gendered_voice(decision.gender, request_id, catalog, approved)
+    if isinstance(decision, UiWordleOpenDecision) and wordle_enabled:
+        # The worker intercepts WORDLE_OPEN and runs the real play; an older worker just speaks the hint.
+        return unsupported_result(request_id=request_id, detail=WORDLE_OPEN_DETAIL, spoken=WORDLE_OPEN_SPOKEN)
     return None
 
 
@@ -365,7 +382,6 @@ async def _run_navigation(
             request_id=request_id,
             expected_revision=expected_revision,
             action=action,
-            catalog=catalog,
             handlers=handlers,
         )
     except (VoiceCatalogError, ContextOperationError) as exc:

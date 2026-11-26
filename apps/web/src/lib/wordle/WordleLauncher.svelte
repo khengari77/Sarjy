@@ -64,11 +64,15 @@
   const activeSync = createActiveSync(
     (event) => (runtime ? runtime.sendControl(event) : Promise.resolve()),
     () => game.state.open,
+    () => voice.pending(),
   );
 
+  let wasOpen = false;
   $effect(() => {
     const open = game.state.open;
-    void open;
+    // Closing the game ends any yes/no it asked for, so a later "yes" belongs to the conversation.
+    if (wasOpen && !open) voice.clearPending();
+    wasOpen = open;
     activeSync.publish();
   });
 

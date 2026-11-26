@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import json
-from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from math import isfinite, sqrt
@@ -59,9 +58,6 @@ def cosine_distance(left, right):
 
 class Embedder(Protocol):
     async def embed(self, db: AsyncSession, text: str) -> tuple[float, ...]: ...
-
-
-LeaseGuard = Callable[[AsyncSession], Awaitable[None]]
 
 
 class EmbeddingFailure(HTTPException):
@@ -280,9 +276,7 @@ class MemoryService:
             guard=guard,
         )
 
-    async def _claim(
-        self, owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version, fingerprint
-    ):
+    async def _claim(self, owner_id, conversation_id, source_turn_id, key, previous_id, expected_version, fingerprint):
         # The claim transaction owns authorization and source reads as well as
         # the reservation, so no caller transaction is touched.
         async with self.sessions() as db, db.begin():
@@ -464,7 +458,7 @@ class MemoryService:
         fingerprint = _fingerprint(conversation_id, source_turn_id, content, previous_id, expected_version)
         try:
             claim, winner = await self._claim(
-                owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version, fingerprint
+                owner_id, conversation_id, source_turn_id, key, previous_id, expected_version, fingerprint
             )
         except OperationalError as exc:
             # SQLite cannot open an independent writer while the caller holds a

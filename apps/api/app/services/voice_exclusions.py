@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime, timedelta
-from typing import Literal
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -59,8 +58,6 @@ STALE_CODES = frozenset(
         "OPERATION_NOT_RESTORABLE",
     }
 )
-
-ProposalKind = Literal["exclude", "restore"]
 
 
 def _request_key(owner_id: str, conversation_id: str, command_type: str, request_id: str) -> str:

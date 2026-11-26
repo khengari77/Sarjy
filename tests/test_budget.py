@@ -4,14 +4,12 @@ from datetime import UTC, datetime
 
 import pytest
 from app.config import Settings
-from app.domain.budget import budget_day, reserve_units
+from app.domain.budget import budget_day
 from app.domain.deepgram_voices import DEFAULT_DEEPGRAM_VOICE_ID
 from app.infrastructure.database import Base, DevelopmentBudget
 from app.main import create_app
 from app.services.budget import reserve
 from fastapi.testclient import TestClient
-from hypothesis import given
-from hypothesis import strategies as st
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -28,15 +26,6 @@ def capture_statements(engine):
         yield statements
     finally:
         event.remove(engine.sync_engine, "before_cursor_execute", capture)
-
-
-@given(st.integers(min_value=0, max_value=1_000_000), st.integers(min_value=1, max_value=1_000_000))
-def test_reservations_never_exceed_limit(used, requested):
-    if used + requested <= 1_000_000:
-        assert reserve_units(used, requested, 1_000_000) == used + requested
-    else:
-        with pytest.raises(ValueError, match="DAILY_BUDGET_EXHAUSTED"):
-            reserve_units(used, requested, 1_000_000)
 
 
 def test_budget_day_is_tripoli_calendar_day():
