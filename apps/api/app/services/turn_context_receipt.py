@@ -105,10 +105,10 @@ def _included_text(record_id: str, content: str, kind: str | None) -> str:
 
 
 async def _redacted_memory_ids(
-    db: AsyncSession, *, owner_id: str, record_ids: set[str], exclusions: set[str]
+    db: AsyncSession, *, owner_id: str, conversation_id: str, record_ids: set[str], exclusions: set[str]
 ) -> set[str]:
     """Included memories that are now hidden, deleted or excluded in this conversation."""
-    rows = await _memory_rows_for_ids(db, owner_id, record_ids)
+    rows = await _memory_rows_for_ids(db, owner_id, conversation_id, record_ids)
     return {row.id for row in rows if row.status in ("hidden", "deleted")} | exclusions
 
 
@@ -287,12 +287,12 @@ def _current_turn_id(snapshot: dict) -> str | None:
 
 
 async def _excluded_entries(
-    db: AsyncSession, *, owner_id: str, snapshot: dict, exclusions: set[str], inputs
+    db: AsyncSession, *, owner_id: str, conversation_id: str, snapshot: dict, exclusions: set[str], inputs
 ) -> list[dict]:
     record_ids = sorted({value for value in snapshot.get("excluded_record_ids", []) if isinstance(value, str)})
     if not record_ids:
         return []
-    rows = await _memory_rows_for_ids(db, owner_id, record_ids)
+    rows = await _memory_rows_for_ids(db, owner_id, conversation_id, record_ids)
     status_by_id = {row.id: row.status for row in rows}
     sources = inputs.memories.blocked_sources
     entries = []
@@ -370,7 +370,9 @@ async def get_turn_context_receipt(db: AsyncSession, *, owner_id: str, conversat
     included_ids = _included_record_ids(snapshot)
     # The lens's own inputs (as of now): which turns are blocked or restate a forgotten fact.
     inputs = await read_context_inputs(db, owner_id=owner_id, conversation_id=conversation_id, combined_read=True)
-    redacted_ids = await _redacted_memory_ids(db, owner_id=owner_id, record_ids=included_ids, exclusions=exclusions)
+    redacted_ids = await _redacted_memory_ids(
+        db, owner_id=owner_id, conversation_id=conversation_id, record_ids=included_ids, exclusions=exclusions
+    )
     turn_texts = await _turn_texts(db, conversation_id=conversation_id, record_ids=included_ids)
     # The lens window is bounded, so an old turn in this snapshot can fall outside it: test the snapshot's own
     # turns against every forgotten fact as well.
@@ -383,7 +385,9 @@ async def get_turn_context_receipt(db: AsyncSession, *, owner_id: str, conversat
         db, conversation_id=conversation_id, included_ids=included_ids, blocked=blanked_ids
     )
     included = _included_entries(snapshot, blanked_ids, turn_ids=set(turn_texts))
-    excluded = await _excluded_entries(db, owner_id=owner_id, snapshot=snapshot, exclusions=exclusions, inputs=inputs)
+    excluded = await _excluded_entries(
+        db, owner_id=owner_id, conversation_id=conversation_id, snapshot=snapshot, exclusions=exclusions, inputs=inputs
+    )
     revision = snapshot.get("revision")
     revision = revision if isinstance(revision, int) else 0
     return {

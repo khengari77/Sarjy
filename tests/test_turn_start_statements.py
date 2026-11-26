@@ -112,13 +112,14 @@ def test_turn_start_statement_budget(tmp_path):
         after = len(statements)
         assert after == STATEMENTS_AFTER
         assert after <= STATEMENTS_BEFORE - 3
-        # The session row rides the locked conversation read and the retraction
-        # blocks come from the blocked-memory read, so neither read is repeated.
+        # The session row rides the locked conversation read and the scope predicate
+        # rides the combined read, so neither read is repeated.
         session_reads = [statement for statement in statements if "voice_sessions" in statement]
         assert len(session_reads) == 1
         assert "JOIN voice_sessions" in session_reads[0]
         assert "LEFT OUTER JOIN turns" in session_reads[0]
-        assert not [statement for statement in statements if "memories.source_conversation_id = ?" in statement]
+        scope_reads = [statement for statement in statements if "memories.source_conversation_id = ?" in statement]
+        assert all("UNION ALL" in statement for statement in scope_reads)
 
 
 def test_window_and_tool_reads_do_not_select_the_snapshot_column(tmp_path):

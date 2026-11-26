@@ -97,7 +97,7 @@ async def _memory_blocks(db, *, owner_id, conversation_id, inputs, sent: set[str
         for c in inputs.memories.included
     ]
     denied_ids = {c.id for c in inputs.memories.denied}
-    status_by_id = {row.id: row.status for row in await _memory_rows_for_ids(db, owner_id, denied_ids)}
+    status_by_id = {row.id: row.status for row in await _memory_rows_for_ids(db, owner_id, conversation_id, denied_ids)}
     for candidate in inputs.memories.denied:
         status = status_by_id.get(candidate.id)
         if status in ("hidden", "deleted"):
