@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def default_deepgram_voice(self):
         # Deepgram Aura-2 is the only TTS, so its model string is the only valid
-        # default; an empty or previously saved ElevenLabs id falls back to it.
+        # default; an empty or previously saved non-Deepgram id falls back to it.
         if deepgram_voice(self.default_voice_id) is None:
             if self.default_voice_id:
                 logging.getLogger(__name__).warning(

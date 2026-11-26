@@ -1,7 +1,7 @@
 # Fallback and durable tool operations — issue #11
 
-Status: implementation draft. No live fallback request, hosted acceptance or
-merge is claimed.
+Status: implemented in `services/voice-agent/fallback.py` and covered by focused
+tests. No live fallback request or hosted acceptance is claimed.
 
 ## Fallback policy
 
