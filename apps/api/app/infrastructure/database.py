@@ -4,6 +4,8 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from app.domain.contracts import SCOPE_GLOBAL
+
 EMBEDDING_DIMENSIONS = 1536
 # Postgres uses pgvector; SQLite keeps a JSON placeholder so local dev and CI
 # exercise the same ORM without the extension.
@@ -123,6 +125,7 @@ class Conversation(Base):
     title: Mapped[str] = mapped_column(String(120), default="New conversation")
     revision: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[str] = mapped_column(String(40), default=now)
+    deleted_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 class Turn(Base):
@@ -200,6 +203,7 @@ class Memory(Base):
     source_conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    scope: Mapped[str] = mapped_column(String(12), default=SCOPE_GLOBAL, server_default=SCOPE_GLOBAL)
     created_at: Mapped[str] = mapped_column(String(40), default=now)
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
 

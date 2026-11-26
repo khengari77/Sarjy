@@ -126,6 +126,15 @@ jobs:
           REQUIRE_WORDLE_POSTGRES: "1"
           TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
           TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
+      - name: Conversation delete fence
+        # A delete must wait for a late worker write that already read the live chat (shared row lock) and then erase
+        # what it wrote. SQLite ignores row locks, so this step is the only coverage. A skip fails the step via
+        # tests/conftest.py.
+        run: uv run pytest -v tests/test_conversation_delete_postgres.py
+        env:
+          REQUIRE_DAY2_INTEGRATION: "1"
+          TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/integration_tests
+          TEST_MEMORY_POSTGRES_URL: postgresql+asyncpg://postgres:test-only@localhost/memory_tests
       - name: Real vector and integration checks
         run: |
           uv run python -c "import sys; sys.path.insert(0, 'apps/api'); import app.services.memory, app.services.context_operations, app.domain.weather_permissions"

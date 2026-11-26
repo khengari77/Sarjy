@@ -288,7 +288,8 @@ class MemoryService:
             )
             if existing is not None:
                 return _claim_value(existing), False
-            await owned_conversation(db, owner_id, conversation_id)
+            # A correction may stay attributed to a source chat that was deleted since: the fact outlives its chat.
+            await owned_conversation(db, owner_id, conversation_id, include_deleted=previous_id is not None)
             await _require_source_turn(db, source_turn_id, conversation_id)
             legacy = await db.scalar(select(Memory).where(Memory.owner_id == owner_id, Memory.request_key == key))
             if legacy is not None:
@@ -400,7 +401,8 @@ class MemoryService:
                 raise HTTPException(503, detail={"code": "MEMORY_REQUEST_UNKNOWN"})
             if claim["fingerprint"] != fingerprint:
                 raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-            await owned_conversation(db, owner_id, conversation_id)
+            # A correction may stay attributed to a source chat that was deleted since: the fact outlives its chat.
+            await owned_conversation(db, owner_id, conversation_id, include_deleted=previous_id is not None)
             if source_turn_id is not None:
                 source = await db.scalar(
                     select(Turn).where(Turn.id == source_turn_id, Turn.conversation_id == conversation_id)

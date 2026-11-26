@@ -36,6 +36,8 @@ def build_context_action_handlers(*, secret: str, search: MemorySearcher = keywo
         from app.infrastructure.database import Conversation
 
         conversation = await db.get(Conversation, conversation_id)
+        if conversation is None or conversation.deleted_at is not None:
+            raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
         if conversation.revision != prepared["revision"] or conversation.revision != expected_revision:
             raise HTTPException(409, detail={"code": "REVISION_CONFLICT"})
         return prepared
