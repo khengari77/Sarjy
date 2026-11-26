@@ -2,18 +2,13 @@ import asyncio
 import os
 import sqlite3
 import subprocess
+import sys
 from contextlib import closing
 
 import pytest
+from alembic_runner import REPO_ROOT, run_alembic
 
 POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL", "")
-
-
-def alembic(url, *commands):
-    env = os.environ | {"DATABASE_URL": url}
-    result = subprocess.run([".venv/bin/alembic", *commands], env=env, capture_output=True, text=True, timeout=120)
-    assert result.returncode == 0, result.stdout + result.stderr
-    return result
 
 
 def seed(connection):
@@ -37,20 +32,26 @@ def snapshot(connection):
 
 
 def test_initial_migration_matches_models(tmp_path):
-    alembic(f"sqlite+aiosqlite:///{tmp_path}/migration.db", "upgrade", "head")
-    alembic(f"sqlite+aiosqlite:///{tmp_path}/migration.db", "check")
+    run_alembic(f"sqlite+aiosqlite:///{tmp_path}/migration.db", "upgrade", "head")
+    run_alembic(f"sqlite+aiosqlite:///{tmp_path}/migration.db", "check")
 
 
 def test_reviewer_migration_is_additive_and_has_one_head(tmp_path):
     url = f"sqlite+aiosqlite:///{tmp_path}/reviewer.db"
-    heads = subprocess.run([".venv/bin/alembic", "heads"], env=os.environ, capture_output=True, text=True, timeout=30)
-    assert heads.returncode == 0, heads.stdout + heads.stderr
+    heads = subprocess.run(
+        [sys.executable, "-m", "alembic", "heads"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
     assert len(heads.stdout.strip().splitlines()) == 1
-    alembic(url, "upgrade", "0009_dispatcher_leases")
+    run_alembic(url, "upgrade", "0009_dispatcher_leases")
     with closing(sqlite3.connect(tmp_path / "reviewer.db")) as connection, connection:
         seed(connection)
         before = snapshot(connection)
-    alembic(url, "upgrade", "head")
+    run_alembic(url, "upgrade", "head")
     with closing(sqlite3.connect(tmp_path / "reviewer.db")) as connection, connection:
         assert snapshot(connection) == before
         assert connection.execute("SELECT invitation_id FROM identities").fetchall() == [(None,)]
@@ -72,8 +73,8 @@ def test_reviewer_migration_is_additive_and_has_one_head(tmp_path):
             "reviewer_source_attempt_windows",
             "reviewer_creation_windows",
         } <= tables
-    alembic(url, "check")
-    alembic(url, "downgrade", "0009_dispatcher_leases")
+    run_alembic(url, "check")
+    run_alembic(url, "downgrade", "0009_dispatcher_leases")
     with closing(sqlite3.connect(tmp_path / "reviewer.db")) as connection, connection:
         assert snapshot(connection) == before
         assert "invitation_id" not in {row[1] for row in connection.execute("PRAGMA table_info(identities)")}
@@ -83,11 +84,11 @@ def test_reviewer_migration_is_additive_and_has_one_head(tmp_path):
 
 def test_day2_migration_is_additive_on_existing_sqlite_database(tmp_path):
     url = f"sqlite+aiosqlite:///{tmp_path}/migration.db"
-    alembic(url, "upgrade", "0003")
+    run_alembic(url, "upgrade", "0003")
     with closing(sqlite3.connect(tmp_path / "migration.db")) as connection, connection:
         seed(connection)
         before = snapshot(connection)
-    alembic(url, "upgrade", "head")
+    run_alembic(url, "upgrade", "head")
     with closing(sqlite3.connect(tmp_path / "migration.db")) as connection, connection:
         assert snapshot(connection) == before
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -101,8 +102,8 @@ def test_day2_migration_is_additive_on_existing_sqlite_database(tmp_path):
         "user_settings",
         "setting_revisions",
     } <= tables
-    alembic(url, "check")
-    alembic(url, "downgrade", "0003")
+    run_alembic(url, "check")
+    run_alembic(url, "downgrade", "0003")
     with closing(sqlite3.connect(tmp_path / "migration.db")) as connection, connection:
         assert "memories" not in {
             row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -120,8 +121,8 @@ async def _postgres_migration():
     import asyncpg
 
     plain = POSTGRES_URL.replace("postgresql+asyncpg://", "postgresql://")
-    alembic(POSTGRES_URL, "downgrade", "base")
-    alembic(POSTGRES_URL, "upgrade", "0003")
+    run_alembic(POSTGRES_URL, "downgrade", "base")
+    run_alembic(POSTGRES_URL, "upgrade", "0003")
     connection = await asyncpg.connect(plain)
     try:
         for role in ("anon", "authenticated"):
@@ -142,8 +143,8 @@ async def _postgres_migration():
         )
     finally:
         await connection.close()
-    alembic(POSTGRES_URL, "upgrade", "head")
-    alembic(POSTGRES_URL, "check")
+    run_alembic(POSTGRES_URL, "upgrade", "head")
+    run_alembic(POSTGRES_URL, "check")
     connection = await asyncpg.connect(plain)
     try:
         embedding = await connection.fetchval(
@@ -235,18 +236,18 @@ RETRIEVAL_INDEXES = (
 def test_retrieval_indexes_upgrade_and_downgrade_on_sqlite(tmp_path):
     path = tmp_path / "retrieval.db"
     url = f"sqlite+aiosqlite:///{path}"
-    alembic(url, "upgrade", "head")
+    run_alembic(url, "upgrade", "head")
     with closing(sqlite3.connect(path)) as connection:
         indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
     assert set(RETRIEVAL_INDEXES) <= indexes
-    alembic(url, "downgrade", "0009_dispatcher_leases")
+    run_alembic(url, "downgrade", "0009_dispatcher_leases")
     with closing(sqlite3.connect(path)) as connection:
         indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert not set(RETRIEVAL_INDEXES) & indexes
     assert {"turns", "memories", "tool_calls"} <= tables, "downgrade must not drop data tables"
-    alembic(url, "upgrade", "head")
-    alembic(url, "check")
+    run_alembic(url, "upgrade", "head")
+    run_alembic(url, "check")
 
 
 def test_retrieval_indexes_upgrade_and_downgrade_on_postgres():
@@ -266,11 +267,11 @@ def test_retrieval_indexes_upgrade_and_downgrade_on_postgres():
             await connection.close()
         return {row["indexname"] for row in rows}
 
-    alembic(POSTGRES_URL, "upgrade", "head")
+    run_alembic(POSTGRES_URL, "upgrade", "head")
     assert set(RETRIEVAL_INDEXES) <= asyncio.run(index_names())
-    alembic(POSTGRES_URL, "downgrade", "0009_dispatcher_leases")
+    run_alembic(POSTGRES_URL, "downgrade", "0009_dispatcher_leases")
     assert not set(RETRIEVAL_INDEXES) & asyncio.run(index_names())
-    alembic(POSTGRES_URL, "upgrade", "head")
+    run_alembic(POSTGRES_URL, "upgrade", "head")
     assert set(RETRIEVAL_INDEXES) <= asyncio.run(index_names())
 
 
@@ -278,11 +279,10 @@ def test_cleanup_migration_preserves_existing_sessions_and_ledger(tmp_path):
     import sqlite3
 
     path = tmp_path / "cleanup.db"
-    env = os.environ | {"DATABASE_URL": f"sqlite+aiosqlite:///{path}"}
+    url = f"sqlite+aiosqlite:///{path}"
 
     def migrate(*args):
-        result = subprocess.run([".venv/bin/alembic", *args], env=env, capture_output=True, text=True, timeout=30)
-        assert result.returncode == 0, result.stdout + result.stderr
+        run_alembic(url, *args)
 
     migrate("upgrade", "0003")
     with closing(sqlite3.connect(path)) as db, db:
@@ -303,7 +303,7 @@ def test_cleanup_migration_preserves_existing_sessions_and_ledger(tmp_path):
 
 def test_day2_upgrade_from_cleanup_head_keeps_confirmation(tmp_path):
     url = f"sqlite+aiosqlite:///{tmp_path}/ancestry.db"
-    alembic(url, "upgrade", "0004_voice_cleanup")
+    run_alembic(url, "upgrade", "0004_voice_cleanup")
     with closing(sqlite3.connect(tmp_path / "ancestry.db")) as db, db:
         seed(db)
         db.execute(
@@ -311,8 +311,8 @@ def test_day2_upgrade_from_cleanup_head_keeps_confirmation(tmp_path):
         )
         db.commit()
         before = snapshot(db)
-    alembic(url, "upgrade", "head")
-    alembic(url, "check")
+    run_alembic(url, "upgrade", "head")
+    run_alembic(url, "check")
     with closing(sqlite3.connect(tmp_path / "ancestry.db")) as db, db:
         assert snapshot(db) == before
         assert (
@@ -323,10 +323,10 @@ def test_day2_upgrade_from_cleanup_head_keeps_confirmation(tmp_path):
 
 def test_accounts_migration_is_additive_and_reversible(tmp_path):
     url = f"sqlite+aiosqlite:///{tmp_path}/accounts.db"
-    alembic(url, "upgrade", "0009_dispatcher_leases")
+    run_alembic(url, "upgrade", "0009_dispatcher_leases")
     with closing(sqlite3.connect(tmp_path / "accounts.db")) as connection, connection:
         seed(connection)
-    alembic(url, "upgrade", "0015_intro_seen")
+    run_alembic(url, "upgrade", "0015_intro_seen")
 
     def content():
         with closing(sqlite3.connect(tmp_path / "accounts.db")) as connection:
@@ -338,20 +338,20 @@ def test_accounts_migration_is_additive_and_reversible(tmp_path):
             return {name: connection.execute(f'SELECT * FROM "{name}"').fetchall() for name in names}
 
     before = content()
-    alembic(url, "upgrade", "0016_accounts")
+    run_alembic(url, "upgrade", "0016_accounts")
     after = content()
     assert set(after) - set(before) == {"accounts", "account_sessions", "account_attempt_windows"}
     assert {name: after[name] for name in before} == before
-    alembic(url, "upgrade", "head")
-    alembic(url, "check")
-    alembic(url, "downgrade", "0015_intro_seen")
+    run_alembic(url, "upgrade", "head")
+    run_alembic(url, "check")
+    run_alembic(url, "downgrade", "0015_intro_seen")
     assert content() == before
 
 
 def test_memory_mode_migration_is_additive_and_reversible(tmp_path):
     path = tmp_path / "memory-mode.db"
     url = f"sqlite+aiosqlite:///{path}"
-    alembic(url, "upgrade", "0016_accounts")
+    run_alembic(url, "upgrade", "0016_accounts")
     with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute(
             "INSERT INTO identities (id, token_hash, expires_at)"
@@ -367,7 +367,7 @@ def test_memory_mode_migration_is_additive_and_reversible(tmp_path):
             " FROM user_settings"
         ).fetchall()
 
-    alembic(url, "upgrade", "head")
+    run_alembic(url, "upgrade", "head")
     with closing(sqlite3.connect(path)) as connection:
         columns = {row[1]: row for row in connection.execute("PRAGMA table_info(user_settings)")}
         assert columns["memory_mode"][3] == 1
@@ -379,9 +379,9 @@ def test_memory_mode_migration_is_additive_and_reversible(tmp_path):
             == before
         )
         assert connection.execute("SELECT memory_mode FROM user_settings").fetchall() == [("auto",)]
-    alembic(url, "check")
+    run_alembic(url, "check")
 
-    alembic(url, "downgrade", "0016_accounts")
+    run_alembic(url, "downgrade", "0016_accounts")
     with closing(sqlite3.connect(path)) as connection:
         assert "memory_mode" not in {row[1] for row in connection.execute("PRAGMA table_info(user_settings)")}
         assert (
