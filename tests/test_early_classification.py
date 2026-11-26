@@ -259,3 +259,29 @@ def test_evicting_an_entry_never_cancels_a_classification_a_command_is_awaiting(
         return await waiter
 
     assert asyncio.run(scenario()) is not None
+
+
+def test_the_early_task_is_outside_the_starting_requests_statement_timer():
+    """Its budget writes happen while turn/start is still being measured; they are not that request's cost."""
+    from app.infrastructure.timing import StatementTiming, current_statement_timing
+
+    seen = []
+
+    class Probe:
+        async def classify(self, *, request_id, instruction):
+            seen.append(current_statement_timing.get())
+            return None
+
+    async def main():
+        store = ClassificationStore()
+        token = current_statement_timing.set(StatementTiming())
+        try:
+            store.start("c:r", PARAPHRASE, Probe())
+            task = store.take("c:r", PARAPHRASE)
+            await task
+            assert current_statement_timing.get() is not None  # the caller keeps its own timer
+        finally:
+            current_statement_timing.reset(token)
+
+    asyncio.run(main())
+    assert seen == [None]
