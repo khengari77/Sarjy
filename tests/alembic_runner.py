@@ -10,6 +10,7 @@ from alembic import command
 from alembic.config import Config
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+COMMAND_TIMEOUT_SECONDS = 120
 
 
 def _config() -> Config:
@@ -53,16 +54,19 @@ def run_alembic(url: str, action: str, revision: str | None = None) -> None:
     except RuntimeError:
         _execute(url, action, revision)
         return
-    failure: list[Exception] = []
+    failure: list[BaseException] = []
 
     def target() -> None:
         try:
             _execute(url, action, revision)
-        except Exception as exc:
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the caller; SystemExit must not look like success
             failure.append(exc)
 
-    thread = threading.Thread(target=target)
+    thread = threading.Thread(target=target, daemon=True)
     thread.start()
-    thread.join()
+    # The old subprocess helper gave each command 120 s; a wedged migration must fail, not hang the session.
+    thread.join(COMMAND_TIMEOUT_SECONDS)
+    if thread.is_alive():
+        raise TimeoutError(f"alembic {action} did not finish within {COMMAND_TIMEOUT_SECONDS} s")
     if failure:
         raise failure[0]

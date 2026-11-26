@@ -14,9 +14,12 @@ def run(connection):
 
 async def migrate():
     engine = create_async_engine(Settings().database_url)
-    async with engine.connect() as connection:
-        await connection.run_sync(run)
-    await engine.dispose()
+    try:
+        async with engine.connect() as connection:
+            await connection.run_sync(run)
+    finally:
+        # Also on failure: in-process callers (the migration tests) must not keep the engine alive.
+        await engine.dispose()
 
 
 if context.is_offline_mode():
