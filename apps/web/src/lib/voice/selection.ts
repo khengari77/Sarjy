@@ -1,4 +1,5 @@
 import type { PendingIntent } from '../chat/intent';
+import { errorCode } from './errors';
 import type { VoiceState } from './connection';
 import type { ConversationStore } from './conversations';
 
@@ -66,5 +67,17 @@ export function createSelectionController(deps: SelectionDeps) {
     });
   }
 
-  return { requestSelect, confirmSwitch, create };
+  async function remove(id: string): Promise<string> {
+    let failure = '';
+    await deps.run(async () => {
+      try {
+        await deps.getConversations().remove(id);
+      } catch (error) {
+        failure = errorCode(error);
+      }
+    });
+    return failure;
+  }
+
+  return { requestSelect, confirmSwitch, create, remove };
 }

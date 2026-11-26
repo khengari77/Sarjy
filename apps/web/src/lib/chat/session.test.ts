@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { request } from '../api';
-import { mergeVoices, startVoiceSession, undoChange } from './session';
+import { deleteConversation, mergeVoices, startVoiceSession, undoChange } from './session';
 
 const voice = (id: string, name: string) => ({ id, name, languages: [] });
 
@@ -30,6 +30,47 @@ describe('startVoiceSession', () => {
     vi.stubGlobal('fetch', fetch);
     await startVoiceSession('chat-1', 'ar');
     expect(JSON.parse(fetch.mock.calls[0][1].body).voice_id).toBeUndefined();
+  });
+});
+
+describe('deleteConversation', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sends DELETE and treats 204 as success', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetch);
+    await expect(deleteConversation('chat-1')).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledWith('/api/v1/conversations/chat-1', {
+      method: 'DELETE',
+      headers: {},
+      body: undefined,
+    });
+  });
+
+  it('treats a missing conversation as already deleted', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 404 })));
+    await expect(deleteConversation('chat-1')).resolves.toBeUndefined();
+  });
+
+  it('treats CONVERSATION_NOT_FOUND as already deleted', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ detail: { code: 'CONVERSATION_NOT_FOUND' } }, { status: 404 })),
+    );
+    await expect(deleteConversation('chat-1')).resolves.toBeUndefined();
+  });
+
+  it('marks a live call as the retryable refusal, not a generic failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ detail: { code: 'CONVERSATION_ACTIVE' } }, { status: 409 })),
+    );
+    await expect(deleteConversation('chat-1')).rejects.toThrow('CONVERSATION_ACTIVE');
+  });
+
+  it('collapses any other failure to a generic failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 500 })));
+    await expect(deleteConversation('chat-1')).rejects.toThrow('CONVERSATION_DELETE_FAILED');
   });
 });
 

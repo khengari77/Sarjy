@@ -1,5 +1,5 @@
 import { request, type Conversation, type Turn } from '../api';
-import { createConversation, fetchConversation, type ToolCall } from '../chat/session';
+import { createConversation, deleteConversation, fetchConversation, type ToolCall } from '../chat/session';
 
 export interface ConversationState {
   conversations: Conversation[];
@@ -70,7 +70,23 @@ export function createConversationStore(
     await refresh();
   }
 
-  return { state, refresh, reload, createChat, ensureConversation, select };
+  async function remove(id: string) {
+    await deleteConversation(id);
+    state.conversations = state.conversations.filter((chat) => chat.id !== id);
+    if (state.current === id) {
+      // Same empty selection the app starts with: no chat, no turns.
+      state.current = null;
+      state.turns = [];
+      state.toolCalls = [];
+    }
+    try {
+      await reload();
+    } catch {
+      // The delete is confirmed; a failed refresh must not be reported as a failed delete.
+    }
+  }
+
+  return { state, refresh, reload, createChat, ensureConversation, select, remove };
 }
 
 export type ConversationStore = ReturnType<typeof createConversationStore>;

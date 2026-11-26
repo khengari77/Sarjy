@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import './history.css';
   import type { Conversation } from '../api';
+  import { wordsFor } from '../chat/words';
   import { filterConversations } from './chatSearch';
 
   interface Props {
@@ -11,25 +12,45 @@
     busy: boolean;
     loading: boolean;
     error: string;
+    /** The conversation whose call is live, if any. */
+    callConversation: string | null;
     onselect: (id: string) => void;
     oncreate: () => void;
     onretry: () => void;
+    /** Returns an empty string on success, or a delete failure code. */
+    ondelete: (id: string) => Promise<string>;
   }
 
-  let { conversations, current, arabic, busy, loading, error, onselect, oncreate, onretry }: Props = $props();
+  let {
+    conversations,
+    current,
+    arabic,
+    busy,
+    loading,
+    error,
+    callConversation,
+    onselect,
+    oncreate,
+    onretry,
+    ondelete,
+  }: Props = $props();
 
   let query = $state('');
   let menuOpenFor = $state<string | null>(null);
   let menuTrigger: HTMLButtonElement | null = null;
   let menuElement = $state<HTMLElement | null>(null);
+  let confirmingDelete = $state<string | null>(null);
+  let deletingId = $state<string | null>(null);
+  let deleteError = $state('');
+
+  const words = $derived(wordsFor(arabic));
 
   const filtered = $derived(filterConversations(conversations, query));
   const hasConversations = $derived(conversations.length > 0);
   const noMatches = $derived(hasConversations && filtered.length === 0);
 
   function select(id: string) {
-    menuOpenFor = null;
-    menuTrigger = null;
+    closeMenu();
     onselect(id);
   }
 
@@ -38,6 +59,8 @@
     menuOpenFor = null;
     menuTrigger = null;
     menuElement = null;
+    confirmingDelete = null;
+    deleteError = '';
     if (restoreFocus) void tick().then(() => trigger?.focus());
   }
 
@@ -48,11 +71,39 @@
     }
     menuTrigger = event.currentTarget as HTMLButtonElement;
     menuOpenFor = id;
+    confirmingDelete = null;
+    deleteError = '';
+  }
+
+  function askDelete(id: string) {
+    if (busy || deletingId || callConversation === id) return;
+    confirmingDelete = id;
+    deleteError = '';
+    void tick().then(() => menuElement?.querySelector<HTMLButtonElement>('.menu-actions button')?.focus());
+  }
+
+  function cancelDelete() {
+    confirmingDelete = null;
+    deleteError = '';
+    void tick().then(() => menuTrigger?.focus());
+  }
+
+  async function confirmDelete() {
+    if (!confirmingDelete || deletingId) return;
+    const id = confirmingDelete;
+    deletingId = id;
+    deleteError = '';
+    const failure = await ondelete(id);
+    deletingId = null;
+    if (failure) {
+      deleteError = failure === 'CONVERSATION_ACTIVE' ? words.deleteActive : words.deleteFailed;
+      return;
+    }
+    closeMenu();
   }
 
   // Dismiss on Escape (returning focus to the trigger) or on any outside
-  // pointer interaction. The menu holds only disabled items today, but the
-  // dismissal path must stay reliable once actions are enabled.
+  // pointer interaction. Delete runs a confirmation step inside the menu.
   $effect(() => {
     if (!menuOpenFor) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -165,11 +216,38 @@
           </button>
           {#if menuOpenFor === chat.id}
             <div class="menu" role="menu" bind:this={menuElement}>
-              <button role="menuitem" disabled>{arabic ? 'إعادة التسمية' : 'Rename'}</button>
-              <button role="menuitem" disabled>{arabic ? 'حذف' : 'Delete'}</button>
-              <p>
-                {arabic ? 'تتوفّر إعادة التسمية والحذف بعد دعم الخادم.' : 'Rename and delete need backend support.'}
-              </p>
+              <button role="menuitem" disabled>{words.rename}</button>
+              {#if confirmingDelete === chat.id}
+                <div class="menu-confirm" role="group" aria-label={words.deleteConfirm}>
+                  <p class="menu-confirm-title">{words.deleteConfirm}</p>
+                  <p>{words.deleteWarning}</p>
+                  <div class="menu-actions">
+                    <button type="button" disabled={deletingId === chat.id} onclick={cancelDelete}>
+                      {words.cancel}
+                    </button>
+                    <button
+                      type="button"
+                      class="danger"
+                      disabled={busy || deletingId === chat.id}
+                      onclick={() => void confirmDelete()}
+                    >
+                      {deletingId === chat.id ? words.deleting : words.delete}
+                    </button>
+                  </div>
+                  {#if deleteError}
+                    <p class="menu-error" role="alert">{deleteError}</p>
+                  {/if}
+                </div>
+              {:else}
+                <button
+                  role="menuitem"
+                  disabled={busy || callConversation === chat.id}
+                  onclick={() => askDelete(chat.id)}
+                >
+                  {words.delete}
+                </button>
+                <p>{words.renameNeedsBackend}</p>
+              {/if}
             </div>
           {/if}
         </div>

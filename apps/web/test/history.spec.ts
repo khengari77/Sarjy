@@ -133,6 +133,11 @@ test('switching chats mid-call requires an explicit end and switch', async ({ pa
   await page.locator('.orb-button').click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 
+  // A live call for this chat blocks deletion until it ends.
+  await page.getByRole('button', { name: 'Conversation actions for Trip to Paris' }).click();
+  await expect(page.getByRole('menu').getByRole('menuitem', { name: 'Delete' })).toBeDisabled();
+  await page.keyboard.press('Escape');
+
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'End the current voice session?' });
   await expect(dialog).toBeVisible();
@@ -170,12 +175,30 @@ test('starting a new conversation mid-call requires the same confirmation', asyn
   await expect(page.locator('.orb-button')).toBeVisible();
 });
 
-test('rename and delete are disabled with an explanation', async ({ page }) => {
-  await mockHistory(page);
+test('delete confirms inline, removes the chat and refreshes the list', async ({ page }) => {
+  const mocked = await mockHistory(page);
   await gotoHistory(page);
   await page.getByRole('button', { name: 'Conversation actions for Trip to Paris' }).click();
   const menu = page.getByRole('menu');
+
   await expect(menu.getByRole('menuitem', { name: 'Rename' })).toBeDisabled();
-  await expect(menu.getByRole('menuitem', { name: 'Delete' })).toBeDisabled();
-  await expect(menu).toContainText('Rename and delete need backend support.');
+  await expect(menu).toContainText('Rename needs backend support.');
+  const deleteItem = menu.getByRole('menuitem', { name: 'Delete' });
+  await expect(deleteItem).toBeEnabled();
+
+  await deleteItem.click();
+  await expect(menu.getByText('Delete this chat?')).toBeVisible();
+  await expect(menu).toContainText(
+    'It and its temporary memories are erased permanently. Permanent memories are kept.',
+  );
+
+  await menu.getByRole('button', { name: 'Delete', exact: true }).click();
+
+  await expect(page.getByRole('button', { name: 'Trip to Paris', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Work ideas', exact: true })).not.toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  expect(mocked.deleted()).toEqual(['c1']);
+  await expect.poll(() => mocked.listCalls()).toBe(2);
 });

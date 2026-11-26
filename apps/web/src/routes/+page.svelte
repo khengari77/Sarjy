@@ -133,10 +133,7 @@
     }, onVoiceError);
   }
 
-  function toggleLanguage() {
-    arabic = !arabic;
-    storeLanguage(arabic);
-  }
+  const toggleLanguage = () => void storeLanguage((arabic = !arabic));
 
   const announcement = createAnnouncement(() => (arabic ? presentation.statusLabel.ar : presentation.statusLabel.en));
 
@@ -188,9 +185,11 @@
       {busy}
       loading={conversation.loading}
       error={conversation.listError}
+      callConversation={voice.live ? conversation.current : null}
       onselect={selection.requestSelect}
       oncreate={selection.create}
       onretry={() => run(() => conversations!.reload())}
+      ondelete={selection.remove}
     />
   {/snippet}
 

@@ -9,6 +9,7 @@ import {
   type VoiceOption,
 } from '../api';
 import type { MemoryChangeKind, MemoryMode } from '../commands/commandStore';
+import { errorCode } from '../voice/errors';
 
 export type ToolCall = { id: string; name: string; result: unknown };
 
@@ -18,6 +19,21 @@ export function mergeVoices(current: VoiceOption[], incoming: VoiceOption[]): Vo
 
 export async function createConversation(): Promise<Conversation> {
   return request<Conversation>('conversations', {});
+}
+
+/**
+ * Delete one chat. A missing conversation is already deleted, and a live call
+ * is a distinct, retryable refusal; everything else is a generic failure.
+ */
+export async function deleteConversation(id: string): Promise<void> {
+  try {
+    await request<null>(`conversations/${encodeURIComponent(id)}`, undefined, 'DELETE', { emptyBody: null });
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === 'HTTP_404' || code === 'CONVERSATION_NOT_FOUND') return;
+    if (code === 'HTTP_409' || code === 'CONVERSATION_ACTIVE') throw new Error('CONVERSATION_ACTIVE');
+    throw new Error('CONVERSATION_DELETE_FAILED');
+  }
 }
 
 export async function fetchConversation(id: string): Promise<{ turns: Turn[]; toolCalls: ToolCall[] }> {
