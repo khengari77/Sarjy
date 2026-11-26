@@ -203,6 +203,9 @@ class Decision(Contract):
 
 
 MemoryMode = Literal["off", "ask", "auto"]
+# ``global`` facts outlive their source chat; ``conversation`` facts die with it.
+SCOPE_GLOBAL = "global"
+SCOPE_CONVERSATION = "conversation"
 
 
 class UserSettings(Contract):

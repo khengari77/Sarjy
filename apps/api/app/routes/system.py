@@ -16,6 +16,7 @@ from app.dependencies import ACCOUNT_COOKIE, COOKIE
 from app.domain.pipeline import KEYS, PRESET, PipelineConfig, validate_pipeline
 from app.infrastructure.database import Conversation, Identity, ToolCall, Turn
 from app.services.accounts import AccountSessionRequired, authorize_account
+from app.services.conversation_delete import delete_conversation
 from app.services.pipeline_settings import configured_keys, default_llm, default_tts, tts_credential_key
 from app.services.reviewer_access import ReviewerAccessDenied, ReviewerSessionRequired, authorize
 from app.services.voices import VoiceCatalog, VoiceCatalogError, VoiceProvider
@@ -85,7 +86,9 @@ def _register_conversation_routes(app, *, database, identity, owned):
     async def conversations(user=Depends(identity), db: AsyncSession = Depends(database)):
         rows = (
             await db.scalars(
-                select(Conversation).where(Conversation.owner_id == user.id).order_by(Conversation.created_at.desc())
+                select(Conversation)
+                .where(Conversation.owner_id == user.id, Conversation.deleted_at.is_(None))
+                .order_by(Conversation.created_at.desc())
             )
         ).all()
         return [{"id": c.id, "title": c.title, "revision": c.revision} for c in rows]
@@ -96,6 +99,10 @@ def _register_conversation_routes(app, *, database, identity, owned):
         db.add(conversation)
         await db.commit()
         return {"id": conversation.id, "title": conversation.title, "revision": conversation.revision}
+
+    @app.delete("/v1/conversations/{conversation_id}", status_code=204)
+    async def delete(conversation_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
+        await delete_conversation(db, owner_id=user.id, conversation_id=conversation_id)
 
     @app.get("/v1/conversations/{conversation_id}/turns")
     async def turns(conversation_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):

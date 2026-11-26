@@ -270,7 +270,7 @@ async def _recover_expired_claim(claim_db, existing, owner_id, conversation_id, 
 async def _claim_preparation(factory, *, owner_id, conversation_id, key, fingerprint):
     async with factory() as claim_db, claim_db.begin():
         conversation = await claim_db.get(Conversation, conversation_id)
-        if not conversation or conversation.owner_id != owner_id:
+        if not conversation or conversation.owner_id != owner_id or conversation.deleted_at is not None:
             raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
         identifier, lease_id = str(uuid4()), str(uuid4())
         result = await insert_ignore(
@@ -424,7 +424,7 @@ async def _dispatch_transaction(
     # Existing gate serializes read-modify-write transactions on SQLite and PostgreSQL.
     await db.execute(update(SessionGate).where(SessionGate.id == 1).values(marker=1))
     conversation = await db.get(Conversation, conversation_id)
-    if not conversation or conversation.owner_id != owner_id:
+    if not conversation or conversation.owner_id != owner_id or conversation.deleted_at is not None:
         raise HTTPException(404, detail={"code": "CONVERSATION_NOT_FOUND"})
     key = _dispatch_key(owner_id, request_id)
     fingerprint = _dispatch_fingerprint(conversation_id, expected_revision, action)
