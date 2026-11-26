@@ -76,8 +76,7 @@ NEGATION_QUESTION: Final[dict[str, Any]] = {
     ),
     "criteria": {
         "yes": (
-            "Retracts or corrects an earlier fact ('I no longer live in X', 'actually my name is Y', 'forget "
-            "that I like tea') or negates a fact about the speaker ('I am not allergic to nuts')."
+            "Retracts or corrects an earlier fact ('I no longer live in X', 'actually my name is Y') or negates a fact about the speaker ('I am not allergic to nuts')."
         ),
         "no": (
             "States a new fact, asks a question, gives a task or makes an ordinary statement without retracting "

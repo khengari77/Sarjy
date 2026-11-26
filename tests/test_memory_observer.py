@@ -315,3 +315,22 @@ def test_a_retraction_of_a_real_fact_asks():
 def test_an_overlong_instruction_is_refused():
     with pytest.raises(ValueError):
         build_observer_request("x" * 5000)
+
+
+def test_a_retraction_with_no_fact_is_left_to_the_voice_commands():
+    # "Forget that I like tea" is an instruction to the assistant, not a fact; the command path owns it.
+    answers = make_answers(has_fact=False, negated=True)
+    assert observer_plan("auto", Sensitivity.NORMAL, answers, explicit=True) is Decision.SKIP
+
+
+def test_the_chosen_option_probability_beats_the_vendor_confidence():
+    body = payload()
+    body["answers"]["fact"] = {  # type: ignore[index]
+        "type": "choice",
+        "choice": "yes",
+        "confidence": 0.99,
+        "probabilities": {"yes": 0.55, "no": 0.45},
+    }
+    parsed = parse_observer_response(body)
+    assert parsed is not None and parsed.confidence == 0.55
+    assert observer_plan("auto", Sensitivity.NORMAL, parsed, explicit=True) is Decision.ASK
