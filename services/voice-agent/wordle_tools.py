@@ -18,7 +18,6 @@ import httpx
 from app.domain.tool_operations import operation_key
 from livekit.agents import RunContext, function_tool
 
-SPELLED_RUN = re.compile(r"(?:^|\s)(?:[a-z]\s+){4}[a-z](?:\s|$)")
 # Common five-letter words that are ordinary speech, not guesses.
 NOT_GUESSES = frozenset(
     [
@@ -85,7 +84,6 @@ class WordleTools:
     current_turn: str | None
     publish_wordle: Any
     wordle_spoken: dict[str, list[str]]
-    wordle_touched: bool
     wordle_calls: set[str]
     current_text: str
     wordle_active: Any
@@ -131,7 +129,6 @@ class WordleTools:
         spoken = body.get("spoken")
         if isinstance(spoken, str) and spoken:
             self.wordle_spoken.setdefault(self.current_turn, []).append(spoken)
-            self.wordle_touched = True
         ui = body.get("ui")
         if self.publish_wordle is not None and ui in {"open", "refresh", "close", "confirm_reset"}:
             try:

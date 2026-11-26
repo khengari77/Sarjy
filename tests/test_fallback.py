@@ -1,6 +1,6 @@
 import asyncio
 
-from fallback import fallback_decision, fallback_eligible, next_attempt
+from fallback import fallback_decision, next_attempt
 from generation import GenerationEvent, GenerationFailure
 
 
@@ -17,39 +17,39 @@ def failure(code="timeout", *, status=None, partial=False):
 
 def test_transient_pre_output_failures_are_eligible():
     for code in ("timeout", "connection_error", "rate_limit", "provider_error"):
-        assert fallback_eligible(failure(code), emitted_output=False, fallback_configured=True)
-    assert fallback_eligible(
+        assert fallback_decision(failure(code), emitted_output=False, fallback_configured=True).allowed
+    assert fallback_decision(
         failure("provider_error", status=503),
         emitted_output=False,
         fallback_configured=True,
-    )
+    ).allowed
 
 
 def test_permanent_http_statuses_never_fall_back():
     for status in (400, 401, 402, 403, 404, 405, 409, 410, 422):
-        assert not fallback_eligible(
+        assert not fallback_decision(
             failure("provider_error", status=status),
             emitted_output=False,
             fallback_configured=True,
-        )
+        ).allowed
     for status in (408, 429, 500, 502, 503, 504):
-        assert fallback_eligible(
+        assert fallback_decision(
             failure("provider_error", status=status),
             emitted_output=False,
             fallback_configured=True,
-        )
+        ).allowed
 
 
 def test_output_partial_cancellation_and_configuration_deny_fallback():
-    assert not fallback_eligible(failure(), emitted_output=True, fallback_configured=True)
-    assert not fallback_eligible(failure(partial=True), emitted_output=False, fallback_configured=True)
-    assert not fallback_eligible(failure("cancelled"), emitted_output=False, fallback_configured=True)
-    assert not fallback_eligible(
+    assert not fallback_decision(failure(), emitted_output=True, fallback_configured=True).allowed
+    assert not fallback_decision(failure(partial=True), emitted_output=False, fallback_configured=True).allowed
+    assert not fallback_decision(failure("cancelled"), emitted_output=False, fallback_configured=True).allowed
+    assert not fallback_decision(
         failure("authentication", status=401),
         emitted_output=False,
         fallback_configured=True,
-    )
-    assert not fallback_eligible(failure(), emitted_output=False, fallback_configured=False)
+    ).allowed
+    assert not fallback_decision(failure(), emitted_output=False, fallback_configured=False).allowed
 
 
 def test_decision_reports_a_reason():

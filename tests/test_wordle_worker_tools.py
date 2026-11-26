@@ -232,7 +232,7 @@ def test_submit_without_a_guess_in_the_utterance_is_refused():
     assert "t1" not in agent.wordle_calls
 
 
-def _guard(active: bool, reply: str, touched: bool = True):
+def _guard(active: bool, reply: str):
     """Run the prose guard over a model reply with no tool call."""
     from livekit.agents import llm as _llm
 
@@ -241,7 +241,6 @@ def _guard(active: bool, reply: str, touched: bool = True):
 
     async def run():
         _, agent = build(lambda request: httpx.Response(200, json={"spoken": "Real board."}), [], active=active)
-        agent.wordle_touched = touched
         agent.current_turn = "turn-1"
         return "".join([c.delta.content or "" async for c in agent._guard_wordle_prose(stream())])
 
