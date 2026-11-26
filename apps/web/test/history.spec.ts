@@ -227,8 +227,12 @@ test('the delete confirmation cannot be dismissed while the delete is in flight'
     await menu.getByRole('button', { name: 'Delete this chat' }).click();
     await expect(menu.getByText('Deleting…')).toBeVisible();
 
+    // With focus inside the sidebar the shell would close this dock on Escape: the menu must consume it.
+    const search = page.getByRole('searchbox', { name: 'Search conversations' });
+    await search.focus();
     await page.keyboard.press('Escape');
-    await page.getByRole('searchbox', { name: 'Search conversations' }).click();
+    await expect(search).toHaveCount(1);
+    await search.click();
     await expect(menu).toBeVisible();
     await expect(menu.getByText('Deleting…')).toBeVisible();
 

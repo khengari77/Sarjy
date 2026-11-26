@@ -124,10 +124,11 @@
       closeMenu();
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || deletingId) return;
+      if (event.key !== 'Escape') return;
+      // The menu always consumes Escape: the shell would otherwise close the whole dock that holds focus.
       event.preventDefault();
       event.stopPropagation();
-      closeMenu(true);
+      if (!deletingId) closeMenu(true);
     };
     document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('keydown', onKeyDown);
