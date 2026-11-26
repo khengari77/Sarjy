@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from fastapi import HTTPException
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.domain.context import (
     DEFAULT_MAX_CHARS,
@@ -25,7 +26,6 @@ from app.infrastructure.database import ToolCall, Turn
 from app.services.authorization import owned_conversation
 from app.services.context_assembly import (
     RETRACTION_PREFIX,
-    _dependency_ids,
     _memory_rows_for_ids,
     read_context_inputs,
 )
@@ -122,6 +122,29 @@ async def _turn_texts(db: AsyncSession, *, conversation_id: str, record_ids: set
     return {row_id: text or "" for row_id, text in rows.all()}
 
 
+def _record_ids(snapshot: object, key: str) -> set[str] | None:
+    """A snapshot's list of record ids, or None when it is missing or unusable (unknown provenance)."""
+    values = snapshot.get(key) if isinstance(snapshot, dict) else None
+    if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+        return None
+    return {value for value in values if not value.startswith(RETRACTION_PREFIX)}
+
+
+def _reply_dependencies(turn: Turn, parent: Turn | None) -> set[str] | None:
+    """What an assistant reply inherited, mirroring the lens: its own derivation, else its parent prompt's records."""
+    snapshot = turn.snapshot if isinstance(turn.snapshot, dict) else {}
+    derivation = snapshot.get("derivation")
+    if isinstance(derivation, dict):
+        values = _record_ids(derivation, "record_ids")
+        if values is None:
+            return None
+        return values | ({parent.id} if parent is not None else set())
+    if parent is None:
+        return None
+    inherited = _record_ids(parent.snapshot, "included_record_ids")
+    return None if inherited is None else inherited | {parent.id}
+
+
 async def _derived_ids(
     db: AsyncSession, *, conversation_id: str, included_ids: set[str], blocked: set[str]
 ) -> set[str]:
@@ -133,31 +156,34 @@ async def _derived_ids(
     """
     if not blocked or not included_ids:
         return set()
+    columns = load_only(Turn.id, Turn.conversation_id, Turn.request_id, Turn.role, Turn.snapshot)
     turns = (
-        await db.scalars(select(Turn).where(Turn.id.in_(included_ids), Turn.conversation_id == conversation_id))
+        await db.scalars(
+            select(Turn).options(columns).where(Turn.id.in_(included_ids), Turn.conversation_id == conversation_id)
+        )
     ).all()
     calls = (await db.scalars(select(ToolCall).where(ToolCall.id.in_(included_ids)))).all()
-    tool_turns = {
+    reply_parents = {turn.request_id.removeprefix("reply:") for turn in turns if turn.request_id.startswith("reply:")}
+    parent_ids = reply_parents | {call.turn_id for call in calls}
+    parents = {
         turn.id: turn
         for turn in (
             await db.scalars(
-                select(Turn).where(
-                    Turn.id.in_({call.turn_id for call in calls}), Turn.conversation_id == conversation_id
-                )
+                select(Turn).options(columns).where(Turn.id.in_(parent_ids), Turn.conversation_id == conversation_id)
             )
         ).all()
     }
     dependencies: dict[str, set[str] | None] = {}
     for turn in turns:
         if turn.role == "assistant":
-            references = _dependency_ids(turn)
-            dependencies[turn.id] = references or None
+            parent = (
+                parents.get(turn.request_id.removeprefix("reply:")) if turn.request_id.startswith("reply:") else None
+            )
+            dependencies[turn.id] = _reply_dependencies(turn, parent)
     for call in calls:
-        parent = tool_turns.get(call.turn_id)
-        if parent is None:
-            dependencies[call.id] = None
-        else:
-            dependencies[call.id] = {parent.id, *_dependency_ids(parent)}
+        parent = parents.get(call.turn_id)
+        inherited = _record_ids(parent.snapshot, "included_record_ids") if parent is not None else None
+        dependencies[call.id] = None if inherited is None or parent is None else inherited | {parent.id}
     derived: set[str] = set()
     while True:
         more = {

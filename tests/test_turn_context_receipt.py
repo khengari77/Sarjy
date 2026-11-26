@@ -477,49 +477,81 @@ def test_a_restating_turn_beyond_the_lens_window_is_still_blanked(tmp_path):
         assert "Benghazi" not in json.dumps(body)
 
 
-def test_a_reply_derived_from_a_forgotten_fact_is_blanked_beyond_the_lens_window(tmp_path):
+def _seed_old_exchange(file, chat, *, user_text, reply_text, reply_snapshot, user_snapshot=None):
+    for turn_id, role, text, at, request, snapshot in (
+        ("old-user", "user", user_text, "2026-11-12T00:00:01+00:00", "old-user", user_snapshot),
+        ("old-reply", "assistant", reply_text, "2026-11-12T00:00:02+00:00", "reply:old-user", reply_snapshot),
+    ):
+        sql(
+            file,
+            "INSERT INTO turns (id,conversation_id,request_id,role,text,status,created_at,snapshot) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (turn_id, chat, request, role, text, "completed", at, json.dumps(snapshot) if snapshot else None),
+        )
+
+
+def _push_out_of_the_lens_window(file, chat):
+    for index in range(110):
+        sql(
+            file,
+            "INSERT INTO turns (id,conversation_id,request_id,role,text,status,created_at) VALUES (?,?,?,?,?,?,?)",
+            (
+                f"x{index}",
+                chat,
+                f"x{index}",
+                "user",
+                "Nothing to see",
+                "completed",
+                f"2099-01-01T00:{index // 60:02d}:{index % 60:02d}+00:00",
+            ),
+        )
+
+
+def test_a_reply_derived_from_a_hidden_memory_is_blanked_beyond_the_lens_window(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         chat = setup(client)
         headers = add_session(file, chat)
-        for turn_id, role, text, at, request, snapshot in (
-            ("fact-user", "user", "my favorite color is blue", "2026-11-12T00:00:01+00:00", "fact-user", None),
-            (
-                "fact-echo",
-                "assistant",
-                "Nice, blue it is",
-                "2026-11-12T00:00:02+00:00",
-                "reply:fact-user",
-                {"derivation": {"turn_id": "fact-user", "record_ids": ["fact-user"]}},
-            ),
-        ):
-            sql(
-                file,
-                "INSERT INTO turns (id,conversation_id,request_id,role,text,status,created_at,snapshot) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (turn_id, chat, request, role, text, "completed", at, json.dumps(snapshot) if snapshot else None),
-            )
         add_memory(file, chat, "color", "My favorite color is blue")
+        # The production shape: the parent prompt carried the memory, so the reply's derivation lists its id, while
+        # neither turn shares enough words with the fact to count as a restatement.
+        _seed_old_exchange(
+            file,
+            chat,
+            user_text="What shade do I like most?",
+            reply_text="You like cerulean best.",
+            reply_snapshot={"derivation": {"turn_id": "old-user", "record_ids": ["system", "color", "old-user"]}},
+            # Known provenance for the parent that does NOT list the memory: only the derivation can connect them.
+            user_snapshot={"included_record_ids": ["system", "old-user"]},
+        )
         later, _ = start_turn(client, headers, "r1", text="What is the weather like?")
-        for index in range(110):
-            sql(
-                file,
-                "INSERT INTO turns (id,conversation_id,request_id,role,text,status,created_at) VALUES (?,?,?,?,?,?,?)",
-                (
-                    f"x{index}",
-                    chat,
-                    f"x{index}",
-                    "user",
-                    "Nothing to see",
-                    "completed",
-                    f"2099-01-01T00:{index // 60:02d}:{index % 60:02d}+00:00",
-                ),
-            )
+        _push_out_of_the_lens_window(file, chat)
         before = {entry["id"]: entry for entry in receipt(client, chat, later).json()["included"]}
-        assert before["fact-echo"]["text"] == "Nice, blue it is"
+        assert before["old-reply"]["text"] == "You like cerulean best."
 
         sql(file, "UPDATE memories SET status='hidden' WHERE id='color'")
         body = receipt(client, chat, later).json()
         entries = {entry["id"]: entry for entry in body["included"]}
-        assert entries["fact-echo"]["text"] == "" and entries["fact-echo"]["withheld"] is True
-        assert "blue" not in json.dumps(body).lower()
+        assert entries["old-reply"]["text"] == "" and entries["old-reply"]["withheld"] is True
+        assert "cerulean" not in json.dumps(body)
+
+
+def test_a_reply_of_unknown_provenance_fails_closed_beyond_the_lens_window(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        headers = add_session(file, chat)
+        add_memory(file, chat, "color", "My favorite color is blue")
+        # No derivation and a parent with no snapshot: nothing says what the reply was built from.
+        _seed_old_exchange(
+            file,
+            chat,
+            user_text="What shade do I like most?",
+            reply_text="You like cerulean best.",
+            reply_snapshot=None,
+        )
+        later, _ = start_turn(client, headers, "r1", text="What is the weather like?")
+        _push_out_of_the_lens_window(file, chat)
+        sql(file, "UPDATE memories SET status='hidden' WHERE id='color'")
+        entries = {entry["id"]: entry for entry in receipt(client, chat, later).json()["included"]}
+        assert entries["old-reply"]["text"] == "" and entries["old-reply"]["withheld"] is True
