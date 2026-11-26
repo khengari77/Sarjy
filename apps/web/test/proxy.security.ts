@@ -54,3 +54,30 @@ test('built proxy still enforces same-origin POSTs', async ({ request }) => {
   expect(accepted.status()).toBe(200);
   expect((await accepted.json()).path).toBe('/v1/echo');
 });
+
+test.describe('built proxy DELETE', () => {
+  test('forwards a same-origin DELETE with the service secret, the cookie and no body', async ({ request }) => {
+    const response = await request.delete('/api/v1/memories/m-1', {
+      headers: { origin: ORIGIN, cookie: 'identity=value' },
+    });
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ method: 'DELETE', path: '/v1/memories/m-1', body_bytes: 0 });
+    expect(body.forwarded).toEqual(expect.arrayContaining(['x-web-service-secret', 'cookie']));
+  });
+
+  test('refuses a cross-origin or origin-less DELETE', async ({ request }) => {
+    // The framework check and the proxy own check both refuse; either way it never reaches the API.
+    for (const headers of [{ origin: 'https://untrusted.example' }, {}] as Record<string, string>[]) {
+      const response = await request.delete('/api/v1/memories/m-1', { headers });
+      expect(response.status()).toBe(403);
+    }
+  });
+
+  test('still refuses methods the UI never uses', async ({ request }) => {
+    for (const method of ['put', 'patch'] as const) {
+      const response = await request[method]('/api/v1/memories/m-1', { headers: { origin: ORIGIN }, data: {} });
+      expect(response.status()).toBe(405);
+    }
+  });
+});

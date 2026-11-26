@@ -54,6 +54,14 @@ class Handler(BaseHTTPRequestHandler):
             {"id": "fake-session", "url": "ws://fake", "token": "fake", "expires_at": "2030-01-01T00:00:00+00:00"},
         )
 
+    def do_DELETE(self) -> None:
+        if self.path.split("?")[0].startswith("/v1/memories/"):
+            self.reply(
+                200, {**self.echo(), "method": "DELETE", "body_bytes": int(self.headers.get("content-length") or 0)}
+            )
+            return
+        self.reply(404, {})
+
     def log_message(self, *args: object) -> None:
         pass
 
