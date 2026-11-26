@@ -25,6 +25,7 @@ from app.infrastructure.timing import StatementTiming, current_statement_timing,
 from app.services.account_auth import CredentialProvider, SupabaseCredentials
 from app.services.accounts import AccountSessionRequired, authorize_account
 from app.services.budget import reserve_jev_request
+from app.services.command_classification import ClassificationStore
 from app.services.context_actions import build_context_action_handlers
 from app.services.jev_ui import JevUiClient
 from app.services.memory import MemoryService, OpenAIEmbedder
@@ -303,6 +304,7 @@ def create_app(
 
     app.state.settings = config
     app.state.ui_classifier = ui_classifier or classifier
+    app.state.classification_store = ClassificationStore()
     database, identity, cleanup_user, owned = build_dependencies(sessions, settings=config, clock=now)
 
     from app.routes.actions import register_action_routes
