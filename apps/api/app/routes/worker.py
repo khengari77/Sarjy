@@ -1,6 +1,7 @@
 """Worker-only endpoints for bootstrap, turns, weather and budget reservations."""
 
 import logging
+import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -8,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
-from sqlalchemy import and_, func, select, text, update
+from sqlalchemy import and_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,7 +49,12 @@ from app.services.memory_capture import (
     propose_memory,
     record_proposal,
 )
-from app.services.memory_tools import memory_forget_tool, memory_propose_tool, memory_recall_tool
+from app.services.memory_tools import (
+    hidden_fact_exists,
+    memory_forget_tool,
+    memory_propose_tool,
+    memory_recall_tool,
+)
 from app.services.titles import generate_conversation_title
 from app.services.tool_operations import (
     ToolOperationError,
@@ -1081,15 +1087,25 @@ AUTO_SAVED_NOTE = (
     "Saved. Tell the user in one short sentence what you remembered; the app shows an undo. "
     "Do not ask a question and do not offer to save it again."
 )
+ALREADY_SAVED_NOTE = "That is already saved. Tell the user it is already saved; do not propose it again."
 AUTO_SAVE_FAILED_NOTE = (
     "The save could not be confirmed. Tell the user you could not confirm it was saved; do not claim it was saved "
     "and do not ask them to confirm."
 )
 
 
+_LONG_NUMBER = re.compile(r"\d(?:[\s.-]?\d){8,}")
+
+
+def _has_long_number(text: str) -> bool:
+    """Nine or more digits in a row (a card, phone or ID number): never saved without asking, whatever the words say."""
+    return _LONG_NUMBER.search(text) is not None
+
+
 def _latin_only(text: str) -> bool:
     """The keyword safety net only knows English, so a fact in another script is never judged safe by it."""
-    return all(unicodedata.name(char, "").startswith("LATIN") for char in text if char.isalpha())
+    letters = [char for char in text if char.isalpha()]
+    return bool(letters) and all(unicodedata.name(char, "").startswith("LATIN") for char in letters)
 
 
 async def _save_without_asking(db, config: Settings, embedder, proposed: dict, *, owner_id, conversation_id) -> dict:
@@ -1104,22 +1120,17 @@ async def _save_without_asking(db, config: Settings, embedder, proposed: dict, *
     proposal = proposed["proposal"]
     secret = _memory_secret(config)
     _, fact, _, negated = proposal_summary(proposal["token"], secret, owner_id, conversation_id)
-    if plan_for_proposal("auto", fact, explicit=False, negated=negated) is not Decision.SAVE or not _latin_only(fact):
+    if (
+        plan_for_proposal("auto", fact, explicit=False, negated=negated) is not Decision.SAVE
+        or not _latin_only(fact)
+        or _has_long_number(fact)
+    ):
         return proposed
     if await proposal_conflicts(
         db, token=proposal["token"], secret=secret, owner_id=owner_id, conversation_id=conversation_id
     ):
         return proposed
-    hidden = await db.scalar(
-        select(Memory.id)
-        .where(
-            Memory.owner_id == owner_id,
-            Memory.status == "hidden",
-            func.lower(Memory.content) == " ".join(fact.split()).casefold(),
-        )
-        .limit(1)
-    )
-    if hidden is not None:
+    if await hidden_fact_exists(db, owner_id, fact):
         return proposed
     setting = await db.scalar(
         select(UserSetting).where(UserSetting.owner_id == owner_id).execution_options(populate_existing=True)
@@ -1142,7 +1153,10 @@ async def _save_without_asking(db, config: Settings, embedder, proposed: dict, *
     except (MemoryCaptureError, ValueError, HTTPException):
         await db.rollback()
         return {"status": "rejected", "error": "MEMORY_SAVE_FAILED", "message": AUTO_SAVE_FAILED_NOTE}
-    change = saved.get("change") or {}
+    change = saved.get("change")
+    if not change:
+        # A concurrent save of the same fact won: there is nothing to undo and nothing new was written.
+        return {"status": "rejected", "error": "MEMORY_ALREADY_SAVED", "message": ALREADY_SAVED_NOTE}
     return {"status": "saved", "change_id": change.get("id"), "message": AUTO_SAVED_NOTE}
 
 

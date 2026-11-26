@@ -709,3 +709,58 @@ def test_auto_propose_still_asks_for_a_third_party_fact_another_script_and_a_hid
         assert active_contents(file) == []
     finally:
         cm.__exit__(None, None, None)
+
+
+def test_auto_propose_never_re_adds_a_hidden_fact_even_where_lower_and_casefold_differ(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        assert propose_tool(client, headers, "I live in Straßburg", "p1", turn_id)["status"] == "saved"
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("UPDATE memories SET status = 'hidden' WHERE content = 'I live in Straßburg'")
+        # ß case-folds to "ss": SQL lower() would not match it, the Python comparison does.
+        again = propose_tool(client, headers, "I live in STRASSBURG", "p2", turn_id)
+        assert again["status"] == "proposed", again
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_auto_propose_asks_for_a_negated_fact_and_for_a_fact_with_no_letters(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        assert propose_tool(client, headers, "I live in Cairo", "p1", turn_id)["status"] == "saved"
+        negated = propose_tool(client, headers, "I no longer live in Cairo", "p2", turn_id)
+        assert negated["status"] == "proposed", negated
+        digits = propose_tool(client, headers, "My number is 4111 1111 1111 1111", "p3", turn_id)
+        assert digits["status"] == "proposed", digits  # nine or more digits in a row: a card, phone or ID number
+        assert propose_tool(client, headers, "I was born in 1999", "p4", turn_id)["status"] == "saved"
+        assert sorted(active_contents(file)) == ["I live in Cairo", "I was born in 1999"]
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_a_memory_turned_off_just_before_the_write_wins(tmp_path, monkeypatch):
+    """The mode is re-read right before the write: a concurrent 'turn memory off' is never overtaken."""
+    from app.routes import worker as worker_module
+
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        with closing(sqlite3.connect(file)) as db:
+            owner = db.execute("SELECT owner_id FROM user_settings").fetchone()[0]
+        original = worker_module.proposal_conflicts
+
+        async def conflicts_then_off(*args, **kwargs):
+            result = await original(*args, **kwargs)
+            with closing(sqlite3.connect(file)) as db, db:
+                db.execute("UPDATE user_settings SET memory_mode = 'off' WHERE owner_id = ?", (owner,))
+            return result
+
+        monkeypatch.setattr(worker_module, "proposal_conflicts", conflicts_then_off)
+        body = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
+        assert body["status"] == "rejected" and body["error"] == "MEMORY_OFF", body
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
