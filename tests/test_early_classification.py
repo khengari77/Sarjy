@@ -206,7 +206,10 @@ def ok_handler(_request):
     return httpx.Response(200, json=payload())
 
 
-def test_a_slow_reservation_does_not_consume_the_provider_deadline():
+def test_a_slow_reservation_does_not_consume_the_provider_deadline(monkeypatch):
+    # Pin the reservation bound high so this tests "reservation time is not provider time", not the constant.
+    monkeypatch.setattr(jev_ui, "RESERVATION_DEADLINE_SECONDS", 1.0)
+
     async def slow_reserve(_request):
         await asyncio.sleep(0.15)
         return True
