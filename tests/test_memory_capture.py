@@ -2269,3 +2269,74 @@ def test_wordle_mode_proposes_no_memory_and_uses_the_game_prompt(tmp_path):
             json={"request_id": "chat-1", "text": "I prefer tea with mint", "wordle_open": False},
         ).json()
         assert closed["memory_proposal"] is not None
+
+
+def _confirm_save(client, headers, request_id, text):
+    proposal = turn(client, headers, text, request_id).json()["memory_proposal"]
+    saved = client.post(
+        "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "save"}
+    ).json()
+    return proposal, saved["memory"]["id"]
+
+
+def test_a_proposal_left_claimed_by_a_crash_is_scrubbed_and_cannot_be_finished(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        set_mode(file, owner, "ask")
+        proposal, memory_id = _confirm_save(client, headers, "fact-1", "I prefer tea with mint")
+        # The crash window: the memory was written but the proposal row never recorded its response.
+        with closing(sqlite3.connect(file)) as db, db:
+            row = db.execute(
+                "SELECT id, result FROM memory_write_requests WHERE request_key=?", (proposal["confirmation_id"],)
+            ).fetchone()
+            result = json.loads(row[1])
+            result.pop("response", None)
+            result.pop("decision", None)
+            db.execute(
+                "UPDATE memory_write_requests SET state='claimed', result=? WHERE id=?", (json.dumps(result), row[0])
+            )
+
+        assert client.delete(f"/v1/memories/{memory_id}").status_code == 200
+        assert not any("tea with mint" in blob for blob in _proposal_blobs(file))
+        with closing(sqlite3.connect(file)) as db:
+            state = db.execute(
+                "SELECT state FROM memory_write_requests WHERE request_key=?", (proposal["confirmation_id"],)
+            ).fetchone()[0]
+        # Discarded rows cannot be finished later, so a confirm that completes after the delete writes nothing back.
+        assert state == "discarded"
+        replay = turn(client, headers, "I prefer tea with mint", "fact-1").json()["memory_proposal"]
+        assert replay.get("token") is None and "tea with mint" not in json.dumps(replay)
+
+
+def test_deleting_a_memory_removes_it_from_stored_compiled_prompts(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        set_mode(file, owner, "ask")
+        _, memory_id = _confirm_save(client, headers, "fact-1", "I prefer tea with mint")
+        later = turn(client, headers, "What do I like to drink?", "q-1").json()["turn_id"]
+
+        def snapshots():
+            with closing(sqlite3.connect(file)) as db:
+                return {row[0]: row[1] or "" for row in db.execute("SELECT id, snapshot FROM turns")}
+
+        before = snapshots()
+        assert memory_id in before[later] and "tea with mint" in before[later]  # the prompt carried the fact
+        assert client.delete(f"/v1/memories/{memory_id}").status_code == 200
+        after = snapshots()
+        assert "tea with mint" not in after[later]
+
+        # Turns that never carried the memory are untouched, apart from the proposal key of the source turn.
+        def stable(raw):
+            value = json.loads(raw) if raw else {}
+            value.pop("memory_proposal", None)
+            return value
+
+        assert {key: stable(value) for key, value in after.items() if key != later} == {
+            key: stable(value) for key, value in before.items() if key != later
+        }
