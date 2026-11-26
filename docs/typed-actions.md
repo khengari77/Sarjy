@@ -2,7 +2,7 @@
 
 The web app submits settings actions through `POST /v1/settings/actions`; finalized voice transcripts reach the
 same owner-authorized dispatcher through the worker's `POST /internal/agent/command`. `POST /v1/actions` accepts
-the submission described below and is used by the browser test harness. `GET /v1/settings` reads only the
+the submission described below; the API tests exercise it, and the browser harness traps it to prove the web app never writes through it. `GET /v1/settings` reads only the
 current identity's settings. Existing development access protection applies to these routes.
 
 A submission contains `conversation_id`, `request_id`, `expected_revision`, `source` (`ui` or `transcript`),
