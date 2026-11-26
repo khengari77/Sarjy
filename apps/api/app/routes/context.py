@@ -1,5 +1,7 @@
 """Context inspection, proposal, confirmation and undo endpoints."""
 
+from typing import Literal
+
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +17,7 @@ from app.services.context_operations import (
     list_operations,
     undo_operation,
 )
+from app.services.turn_context_receipt import get_turn_context_receipt
 
 
 class ContextProposalInput(BaseModel):
@@ -161,6 +164,56 @@ class ContextBlocks(BaseModel):
     blocks: list[ContextBlock]
 
 
+class TurnContextIncluded(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    kind: Literal["memory", "tool", "history"]
+    text: str
+    trust: Literal["data", "conversation"]
+    # True when the live policy now blocks this record: its id stays, its text is not shown.
+    withheld: bool = False
+
+
+class TurnContextExcluded(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    reason: Literal[
+        "hidden",
+        "excluded_in_conversation",
+        "deleted",
+        "derived",
+        "source_of_blocked_memory",
+        "restates_forgotten_fact",
+    ]
+
+
+class TurnContextBudget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    used_chars: int
+    limit_chars: int
+
+
+class TurnContextDiff(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    added: list[str]
+    removed: list[str]
+
+
+class TurnContextReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    turn_id: str
+    revision: int
+    prompt_sha256: str = Field(
+        description="Digest of this receipt's own content (revision, ids, shown text), not of the compiled prompt."
+    )
+    history_count: int
+    included: list[TurnContextIncluded]
+    excluded: list[TurnContextExcluded]
+    budget: TurnContextBudget
+    previous_turn_id: str | None
+    diff: TurnContextDiff
+
+
 def _context_error(exc: ContextOperationError) -> HTTPException:
     return HTTPException(exc.status, detail={"code": exc.code})
 
@@ -265,6 +318,18 @@ def register_exclusion_routes(app, *, config: Settings, database, identity):
             )
         except ContextOperationError as exc:
             raise _context_error(exc) from exc
+
+    @app.get(
+        "/v1/conversations/{conversation_id}/turns/{turn_id}/context",
+        response_model=TurnContextReceipt,
+    )
+    async def get_turn_context(
+        conversation_id: str,
+        turn_id: str,
+        user=Depends(identity),
+        db: AsyncSession = Depends(database),
+    ):
+        return await get_turn_context_receipt(db, owner_id=user.id, conversation_id=conversation_id, turn_id=turn_id)
 
     @app.get("/v1/conversations/{conversation_id}/context/blocks", response_model=ContextBlocks)
     async def get_context_blocks(

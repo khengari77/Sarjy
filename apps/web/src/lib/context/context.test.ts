@@ -17,7 +17,7 @@ function turnPayload(overrides: Record<string, unknown> = {}) {
     revision: 3,
     prompt_sha256: 'abcdef123456',
     history_count: 2,
-    included: [{ id: 'memory-1', kind: 'memory', text: 'Trip to Tripoli', trust: 'data' }],
+    included: [{ id: 'memory-1', kind: 'memory', text: 'Trip to Tripoli', trust: 'data', withheld: false }],
     excluded: [{ id: 'memory-2', reason: 'conversation_exclusion' }],
     budget,
     previous_turn_id: 'turn-0',
@@ -138,7 +138,9 @@ describe('budget meter', () => {
 });
 
 describe('diff labels', () => {
-  const included = [{ id: 'memory-1', kind: 'memory' as const, text: 'Trip to Tripoli', trust: 'data' as const }];
+  const included = [
+    { id: 'memory-1', kind: 'memory' as const, text: 'Trip to Tripoli', trust: 'data' as const, withheld: false },
+  ];
   const excluded = [{ id: 'memory-2', reason: 'conversation_exclusion' }];
 
   it('resolves known ids to receipt labels and unknown ids to a short id', () => {
