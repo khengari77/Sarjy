@@ -22,6 +22,7 @@ from app.domain.ui_routing import (
     UiClarificationDecision,
     UiDecision,
     UiVoiceGenderDecision,
+    UiWordleOpenDecision,
     build_ui_request,
     evaluate_ui_classification,
     parse_ui_response,
@@ -29,7 +30,7 @@ from app.domain.ui_routing import (
 from app.services.jev import JEV_ENDPOINT
 
 CASES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "jev_ui_live_cases.json"
-ACTION_LABEL = re.compile(r"^(theme:(light|dark|system)|captions:(on|off)|speed:[+-]|voice:(male|female))$")
+ACTION_LABEL = re.compile(r"^(theme:(light|dark|system)|captions:(on|off)|speed:[+-]|voice:(male|female)|wordle:open)$")
 
 
 def percentile(ordered: list[int], fraction: float) -> int:
@@ -101,6 +102,8 @@ def label(decision: UiDecision | None) -> str:
         return "MULTI"
     if isinstance(decision, UiVoiceGenderDecision):
         return f"voice:{decision.gender}"
+    if isinstance(decision, UiWordleOpenDecision):
+        return "wordle:open"
     assert isinstance(decision, UiActionDecision)
     action = decision.action
     kind = type(action).__name__

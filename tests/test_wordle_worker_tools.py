@@ -9,6 +9,8 @@ from livekit.agents import llm
 from main import SarjyAgent
 from wordle_tools import (
     WORDLE_FAILED,
+    WORDLE_GAME_TOOLS,
+    WORDLE_OPEN_DETAIL,
     claims_game_state,
     extract_guess,
     has_guess_candidate,
@@ -186,9 +188,14 @@ def test_bare_guess_is_recorded_and_spoken_without_the_model(monkeypatch):
     assert seen == ["/internal/agent/tool/wordle-guess"]
 
 
-def test_closed_game_keeps_play_and_never_records_a_bare_word():
+def test_closed_popup_offers_no_wordle_tool_and_never_records_a_bare_word():
     _, agent = build(lambda request: httpx.Response(200, json={}), [], active=False)
-    assert "play_wordle" in {tool.info.name for tool in agent._wordle_tools(agent.tools)}
+    agent.current_turn = "t1"
+    names = {tool.info.name for tool in agent._wordle_tools(agent.tools)}
+    assert names.isdisjoint(WORDLE_GAME_TOOLS)
+    # Non-Wordle tools are untouched.
+    assert {"propose_memory", "recall"} <= names
+    assert {tool.info.name for tool in agent.tools} >= WORDLE_GAME_TOOLS
     message = llm.ChatMessage(id="m1", role="user", content=["false"])
     assert asyncio.run(agent._wordle_turn_speech(message)) is None
 
@@ -286,3 +293,55 @@ def test_reset_tool_asks_for_confirmation_through_the_client_and_never_resets():
 
     asyncio.run(run())
     assert seen == ["/internal/agent/tool/wordle-reset"] and published == ["confirm_reset"]
+
+
+def test_turn_start_reports_the_popup_state():
+    bodies: list[dict] = []
+
+    def handler(request):
+        if request.url.path == "/internal/agent/turn/start":
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"turn_id": f"turn-{len(bodies)}", "context": {}})
+        return httpx.Response(200, json={})
+
+    async def run():
+        state = {"open": False}
+        client, agent = build(handler, [])
+        agent.wordle_active = lambda: state["open"]
+        async with client:
+            await agent.on_user_turn_completed(None, llm.ChatMessage(id="m1", role="user", content=["Hi there."]))
+            state["open"] = True
+            await agent.on_user_turn_completed(None, llm.ChatMessage(id="m2", role="user", content=["Crane."]))
+
+    asyncio.run(run())
+    assert [body["wordle_open"] for body in bodies] == [False, True]
+
+
+def test_jev_wordle_open_command_runs_the_real_play_and_opens_the_popup():
+    seen: list[str] = []
+    published: list[str] = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        return httpx.Response(200, json={"status": "in_progress", "ui": "open", "spoken": "Today's Wordle is open."})
+
+    command = {"detail": WORDLE_OPEN_DETAIL, "kind": "unsupported", "spoken": 'Say "play Wordle".'}
+
+    async def run():
+        client, agent = build(handler, published)
+        async with client:
+            agent.current_turn = "turn-1"
+            assert await agent._command_speech(command) == "Today's Wordle is open."
+            # Already open: nothing is played again and the hint is spoken instead.
+            agent.wordle_active = lambda: True
+            assert await agent._command_speech(command) == 'Say "play Wordle".'
+
+    asyncio.run(run())
+    assert seen == ["/internal/agent/tool/wordle-play"]
+    assert published == ["open"]
+
+
+def test_worker_and_api_agree_on_the_wordle_open_detail():
+    from app.domain.ui_routing import WORDLE_OPEN_DETAIL as API_DETAIL
+
+    assert WORDLE_OPEN_DETAIL == API_DETAIL

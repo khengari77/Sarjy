@@ -36,6 +36,9 @@ FORCED_MEMORY_TOOLS: Final[dict[str, str]] = {
     "recall": "recall",
 }
 MULTIPLE_COMMANDS_SPOKEN: Final = "I can only make one change at a time. Which one should I do first?"
+# A confident "open Wordle" answer becomes this command detail; the worker runs the real play.
+WORDLE_OPEN_DETAIL: Final = "WORDLE_OPEN"
+WORDLE_OPEN_SPOKEN: Final = 'To open today\'s Wordle, say "play Wordle".'
 
 _SCOPE = (
     "Judge only the current instruction itself. A polite request or an ability question that asks the "
@@ -48,7 +51,7 @@ _SCOPE = (
 
 QUESTION_OPTIONS: Final[dict[str, tuple[str, ...]]] = {
     "route": ("conversation", "ui_command", "multiple_commands"),
-    "family": ("theme", "captions", "speed", "voice", "none"),
+    "family": ("theme", "captions", "speed", "voice", "wordle", "none"),
     "theme": ("light", "dark", "system", "none"),
     "captions": ("show", "hide", "none"),
     "speed": ("faster", "slower", "none"),
@@ -61,7 +64,7 @@ UI_QUESTIONS: Final[dict[str, dict[str, Any]]] = {
         "type": "choice",
         "instructions": (
             "Is the current instruction a request, including a polite one such as 'can you ...?', for the assistant to "
-            "change one of its own application settings right now? " + _SCOPE
+            "change one of its own application settings or open the daily Wordle game right now? " + _SCOPE
         ),
         "criteria": {
             "conversation": (
@@ -70,20 +73,25 @@ UI_QUESTIONS: Final[dict[str, dict[str, Any]]] = {
             ),
             "ui_command": (
                 "One request, direct or polite ('can you make it dark?', 'could you bring back dark mode?'), to change "
-                "exactly one setting: the theme, caption visibility, speaking speed or the assistant's voice."
+                "exactly one setting: the theme, caption visibility, speaking speed or the assistant's voice; or a "
+                "request to start, resume or open the daily Wordle game."
             ),
             "multiple_commands": "Direct requests to change two or more settings in the same instruction.",
         },
     },
     "family": {
         "type": "choice",
-        "instructions": "Which setting does the current instruction ask the assistant to change, even politely? "
-        + _SCOPE,
+        "instructions": "Which setting does the current instruction ask the assistant to change, or does it ask to "
+        "open the daily Wordle game, even politely? " + _SCOPE,
         "criteria": {
             "theme": "A request to change the appearance: light or dark mode, brighter or darker, bringing back a theme.",
             "captions": "A request to show, hide or turn on or off captions, subtitles or what the assistant says as text.",
             "speed": "A request to make the assistant speak faster or slower, including a complaint that it is too fast or slow.",
             "voice": "A request to change which voice the assistant speaks with.",
+            "wordle": (
+                "A request to start, resume or open the daily Wordle game now. Not talk about Wordle, past games, "
+                "opinions or questions about it."
+            ),
             "none": "Does not ask to change any of these settings.",
         },
     },
@@ -187,7 +195,13 @@ class UiClarificationDecision(Contract):
     spoken: str = MULTIPLE_COMMANDS_SPOKEN
 
 
-UiDecision = UiActionDecision | UiVoiceGenderDecision | UiClarificationDecision
+class UiWordleOpenDecision(Contract):
+    """Open the daily Wordle: the worker runs the same server play as the play_wordle tool."""
+
+    kind: Literal["wordle_open"] = "wordle_open"
+
+
+UiDecision = UiActionDecision | UiVoiceGenderDecision | UiClarificationDecision | UiWordleOpenDecision
 
 
 def build_ui_request(instruction: str) -> dict[str, Any]:
@@ -284,6 +298,9 @@ def evaluate_ui_classification(result: UiClassification) -> UiDecision | None:
     if not _confident(result.family):
         return None
     family = result.family.choice
+    if family == "wordle":
+        # No detail question: a confident family answer is the whole decision.
+        return UiWordleOpenDecision()
     if family not in ("theme", "captions", "speed", "voice"):
         return None
     return _detail_decision(family, getattr(result, family))

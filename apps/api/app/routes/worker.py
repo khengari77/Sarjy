@@ -64,6 +64,8 @@ class BudgetReservation(BaseModel):
 class AgentInput(BaseModel):
     request_id: str = Field(min_length=1, max_length=100)
     text: str = Field(min_length=1, max_length=12000)
+    # Whether the Wordle popup is open, reported by the worker; None (an older worker) keeps the full Wordle rules.
+    wordle_open: bool | None = None
 
 
 class MemoryConfirm(BaseModel):
@@ -275,6 +277,7 @@ def _context_instructions(
     turn,
     strict_capture: bool = False,
     memory_mode: str = "auto",
+    wordle_open: bool | None = None,
 ) -> tuple[str, dict | None]:
     # With memory off nothing is ever proposed, so there is no question to ask and nothing to arm.
     proposal = (
@@ -293,7 +296,7 @@ def _context_instructions(
     if sensitive:
         # A credential creates no proposal at all, so the sensitive text is never recorded as one.
         proposal = None
-    instructions = pipeline_instructions(pipeline)
+    instructions = pipeline_instructions(pipeline, wordle_open=wordle_open)
     if proposal is not None:
         instructions = f"{instructions}\n\n{PENDING_MEMORY_INSTRUCTION}"
     elif sensitive:
@@ -648,6 +651,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
             turn=turn,
             # With the model classifier available, regexes only keep the exact "remember that ..." fast path.
             strict_capture=getattr(app.state, "ui_classifier", None) is not None,
+            wordle_open=body.wordle_open,
         )
         inputs = await read_context_inputs(
             db, owner_id=conversation.owner_id, conversation_id=voice.conversation_id, combined_read=True
@@ -862,6 +866,7 @@ def _register_command_routes(app, *, config, database, guard, catalog, approved_
             handlers=app.state.action_handlers,
             secret=secret,
             ui_classifier=classifier if classifier.inner is not None else None,
+            wordle_enabled=config.wordle_enabled,
         )
         return {
             "command": result.model_dump(mode="json") if result is not None else None,

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Final
 
 import httpx
 from app.domain.tool_operations import operation_key
@@ -78,6 +78,14 @@ async def publish_wordle(room, action: str) -> None:
     await room.local_participant.publish_data(
         json.dumps({"action": action}).encode(), reliable=True, topic="sarjy.wordle"
     )
+
+
+# The five model-facing Wordle tools; none is offered while the popup is closed.
+WORDLE_GAME_TOOLS: Final = frozenset(
+    {"play_wordle", "submit_wordle_guess", "wordle_status", "reset_wordle", "close_wordle"}
+)
+# Command detail the API returns when Jev hears a loose request to play (app.domain.ui_routing.WORDLE_OPEN_DETAIL).
+WORDLE_OPEN_DETAIL: Final = "WORDLE_OPEN"
 
 
 class WordleTools:
