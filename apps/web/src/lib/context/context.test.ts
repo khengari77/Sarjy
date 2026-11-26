@@ -138,7 +138,9 @@ describe('budget meter', () => {
 });
 
 describe('diff labels', () => {
-  const included = [{ id: 'memory-1', kind: 'memory' as const, text: 'Trip to Tripoli', trust: 'data' as const, withheld: false }];
+  const included = [
+    { id: 'memory-1', kind: 'memory' as const, text: 'Trip to Tripoli', trust: 'data' as const, withheld: false },
+  ];
   const excluded = [{ id: 'memory-2', reason: 'conversation_exclusion' }];
 
   it('resolves known ids to receipt labels and unknown ids to a short id', () => {
