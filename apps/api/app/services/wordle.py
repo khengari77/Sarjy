@@ -217,7 +217,7 @@ def _servable_date(latest_date: date | None, wall_date: date) -> date:
     return latest_date
 
 
-async def scheduled_puzzle_date(db: AsyncSession, instant: datetime, timezone: str) -> date:
+async def scheduled_puzzle_date(instant: datetime, timezone: str) -> date:
     """The date to fetch/advance to, bounded by the publisher-schedule clock.
 
     The clock decides when to attempt the next publication; an ingested row can
@@ -260,7 +260,7 @@ async def ensure_today(
     """
     instant = now or datetime.now(UTC)
     try:
-        day = await scheduled_puzzle_date(db, instant, timezone)
+        day = await scheduled_puzzle_date(instant, timezone)
     except WordleValidationError as exc:
         raise WordleServiceError(exc.code, 503) from exc
     try:

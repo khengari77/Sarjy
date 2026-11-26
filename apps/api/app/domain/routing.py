@@ -105,7 +105,6 @@ TIER_OPTIONS: Final[dict[str, str]] = {
     ),
 }
 TIER_BY_OPTION: Final[dict[str, int]] = {option: index for index, option in enumerate(TIER_OPTIONS, start=1)}
-TIER_OPTION_BY_VALUE: Final[dict[int, str]] = {index: option for index, option in enumerate(TIER_OPTIONS, start=1)}
 
 COMPLEXITY_CRITERIA: Final[dict[str, str]] = {
     "simple": (
@@ -502,7 +501,6 @@ __all__ = [
     "ROUTING_POLICY_VERSION",
     "RoutingOutcome",
     "TIER_BY_OPTION",
-    "TIER_OPTION_BY_VALUE",
     "TIER_OPTIONS",
     "TIER_QUESTION",
     "UsageMetadata",

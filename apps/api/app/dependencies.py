@@ -84,7 +84,7 @@ def _cleanup_dependency(settings: Settings, clock, database):
     return cleanup_user
 
 
-def _owned_dependency(database):
+def _owned_dependency():
     async def owned(conversation_id: str, user: Identity, db: AsyncSession):
         return await owned_conversation(db, user.id, conversation_id)
 
@@ -98,5 +98,5 @@ def build_dependencies(sessions, *, settings: Settings, clock) -> tuple:
         database,
         _identity_dependency(settings, clock, database),
         _cleanup_dependency(settings, clock, database),
-        _owned_dependency(database),
+        _owned_dependency(),
     )

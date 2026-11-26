@@ -138,9 +138,7 @@ class EffectSession:
         raise HTTPException(503, detail={"code": "ACTION_TRANSACTION_OWNED"})
 
 
-async def dispatch_action(
-    db, *, owner_id, conversation_id, request_id, expected_revision, action, catalog, handlers, approved_voice_ids=None
-):
+async def dispatch_action(db, *, owner_id, conversation_id, request_id, expected_revision, action, catalog, handlers):
     """Own a fresh short transaction, independent of authentication reads."""
     bind = db.bind
     factory = async_sessionmaker(bind.engine if isinstance(bind, AsyncConnection) else bind, expire_on_commit=False)
@@ -188,7 +186,6 @@ async def dispatch_action(
                 request_id=request_id,
                 expected_revision=expected_revision,
                 action=action,
-                catalog=catalog,
                 handlers=handlers,
                 prepared=prepared,
                 prepared_operation_id=preparation_id,
@@ -419,7 +416,6 @@ async def _dispatch_transaction(
     request_id,
     expected_revision,
     action,
-    catalog,
     handlers,
     prepared=None,
     prepared_operation_id=None,

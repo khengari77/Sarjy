@@ -325,7 +325,7 @@ async def _replayed_proposal(db: AsyncSession, *, owner_id: str, turn) -> dict |
     return proposal
 
 
-async def _replayed_turn_response(db: AsyncSession, *, owner_id: str, conversation_id: str, turn):
+async def _replayed_turn_response(db: AsyncSession, *, owner_id: str, turn):
     return {
         "turn_id": turn.id,
         "context": turn.snapshot,
@@ -627,7 +627,6 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
             return await _replayed_turn_response(
                 db,
                 owner_id=conversation.owner_id,
-                conversation_id=voice.conversation_id,
                 turn=existing,
             )
         turn = Turn(
@@ -739,7 +738,6 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
             return await _replayed_turn_response(
                 db,
                 owner_id=owner_id,
-                conversation_id=conversation_id,
                 turn=existing,
             )
         return {"turn_id": turn.id, "context": turn.snapshot, "memory_proposal": proposal}

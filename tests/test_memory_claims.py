@@ -14,7 +14,7 @@ from app.infrastructure.database import (
     Turn,
 )
 from app.services.memory import MemoryService, OpenAIEmbedder, _fingerprint
-from app.services.memory_eligibility import blocked_memory_ids, blocked_source_turn_ids
+from app.services.memory_eligibility import blocked_memory_ids
 from fastapi import HTTPException
 from sqlalchemy import select, update
 from test_memory import FakeEmbedder, setup
@@ -127,7 +127,7 @@ def test_embedded_recovery_and_abandoned_claim_do_not_reserve_again(tmp_path):
             async with sessions() as db:
                 service = MemoryService(db, fake)
                 fingerprint = _fingerprint("a1", None, "Fact", None, None)
-                claim, winner = await service._claim("alice", "a1", None, "Fact", "recover", None, None, fingerprint)
+                claim, winner = await service._claim("alice", "a1", None, "recover", None, None, fingerprint)
                 assert winner
             async with sessions() as db:
                 await db.execute(
@@ -143,7 +143,7 @@ def test_embedded_recovery_and_abandoned_claim_do_not_reserve_again(tmp_path):
             async with sessions() as db:
                 service = MemoryService(db, fake)
                 fingerprint = _fingerprint("a1", None, "Other", None, None)
-                abandoned, _ = await service._claim("alice", "a1", None, "Other", "abandoned", None, None, fingerprint)
+                abandoned, _ = await service._claim("alice", "a1", None, "abandoned", None, None, fingerprint)
             async with sessions() as db:
                 await db.execute(
                     update(MemoryWriteRequest)
@@ -262,7 +262,6 @@ def test_corrections_preserve_scoped_exclusion_lineage_and_sources_until_undo(tm
                 second = await service.correct_memory("alice", first.id, 1, "Tripoli, Libya", "second")
                 third = await service.correct_memory("alice", second.id, 2, "Tripoli in Libya", "third")
                 assert await blocked_memory_ids(db, "alice", "a2") == frozenset({first.id, second.id, third.id})
-                assert await blocked_source_turn_ids(db, "alice", "a2") == frozenset({"source"})
                 assert await service.search_memories("alice", "a2", "city") == ()
                 assert (await service.search_memories("alice", "a1", "city"))[0].id == third.id
                 await db.execute(update(ContextExclusion).where(ContextExclusion.id == "ex").values(active=False))

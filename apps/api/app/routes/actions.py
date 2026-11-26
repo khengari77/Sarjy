@@ -160,7 +160,6 @@ def register_action_routes(app, database, identity, owned, catalog, approved_voi
                 action=action,
                 catalog=catalog,
                 handlers=app.state.action_handlers,
-                approved_voice_ids=approved_voice_ids,
             )
         except (VoiceCatalogError, ContextOperationError) as exc:
             raise HTTPException(exc.status, detail={"code": exc.code}) from exc
