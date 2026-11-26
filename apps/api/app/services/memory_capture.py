@@ -371,6 +371,9 @@ async def _resolved_proposal_response(
         )
     )
     stored = dict(row.result or {}) if row is not None else {}
+    if stored.get("scrubbed"):
+        # The memory behind the proposal was deleted, so the token can only report a discarded outcome.
+        return {"status": "discarded", "memory": None, "idempotent": True}
     if stored.get("decision") == decision and isinstance(stored.get("response"), dict):
         return {**stored["response"], "idempotent": True}
     raise MemoryCaptureError("MEMORY_PROPOSAL_RESOLVED", 409, confirmation_id=confirmation_id)

@@ -18,7 +18,14 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.memory_changes import AUTO_SAVE
-from app.infrastructure.database import ContextOperation, Memory, MemoryWriteRequest, now
+from app.infrastructure.database import (
+    ContextOperation,
+    Memory,
+    MemoryCaptureDecision,
+    MemoryWriteRequest,
+    Turn,
+    now,
+)
 
 ACTIVE = "active"
 HIDDEN = "hidden"
@@ -89,6 +96,81 @@ async def _lineage(db: AsyncSession, owner_id: str, row: Memory) -> list[Memory]
     return chain
 
 
+def _tombstoned_request(result: dict) -> dict:
+    """Keep the lookup keys a replay reads and drop the proposal text and signed token."""
+    proposal = result.get("proposal")
+    kept: dict = {"scrubbed": True}
+    if isinstance(proposal, dict):
+        if isinstance(proposal.get("confirmation_id"), str):
+            kept["confirmation_id"] = proposal["confirmation_id"]
+        if isinstance(proposal.get("confirmation_revision"), int):
+            kept["confirmation_revision"] = proposal["confirmation_revision"]
+    tombstone: dict = {"proposal": kept, "scrubbed": True}
+    if isinstance(result.get("decision"), str):
+        tombstone["decision"] = result["decision"]
+    return tombstone
+
+
+def _tombstoned_snapshot(proposal: dict) -> dict:
+    return {
+        "confirmation_id": proposal.get("confirmation_id"),
+        "confirmation_revision": proposal.get("confirmation_revision"),
+        "scrubbed": True,
+    }
+
+
+def _request_memory_id(result: dict) -> str | None:
+    response = result.get("response")
+    memory = response.get("memory") if isinstance(response, dict) else None
+    return memory.get("id") if isinstance(memory, dict) else None
+
+
+async def _scrub_proposals(db: AsyncSession, owner_id: str, deleted: set[str]) -> set[str]:
+    """Tombstone the proposal rows whose saved memory is in the deleted lineage."""
+    proposals = (await db.scalars(select(MemoryWriteRequest).where(MemoryWriteRequest.owner_id == owner_id))).all()
+    proposal_keys: set[str] = set()
+    for request in proposals:
+        result = request.result
+        if not isinstance(result, dict) or _request_memory_id(result) not in deleted:
+            continue
+        stored = result.get("proposal")
+        if isinstance(stored, dict) and isinstance(stored.get("confirmation_id"), str):
+            proposal_keys.add(stored["confirmation_id"])
+        proposal_keys.add(request.request_key)
+        request.result = _tombstoned_request(result)
+        request.embedding = None
+    return proposal_keys
+
+
+async def _scrub_decisions(db: AsyncSession, owner_id: str, deleted: set[str], proposal_keys: set[str]) -> None:
+    decisions = (
+        await db.scalars(select(MemoryCaptureDecision).where(MemoryCaptureDecision.owner_id == owner_id))
+    ).all()
+    for decision in decisions:
+        result = decision.result
+        if not isinstance(result, dict):
+            continue
+        memory = result.get("memory")
+        belongs = decision.confirmation_id in proposal_keys or (
+            isinstance(memory, dict) and memory.get("id") in deleted
+        )
+        if belongs:
+            decision.result = {"status": "discarded", "memory": None, "scrubbed": True}
+
+
+async def _scrub_turns(db: AsyncSession, chain: list[Memory], proposal_keys: set[str]) -> None:
+    source_turns = [item.source_turn_id for item in chain if item.source_turn_id]
+    if not source_turns:
+        return
+    turns = (await db.scalars(select(Turn).where(Turn.id.in_(source_turns)))).all()
+    for turn in turns:
+        snapshot = dict(turn.snapshot or {})
+        proposal = snapshot.get("memory_proposal")
+        if isinstance(proposal, dict) and proposal.get("confirmation_id") in proposal_keys:
+            snapshot["memory_proposal"] = _tombstoned_snapshot(proposal)
+            turn.snapshot = snapshot
+
+
 async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> VisibilityResult:
     """Idempotent permanent tombstone; wipes content everywhere this service stores it."""
     row = await _owned(db, owner_id, memory_id)
@@ -96,6 +178,7 @@ async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> Visi
         return VisibilityResult(row.id, DELETED, False)
     chain = await _lineage(db, owner_id, row)
     ids = [item.id for item in chain]
+    deleted = set(ids)
     keys = [item.request_key for item in chain if item.request_key]
     await db.execute(
         update(Memory)
@@ -108,6 +191,9 @@ async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> Visi
             .where(MemoryWriteRequest.owner_id == owner_id, MemoryWriteRequest.request_key.in_(keys))
             .values(embedding=None, result=None)
         )
+    proposal_keys = await _scrub_proposals(db, owner_id, deleted)
+    await _scrub_decisions(db, owner_id, deleted, proposal_keys)
+    await _scrub_turns(db, chain, proposal_keys)
     operations = (
         await db.scalars(
             select(ContextOperation).where(

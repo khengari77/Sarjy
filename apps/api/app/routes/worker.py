@@ -321,6 +321,9 @@ async def _replayed_proposal(db: AsyncSession, *, owner_id: str, turn) -> dict |
     proposal, state = await load_proposal(db, owner_id=owner_id, confirmation_id=confirmation_id)
     if proposal is None:
         return None
+    if proposal.get("scrubbed"):
+        # The memory this proposal produced was permanently deleted; its text is gone.
+        return {**proposal, "token": None, "state": "discarded", "outcome": "discarded"}
     if state in {"saved", "discarded"}:
         return {**proposal, "token": None, "state": state, "outcome": state}
     if state != "proposed":

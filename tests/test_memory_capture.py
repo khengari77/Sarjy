@@ -2182,6 +2182,72 @@ def test_decision_turn_does_not_adopt_a_proposal_offered_by_the_server():
     assert confirms == [{"token": "signed", "decision": "save"}]
 
 
+def _proposal_blobs(file):
+    """Serialized proposal copies only: not the user's turn text or compiled context."""
+    with closing(sqlite3.connect(file)) as db:
+        blobs = []
+        for table in ("memory_write_requests", "memory_capture_decisions"):
+            blobs.extend(row[0] for row in db.execute(f"SELECT result FROM {table}") if row[0] is not None)
+        for (snapshot,) in db.execute("SELECT snapshot FROM turns"):
+            proposal = json.loads(snapshot).get("memory_proposal") if snapshot else None
+            if proposal is not None:
+                blobs.append(json.dumps(proposal))
+        blobs.extend(row[0] for row in db.execute("SELECT payload FROM context_operations") if row[0] is not None)
+    return blobs
+
+
+def test_deleting_a_captured_memory_scrubs_proposal_copies_and_replays(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        set_mode(file, owner, "ask")
+
+        first = turn(client, headers, "I prefer tea with mint", "fact-1").json()["memory_proposal"]
+        saved = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+        ).json()
+        memory_id = saved["memory"]["id"]
+
+        second = turn(client, headers, "My name is Sam", "fact-2").json()["memory_proposal"]
+        kept = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "save"}
+        ).json()
+        assert kept["status"] == "saved" and kept["memory"]["id"] != memory_id
+
+        assert client.delete(f"/v1/memories/{memory_id}").status_code == 200
+        assert all("tea with mint" not in json.dumps(blob) for blob in _proposal_blobs(file))
+
+        replayed_turn = turn(client, headers, "I prefer tea with mint", "fact-1").json()
+        assert replayed_turn["memory_proposal"]["state"] == "discarded"
+        assert replayed_turn["memory_proposal"]["token"] is None
+        assert "tea with mint" not in json.dumps(replayed_turn["memory_proposal"])
+
+        replayed_confirm = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+        )
+        assert replayed_confirm.status_code == 200, replayed_confirm.text
+        assert replayed_confirm.json()["status"] == "discarded"
+        assert replayed_confirm.json()["memory"] is None
+        assert "tea with mint" not in replayed_confirm.text
+
+        # A different, undeleted memory keeps its idempotent replay.
+        kept_turn = turn(client, headers, "My name is Sam", "fact-2").json()
+        assert kept_turn["memory_proposal"]["state"] == "saved"
+        assert kept_turn["memory_proposal"]["text"] == "My name is Sam"
+        kept_confirm = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "save"}
+        )
+        assert kept_confirm.status_code == 200, kept_confirm.text
+        assert kept_confirm.json()["status"] == "saved" and kept_confirm.json()["idempotent"] is True
+        assert kept_confirm.json()["memory"]["id"] == kept["memory"]["id"]
+
+        # Deleting twice is harmless and leaves the tombstone intact.
+        assert client.delete(f"/v1/memories/{memory_id}").json()["changed"] is False
+        assert all("tea with mint" not in json.dumps(blob) for blob in _proposal_blobs(file))
+
+
 def test_wordle_mode_proposes_no_memory_and_uses_the_game_prompt(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
