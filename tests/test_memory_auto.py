@@ -102,7 +102,12 @@ def test_replaying_the_same_token_returns_the_same_change_and_writes_once(tmp_pa
         cm.__exit__(None, None, None)
 
 
-def test_a_racing_replay_of_one_token_returns_the_same_change_instead_of_a_500(tmp_path, monkeypatch):
+@pytest.mark.parametrize("blind_checks", [3, 4])
+def test_a_racing_replay_of_one_token_returns_the_same_change_instead_of_a_500(tmp_path, monkeypatch, blind_checks):
+    # 4 blind checks: the replay reaches the duplicate INSERT and recovers from the IntegrityError.
+    # 3 blind checks: the re-check under the owner lock sees the committed row and returns without inserting; the
+    # IntegrityError class is then replaced by one nothing raises, so the real error would escape if that
+    # re-check were removed.
     cm, client, file, headers = started(tmp_path, "auto")
     try:
         proposal = proposal_of(client, headers, "My name is Sam", "fact-1")
@@ -117,11 +122,13 @@ def test_a_racing_replay_of_one_token_returns_the_same_change_instead_of_a_500(t
             # are the two early checks and the two re-checks under the owner lock; only the last re-read sees the row.
             nonlocal calls
             calls += 1
-            if calls <= 4:
+            if calls <= blind_checks:
                 return None
             return await real_journalled(db, owner_id, key)
 
         monkeypatch.setattr(memory_auto, "_journalled", blind_for_both_checks)
+        if blind_checks == 3:
+            monkeypatch.setattr(memory_auto, "IntegrityError", type("NeverRaised", (Exception,), {}))
         first = auto(client, headers, proposal["token"])
         second = auto(client, headers, proposal["token"])
         assert first.status_code == 200 and second.status_code == 200, second.text
@@ -587,8 +594,10 @@ def test_undo_scrubs_the_proposal_decision_and_prompt_copies_so_a_later_delete_h
         change = saved.json()["change"]
         turn(client, headers, "what do you know about me", "fact-2")
 
-        assert _copies(file)["memory_write_requests"]
-        assert any("Sam" in snapshot for snapshot in turn_snapshots(file))
+        before = _copies(file)
+        # Every copy the final assertion calls gone existed first, or that assertion proves nothing.
+        assert before["memory_write_requests"] and before["memory_capture_decisions"]
+        assert before["context_operations"] and before["turns"]
 
         assert client.post(f"/v1/changes/{change['id']}/undo").status_code == 200
         assert client.delete(f"/v1/memories/{change['memory_id']}").status_code == 200
