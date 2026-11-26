@@ -256,7 +256,7 @@ def register_worker_routes(
         secret=_memory_secret(config),
     )
     _register_tool_routes(app, config=config, database=database, guard=guard)
-    _register_memory_tool_routes(app, config=config, database=database, guard=guard)
+    _register_memory_tool_routes(app, config=config, database=database, guard=guard, embedder=embedder)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
     _register_auto_memory_route(app, config=config, database=database, guard=guard, embedder=embedder)
     if wordle_source is not None:
@@ -1074,8 +1074,44 @@ async def _run_memory_tool(guard, db: AsyncSession, request: Request, body, name
     )
 
 
-def _register_memory_tool_routes(app, *, config: Settings, database, guard):
-    """Model-facing memory tools. Every route is propose-only or read-only."""
+AUTO_SAVED_NOTE = (
+    "Saved. Tell the user in one short sentence what you remembered; the app shows an undo. "
+    "Do not ask a question and do not offer to save it again."
+)
+AUTO_SAVE_FAILED_NOTE = "The save failed, so nothing was saved. Apologise briefly and do not claim it was saved."
+
+
+async def _save_without_asking(db, config: Settings, embedder, proposed: dict, *, owner_id, conversation_id) -> dict:
+    """``auto`` mode: a fact the policy says to save is saved now, not asked about.
+
+    The proposal is the signed record the policy is re-checked against (``auto_commit_memory`` refuses a credential or
+    a fact that needs consent). A fact that needs consent keeps its proposal, so the app asks once as before. Once a
+    save was attempted a failure never falls back to a question or to a claim that it was saved.
+    """
+    proposal = proposed["proposal"]
+    secret = _memory_secret(config)
+    _, text, explicit, negated = proposal_summary(proposal["token"], secret, owner_id, conversation_id)
+    if plan_for_proposal("auto", text, explicit=explicit, negated=negated) is not Decision.SAVE:
+        return proposed
+    try:
+        saved = await auto_commit_memory(
+            db,
+            MemoryService(db, embedder),
+            token=proposal["token"],
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            secret=secret,
+            mode="auto",
+        )
+    except (MemoryCaptureError, ValueError, HTTPException):
+        await db.rollback()
+        return {"status": "rejected", "error": "MEMORY_SAVE_FAILED", "message": AUTO_SAVE_FAILED_NOTE}
+    change = saved.get("change") or {}
+    return {"status": "saved", "change_id": change.get("id"), "message": AUTO_SAVED_NOTE}
+
+
+def _register_memory_tool_routes(app, *, config: Settings, database, guard, embedder):
+    """Model-facing memory tools. Propose asks, except in ``auto`` mode where the policy may save at once."""
     secret = _memory_secret(config)
 
     @app.post("/internal/agent/tool/memory-propose")
@@ -1100,6 +1136,11 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
                 fact=body.fact,
                 secret=secret,
             )
+            mode = row.memory_mode if row is not None else "auto"
+            if result.get("status") == "proposed" and mode == "auto":
+                return await _save_without_asking(
+                    db, config, embedder, result, owner_id=owner_id, conversation_id=conversation_id
+                )
             return result
 
         return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)

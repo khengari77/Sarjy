@@ -77,7 +77,8 @@ def test_propose_memory_rejects_untrusted_facts_without_a_proposal(tmp_path):
 def test_operation_key_replay_and_conflict_for_every_tool(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
-        _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+        owner, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+        set_mode(file, owner, "ask")  # these cover the ask-first flow; auto saves a proposed fact without a question
         cases = [
             (PROPOSE, "fact", "I work at Acme", "I work at Initech"),
             (FORGET, "query", "tea", "coffee"),
@@ -165,7 +166,8 @@ def test_undo_unhides_the_latest_hide_and_a_stray_yes_changes_nothing(tmp_path):
 def test_hiding_does_not_need_consent_and_leaves_remember_consent_untouched(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
-        _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+        owner, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+        set_mode(file, owner, "ask")  # these cover the ask-first flow; auto saves a proposed fact without a question
         assert call(client, headers, PROPOSE, turn, "p1", fact="I work at Acme").json()["status"] == "proposed"
         assert call(client, headers, FORGET, turn, "f1", query="tea").json()["status"] == "hidden"
         assert table_count(file, "memories", "status='active'") == 0
@@ -225,7 +227,8 @@ def test_tool_failure_never_claims_success(tmp_path, monkeypatch):
 def test_already_saved_fact_is_rejected_but_a_hidden_one_is_not_counted(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
-        _, _, headers, turn = setup(client, file, [("name", "My name is Abdulrahma")])
+        owner, _, headers, turn = setup(client, file, [("name", "My name is Abdulrahma")])
+        set_mode(file, owner, "ask")  # these cover the ask-first flow; auto saves a proposed fact without a question
         body = call(client, headers, PROPOSE, turn, "p1", fact="  my NAME is   abdulrahma ").json()
         assert body["status"] == "rejected" and body["error"] == "MEMORY_ALREADY_SAVED"
         assert "proposal" not in body and "already saved" in body["message"]
