@@ -143,3 +143,14 @@ async def memory_recall_tool(
             "If the list is empty say you have nothing saved about that."
         ),
     }
+
+
+async def hidden_fact_exists(db: AsyncSession, owner_id: str, content: str) -> bool:
+    """Whether the owner has hidden this exact fact. Compared in Python with ``_already_saved``'s normalisation.
+
+    SQL ``lower()`` and ``casefold()`` differ (``ß``, ligatures, non-ASCII capitals on SQLite), and a miss here would
+    let auto mode silently re-add a fact the user hid.
+    """
+    wanted = " ".join(content.split()).casefold()
+    rows = await db.scalars(select(Memory.content).where(Memory.owner_id == owner_id, Memory.status == "hidden"))
+    return any(" ".join(row.split()).casefold() == wanted for row in rows)

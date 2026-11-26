@@ -1,6 +1,8 @@
 """Worker-only endpoints for bootstrap, turns, weather and budget reservations."""
 
 import logging
+import re
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
@@ -42,11 +44,17 @@ from app.services.memory_capture import (
     MemoryCaptureError,
     confirm_memory,
     load_proposal,
+    proposal_conflicts,
     proposal_summary,
     propose_memory,
     record_proposal,
 )
-from app.services.memory_tools import memory_forget_tool, memory_propose_tool, memory_recall_tool
+from app.services.memory_tools import (
+    hidden_fact_exists,
+    memory_forget_tool,
+    memory_propose_tool,
+    memory_recall_tool,
+)
 from app.services.titles import generate_conversation_title
 from app.services.tool_operations import (
     ToolOperationError,
@@ -256,7 +264,7 @@ def register_worker_routes(
         secret=_memory_secret(config),
     )
     _register_tool_routes(app, config=config, database=database, guard=guard)
-    _register_memory_tool_routes(app, config=config, database=database, guard=guard)
+    _register_memory_tool_routes(app, config=config, database=database, guard=guard, embedder=embedder)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
     _register_auto_memory_route(app, config=config, database=database, guard=guard, embedder=embedder)
     if wordle_source is not None:
@@ -1074,8 +1082,86 @@ async def _run_memory_tool(guard, db: AsyncSession, request: Request, body, name
     )
 
 
-def _register_memory_tool_routes(app, *, config: Settings, database, guard):
-    """Model-facing memory tools. Every route is propose-only or read-only."""
+MEMORY_OFF_NOTE = "Memory is turned off, so nothing was saved. Tell the user memory is off; do not claim it was saved."
+AUTO_SAVED_NOTE = (
+    "Saved. Tell the user in one short sentence what you remembered; the app shows an undo. "
+    "Do not ask a question and do not offer to save it again."
+)
+ALREADY_SAVED_NOTE = "That is already saved. Tell the user it is already saved; do not propose it again."
+AUTO_SAVE_FAILED_NOTE = (
+    "The save could not be confirmed. Tell the user you could not confirm it was saved; do not claim it was saved "
+    "and do not ask them to confirm."
+)
+
+
+_LONG_NUMBER = re.compile(r"\d(?:[\s.-]?\d){8,}")
+
+
+def _has_long_number(text: str) -> bool:
+    """Nine or more digits in a row (a card, phone or ID number): never saved without asking, whatever the words say."""
+    return _LONG_NUMBER.search(text) is not None
+
+
+def _latin_only(text: str) -> bool:
+    """The keyword safety net only knows English, so a fact in another script is never judged safe by it."""
+    letters = [char for char in text if char.isalpha()]
+    return bool(letters) and all(unicodedata.name(char, "").startswith("LATIN") for char in letters)
+
+
+async def _save_without_asking(db, config: Settings, embedder, proposed: dict, *, owner_id, conversation_id) -> dict:
+    """``auto`` mode: a fact the policy and the keyword safety net both clear is saved now, not asked about.
+
+    Anything doubtful keeps its proposal, so the app asks as before: a fact the policy asks about (a model-proposed
+    fact is never ``explicit``, so another person's detail asks), one that contradicts a saved fact (the user decides
+    in every mode), one the owner hid (a forgotten fact is never silently re-added), and one the English-only
+    keyword net cannot judge (another script). The mode is re-read just before the write. Once a save was attempted
+    a failure never falls back to a question or to a claim that it was saved.
+    """
+    proposal = proposed["proposal"]
+    secret = _memory_secret(config)
+    _, fact, _, negated = proposal_summary(proposal["token"], secret, owner_id, conversation_id)
+    if (
+        plan_for_proposal("auto", fact, explicit=False, negated=negated) is not Decision.SAVE
+        or not _latin_only(fact)
+        or _has_long_number(fact)
+    ):
+        return proposed
+    if await proposal_conflicts(
+        db, token=proposal["token"], secret=secret, owner_id=owner_id, conversation_id=conversation_id
+    ):
+        return proposed
+    if await hidden_fact_exists(db, owner_id, fact):
+        return proposed
+    setting = await db.scalar(
+        select(UserSetting).where(UserSetting.owner_id == owner_id).execution_options(populate_existing=True)
+    )
+    mode = setting.memory_mode if setting is not None else "auto"
+    if mode == "off":
+        return {"status": "rejected", "error": "MEMORY_OFF", "message": MEMORY_OFF_NOTE}
+    if mode != "auto":
+        return proposed
+    try:
+        saved = await auto_commit_memory(
+            db,
+            MemoryService(db, embedder),
+            token=proposal["token"],
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            secret=secret,
+            mode="auto",
+        )
+    except (MemoryCaptureError, ValueError, HTTPException):
+        await db.rollback()
+        return {"status": "rejected", "error": "MEMORY_SAVE_FAILED", "message": AUTO_SAVE_FAILED_NOTE}
+    change = saved.get("change")
+    if not change:
+        # A concurrent save of the same fact won: there is nothing to undo and nothing new was written.
+        return {"status": "rejected", "error": "MEMORY_ALREADY_SAVED", "message": ALREADY_SAVED_NOTE}
+    return {"status": "saved", "change_id": change.get("id"), "message": AUTO_SAVED_NOTE}
+
+
+def _register_memory_tool_routes(app, *, config: Settings, database, guard, embedder):
+    """Model-facing memory tools. Propose asks, except in ``auto`` mode where the policy may save at once."""
     secret = _memory_secret(config)
 
     @app.post("/internal/agent/tool/memory-propose")
@@ -1083,12 +1169,7 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
         async def effect(owner_id, conversation_id):
             row = await db.get(UserSetting, owner_id)
             if row is not None and row.memory_mode == "off":
-                return {
-                    "status": "rejected",
-                    "error": "MEMORY_OFF",
-                    "message": "Memory is turned off, so nothing was saved. Tell the user memory is off; "
-                    "do not claim it was saved.",
-                }
+                return {"status": "rejected", "error": "MEMORY_OFF", "message": MEMORY_OFF_NOTE}
             if classify_sensitivity(body.fact) is Sensitivity.CREDENTIAL:
                 # Never record it as a proposal: that would store the text we promise not to keep.
                 return {"status": "rejected", "error": "MEMORY_SENSITIVE", "message": SENSITIVE_TOOL_NOTE}
@@ -1100,6 +1181,11 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
                 fact=body.fact,
                 secret=secret,
             )
+            mode = row.memory_mode if row is not None else "auto"
+            if result.get("status") == "proposed" and mode == "auto":
+                return await _save_without_asking(
+                    db, config, embedder, result, owner_id=owner_id, conversation_id=conversation_id
+                )
             return result
 
         return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)

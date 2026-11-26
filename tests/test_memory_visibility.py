@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_context_assembly import start_turn
 from test_memory import FakeEmbedder
+from test_memory_capture import set_mode
 
 PROPOSE = "/internal/agent/tool/memory-propose"
 RECALL = "/internal/agent/tool/memory-recall"
@@ -161,6 +162,7 @@ def test_a_hidden_or_deleted_memory_surfaces_nowhere(tmp_path, how):
             RECALL, headers=headers, json={"turn_id": started["turn_id"], "request_id": "r", "query": "tea"}
         ).json()
         assert recall["memories"] == []
+        set_mode(file, owner, "ask")  # a proposal is only asked about in ask mode; auto saves it
         if how == "hidden":
             payload = {"turn_id": started["turn_id"], "request_id": "p", "fact": "I prefer green tea"}
             assert client.post(PROPOSE, headers=headers, json=payload).json()["status"] == "proposed"
