@@ -217,3 +217,34 @@ def test_no_model_tool_can_delete():
 
     names = {name for name in dir(main.SarjyAgent) if not name.startswith("_")}
     assert not {name for name in names if "delete" in name or "hide" in name}
+
+
+def test_a_correction_chain_longer_than_the_old_cap_is_erased_to_its_first_version(tmp_path):
+    from app.infrastructure.database import Base, Memory
+    from app.services.memory_visibility import delete_memory
+    from sqlalchemy import select
+
+    async def main():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/chain.db")
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            for index in range(130):
+                db.add(
+                    Memory(
+                        id=f"m{index}",
+                        owner_id="owner",
+                        source_conversation_id="c",
+                        content=f"fact version {index}",
+                        status="active" if index == 129 else "superseded",
+                        version=1,
+                        supersedes_id=f"m{index - 1}" if index else None,
+                    )
+                )
+            await db.commit()
+            await delete_memory(db, "owner", "m129")
+            await db.commit()
+            assert set((await db.scalars(select(Memory.content))).all()) == {""}
+        await engine.dispose()
+
+    asyncio.run(main())

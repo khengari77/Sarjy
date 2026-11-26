@@ -31,7 +31,11 @@
             <span class="chip">{contextKindLabel(item.kind)}</span>
             <span class="chip receipt-data">{words.dataBadge}</span>
           </div>
-          <p class="receipt-text">{item.text}</p>
+          {#if item.withheld}
+            <p class="memory-muted">{words.withheld}</p>
+          {:else}
+            <p class="receipt-text">{item.text}</p>
+          {/if}
         </li>
       {/each}
     </ul>

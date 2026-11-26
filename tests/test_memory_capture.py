@@ -1869,12 +1869,12 @@ def test_memory_write_is_aborted_after_a_lease_takeover(tmp_path, monkeypatch):
         # takeover comes from a different process, so give each call its own.
         monkeypatch.setattr(memory_capture, "_subject_lock", lambda owner_id, subject: asyncio.Lock())
 
-        async def gated_require(db, payload, lease_id):
+        async def gated_require(db, payload, lease_id, **kwargs):
             calls["count"] += 1
             if calls["count"] == 1:
                 entered.set()
                 await release.wait()
-            return await original(db, payload, lease_id)
+            return await original(db, payload, lease_id, **kwargs)
 
         monkeypatch.setattr(memory_capture, "_require_lease", gated_require)
         try:
@@ -2182,6 +2182,72 @@ def test_decision_turn_does_not_adopt_a_proposal_offered_by_the_server():
     assert confirms == [{"token": "signed", "decision": "save"}]
 
 
+def _proposal_blobs(file):
+    """Serialized proposal copies only: not the user's turn text or compiled context."""
+    with closing(sqlite3.connect(file)) as db:
+        blobs = []
+        for table in ("memory_write_requests", "memory_capture_decisions"):
+            blobs.extend(row[0] for row in db.execute(f"SELECT result FROM {table}") if row[0] is not None)
+        for (snapshot,) in db.execute("SELECT snapshot FROM turns"):
+            proposal = json.loads(snapshot).get("memory_proposal") if snapshot else None
+            if proposal is not None:
+                blobs.append(json.dumps(proposal))
+        blobs.extend(row[0] for row in db.execute("SELECT payload FROM context_operations") if row[0] is not None)
+    return blobs
+
+
+def test_deleting_a_captured_memory_scrubs_proposal_copies_and_replays(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        set_mode(file, owner, "ask")
+
+        first = turn(client, headers, "I prefer tea with mint", "fact-1").json()["memory_proposal"]
+        saved = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+        ).json()
+        memory_id = saved["memory"]["id"]
+
+        second = turn(client, headers, "My name is Sam", "fact-2").json()["memory_proposal"]
+        kept = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "save"}
+        ).json()
+        assert kept["status"] == "saved" and kept["memory"]["id"] != memory_id
+
+        assert client.delete(f"/v1/memories/{memory_id}").status_code == 200
+        assert all("tea with mint" not in json.dumps(blob) for blob in _proposal_blobs(file))
+
+        replayed_turn = turn(client, headers, "I prefer tea with mint", "fact-1").json()
+        assert replayed_turn["memory_proposal"]["state"] == "discarded"
+        assert replayed_turn["memory_proposal"]["token"] is None
+        assert "tea with mint" not in json.dumps(replayed_turn["memory_proposal"])
+
+        replayed_confirm = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": first["token"], "decision": "save"}
+        )
+        assert replayed_confirm.status_code == 200, replayed_confirm.text
+        assert replayed_confirm.json()["status"] == "discarded"
+        assert replayed_confirm.json()["memory"] is None
+        assert "tea with mint" not in replayed_confirm.text
+
+        # A different, undeleted memory keeps its idempotent replay.
+        kept_turn = turn(client, headers, "My name is Sam", "fact-2").json()
+        assert kept_turn["memory_proposal"]["state"] == "saved"
+        assert kept_turn["memory_proposal"]["text"] == "My name is Sam"
+        kept_confirm = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": second["token"], "decision": "save"}
+        )
+        assert kept_confirm.status_code == 200, kept_confirm.text
+        assert kept_confirm.json()["status"] == "saved" and kept_confirm.json()["idempotent"] is True
+        assert kept_confirm.json()["memory"]["id"] == kept["memory"]["id"]
+
+        # Deleting twice is harmless and leaves the tombstone intact.
+        assert client.delete(f"/v1/memories/{memory_id}").json()["changed"] is False
+        assert all("tea with mint" not in json.dumps(blob) for blob in _proposal_blobs(file))
+
+
 def test_wordle_mode_proposes_no_memory_and_uses_the_game_prompt(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
@@ -2203,3 +2269,234 @@ def test_wordle_mode_proposes_no_memory_and_uses_the_game_prompt(tmp_path):
             json={"request_id": "chat-1", "text": "I prefer tea with mint", "wordle_open": False},
         ).json()
         assert closed["memory_proposal"] is not None
+
+
+def _confirm_save(client, headers, request_id, text):
+    proposal = turn(client, headers, text, request_id).json()["memory_proposal"]
+    saved = client.post(
+        "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "save"}
+    ).json()
+    return proposal, saved["memory"]["id"]
+
+
+def test_a_proposal_left_claimed_by_a_crash_is_scrubbed_and_cannot_be_finished(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        set_mode(file, owner, "ask")
+        proposal, memory_id = _confirm_save(client, headers, "fact-1", "I prefer tea with mint")
+        # The crash window: the memory was written but the proposal row never recorded its response.
+        with closing(sqlite3.connect(file)) as db, db:
+            row = db.execute(
+                "SELECT id, result FROM memory_write_requests WHERE request_key=?", (proposal["confirmation_id"],)
+            ).fetchone()
+            result = json.loads(row[1])
+            result.pop("response", None)
+            result.pop("decision", None)
+            db.execute(
+                "UPDATE memory_write_requests SET state='claimed', result=? WHERE id=?", (json.dumps(result), row[0])
+            )
+
+        assert client.delete(f"/v1/memories/{memory_id}").status_code == 200
+        assert not any("tea with mint" in blob for blob in _proposal_blobs(file))
+        with closing(sqlite3.connect(file)) as db:
+            state = db.execute(
+                "SELECT state FROM memory_write_requests WHERE request_key=?", (proposal["confirmation_id"],)
+            ).fetchone()[0]
+        # Discarded rows cannot be finished later, so a confirm that completes after the delete writes nothing back.
+        assert state == "discarded"
+        replay = turn(client, headers, "I prefer tea with mint", "fact-1").json()["memory_proposal"]
+        assert replay.get("token") is None and "tea with mint" not in json.dumps(replay)
+
+
+def test_deleting_a_memory_removes_it_from_stored_compiled_prompts(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        set_mode(file, owner, "ask")
+        _, memory_id = _confirm_save(client, headers, "fact-1", "I prefer tea with mint")
+        later = turn(client, headers, "What do I like to drink?", "q-1").json()["turn_id"]
+
+        def snapshots():
+            with closing(sqlite3.connect(file)) as db:
+                return {row[0]: row[1] or "" for row in db.execute("SELECT id, snapshot FROM turns")}
+
+        before = snapshots()
+        assert memory_id in before[later] and "tea with mint" in before[later]  # the prompt carried the fact
+        assert client.delete(f"/v1/memories/{memory_id}").status_code == 200
+        after = snapshots()
+        assert "tea with mint" not in after[later]
+
+        # Turns that never carried the memory are untouched, apart from the proposal key of the source turn.
+        def stable(raw):
+            value = json.loads(raw) if raw else {}
+            value.pop("memory_proposal", None)
+            return value
+
+        assert {key: stable(value) for key, value in after.items() if key != later} == {
+            key: stable(value) for key, value in before.items() if key != later
+        }
+
+
+def test_deleting_a_memory_ends_the_lease_of_its_capture_decision(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        set_mode(file, owner, "ask")
+        proposal, memory_id = _confirm_save(client, headers, "fact-1", "I prefer tea with mint")
+        # Put the decision back mid-flight: claimed by a live worker that has not written yet.
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute(
+                "UPDATE memory_capture_decisions SET outcome='applying', lease_id='lease', result=NULL, "
+                "lease_expires_at='2999-01-01T00:00:00+00:00' WHERE confirmation_id=?",
+                (proposal["confirmation_id"],),
+            )
+        assert client.delete(f"/v1/memories/{memory_id}").status_code == 200
+        with closing(sqlite3.connect(file)) as db:
+            outcome, lease = db.execute(
+                "SELECT outcome, lease_id FROM memory_capture_decisions WHERE confirmation_id=?",
+                (proposal["confirmation_id"],),
+            ).fetchone()
+        # With no live lease the late confirm cannot write the fact back.
+        assert outcome == "discarded" and lease is None
+        late = client.post(
+            "/internal/agent/memory/confirm", headers=headers, json={"token": proposal["token"], "decision": "save"}
+        )
+        assert late.json().get("status") != "saved", late.text
+        assert not _active_texts(file, "tea with mint")
+
+
+def _active_texts(file, text):
+    with closing(sqlite3.connect(file)) as db:
+        return db.execute(
+            "SELECT id FROM memories WHERE content LIKE ? AND status != 'deleted'", (f"%{text}%",)
+        ).fetchall()
+
+
+def test_delete_and_every_committing_write_take_the_per_owner_lock_first(tmp_path, monkeypatch):
+    from app.services import memory, memory_visibility
+
+    calls = []
+    real = memory_visibility.lock_owner_memories
+
+    async def spy(db, owner_id):
+        calls.append(owner_id)
+        await real(db, owner_id)
+
+    monkeypatch.setattr(memory_visibility, "lock_owner_memories", spy)
+    monkeypatch.setattr(memory, "lock_owner_memories", spy)
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        set_mode(file, owner, "ask")
+        _proposal, memory_id = _confirm_save(client, headers, "fact-1", "I prefer tea with mint")
+        assert calls == [owner], "the committing write takes the lock"
+        assert client.delete(f"/v1/memories/{memory_id}").status_code == 200
+        assert calls == [owner, owner], "the delete takes it too"
+
+
+def test_stored_prompt_scrub_matches_whole_words_and_short_facts():
+    from app.services.memory_visibility import _text_variants, _without
+
+    assert _without("I am female, not male", _text_variants({"male"})) == "I am female, not "
+    assert _without("tea instead", _text_variants({"tea"})) == " instead"
+    assert _without({"a": ["12", '{"text":"12"}']}, _text_variants({"12"})) == {"a": ["", "{}"]}
+
+
+def test_a_retry_of_a_deleted_memory_request_is_refused_not_a_500(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        add_turn_session(file, chat, owner)
+        body = {"content": "I prefer green tea", "idempotency_key": "k1"}
+        created = client.post(f"/v1/conversations/{chat}/memories", json=body)
+        assert created.status_code == 201
+        assert client.delete(f"/v1/memories/{created.json()['id']}").status_code == 200
+        retry = client.post(f"/v1/conversations/{chat}/memories", json=body)
+        assert retry.status_code == 409
+
+
+def test_scrub_keeps_arabic_combining_marks_with_their_word():
+    from app.services.memory_visibility import _text_variants, _without
+
+    assert _without("مُحَمَّدٌ", _text_variants({"مُحَمَّد"})) == "مُحَمَّدٌ"
+    assert _without("اسمي مُحَمَّد", _text_variants({"مُحَمَّد"})) == "اسمي "
+
+
+def test_the_commit_guard_refuses_a_proposal_a_delete_already_discarded(tmp_path):
+    """A confirm parked before it owned a decision row is fenced by the proposal's tombstone, not a row lock."""
+    import asyncio
+
+    from app.infrastructure.database import MemoryCaptureDecision, MemoryWriteRequest
+    from app.services.memory_capture import MemoryCaptureError, _decision_values, _require_lease
+
+    _asyncio, open_store, _proposal, _decision, _rows, _error = _capture_harness(tmp_path)
+    payload = {"confirmation_id": "conf-1", "revision": 1, "owner_id": "owner", "exp": 4_000_000_000}
+
+    async def attempt(state, result):
+        engine, sessions = await open_store(f"guard-{state}.db", ["I prefer tea"])
+        async with sessions() as db:
+            db.add(
+                MemoryCaptureDecision(
+                    **_decision_values(
+                        payload=payload,
+                        owner_id="owner",
+                        conversation_id="chat",
+                        token="t",
+                        decision="save",
+                        outcome="applying",
+                        lease_id="lease",
+                    )
+                )
+            )
+            db.add(
+                MemoryWriteRequest(
+                    id="w1",
+                    owner_id="owner",
+                    conversation_id="chat",
+                    request_key="conf-1",
+                    fingerprint="f",
+                    state=state,
+                    result=result,
+                )
+            )
+            await db.commit()
+        try:
+            async with sessions() as db:
+                try:
+                    await _require_lease(db, payload, "lease", lock=True)
+                except MemoryCaptureError as exc:
+                    return exc.code
+            return "ok"
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(attempt("claimed", {"proposal": {"text": "I prefer tea"}})) == "ok"
+    assert asyncio.run(attempt("discarded", None)) == "MEMORY_LEASE_LOST"
+    assert asyncio.run(attempt("claimed2", {"scrubbed": True})) == "MEMORY_LEASE_LOST"
+
+
+def test_a_scrubbed_snapshot_keeps_a_consistent_prompt_digest():
+    from app.domain.context import prompt_sha256
+    from app.services.memory_visibility import _rehashed, _text_variants, _without
+
+    messages = [{"role": "system", "content": "rules"}, {"role": "user", "content": "I prefer tea with mint"}]
+    snapshot = {
+        "messages": messages,
+        "canonical_prompt_sha256": prompt_sha256(messages),
+        "manifest": {"canonical_prompt_sha256": prompt_sha256(messages)},
+    }
+    scrubbed = _rehashed(_without(snapshot, _text_variants({"tea with mint"})))
+    digest = prompt_sha256(scrubbed["messages"])
+    assert "tea with mint" not in json.dumps(scrubbed)
+    assert scrubbed["canonical_prompt_sha256"] == digest == scrubbed["manifest"]["canonical_prompt_sha256"]
+    assert digest != prompt_sha256(messages)

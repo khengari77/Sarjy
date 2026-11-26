@@ -527,3 +527,33 @@ def test_a_credential_cannot_be_confirmed_even_in_ask_mode(tmp_path):
         assert memory_rows(file) == []
     finally:
         cm.__exit__(None, None, None)
+
+
+def _copies(file):
+    """Where each table that can carry a copy of a fact still mentions it."""
+    with closing(sqlite3.connect(file)) as db:
+        return {
+            table: any("Sam" in str(value) for row in db.execute(f"SELECT * FROM {table}") for value in row)
+            for table in ("memory_write_requests", "memory_capture_decisions", "context_operations", "turns")
+        }
+
+
+def test_undo_scrubs_the_proposal_decision_and_prompt_copies_so_a_later_delete_has_nothing_left(tmp_path):
+    # Undo tombstones the row, so a later permanent delete returns early; the copies must already be gone.
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        change = save_via_auto(client, headers, "My name is Sam", "fact-1")
+        assert _copies(file)["memory_write_requests"]
+
+        assert client.post(f"/v1/changes/{change['id']}/undo").status_code == 200
+        assert client.delete(f"/v1/memories/{change['memory_id']}").status_code == 200
+
+        # Only the user's own utterance in the transcript still says it; no memory copy does.
+        assert _copies(file) == {
+            "memory_write_requests": False,
+            "memory_capture_decisions": False,
+            "context_operations": False,
+            "turns": True,
+        }
+    finally:
+        cm.__exit__(None, None, None)

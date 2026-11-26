@@ -823,6 +823,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations/{conversation_id}/turns/{turn_id}/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Turn Context */
+        get: operations["get_turn_context_v1_conversations__conversation_id__turns__turn_id__context_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/conversations/{conversation_id}/context/blocks": {
         parameters: {
             query?: never;
@@ -1710,6 +1727,74 @@ export interface components {
             response_tier?: number | null;
             /** @default automatic */
             response_preference: components["schemas"]["ResponsePreference"];
+        };
+        /** TurnContextBudget */
+        TurnContextBudget: {
+            /** Used Chars */
+            used_chars: number;
+            /** Limit Chars */
+            limit_chars: number;
+        };
+        /** TurnContextDiff */
+        TurnContextDiff: {
+            /** Added */
+            added: string[];
+            /** Removed */
+            removed: string[];
+        };
+        /** TurnContextExcluded */
+        TurnContextExcluded: {
+            /** Id */
+            id: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "hidden" | "excluded_in_conversation" | "deleted" | "derived" | "source_of_blocked_memory" | "restates_forgotten_fact";
+        };
+        /** TurnContextIncluded */
+        TurnContextIncluded: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "memory" | "tool" | "history";
+            /** Text */
+            text: string;
+            /**
+             * Trust
+             * @enum {string}
+             */
+            trust: "data" | "conversation";
+            /**
+             * Withheld
+             * @default false
+             */
+            withheld: boolean;
+        };
+        /** TurnContextReceipt */
+        TurnContextReceipt: {
+            /** Turn Id */
+            turn_id: string;
+            /** Revision */
+            revision: number;
+            /**
+             * Prompt Sha256
+             * @description Digest of this receipt's own content (revision, ids, shown text), not of the compiled prompt.
+             */
+            prompt_sha256: string;
+            /** History Count */
+            history_count: number;
+            /** Included */
+            included: components["schemas"]["TurnContextIncluded"][];
+            /** Excluded */
+            excluded: components["schemas"]["TurnContextExcluded"][];
+            budget: components["schemas"]["TurnContextBudget"];
+            /** Previous Turn Id */
+            previous_turn_id: string | null;
+            diff: components["schemas"]["TurnContextDiff"];
         };
         /** TurnMetricsInput */
         TurnMetricsInput: {
@@ -3581,6 +3666,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContextProposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_turn_context_v1_conversations__conversation_id__turns__turn_id__context_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TurnContextReceipt"];
                 };
             };
             /** @description Validation Error */

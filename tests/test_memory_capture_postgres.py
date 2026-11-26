@@ -407,3 +407,55 @@ def test_postgres_subject_lock_releases_at_transaction_boundary():
             await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_postgres_delete_waits_for_a_committing_write_of_the_same_owner():
+    """The per-owner lock serializes erasure and writes on a real PostgreSQL."""
+    url = os.environ.get("TEST_MEMORY_POSTGRES_URL")
+    if not url:
+        pytest.skip("TEST_MEMORY_POSTGRES_URL requires disposable migrated pgvector PostgreSQL")
+    from app.services.memory_erasure_lock import lock_owner_memories
+    from app.services.memory_visibility import delete_memory
+
+    async def run():
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        owner, chat = str(uuid4()), str(uuid4())
+        memory_id = str(uuid4())
+        try:
+            async with sessions() as db:
+                db.add(Identity(id=owner, token_hash=owner, expires_at="2030"))
+                await db.commit()
+                db.add(Conversation(id=chat, owner_id=owner))
+                await db.commit()
+                db.add(
+                    Memory(
+                        id=memory_id,
+                        owner_id=owner,
+                        content="I prefer tea",
+                        embedding_model="m",
+                        source_conversation_id=chat,
+                        version=1,
+                        status="active",
+                    )
+                )
+                await db.commit()
+
+            writer, other = sessions(), sessions()
+            try:
+                await writer.begin()
+                await lock_owner_memories(writer, owner)  # a write mid-commit
+                deleting = asyncio.create_task(delete_memory(other, owner, memory_id))
+                await asyncio.sleep(1.0)
+                assert not deleting.done(), "the delete must wait for the committing write"
+                await writer.commit()
+                result = await asyncio.wait_for(deleting, 10)
+                await other.commit()
+                assert result.changed is True
+            finally:
+                await writer.close()
+                await other.close()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())

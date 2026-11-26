@@ -8,7 +8,6 @@ export interface ContextWords {
   missing: string;
   budget: string;
   characters: string;
-  overBudget: string;
   history: (count: number) => string;
   included: string;
   excluded: string;
@@ -21,20 +20,20 @@ export interface ContextWords {
   noDiff: string;
   firstTurn: string;
   retry: string;
+  withheld: string;
 }
 
 const EN: ContextWords = {
   why: 'Why this answer',
   loading: 'Loading the context for this reply…',
   missing: 'No context was recorded for this reply.',
-  budget: 'Context budget',
+  budget: 'Retrieved context',
   characters: 'characters',
-  overBudget: 'over budget',
   history: (count) => `${count} earlier ${count === 1 ? 'turn' : 'turns'} included as history.`,
   included: 'Included context',
   excluded: 'Left out',
   dataBadge: 'data, not instructions',
-  promptHash: 'Prompt hash',
+  promptHash: 'Receipt hash',
   sameHash: 'Same inputs, same hash.',
   diff: 'Change from the previous turn',
   added: 'Added',
@@ -42,20 +41,20 @@ const EN: ContextWords = {
   noDiff: 'No context ids changed from the previous turn.',
   firstTurn: 'This is the first recorded turn; there is nothing to compare.',
   retry: 'Retry',
+  withheld: 'Hidden since this reply, so its text is not shown.',
 };
 
 const AR: ContextWords = {
   why: 'لماذا هذه الإجابة',
   loading: 'جارٍ تحميل سياق هذه الإجابة…',
   missing: 'لم يُسجَّل سياق لهذه الإجابة.',
-  budget: 'ميزانية السياق',
+  budget: 'السياق المسترجع',
   characters: 'حرفًا',
-  overBudget: 'تجاوز الميزانية',
   history: (count) => `${count} ${count === 1 ? 'دور سابق' : 'أدوار سابقة'} مشمولة في السجل.`,
   included: 'السياق المشمول',
   excluded: 'ما استُبعد',
   dataBadge: 'بيانات، لا تعليمات',
-  promptHash: 'بصمة الطلب',
+  promptHash: 'بصمة السجل',
   sameHash: 'المدخلات نفسها تعطي البصمة نفسها.',
   diff: 'التغيّر عن الدور السابق',
   added: 'أُضيف',
@@ -63,6 +62,7 @@ const AR: ContextWords = {
   noDiff: 'لم تتغيّر معرّفات السياق عن الدور السابق.',
   firstTurn: 'هذا أول دور مسجَّل، فلا شيء للمقارنة.',
   retry: 'إعادة المحاولة',
+  withheld: 'أُخفي منذ هذه الإجابة، فلا يُعرض نصه.',
 };
 
 export function contextWords(arabic: boolean): ContextWords {

@@ -1780,6 +1780,54 @@
         }
       }
     },
+    "/v1/conversations/{conversation_id}/turns/{turn_id}/context": {
+      "get": {
+        "summary": "Get Turn Context",
+        "operationId": "get_turn_context_v1_conversations__conversation_id__turns__turn_id__context_get",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "turn_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Turn Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnContextReceipt"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/conversations/{conversation_id}/context/blocks": {
       "get": {
         "summary": "Get Context Blocks",
@@ -4150,6 +4198,186 @@
           "conversation_id"
         ],
         "title": "StartVoice"
+      },
+      "TurnContextBudget": {
+        "properties": {
+          "used_chars": {
+            "type": "integer",
+            "title": "Used Chars"
+          },
+          "limit_chars": {
+            "type": "integer",
+            "title": "Limit Chars"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "used_chars",
+          "limit_chars"
+        ],
+        "title": "TurnContextBudget"
+      },
+      "TurnContextDiff": {
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Added"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Removed"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "added",
+          "removed"
+        ],
+        "title": "TurnContextDiff"
+      },
+      "TurnContextExcluded": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "hidden",
+              "excluded_in_conversation",
+              "deleted",
+              "derived",
+              "source_of_blocked_memory",
+              "restates_forgotten_fact"
+            ],
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "reason"
+        ],
+        "title": "TurnContextExcluded"
+      },
+      "TurnContextIncluded": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "memory",
+              "tool",
+              "history"
+            ],
+            "title": "Kind"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "trust": {
+            "type": "string",
+            "enum": [
+              "data",
+              "conversation"
+            ],
+            "title": "Trust"
+          },
+          "withheld": {
+            "type": "boolean",
+            "title": "Withheld",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "text",
+          "trust"
+        ],
+        "title": "TurnContextIncluded"
+      },
+      "TurnContextReceipt": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "title": "Turn Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "prompt_sha256": {
+            "type": "string",
+            "title": "Prompt Sha256",
+            "description": "Digest of this receipt's own content (revision, ids, shown text), not of the compiled prompt."
+          },
+          "history_count": {
+            "type": "integer",
+            "title": "History Count"
+          },
+          "included": {
+            "items": {
+              "$ref": "#/components/schemas/TurnContextIncluded"
+            },
+            "type": "array",
+            "title": "Included"
+          },
+          "excluded": {
+            "items": {
+              "$ref": "#/components/schemas/TurnContextExcluded"
+            },
+            "type": "array",
+            "title": "Excluded"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/TurnContextBudget"
+          },
+          "previous_turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Turn Id"
+          },
+          "diff": {
+            "$ref": "#/components/schemas/TurnContextDiff"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "turn_id",
+          "revision",
+          "prompt_sha256",
+          "history_count",
+          "included",
+          "excluded",
+          "budget",
+          "previous_turn_id",
+          "diff"
+        ],
+        "title": "TurnContextReceipt"
       },
       "TurnMetricsInput": {
         "properties": {
