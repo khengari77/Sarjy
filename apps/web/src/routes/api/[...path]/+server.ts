@@ -4,8 +4,9 @@ import { proxyTimeoutMs } from '../../../lib/proxy-deadline';
 import { resolveProxyTarget } from '../../../lib/proxy-path';
 
 const proxy: RequestHandler = async ({ request, params, url, getClientAddress }) => {
-  if (!['GET', 'POST'].includes(request.method)) return new Response(null, { status: 405 });
-  if (request.method === 'POST' && request.headers.get('origin') !== url.origin) {
+  if (!['GET', 'POST', 'DELETE'].includes(request.method)) return new Response(null, { status: 405 });
+  // Every method that changes state must come from this origin; DELETE carries no body.
+  if (request.method !== 'GET' && request.headers.get('origin') !== url.origin) {
     return Response.json({ detail: { code: 'INVALID_ORIGIN' } }, { status: 403 });
   }
   const target = resolveProxyTarget(params.path ?? '', API_INTERNAL_URL);
@@ -41,3 +42,4 @@ const proxy: RequestHandler = async ({ request, params, url, getClientAddress })
 };
 export const GET = proxy;
 export const POST = proxy;
+export const DELETE = proxy;
