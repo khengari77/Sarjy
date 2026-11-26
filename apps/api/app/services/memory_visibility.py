@@ -37,7 +37,20 @@ HIDDEN = "hidden"
 DELETED = "deleted"
 HIDE_OPERATION = "memory_hide"
 UNHIDE_OPERATION = "memory_unhide"
-_LINEAGE_LIMIT = 100
+
+
+@dataclass(frozen=True)
+class Erased:
+    """What the scrubs need from a row whose content is being wiped (read before the wipe)."""
+
+    id: str
+    content: str
+    request_key: str | None
+    source_turn_id: str | None
+
+    @classmethod
+    def of(cls, row: Memory) -> Erased:
+        return cls(row.id, row.content or "", row.request_key, row.source_turn_id)
 
 
 @dataclass(frozen=True)
@@ -93,7 +106,7 @@ async def _lineage(db: AsyncSession, owner_id: str, row: Memory) -> list[Memory]
     chain = [row]
     seen = {row.id}
     current = row
-    while current.supersedes_id is not None and len(chain) < _LINEAGE_LIMIT and current.supersedes_id not in seen:
+    while current.supersedes_id is not None and current.supersedes_id not in seen:
         previous = await db.scalar(
             select(Memory).where(Memory.id == current.supersedes_id, Memory.owner_id == owner_id)
         )
@@ -188,7 +201,7 @@ async def _scrub_decisions(db: AsyncSession, owner_id: str, deleted: set[str], p
         decision.lease_expires_at = None
 
 
-async def _scrub_turns(db: AsyncSession, owner_id: str, chain: list[Memory], proposal_keys: set[str]) -> None:
+async def _scrub_turns(db: AsyncSession, owner_id: str, chain: list[Erased], proposal_keys: set[str]) -> None:
     source_turns = [item.source_turn_id for item in chain if item.source_turn_id]
     if not source_turns:
         return
@@ -273,24 +286,12 @@ async def _scrub_snapshots(db: AsyncSession, owner_id: str, deleted: set[str], t
             turn.snapshot = _rehashed(scrubbed)
 
 
-async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> VisibilityResult:
-    """Idempotent permanent tombstone; wipes content everywhere this service stores it."""
-    # First: a write that is committing for this owner finishes before this delete reads anything, and a write that
-    # starts later waits for this delete and then sees the discarded proposal (the commit guard refuses it).
-    await lock_owner_memories(db, owner_id)
-    row = await _owned(db, owner_id, memory_id, lock=True)
-    if row.status == DELETED:
-        return VisibilityResult(row.id, DELETED, False)
-    chain = await _lineage(db, owner_id, row)
-    ids = [item.id for item in chain]
+async def scrub_copies(db: AsyncSession, owner_id: str, erased: list[Erased]) -> None:
+    """Wipe every stored copy of facts whose memory rows are being tombstoned (delete and undo both call this)."""
+    ids = [item.id for item in erased]
     deleted = set(ids)
-    texts = {item.content for item in chain if item.content}
-    keys = [item.request_key for item in chain if item.request_key]
-    await db.execute(
-        update(Memory)
-        .where(Memory.id.in_(ids), Memory.owner_id == owner_id)
-        .values(status=DELETED, content="", subject=None, embedding=None, updated_at=now())
-    )
+    texts = {item.content for item in erased if item.content}
+    keys = [item.request_key for item in erased if item.request_key]
     if keys:
         await db.execute(
             update(MemoryWriteRequest)
@@ -299,7 +300,7 @@ async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> Visi
         )
     proposal_keys = await _scrub_proposals(db, owner_id, deleted, texts)
     await _scrub_decisions(db, owner_id, deleted, proposal_keys)
-    await _scrub_turns(db, owner_id, chain, proposal_keys)
+    await _scrub_turns(db, owner_id, erased, proposal_keys)
     await _scrub_snapshots(db, owner_id, deleted, texts)
     operations = (
         await db.scalars(
@@ -315,4 +316,22 @@ async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> Visi
             operation.payload = {"memory_id": (operation.payload or {}).get("memory_id"), "scrubbed": True}
             if operation.outcome == "applied" and operation.command_type in (HIDE_OPERATION, AUTO_SAVE):
                 operation.outcome = "deleted"
+
+
+async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> VisibilityResult:
+    """Idempotent permanent tombstone; wipes content everywhere this service stores it."""
+    # First: a write that is committing for this owner finishes before this delete reads anything, and a write that
+    # starts later waits for this delete and then sees the discarded proposal (the commit guard refuses it).
+    await lock_owner_memories(db, owner_id)
+    row = await _owned(db, owner_id, memory_id, lock=True)
+    if row.status == DELETED:
+        return VisibilityResult(row.id, DELETED, False)
+    chain = await _lineage(db, owner_id, row)
+    erased = [Erased.of(item) for item in chain]
+    await db.execute(
+        update(Memory)
+        .where(Memory.id.in_([item.id for item in erased]), Memory.owner_id == owner_id)
+        .values(status=DELETED, content="", subject=None, embedding=None, updated_at=now())
+    )
+    await scrub_copies(db, owner_id, erased)
     return VisibilityResult(memory_id, DELETED, True)
