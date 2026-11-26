@@ -43,16 +43,17 @@ def make_answers(
 
 
 def answer(choice: str, probability: float = 0.9) -> dict[str, object]:
-    return {"choice": choice, "probability": probability}
+    return {"type": "choice", "choice": choice, "confidence": probability}
 
 
 def payload() -> dict[str, object]:
     return {
+        "model": JEV_MODEL,
         "answers": {
             "fact": answer("yes"),
             "tier": answer("normal"),
             "negation": answer("no"),
-        }
+        },
     }
 
 
@@ -151,11 +152,12 @@ def test_the_model_can_raise_the_floor_but_not_lower_it():
 
 def test_valid_payload_maps_the_choices_and_takes_the_minimum_probability():
     body = {
+        "model": JEV_MODEL,
         "answers": {
             "fact": answer("yes", 0.91),
             "tier": answer("health", 0.82),
             "negation": answer("no", 0.97),
-        }
+        },
     }
     assert parse_observer_response(body) == ObserverAnswers(
         has_fact=True, tier=Sensitivity.HEALTH, negated=False, confidence=0.82
@@ -188,18 +190,18 @@ MALFORMED = [
     {"answers": {"fact": "yes", "tier": answer("normal"), "negation": answer("no")}},
     {"answers": {"fact": answer("yes"), "tier": None, "negation": answer("no")}},
     {"answers": {"fact": answer("yes"), "tier": answer("normal"), "negation": ["no"]}},
-    {"answers": {"fact": {"choice": "yes"}, "tier": answer("normal"), "negation": answer("no")}},
-    {"answers": {"fact": {"probability": 0.9}, "tier": answer("normal"), "negation": answer("no")}},
+    {"answers": {"fact": {"type": "choice", "choice": "yes"}, "tier": answer("normal"), "negation": answer("no")}},
+    {"answers": {"fact": {"type": "choice", "confidence": 0.9}, "tier": answer("normal"), "negation": answer("no")}},
     {
         "answers": {
-            "fact": {"choice": "yes", "probability": {"nested": None}},
+            "fact": {"type": "choice", "choice": "yes", "confidence": {"nested": None}},
             "tier": answer("normal"),
             "negation": answer("no"),
         }
     },
     {
         "answers": {
-            "fact": {"choice": {"nested": None}, "probability": 0.9},
+            "fact": {"type": "choice", "choice": {"nested": None}, "confidence": 0.9},
             "tier": answer("normal"),
             "negation": answer("no"),
         }
@@ -268,3 +270,48 @@ def test_build_observer_request_returns_a_fresh_copy_with_exactly_three_question
     first["questions"]["fact"]["criteria"]["yes"] = "changed"
     assert second["questions"] == OBSERVER_QUESTIONS
     assert OBSERVER_QUESTIONS["fact"]["criteria"]["yes"] != "changed"
+
+
+def test_the_real_jev_wire_shape_parses():
+    body = {
+        "model": JEV_MODEL,
+        "answers": {
+            "fact": {"type": "choice", "choice": "yes", "confidence": 0.99, "probabilities": {"yes": 0.96, "no": 0.04}},
+            "tier": {"type": "choice", "choice": "normal", "confidence": 0.9, "probabilities": {"normal": 0.93}},
+            "negation": {"type": "choice", "choice": "no", "confidence": 0.9},
+        },
+    }
+    assert parse_observer_response(body) == ObserverAnswers(
+        has_fact=True, tier=Sensitivity.NORMAL, negated=False, confidence=0.9
+    )
+
+
+def test_a_huge_integer_probability_returns_none_instead_of_raising():
+    body = payload()
+    body["answers"]["fact"]["confidence"] = 10**400  # type: ignore[index]
+    assert parse_observer_response(body) is None
+
+
+def test_a_wrong_model_or_missing_type_is_rejected():
+    body = payload()
+    body["model"] = "other"
+    assert parse_observer_response(body) is None
+    body = payload()
+    del body["answers"]["fact"]["type"]  # type: ignore[attr-defined]
+    assert parse_observer_response(body) is None
+
+
+@pytest.mark.parametrize("floor", [Sensitivity.HEALTH, Sensitivity.FINANCE, Sensitivity.THIRD_PARTY])
+def test_a_model_saying_normal_never_lowers_the_floor(floor):
+    assert observer_plan(
+        "auto", floor, make_answers(tier=Sensitivity.NORMAL), explicit=floor is Sensitivity.THIRD_PARTY
+    ) is (Decision.SAVE if floor is Sensitivity.THIRD_PARTY else Decision.ASK)
+
+
+def test_a_retraction_of_a_real_fact_asks():
+    assert observer_plan("auto", Sensitivity.NORMAL, make_answers(negated=True), explicit=True) is Decision.ASK
+
+
+def test_an_overlong_instruction_is_refused():
+    with pytest.raises(ValueError):
+        build_observer_request("x" * 5000)

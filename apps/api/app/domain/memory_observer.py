@@ -15,7 +15,7 @@ from typing import Any, Final
 
 from app.domain.memory_policy import Decision, Sensitivity, combine, decide
 from app.domain.routing import JEV_MODEL
-from app.domain.ui_routing import CONFIDENCE_THRESHOLD
+from app.domain.ui_routing import CONFIDENCE_THRESHOLD, _parse_answer
 
 _ANY_LANGUAGE = " The criteria apply in any language; the instruction may be in Arabic or English."
 
@@ -92,6 +92,7 @@ OBSERVER_QUESTIONS: Final[dict[str, dict[str, Any]]] = {
     "negation": NEGATION_QUESTION,
 }
 
+MAX_OBSERVER_CHARS: Final = 2000
 _YES_NO: Final[dict[str, bool]] = {"yes": True, "no": False}
 _TIERS: Final[dict[str, Sensitivity]] = {sensitivity.value: sensitivity for sensitivity in Sensitivity}
 
@@ -106,12 +107,14 @@ class ObserverAnswers:
     confidence: float
 
     def __post_init__(self) -> None:
-        if not math.isfinite(self.confidence) or not 0.0 <= self.confidence <= 1.0:
+        if isinstance(self.confidence, bool) or not math.isfinite(self.confidence) or not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be a finite number between 0 and 1")
 
 
 def build_observer_request(instruction: str) -> dict[str, Any]:
     """The Jev request body for one observer call; a fresh copy every time."""
+    if len(instruction) > MAX_OBSERVER_CHARS:
+        raise ValueError("instruction too long for the observer")
     questions = json.loads(json.dumps(OBSERVER_QUESTIONS))
     return {
         "model": JEV_MODEL,
@@ -122,7 +125,7 @@ def build_observer_request(instruction: str) -> dict[str, Any]:
 
 def parse_observer_response(body: object) -> ObserverAnswers | None:
     """Validate a Jev payload; any deviation returns ``None``."""
-    if not isinstance(body, Mapping):
+    if not isinstance(body, Mapping) or body.get("model") != JEV_MODEL:
         return None
     answers = body.get("answers")
     if not isinstance(answers, Mapping):
@@ -142,25 +145,17 @@ def parse_observer_response(body: object) -> ObserverAnswers | None:
 
 
 def _parse_choice(raw: object, options: Mapping[str, object]) -> tuple[str, float] | None:
-    if not isinstance(raw, Mapping):
-        return None
-    choice = raw.get("choice")
-    if not isinstance(choice, str) or choice not in options:
-        return None
-    probability = raw.get("probability")
-    if isinstance(probability, bool) or not isinstance(probability, (int, float)):
-        return None
-    value = float(probability)
-    if not math.isfinite(value) or not 0.0 <= value <= 1.0:
-        return None
-    return choice, value
+    """One Jev answer, read exactly as the UI path reads it (type, choice, probabilities or confidence)."""
+    parsed = _parse_answer(raw, tuple(options))
+    return None if parsed is None else (parsed.choice, parsed.probability)
 
 
 def observer_plan(mode: str, floor: Sensitivity, answers: ObserverAnswers | None, *, explicit: bool) -> Decision:
     """What the background observer should do with a finalized user turn.
 
     The keyword floor can only be raised by the model's tier.  Nothing can lower
-    a credential, and a retraction or a low-confidence answer only ever asks.
+    a credential (always SKIP).  A retraction or a low-confidence answer about a
+    real, non-credential fact asks; with no fact there is nothing to ask about.
     """
     if mode != "auto":
         return Decision.SKIP
