@@ -94,8 +94,8 @@ def register_voice_routes(
             stt={"provider": "deepgram_direct", "model": "nova-3", "language": body.language},
             llm={"provider": default_llm(config)[0], "model": default_llm(config)[1], "language": body.language},
             tts={
-                "provider": default_tts(config)[0],
-                "model": default_tts(config)[1],
+                "provider": default_tts()[0],
+                "model": default_tts()[1],
                 "voice_id": body.voice_id,
                 "language": body.language,
             },

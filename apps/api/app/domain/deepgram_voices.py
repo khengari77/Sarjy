@@ -10,8 +10,6 @@ from dataclasses import dataclass
 
 DEEPGRAM_TTS_MODEL = "aura-2"
 DEFAULT_DEEPGRAM_VOICE_ID = "aura-2-thalia-en"
-# Deepgram documents per-request speed for Aura-2 English and Spanish voices only.
-SPEED_SUPPORTED_SUFFIXES = ("-en", "-es")
 
 
 @dataclass(frozen=True)
@@ -84,7 +82,3 @@ DEEPGRAM_VOICES: tuple[DeepgramVoice, ...] = (
 
 def deepgram_voice(voice_id: str) -> DeepgramVoice | None:
     return next((voice for voice in DEEPGRAM_VOICES if voice.id == voice_id), None)
-
-
-def deepgram_speed_supported(voice_id: str) -> bool:
-    return voice_id.endswith(SPEED_SUPPORTED_SUFFIXES)
