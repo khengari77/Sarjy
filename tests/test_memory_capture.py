@@ -331,7 +331,7 @@ def test_worker_confirms_pending_memory_only_on_explicit_affirmative():
     paths, remaining, _ = asyncio.run(exchange("save it"))
     assert remaining is None
     assert paths == [
-        ("/internal/agent/turn/start", {"request_id": "message", "text": "save it"}),
+        ("/internal/agent/turn/start", {"request_id": "message", "text": "save it", "wordle_open": False}),
         ("/internal/agent/memory/confirm", {"token": "signed", "decision": "save"}),
     ]
 
@@ -340,11 +340,18 @@ def test_worker_confirms_pending_memory_only_on_explicit_affirmative():
     assert paths[-1] == ("/internal/agent/memory/confirm", {"token": "signed", "decision": "save"})
 
     paths, remaining, outcome = asyncio.run(exchange("maybe later"))
-    assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "maybe later"})]
+    assert paths == [
+        ("/internal/agent/turn/start", {"request_id": "message", "text": "maybe later", "wordle_open": False})
+    ]
     assert remaining is None and outcome == "not_saved"
 
     paths, remaining, outcome = asyncio.run(exchange("okay what's the weather"))
-    assert paths == [("/internal/agent/turn/start", {"request_id": "message", "text": "okay what's the weather"})]
+    assert paths == [
+        (
+            "/internal/agent/turn/start",
+            {"request_id": "message", "text": "okay what's the weather", "wordle_open": False},
+        )
+    ]
     assert remaining is None and outcome == "not_saved"
 
     paths, remaining, _ = asyncio.run(exchange("No thanks."))
