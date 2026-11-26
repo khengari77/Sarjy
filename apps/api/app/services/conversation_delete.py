@@ -12,6 +12,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.contracts import SCOPE_CONVERSATION
+from app.domain.memory_changes import AUTO_SAVE
 from app.domain.sessions import call_is_live
 from app.infrastructure.database import (
     ContextExclusion,
@@ -69,6 +70,17 @@ async def _refuse_active_call(db: AsyncSession, owner_id: str, conversation_id: 
         raise HTTPException(409, detail={"code": "CONVERSATION_ACTIVE"})
 
 
+async def _surviving(db: AsyncSession, owner_id: str, ids: set) -> set[str]:
+    """Which of these memory ids still exist (not tombstoned) for this owner."""
+    wanted = [value for value in ids if isinstance(value, str)]
+    if not wanted:
+        return set()
+    rows = await db.scalars(
+        select(Memory.id).where(Memory.owner_id == owner_id, Memory.id.in_(wanted), Memory.status != DELETED)
+    )
+    return set(rows.all())
+
+
 async def _blank_conversation_text(db: AsyncSession, owner_id: str, conversation_id: str) -> None:
     turns = select(Turn.id).where(Turn.conversation_id == conversation_id)
     await db.execute(delete(ContextSnapshot).where(ContextSnapshot.turn_id.in_(turns)))
@@ -86,8 +98,12 @@ async def _blank_conversation_text(db: AsyncSession, owner_id: str, conversation
             )
         )
     ).all()
+    kept = await _surviving(db, owner_id, {(op.payload or {}).get("memory_id") for op in operations})
     for operation in operations:
-        operation.payload = {"kind": (operation.payload or {}).get("kind"), "scrubbed": True}
+        payload = operation.payload or {}
+        if operation.command_type == AUTO_SAVE and payload.get("memory_id") in kept:
+            continue  # the journal entry of a fact that outlives this chat stays, so it can still be undone
+        operation.payload = {"kind": payload.get("kind"), "scrubbed": True}
 
 
 async def delete_conversation(db: AsyncSession, *, owner_id: str, conversation_id: str) -> None:

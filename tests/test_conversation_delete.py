@@ -396,3 +396,82 @@ def test_a_global_memory_can_still_be_corrected_after_its_source_chat_is_deleted
             f"/v1/conversations/{chat}/memories", json={"content": "I like rain", "idempotency_key": "g-3"}
         )
         assert again.status_code == 404
+
+
+def test_the_journal_entry_of_a_surviving_global_memory_stays_undoable_and_a_temporary_one_is_scrubbed(tmp_path):
+    from app.domain.memory_changes import AUTO_SAVE
+    from app.infrastructure.database import ContextOperation
+    from app.services.conversation_delete import delete_conversation
+    from app.services.memory_auto import _change_payload
+
+    def operation(key, memory_id, label):
+        return ContextOperation(
+            id=key,
+            owner_id="owner",
+            conversation_id="chat",
+            command_type=AUTO_SAVE,
+            payload={"kind": "memory_saved", "label": label, "memory_id": memory_id, "version": 1},
+            idempotency_key=key,
+            outcome="applied",
+        )
+
+    async def main():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/journal.db")
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as db:
+                db.add(Conversation(id="chat", owner_id="owner", title="Trip", revision=0))
+                for name, scope in (("keep", "global"), ("temp", "conversation")):
+                    db.add(
+                        Memory(
+                            id=name,
+                            owner_id="owner",
+                            source_conversation_id="chat",
+                            content=f"{name} fact",
+                            scope=scope,
+                            status="active",
+                            version=1,
+                        )
+                    )
+                db.add_all([operation("op-keep", "keep", "Remembered: keep fact"), operation("op-temp", "temp", "x")])
+                await db.commit()
+
+                await delete_conversation(db, owner_id="owner", conversation_id="chat")
+                kept = await db.get(ContextOperation, "op-keep")
+                gone = await db.get(ContextOperation, "op-temp")
+                assert kept.payload["label"] == "Remembered: keep fact" and _change_payload(kept)["undoable"]
+                assert gone.payload.get("scrubbed") is True and not _change_payload(gone)["undoable"]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(main())
+
+
+def test_routes_that_can_arrive_after_the_call_ended_take_the_shared_conversation_lock(tmp_path, monkeypatch):
+    """finalize, memory/confirm and memory/auto are accepted for 60 s after a call ends; a delete must wait for them."""
+    from app.routes import worker
+
+    seen = []
+    original = worker._live_conversation
+
+    async def spy(db, conversation_id, *, share=False):
+        seen.append(share)
+        return await original(db, conversation_id, share=share)
+
+    monkeypatch.setattr(worker, "_live_conversation", spy)
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        headers = add_turn_session(file, chat, owner)
+        turn_id = turn(client, headers, "hello there", "lock-1").json()["turn_id"]
+        for path, body in (
+            ("/internal/agent/turn/finalize", {"turn_id": turn_id, "text": "hi", "status": "completed"}),
+            ("/internal/agent/memory/confirm", {"token": "x", "decision": "save"}),
+            ("/internal/agent/memory/auto", {"token": "x"}),
+        ):
+            seen.clear()
+            client.post(path, headers=headers, json=body)
+            assert seen and all(seen), f"{path} must hold the shared lock: {seen}"
