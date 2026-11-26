@@ -75,6 +75,8 @@ class ClassificationStore:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._entries: OrderedDict[str, _Entry] = OrderedDict()
+        # The event loop keeps only weak references to tasks: hold every running one until it finishes.
+        self._running: set[asyncio.Task[UiClassification | None]] = set()
         self._capacity = capacity
         self._ttl = ttl_seconds
         self._clock = clock
@@ -93,6 +95,8 @@ class ClassificationStore:
             self._discard(next(iter(self._entries)))
         request_id = "ui-early:" + hashlib.sha256(key.encode()).hexdigest()[:32]
         task = asyncio.create_task(_classify(classifier, request_id, text))
+        self._running.add(task)
+        task.add_done_callback(self._running.discard)
         self._entries[key] = _Entry(text, task, self._clock())
 
     def take(self, key: str, text: str) -> asyncio.Task[UiClassification | None] | None:
@@ -109,9 +113,9 @@ class ClassificationStore:
             self._discard(key)
 
     def _discard(self, key: str) -> None:
-        entry = self._entries.pop(key)
-        if not entry.task.done():
-            entry.task.cancel()
+        # Forget the entry only. The task is bounded by the Jev deadlines and swallows its own errors, and a
+        # /command may be awaiting it right now: cancelling it would abort that request instead of a clean miss.
+        self._entries.pop(key)
 
 
 async def _classify(classifier: UiClassifier, request_id: str, text: str) -> UiClassification | None:

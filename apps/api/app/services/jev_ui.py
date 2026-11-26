@@ -32,7 +32,7 @@ _ESTIMATED_INPUT_TOKENS: Final = 900
 UI_DEADLINE_SECONDS: Final = 1.2
 # The budget reservation is a database round trip, not provider time: it has its own short bound so a slow
 # database neither eats the provider deadline nor counts as a provider failure.
-RESERVATION_DEADLINE_SECONDS: Final = 0.5
+RESERVATION_DEADLINE_SECONDS: Final = 0.3
 # Turns in a conversation are seconds apart; the library's default drops an idle connection after five.
 KEEP_ALIVE: Final = httpx.Limits(max_connections=20, max_keepalive_connections=4, keepalive_expiry=60)
 

@@ -624,6 +624,17 @@ async def _turn_start_context(db: AsyncSession, request: Request, request_id: st
     return conversation, existing, settings_row, voice
 
 
+def _start_early_classification(app, conversation_id: str, body: AgentInput) -> None:
+    """Authorized and not a replay: Jev needs only the text, so it runs while the rest of turn/start compiles.
+
+    Not in Wordle mode: the worker answers a guess locally and never asks /command about that turn.
+    """
+    if not body.wordle_open:
+        app.state.classification_store.start(
+            classification_key(conversation_id, body.request_id), body.text, app.state.ui_classifier
+        )
+
+
 def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
     @app.post("/internal/agent/turn/start")
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
@@ -637,10 +648,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
                 owner_id=conversation.owner_id,
                 turn=existing,
             )
-        # Authorized and not a replay: Jev needs only the text, so it runs while the rest of this handler compiles.
-        app.state.classification_store.start(
-            classification_key(voice.conversation_id, body.request_id), body.text, app.state.ui_classifier
-        )
+        _start_early_classification(app, voice.conversation_id, body)
         turn = Turn(
             id=str(uuid4()),
             conversation_id=voice.conversation_id,

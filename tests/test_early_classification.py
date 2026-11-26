@@ -48,7 +48,7 @@ def test_turn_start_starts_the_classification_and_command_reuses_it_once(tmp_pat
         assert fake.calls == [PARAPHRASE]
 
 
-def test_a_conversational_turn_still_returns_the_memory_op_from_the_early_classification(tmp_path):
+def test_a_conversational_turn_starts_one_early_call_and_command_answers_none(tmp_path):
     fake = FakeClassifier(classification(route="conversation"))
     client, file = worker(tmp_path, fake)
     with client:
@@ -56,9 +56,26 @@ def test_a_conversational_turn_still_returns_the_memory_op_from_the_early_classi
         conversation = client.post("/v1/conversations").json()["id"]
         headers = _voice_session(client, file, conversation)
         turn_id = start(client, headers, "I really love dark mode")
+        assert fake.calls == ["I really love dark mode"]
         body = client.post("/internal/agent/command", headers=headers, json={"turn_id": turn_id}).json()
         assert body["command"] is None
         assert len(fake.calls) == 1
+
+
+def test_wordle_mode_turns_start_no_early_call(tmp_path):
+    fake = FakeClassifier(classification(route="conversation"))
+    client, file = worker(tmp_path, fake)
+    with client:
+        client.post("/v1/demo-session")
+        conversation = client.post("/v1/conversations").json()["id"]
+        headers = _voice_session(client, file, conversation)
+        response = client.post(
+            "/internal/agent/turn/start",
+            headers=headers,
+            json={"request_id": "g1", "text": "could you please try the word crane", "wordle_open": True},
+        )
+        assert response.status_code == 200
+        assert fake.calls == []
 
 
 @pytest.mark.parametrize("text", ["Hide captions.", "yes", "Forget my coffee order", "x" * 300])
@@ -125,10 +142,10 @@ def test_store_keeps_one_task_per_key_and_text_and_replaces_a_changed_text():
         await asyncio.sleep(0)
         return first.cancelled()
 
-    assert asyncio.run(scenario()) is True
+    assert asyncio.run(scenario()) is False
 
 
-def test_store_evicts_the_oldest_beyond_capacity_and_expired_entries_and_cancels_them():
+def test_store_evicts_the_oldest_beyond_capacity_and_forgets_expired_entries():
     async def scenario():
         now = [0.0]
         store = ClassificationStore(capacity=2, ttl_seconds=10, clock=lambda: now[0])
@@ -140,11 +157,8 @@ def test_store_evicts_the_oldest_beyond_capacity_and_expired_entries_and_cancels
         for key in ("a", "b", "c"):
             store.start(key, PARAPHRASE, Slow())
         assert store.take("a", PARAPHRASE) is None and store.take("c", PARAPHRASE) is not None
-        task_b = store.take("b", PARAPHRASE)
         now[0] = 11.0
-        assert store.take("b", PARAPHRASE) is None
-        await asyncio.sleep(0)
-        assert task_b is not None and task_b.cancelled()
+        assert store.take("b", PARAPHRASE) is None and store.take("c", PARAPHRASE) is None
 
     asyncio.run(scenario())
 
@@ -220,3 +234,25 @@ def test_a_reservation_past_its_own_bound_is_a_miss_that_never_trips_the_circuit
 
     assert asyncio.run(scenario()) == [None] * 4
     assert sent == [] and not client.circuit.is_open()
+
+
+def test_evicting_an_entry_never_cancels_a_classification_a_command_is_awaiting():
+    async def scenario():
+        release = asyncio.Event()
+
+        class Gate:
+            async def classify(self, *, request_id, instruction):
+                await release.wait()
+                return classification(route="conversation")
+
+        store = ClassificationStore(capacity=1)
+        store.start("a", PARAPHRASE, Gate())
+        waiter = asyncio.create_task(
+            StoredClassifier(Gate(), store, "a").classify(request_id="r", instruction=PARAPHRASE)
+        )
+        await asyncio.sleep(0.01)
+        store.start("b", PARAPHRASE + " now", Gate())  # evicts "a" while the waiter is inside it
+        release.set()
+        return await waiter
+
+    assert asyncio.run(scenario()) is not None
