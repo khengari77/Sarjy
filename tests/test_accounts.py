@@ -279,7 +279,9 @@ def test_a_stranger_cannot_lock_an_owner_out_from_elsewhere(world, monkeypatch):
     limit = AttemptLimit("email-source", 2, EMAIL_SOURCE_LIMIT.window)
     monkeypatch.setattr("app.routes.accounts.EMAIL_SOURCE_LIMIT", limit)
     post(world.browser(), "sign-up")
-    for index in range(3):
+    # 15 foreign sources x 2 failures: 30 failed sign-ins against the owner's email, enough to trip any
+    # plausible email-only cap, while each source key stays under its own limit.
+    for index in range(15):
         source = {"x-reviewer-source": f"192.0.2.{index}"}
         for _ in range(limit.attempts):
             post(world.browser(), "sign-in", password="wrong password", headers=source)

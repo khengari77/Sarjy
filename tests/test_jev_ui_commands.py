@@ -358,6 +358,8 @@ def test_ui_deadline_is_its_own_constant_above_the_routing_deadline():
 
     assert UI_DEADLINE_SECONDS == 1.2
     assert DEFAULT_DEADLINE_SECONDS == 0.75
+    # A default client really uses the UI deadline, not the shorter routing one.
+    assert JevUiClient("k", allow)._deadline == UI_DEADLINE_SECONDS
 
     async def scenario():
         async def slowish(_request):
