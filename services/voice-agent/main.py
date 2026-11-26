@@ -58,6 +58,7 @@ from turn_metrics import assistant_metrics, build_payload, elapsed_ms
 from warm import ConnectionWarmup
 from wordle_commands import is_wordle_command, parse_say_payload
 from wordle_tools import (
+    WORDLE_ALREADY_OPEN,
     WORDLE_GAME_TOOLS,
     WORDLE_OPEN_DETAIL,
     WordleTools,
@@ -922,15 +923,17 @@ class SarjyAgent(WordleTools, Agent):
             self._record_offset(turn_id, "t_command_end_ms", time.perf_counter(), first_only=True)
         return self.commands[message.id]
 
-    async def _command_speech(self, command: Mapping[str, Any]) -> str:
-        """Apply a command result and return the line to speak.
+    async def _command_speech(self, command: Mapping[str, Any], turn_id: str) -> str:
+        """Apply a command result for ``turn_id`` and return the line to speak.
 
         WORDLE_OPEN (Jev heard a loose "let's play Wordle") runs the same server play as the play_wordle
         tool, which opens the popup; the command is not published and its spoken hint covers a failed play.
+        With the popup already open it reads the board instead, so the user is never told to open it.
         """
         if command.get("detail") == WORDLE_OPEN_DETAIL:
-            spoken = None if self.wordle_active() else await self._wordle_direct("wordle-play")
-            return spoken or command["spoken"]
+            if self.wordle_active():
+                return await self._wordle_direct("wordle-status", turn=turn_id) or WORDLE_ALREADY_OPEN
+            return await self._wordle_direct("wordle-play", turn=turn_id) or command["spoken"]
         await self._publish_command(command)
         return command["spoken"]
 
@@ -1153,7 +1156,7 @@ class SarjyAgent(WordleTools, Agent):
         if command is not None:
             if early is not None:
                 early.cancel()
-            spoken = await self._command_speech(command)
+            spoken = await self._command_speech(command, turn_id)
             # Nothing the model says is heard on a command turn; TTS remains budgeted
             # and the deterministic spoken line is the whole assistant turn.
             self._record_stage(turn_id, "release_wait_ms", reply_started, first_only=True)

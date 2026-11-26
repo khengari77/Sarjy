@@ -65,6 +65,7 @@ class AgentInput(BaseModel):
     request_id: str = Field(min_length=1, max_length=100)
     text: str = Field(min_length=1, max_length=12000)
     # Whether the Wordle popup is open, reported by the worker; None (an older worker) keeps the full Wordle rules.
+    # A retried turn/start replays the first attempt's snapshot, so its rules keep that attempt's popup state.
     wordle_open: bool | None = None
 
 

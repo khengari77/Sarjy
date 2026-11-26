@@ -464,6 +464,46 @@
         }
       }
     },
+    "/v1/changes/{change_id}/undo": {
+      "post": {
+        "summary": "Undo",
+        "description": "Undo one auto-saved change by id. Idempotent; 409 if the memory was changed since.",
+        "operationId": "undo_v1_changes__change_id__undo_post",
+        "parameters": [
+          {
+            "name": "change_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Change Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeUndone"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "summary": "Health",
@@ -1222,6 +1262,43 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/MemoryConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/agent/memory/auto": {
+      "post": {
+        "summary": "Auto Memory Route",
+        "description": "Commit a proposal without a spoken question. Only valid in ``auto`` mode and only when the policy says save.",
+        "operationId": "auto_memory_route_internal_agent_memory_auto_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryAuto"
               }
             }
           },
@@ -2020,6 +2097,17 @@
             "maxLength": 12000,
             "minLength": 1,
             "title": "Text"
+          },
+          "wordle_open": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wordle Open"
           }
         },
         "type": "object",
@@ -2082,6 +2170,52 @@
           "provider"
         ],
         "title": "BudgetReservation"
+      },
+      "ChangeUndone": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "undoable": {
+            "type": "boolean",
+            "title": "Undoable"
+          },
+          "memory_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Id"
+          },
+          "changed": {
+            "type": "boolean",
+            "title": "Changed"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "undoable",
+          "memory_id",
+          "changed"
+        ],
+        "title": "ChangeUndone"
       },
       "CommandInput": {
         "properties": {
@@ -2992,6 +3126,21 @@
         "title": "HandledAction"
       },
       "JsonValue": {},
+      "MemoryAuto": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "MemoryAuto"
+      },
       "MemoryConfirm": {
         "properties": {
           "token": {

@@ -8,6 +8,8 @@ import httpx
 from livekit.agents import llm
 from main import SarjyAgent
 from wordle_tools import (
+    POPUP_FAILED,
+    WORDLE_ALREADY_OPEN,
     WORDLE_FAILED,
     WORDLE_GAME_TOOLS,
     WORDLE_OPEN_DETAIL,
@@ -316,12 +318,14 @@ def test_turn_start_reports_the_popup_state():
     assert [body["wordle_open"] for body in bodies] == [False, True]
 
 
-def test_jev_wordle_open_command_runs_the_real_play_and_opens_the_popup():
-    seen: list[str] = []
+def test_jev_wordle_open_command_runs_the_real_play_for_the_answered_turn():
+    seen: list[tuple[str, dict]] = []
     published: list[str] = []
 
     def handler(request):
-        seen.append(request.url.path)
+        seen.append((request.url.path, json.loads(request.content)))
+        if request.url.path.endswith("wordle-status"):
+            return httpx.Response(200, json={"status": "in_progress", "spoken": "Two guesses so far, four left."})
         return httpx.Response(200, json={"status": "in_progress", "ui": "open", "spoken": "Today's Wordle is open."})
 
     command = {"detail": WORDLE_OPEN_DETAIL, "kind": "unsupported", "spoken": 'Say "play Wordle".'}
@@ -329,15 +333,48 @@ def test_jev_wordle_open_command_runs_the_real_play_and_opens_the_popup():
     async def run():
         client, agent = build(handler, published)
         async with client:
-            agent.current_turn = "turn-1"
-            assert await agent._command_speech(command) == "Today's Wordle is open."
-            # Already open: nothing is played again and the hint is spoken instead.
+            # A later utterance has already moved current_turn; the play belongs to turn A.
+            agent.current_turn = "turn-B"
+            assert await agent._command_speech(command, "turn-A") == "Today's Wordle is open."
+            assert "turn-B" not in agent.wordle_spoken
+            # Already open: the board is read back instead of telling the user to open it.
             agent.wordle_active = lambda: True
-            assert await agent._command_speech(command) == 'Say "play Wordle".'
+            assert await agent._command_speech(command, "turn-C") == "Two guesses so far, four left."
 
     asyncio.run(run())
-    assert seen == ["/internal/agent/tool/wordle-play"]
+    assert [path for path, _ in seen] == ["/internal/agent/tool/wordle-play", "/internal/agent/tool/wordle-status"]
+    assert seen[0][1]["turn_id"] == "turn-A" and seen[1][1]["turn_id"] == "turn-C"
     assert published == ["open"]
+
+
+def test_already_open_falls_back_to_an_honest_line_when_the_board_cannot_be_read():
+    def handler(request):
+        return httpx.Response(503)
+
+    command = {"detail": WORDLE_OPEN_DETAIL, "kind": "unsupported", "spoken": 'Say "play Wordle".'}
+
+    async def run():
+        client, agent = build(handler, [], active=True)
+        async with client:
+            return await agent._command_speech(command, "turn-1")
+
+    assert asyncio.run(run()) == WORDLE_ALREADY_OPEN
+
+
+def test_a_failed_popup_update_is_spoken_not_hidden():
+    async def failing_publish(_action):
+        raise RuntimeError("data channel closed")
+
+    def handler(request):
+        return httpx.Response(200, json={"status": "in_progress", "ui": "open", "spoken": "Today's Wordle is open."})
+
+    async def run():
+        client, agent = build(handler, [])
+        agent.publish_wordle = failing_publish
+        async with client:
+            return await agent._wordle_direct("wordle-play", turn="turn-1")
+
+    assert asyncio.run(run()) == f"Today's Wordle is open. {POPUP_FAILED}"
 
 
 def test_worker_and_api_agree_on_the_wordle_open_detail():
