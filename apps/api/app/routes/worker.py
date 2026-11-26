@@ -26,6 +26,7 @@ from app.domain.intro import intro_for
 from app.domain.memory_policy import Decision, Sensitivity, classify_sensitivity, plan_for_proposal
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
+from app.domain.sessions import call_is_live
 from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
 from app.infrastructure.database import Conversation, Memory, Turn, TurnMetric, UserSetting, VoiceSession
@@ -187,7 +188,29 @@ def _session_is_active(voice: VoiceSession | None, room_name: str | None, *, all
     if voice is None:
         return False
     statuses, cutoff = _session_window(allow_ended)
-    return voice.room_name == room_name and voice.status in statuses and voice.expires_at > cutoff
+    return voice.room_name == room_name and call_is_live(voice.status, voice.expires_at, cutoff, statuses=statuses)
+
+
+async def _live_conversation(db: AsyncSession, conversation_id: str, *, share: bool = False):
+    """The conversation, or 404 when it is missing or tombstoned; late worker writes must not repopulate text.
+
+    ``share`` takes a shared row lock held to the end of the request: a delete (which locks the row for update) either
+    finished first, so this 404s, or waits until this write has committed and then erases it. Writers may overlap each
+    other; only a delete is held off. Only valid where the request session itself commits the write (``finalize``).
+    ``memory/confirm``, ``memory/auto`` and ``memory-propose`` commit the request session early and write through
+    separate sessions, so a lock here would be released too soon: they only get this check. A delete that lands in that
+    instant can leave a proposal, decision, ledger or tool-call row holding the fact text (also for a fact that never
+    becomes a memory), which no later delete cleans. Nothing is exposed (the conversation is invisible and read-only),
+    but it is an erasure gap: before temporary memories get a producer, move the live check (and a shared lock) into
+    the writing transaction (tracked in issue #302).
+    """
+    statement = select(Conversation).where(Conversation.id == conversation_id)
+    if share:
+        statement = statement.with_for_update(read=True, of=Conversation)
+    conversation = await db.scalar(statement.execution_options(populate_existing=True))
+    if conversation is None or conversation.deleted_at is not None:
+        raise HTTPException(404)
+    return conversation
 
 
 def _session_guard(config: Settings):
@@ -356,9 +379,7 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
     @app.post("/internal/agent/memory/confirm")
     async def confirm_memory_route(body: MemoryConfirm, request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db, allow_ended=True)
-        conversation = await db.get(Conversation, voice.conversation_id)
-        if conversation is None:
-            raise HTTPException(404)
+        conversation = await _live_conversation(db, voice.conversation_id)
         if body.decision != "discard":
             # A proposal armed before the user turned memory off must not be savable afterwards.
             row = await db.get(UserSetting, conversation.owner_id)
@@ -389,9 +410,7 @@ def _register_auto_memory_route(app, *, config: Settings, database, guard, embed
     async def auto_memory_route(body: MemoryAuto, request: Request, db: AsyncSession = Depends(database)):
         """Commit a proposal without a spoken question. Only valid in ``auto`` mode and only when the policy says save."""
         voice = await guard(request, db, allow_ended=True)
-        conversation = await db.get(Conversation, voice.conversation_id)
-        if conversation is None:
-            raise HTTPException(404)
+        conversation = await _live_conversation(db, voice.conversation_id)
         row = await db.get(UserSetting, conversation.owner_id)
         mode = row.memory_mode if row is not None else "auto"
         if mode == "off":
@@ -505,6 +524,7 @@ def _register_session_routes(app, *, database, guard):
 
 
 async def _record_turn_metrics(db: AsyncSession, voice: VoiceSession, body: TurnMetricsInput):
+    await _live_conversation(db, voice.conversation_id)
     turn = await db.get(Turn, body.turn_id)
     if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
         raise HTTPException(404)
@@ -571,7 +591,7 @@ async def _locked_turn_context(db: AsyncSession, conversation_id: str, request_i
             select(Conversation, Turn, UserSetting)
             .outerjoin(Turn, and_(Turn.conversation_id == Conversation.id, Turn.request_id == request_id))
             .outerjoin(UserSetting, UserSetting.owner_id == Conversation.owner_id)
-            .where(Conversation.id == conversation_id)
+            .where(Conversation.id == conversation_id, Conversation.deleted_at.is_(None))
             .with_for_update(of=Conversation)
         )
     ).one_or_none()
@@ -600,6 +620,7 @@ async def _locked_turn_context_for_session(
                 VoiceSession.room_name == room_name,
                 VoiceSession.status.in_(statuses),
                 VoiceSession.expires_at > cutoff,
+                Conversation.deleted_at.is_(None),
             )
             .with_for_update(of=Conversation)
         )
@@ -774,6 +795,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
         db: AsyncSession = Depends(database),
     ):
         voice = await guard(request, db, allow_ended=True)
+        await _live_conversation(db, voice.conversation_id, share=True)
         user_turn = await db.get(Turn, body.turn_id)
         if not user_turn or user_turn.conversation_id != voice.conversation_id:
             raise HTTPException(404)
@@ -842,7 +864,11 @@ def _register_command_routes(app, *, config, database, guard, catalog, approved_
                 select(VoiceSession, Turn, Conversation)
                 .join(Turn, Turn.conversation_id == VoiceSession.conversation_id)
                 .join(Conversation, Conversation.id == Turn.conversation_id)
-                .where(VoiceSession.id == request.headers.get("x-session-id", ""), Turn.id == body.turn_id)
+                .where(
+                    VoiceSession.id == request.headers.get("x-session-id", ""),
+                    Turn.id == body.turn_id,
+                    Conversation.deleted_at.is_(None),
+                )
             )
         ).first()
         if (
@@ -856,9 +882,7 @@ def _register_command_routes(app, *, config, database, guard, catalog, approved_
             turn = await db.get(Turn, body.turn_id)
             if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
                 raise HTTPException(404)
-            conversation = await db.get(Conversation, turn.conversation_id)
-            if conversation is None:
-                raise HTTPException(404)
+            conversation = await _live_conversation(db, turn.conversation_id)
         else:
             _, turn, conversation = row
         snapshot = turn.snapshot or {}
@@ -951,6 +975,7 @@ def _register_tool_routes(app, *, config, database, guard):
                 raise HTTPException(404)
         else:
             _, turn = row
+        await _live_conversation(db, turn.conversation_id)
         policy = (turn.snapshot or {}).get("weather_policy") or {}
         decision = decide_weather_request(
             city=body.city,
@@ -1030,9 +1055,9 @@ async def _finish_tool_operation(db: AsyncSession, key: str, effect) -> dict:
 
 async def _run_memory_tool(guard, db: AsyncSession, request: Request, body, name: str, arguments: dict, effect):
     voice = await guard(request, db)
-    conversation = await db.get(Conversation, voice.conversation_id)
+    conversation = await _live_conversation(db, voice.conversation_id)
     turn = await db.get(Turn, body.turn_id)
-    if conversation is None or not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
+    if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
         raise HTTPException(404)
     try:
         claim = await claim_tool_operation(
