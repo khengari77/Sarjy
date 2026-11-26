@@ -8,6 +8,7 @@ import pytest
 from livekit.agents import llm
 from main import SarjyAgent
 from test_worker_commands import _command, _snapshot
+from wordle_tools import WORDLE_MODE_NUDGE
 
 COMMAND = _command("executed", "SetCaptionsVisible", "Captions hidden.")
 
@@ -251,6 +252,12 @@ def test_a_reply_asked_for_too_early_is_asked_for_again(monkeypatch, change):
             else:
                 agent.memory_outcome = "save"
             worker.gate.set()
+            if change == "wordle":
+                # The popup opened mid-turn: Wordle mode answers "Hello there." with the nudge, and the
+                # early reply (asked for before the popup opened) is closed and never heard.
+                assert await reply == [WORDLE_MODE_NUDGE]
+                assert len(worker.choices) == 1 and worker.closed == 1
+                return
             assert await reply == ["hello", "world"]
             assert len(worker.choices) == 2 and worker.closed == 2
 
