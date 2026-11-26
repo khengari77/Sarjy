@@ -1,12 +1,9 @@
 """Independent Day 2 integration verification.
 
-This file is deliberately test-only. Cases whose implementation is still on an
-unmerged branch (or owned by #5) are skipped with a named blocker instead of
-being replaced by a passing mock; re-run them once the dependency lands.
-The required PostgreSQL CI job fails if any selected acceptance case skips.
+This file is deliberately test-only. The required PostgreSQL CI job fails if
+any selected acceptance case skips.
 """
 
-import importlib.util
 import json
 import os
 import sqlite3
@@ -36,10 +33,6 @@ from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
 POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL", "")
-HAS_CONTEXT_ASSEMBLY = importlib.util.find_spec("app.domain.weather_permissions") is not None
-HAS_CONTEXT_OPERATIONS = importlib.util.find_spec("app.services.context_operations") is not None
-HAS_MEMORY = importlib.util.find_spec("app.services.memory") is not None
-MEMORY_BLOCKER = "blocked on PR #33 / issue #5 (memory repository not merged)"
 
 
 class FakeEmbedder:
@@ -189,7 +182,6 @@ def test_tenant_isolation_for_conversation_reads(tmp_path):
         assert other.get(f"/v1/conversations/{chat}/tool-calls").status_code == 404
 
 
-@pytest.mark.skipif(not HAS_MEMORY, reason=MEMORY_BLOCKER)
 def test_budget_denial_is_reported_before_any_provider_work(tmp_path):
     import httpx
     from app.services.memory import OpenAIEmbedder
@@ -216,7 +208,6 @@ def test_budget_denial_is_reported_before_any_provider_work(tmp_path):
         assert calls == []
 
 
-@pytest.mark.skipif(not HAS_CONTEXT_ASSEMBLY, reason="blocked on PR #34 / issue #6 (weather permissions not merged)")
 def test_weather_cannot_use_an_excluded_location_memory(tmp_path, monkeypatch):
     file, settings = configured(tmp_path)
     calls = []
@@ -263,7 +254,6 @@ def test_weather_cannot_use_an_excluded_location_memory(tmp_path, monkeypatch):
         assert calls == []
 
 
-@pytest.mark.skipif(not HAS_CONTEXT_OPERATIONS, reason="blocked on PR #35 / issue #8 (proposal service not merged)")
 def test_trip_exclusion_preserves_budget_and_undo_restores_exactly(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
@@ -304,7 +294,6 @@ def test_trip_exclusion_preserves_budget_and_undo_restores_exactly(tmp_path):
             assert db.execute("SELECT count(*) FROM context_exclusions WHERE active=1").fetchone()[0] == 0
 
 
-@pytest.mark.skipif(not HAS_MEMORY, reason=MEMORY_BLOCKER)
 def test_cross_session_recall_and_correction_versions(tmp_path):
     _, settings = configured(tmp_path)
     app = create_app(settings, embedding_adapter=FakeEmbedder())
@@ -345,7 +334,6 @@ def test_cross_session_recall_and_correction_versions(tmp_path):
         assert stale.status_code == 409, stale.text
 
 
-@pytest.mark.skipif(not HAS_MEMORY, reason=MEMORY_BLOCKER)
 def test_memory_is_owner_scoped_across_identities(tmp_path):
     _, settings = configured(tmp_path)
     app = create_app(settings, embedding_adapter=FakeEmbedder())
@@ -375,7 +363,7 @@ def test_memory_is_owner_scoped_across_identities(tmp_path):
         )
 
 
-@pytest.mark.skipif(not (HAS_MEMORY and POSTGRES_URL), reason=MEMORY_BLOCKER + " or TEST_POSTGRES_URL is not set")
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not set (disposable PostgreSQL only)")
 def test_real_pgvector_retrieval_uses_owner_scope():
     import asyncio
     import subprocess

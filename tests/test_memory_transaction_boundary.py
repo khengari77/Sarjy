@@ -54,7 +54,7 @@ def test_clean_caller_session_writes_without_touching_its_transaction(tmp_path):
     __import__("asyncio").run(run())
 
 
-def test_sqlite_busy_uses_error_code_not_message(tmp_path, monkeypatch):
+def test_sqlite_busy_uses_error_code_not_message():
     import sqlite3
 
     from app.services.memory import _sqlite_busy
@@ -68,7 +68,7 @@ def test_sqlite_busy_uses_error_code_not_message(tmp_path, monkeypatch):
     assert not _sqlite_busy(OperationalError("stmt", {}, sqlite3.OperationalError("no such table")))
 
 
-def test_postgres_preserves_uncommitted_caller_title(tmp_path):
+def test_postgres_preserves_uncommitted_caller_title():
     import os
     from uuid import uuid4
 
@@ -109,7 +109,7 @@ def test_postgres_preserves_uncommitted_caller_title(tmp_path):
     __import__("asyncio").run(run())
 
 
-def test_in_memory_static_pool_is_rejected_before_create(tmp_path):
+def test_in_memory_static_pool_is_rejected_before_create():
     from app.infrastructure.database import Base, Identity, Memory, MemoryWriteRequest
     from fastapi import HTTPException
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -144,7 +144,7 @@ def test_in_memory_static_pool_is_rejected_before_create(tmp_path):
     __import__("asyncio").run(run())
 
 
-def test_in_memory_static_pool_is_rejected_before_correction_read(tmp_path):
+def test_in_memory_static_pool_is_rejected_before_correction_read():
     from app.infrastructure.database import Base, Identity, Memory
     from fastapi import HTTPException
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine

@@ -56,7 +56,9 @@ def test_stop_refresh_task_does_not_raise_for_a_failed_task():
     asyncio.run(run())
 
 
-def test_shutdown_disposes_when_the_task_ignores_cancellation():
+def test_shutdown_disposes_when_the_task_ignores_cancellation(monkeypatch):
+    monkeypatch.setattr("app.main.REFRESH_TASK_SHUTDOWN_TIMEOUT_SECONDS", 0.2)
+
     class Engine:
         disposed = False
 

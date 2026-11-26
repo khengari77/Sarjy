@@ -1,5 +1,6 @@
 """Keep documentation linked and truthful as the implementation moves."""
 
+import os
 import re
 from pathlib import Path
 
@@ -15,9 +16,11 @@ FORBIDDEN = (
 
 
 def _files(suffix: str):
-    for path in ROOT.rglob(f"*{suffix}"):
-        if not EXCLUDED.intersection(path.parts):
-            yield path
+    for directory, subdirectories, names in os.walk(ROOT):
+        subdirectories[:] = [name for name in subdirectories if name not in EXCLUDED]
+        for name in names:
+            if name.endswith(suffix):
+                yield Path(directory) / name
 
 
 def test_local_markdown_links_resolve():
