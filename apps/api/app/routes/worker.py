@@ -197,9 +197,11 @@ async def _live_conversation(db: AsyncSession, conversation_id: str, *, share: b
     ``share`` takes a shared row lock held to the end of the request: a delete (which locks the row for update) either
     finished first, so this 404s, or waits until this write has committed and then erases it. Writers may overlap each
     other; only a delete is held off. Only valid where the request session itself commits the write (``finalize``).
-    ``memory/confirm`` and ``memory/auto`` commit the request session early and write through separate sessions, so a
-    lock here would be released too soon: they only get this check. A fact they save in the instant of a delete is a
-    global one (it outlives the chat by design); when temporary memories get a producer, the live check must move into
+    ``memory/confirm``, ``memory/auto`` and ``memory-propose`` commit the request session early and write through
+    separate sessions, so a lock here would be released too soon: they only get this check. A delete that lands in that
+    instant can leave a proposal, decision, ledger or tool-call row holding the fact text (also for a fact that never
+    becomes a memory), which no later delete cleans. Nothing is exposed (the conversation is invisible and read-only),
+    but it is an erasure gap: before temporary memories get a producer, move the live check (and a shared lock) into
     the writing transaction (tracked in issue #302).
     """
     statement = select(Conversation).where(Conversation.id == conversation_id)

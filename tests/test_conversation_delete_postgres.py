@@ -21,10 +21,12 @@ def _url():
 
 
 async def _blocked_sessions(sessions) -> int:
+    """Sessions waiting on a lock in a statement the delete issues (its row lock or the owner advisory lock)."""
     async with sessions() as observer:
         return await observer.scalar(
             text(
-                "select count(*) from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'"
+                "select count(*) from pg_stat_activity where datname = current_database() "
+                "and wait_event_type = 'Lock' and query ~* '(for no key update|pg_advisory)'"
             )
         )
 
