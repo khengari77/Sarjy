@@ -1,0 +1,426 @@
+{
+  "encoding": "mp3",
+  "texts": {
+    "full": {
+      "chars": 256,
+      "sha256": "8d5a541f201b99e8e9e1097a5a51130082dff6eed48392fb6c113bc4f387ef82"
+    },
+    "short": {
+      "chars": 31,
+      "sha256": "5bd01158566374eef1c3f665885a5e4156e64d5760fc2a4d4dd8f5c5a167c7dd"
+    }
+  },
+  "version": 1,
+  "voices": {
+    "aura-2-amalthea-en": {
+      "full": {
+        "bytes": 90576,
+        "sha256": "9215f5fc81cc4865fbe8e7a6e8384c3ed1e36f46f25cbdf000313eb8a44843bd"
+      },
+      "short": {
+        "bytes": 11376,
+        "sha256": "b6face8d3cb73203f40eb26504608dda32499907ae52bf92d07533434f74dcd1"
+      }
+    },
+    "aura-2-andromeda-en": {
+      "full": {
+        "bytes": 92304,
+        "sha256": "4227edb47141eaf83c2f1e737b0b5c8a2a6bf75ceb23e0defeaa40741f6faf8c"
+      },
+      "short": {
+        "bytes": 11376,
+        "sha256": "ec32085fa4427839257abb8f9b3680315f7896e6471d2efdc67f937227c968c6"
+      }
+    },
+    "aura-2-apollo-en": {
+      "full": {
+        "bytes": 116064,
+        "sha256": "16e629013ab30ac1a00ebde3e20e3b74898a08caaecfbd51e9c8b5b16eeb89cb"
+      },
+      "short": {
+        "bytes": 12384,
+        "sha256": "689fe95a37a1169f15c7d6bc0e792e3169f8a9a48d17a2e06fcb3612a1652fad"
+      }
+    },
+    "aura-2-arcas-en": {
+      "full": {
+        "bytes": 97344,
+        "sha256": "a9718b7811a39c09d5cd71cf3086a69d954642fe1fb6ddbbdf41f35ab7744e59"
+      },
+      "short": {
+        "bytes": 13824,
+        "sha256": "7d54110a16360c08f609fd9a17164b6ed8f09302ddc56a241e26fd4c2e11fb33"
+      }
+    },
+    "aura-2-aries-en": {
+      "full": {
+        "bytes": 99216,
+        "sha256": "5c0b0e954e2127cd0e6e68673a9baadf6779ac87649c31327fa9f996790e6697"
+      },
+      "short": {
+        "bytes": 11088,
+        "sha256": "8e86ec658f7e1d73e05203dd69aa105e049c52488259db2db6eaeb4f3fefaffd"
+      }
+    },
+    "aura-2-asteria-en": {
+      "full": {
+        "bytes": 89568,
+        "sha256": "120c182ca387d6e07a485d874c56e7db0ed5319f9e66e89435055a82680032f1"
+      },
+      "short": {
+        "bytes": 11376,
+        "sha256": "ec0cbdf62e18e83ad23fdf6085cd6946e3f38bc189dd8c12a5863f9968c89b74"
+      }
+    },
+    "aura-2-athena-en": {
+      "full": {
+        "bytes": 93168,
+        "sha256": "8c747ccaaa1dab911ef78f0227296d63f13cd75e898be880719733bcaa60f38a"
+      },
+      "short": {
+        "bytes": 12528,
+        "sha256": "adf3b11e7b2a71131f1cd9e1fff6da38e9b924a55a0f74672271e0f66c4afaac"
+      }
+    },
+    "aura-2-atlas-en": {
+      "full": {
+        "bytes": 99936,
+        "sha256": "d1a41bedce76c4840c7c441d6977612fc80571dab1c5220fde255ae295ae9cc9"
+      },
+      "short": {
+        "bytes": 12384,
+        "sha256": "05e027c98b18882e5d0ece13c98ae02399ad4dd4e6ffaa17ecfa9cf385e68d1c"
+      }
+    },
+    "aura-2-aurora-en": {
+      "full": {
+        "bytes": 98928,
+        "sha256": "d8aa69818b15575b988733c024bda2f6353adbaaf2204062b18c4a6b5bf3341f"
+      },
+      "short": {
+        "bytes": 11664,
+        "sha256": "3e2918544f233bf1cb578425371ce370620a9acf8f424d4ecef4fe654f41cc18"
+      }
+    },
+    "aura-2-callista-en": {
+      "full": {
+        "bytes": 97344,
+        "sha256": "ee4a7ec9a26d309f3b5791df188b9ac98e3b9f91a7c2eefd46e146214ef151ba"
+      },
+      "short": {
+        "bytes": 13968,
+        "sha256": "cfbfd4d57aff307fd46455771c1e4dc5b30f5d48134f37da543c836cdcf030e0"
+      }
+    },
+    "aura-2-cora-en": {
+      "full": {
+        "bytes": 98928,
+        "sha256": "1bd898088904eac21de1be74234abce72d2358f1b7535893d872cedf49e94305"
+      },
+      "short": {
+        "bytes": 11808,
+        "sha256": "6dd155146dc6af15b8d4615a16dc13975f8cff8b0238faff295980241cacfd92"
+      }
+    },
+    "aura-2-cordelia-en": {
+      "full": {
+        "bytes": 97056,
+        "sha256": "c483b98d6f8fd88e2f4803913ec7d12a83c2d6b2d853f2838d7a48108d183cc1"
+      },
+      "short": {
+        "bytes": 15408,
+        "sha256": "76fb11909ecec5655ddcf0b86c5489e802cb4748c836eedc0563d51d4e794ce7"
+      }
+    },
+    "aura-2-delia-en": {
+      "full": {
+        "bytes": 99936,
+        "sha256": "a1ce748fd7620c4d248b12295294b8724d05057e5dda63c0d50245ee14ebd18f"
+      },
+      "short": {
+        "bytes": 13248,
+        "sha256": "1b620dd6d021657cd3b453bc915c6a8854f52369807ccaf2a842b0bd3b3a438c"
+      }
+    },
+    "aura-2-draco-en": {
+      "full": {
+        "bytes": 114768,
+        "sha256": "64c50fcb20aa901f2d006b2296460f6f9b54a273441c1e8575e94fb784b31b71"
+      },
+      "short": {
+        "bytes": 13248,
+        "sha256": "0a154a9b2577289ff6741202ca93a56a92a48a7b6602be33c3d617a02703493b"
+      }
+    },
+    "aura-2-electra-en": {
+      "full": {
+        "bytes": 108864,
+        "sha256": "0c0f214574642ffeed08b2eea6c7818131370fd8ac3d3a9ef5c9a08d3c891e9c"
+      },
+      "short": {
+        "bytes": 12384,
+        "sha256": "0ac60cc6c1d44a8f13084d1162747bae4d6e066e687b0792be39e9d09bf33945"
+      }
+    },
+    "aura-2-harmonia-en": {
+      "full": {
+        "bytes": 98064,
+        "sha256": "59b1f76a83ac60621f91d2beceb5d0169440f67311061f9879a5a6f682d0f205"
+      },
+      "short": {
+        "bytes": 10656,
+        "sha256": "d5259305d40e7be33f4954045c0d4089fbac3151d9405dd745f4216c39ed1085"
+      }
+    },
+    "aura-2-helena-en": {
+      "full": {
+        "bytes": 105984,
+        "sha256": "11f5032ae7e1a7e89d66e6f437f6eecab2b6049a0e21777ed622ebc4585446de"
+      },
+      "short": {
+        "bytes": 15408,
+        "sha256": "6d9e83a6c75cf511d66126ebc33c8cfa3deb26e54efff9139a27e08e82db0eb8"
+      }
+    },
+    "aura-2-hera-en": {
+      "full": {
+        "bytes": 106704,
+        "sha256": "6e11d4f3c3491ce63ab3cd738e44e483a2b4e30d1fb614413680c7deb4a11d24"
+      },
+      "short": {
+        "bytes": 13824,
+        "sha256": "eac8d54e03f961f348129d06dfd7bedaa1170ba3c3fce2578d3e864a66f7c783"
+      }
+    },
+    "aura-2-hermes-en": {
+      "full": {
+        "bytes": 107424,
+        "sha256": "eef330ad69f7c158436b367c93a6105d3c88ade54a1eb77b7f80f1681fb18ed0"
+      },
+      "short": {
+        "bytes": 13824,
+        "sha256": "77cf30a18594d6f2e1f6a8e9044154fc0d0059cf790a16d0c35a7f7a870ceb87"
+      }
+    },
+    "aura-2-hyperion-en": {
+      "full": {
+        "bytes": 113184,
+        "sha256": "b054544f29ffc614504dd63144936ace433880beae9e25445feed86f664352da"
+      },
+      "short": {
+        "bytes": 11664,
+        "sha256": "71dfa0a7cf6085048df54cc4f0e98596efbc33c27afcf01b68c29626d97cdac5"
+      }
+    },
+    "aura-2-iris-en": {
+      "full": {
+        "bytes": 97488,
+        "sha256": "f13a631069c2a0b2f3994ac972e8d47b4cdd33b65d5ae27eb49db086462cbf9b"
+      },
+      "short": {
+        "bytes": 14544,
+        "sha256": "07365734402213f7eeadd29532a2f55c186fbdd2de8484eb805f1723b517514a"
+      }
+    },
+    "aura-2-janus-en": {
+      "full": {
+        "bytes": 116496,
+        "sha256": "68b366aa1fe0f05ae5fd790f0d03526ab6237ad72cbd36ba490fb5bbbcd62179"
+      },
+      "short": {
+        "bytes": 13824,
+        "sha256": "c7cef4360e84be187690b8ac6c42164a77e4c005ecd922df6dd56a9750b8909c"
+      }
+    },
+    "aura-2-juno-en": {
+      "full": {
+        "bytes": 104544,
+        "sha256": "6fe1380e1ba743da6d432e813f6e6e7bcbcd60550e91214b4245b0e2011776ae"
+      },
+      "short": {
+        "bytes": 14688,
+        "sha256": "601ff019ef5009c0beb34ca43b08d50a7629f25f1db75fef593e0a5fcbc7c650"
+      }
+    },
+    "aura-2-jupiter-en": {
+      "full": {
+        "bytes": 102096,
+        "sha256": "e18c158c2628ae9bc4c21ac76d83e88eb36cb287f23d8ed333c8ddaf4741cfbc"
+      },
+      "short": {
+        "bytes": 14544,
+        "sha256": "743080fff587376b69023ec061bfd0ea8e765aaf48dd1a313de3c244376e8034"
+      }
+    },
+    "aura-2-luna-en": {
+      "full": {
+        "bytes": 104256,
+        "sha256": "1180fc22e3e5201b7dbd5ffd77e15676b515d64ac526d8d488fdea60b166ec1d"
+      },
+      "short": {
+        "bytes": 13536,
+        "sha256": "992d57088086979a146b0e02c12f155065fbd5034089d3e9556cd8347e2580d0"
+      }
+    },
+    "aura-2-mars-en": {
+      "full": {
+        "bytes": 104544,
+        "sha256": "f55469f967c4b1f8fca769f09506898ede2a9067eb581797ccc05b34d1889f59"
+      },
+      "short": {
+        "bytes": 12096,
+        "sha256": "4ce74369102f21c614f5ad8fc3062477cbb85d4eeca3496d7bfc31d64fe4e419"
+      }
+    },
+    "aura-2-minerva-en": {
+      "full": {
+        "bytes": 103104,
+        "sha256": "79f988b1d99147ec14553c7eb2ecfc91563c2b200ac458687c829244bd9d8cd4"
+      },
+      "short": {
+        "bytes": 13968,
+        "sha256": "4080dfcea368ac100d98413b85cc3b386530bfe2d7131d0cc1fbcbd351612758"
+      }
+    },
+    "aura-2-neptune-en": {
+      "full": {
+        "bytes": 104256,
+        "sha256": "6e89253f154e2c959d08b9b63901ee7a8088e3dbe34207dcbb39b56fac2c04ae"
+      },
+      "short": {
+        "bytes": 13248,
+        "sha256": "9b0b1a1ba3cb4a7b3cc36ba94fcce58361c7f7ea8353d0c3a83b35001d810752"
+      }
+    },
+    "aura-2-odysseus-en": {
+      "full": {
+        "bytes": 104976,
+        "sha256": "22b018dcff3d8d04b2235caf5419cf722f5eb0d69d5a9f7eba8789de8df9b867"
+      },
+      "short": {
+        "bytes": 15264,
+        "sha256": "9aa52562f9e0f6d9206a843e16718e081d7ddd92be539d04f0cc39adcb0691d7"
+      }
+    },
+    "aura-2-ophelia-en": {
+      "full": {
+        "bytes": 115056,
+        "sha256": "a27dee3fbaa869f0f75f85ec13b8ce0e860493cf7ab1f178a0a1e66ef20e86c7"
+      },
+      "short": {
+        "bytes": 15408,
+        "sha256": "905bad5033541cf309b2b4c868e0b80e74b91b0af084c5e304676e522a684d00"
+      }
+    },
+    "aura-2-orion-en": {
+      "full": {
+        "bytes": 104256,
+        "sha256": "e7453ec57863f3019e0a1ea5064fb17858d710777759664e52af8ba7ec593fe7"
+      },
+      "short": {
+        "bytes": 13536,
+        "sha256": "6f7448a5f0808f85d543520b956af06aa7eab5b824ef1c4e8f4858803d214261"
+      }
+    },
+    "aura-2-orpheus-en": {
+      "full": {
+        "bytes": 88848,
+        "sha256": "8304fbeb5e1825dc769c669f3de118ecca0f686c4a63fb3aae172ded2f57ee98"
+      },
+      "short": {
+        "bytes": 11664,
+        "sha256": "9d9310b334e9bb15966a73f669fd09c03ed8ad75ce29fea94bfc0c270d90bd56"
+      }
+    },
+    "aura-2-pandora-en": {
+      "full": {
+        "bytes": 94176,
+        "sha256": "2f0a54e6eb7883a05bec890ac59dbda322768b1e8801d384da84f43ceb4fb6f3"
+      },
+      "short": {
+        "bytes": 14544,
+        "sha256": "71ad48e4b809378eb26c6c045dbf5bd3aff5b4ee6b1003d0d068cc16d8976041"
+      }
+    },
+    "aura-2-phoebe-en": {
+      "full": {
+        "bytes": 87264,
+        "sha256": "5a68ec929afe73e7380da21cd42650a7fc79809fec3b6fd3278532aae8d12c27"
+      },
+      "short": {
+        "bytes": 12816,
+        "sha256": "2aad3f2631b6abc5155ffb80090a577e19181293aa423d59bf7011f47244f348"
+      }
+    },
+    "aura-2-pluto-en": {
+      "full": {
+        "bytes": 96048,
+        "sha256": "778ccba9912880aca5decc3c744fc16da1a9ec182ba72df29a403a7727275bfc"
+      },
+      "short": {
+        "bytes": 13248,
+        "sha256": "89a86946e159439a3c24a31666825fcb06dea43786e4222311a63fadea750484"
+      }
+    },
+    "aura-2-saturn-en": {
+      "full": {
+        "bytes": 104976,
+        "sha256": "9061c553d1c2b78d651430cdc0e2cf7883e765558c8e9e63030cd9924e187156"
+      },
+      "short": {
+        "bytes": 12096,
+        "sha256": "e279669a73aebf88c92227211bee38fbb8927c9b7a79d48a40ade2da8c75b416"
+      }
+    },
+    "aura-2-selene-en": {
+      "full": {
+        "bytes": 104976,
+        "sha256": "b1d9cb78c63e04b9d9777033a9bc2276dcd77656e1358bd3237f39049c076043"
+      },
+      "short": {
+        "bytes": 16128,
+        "sha256": "5fd51aeb34a5279ae115603b1f8249810d49782bf25253f8a3af51a38a78c211"
+      }
+    },
+    "aura-2-thalia-en": {
+      "full": {
+        "bytes": 106704,
+        "sha256": "936e93e0646965b3f4187d0c8868b3047e9cf6d3a485e80345b2c608f4840c58"
+      },
+      "short": {
+        "bytes": 13824,
+        "sha256": "0d72e1405db7d7e0352cbb1e55b46b70e6d4f35a02e674fe606f4a5d14df685e"
+      }
+    },
+    "aura-2-theia-en": {
+      "full": {
+        "bytes": 76608,
+        "sha256": "00635d47f51e53a98e98663eed998b1982612f5269f59ffd5dba6543b436a373"
+      },
+      "short": {
+        "bytes": 11088,
+        "sha256": "4b92635769e7a51f2009cb260a26bed1a17c251f6f25bbaeb1326b89fc2eba9a"
+      }
+    },
+    "aura-2-vesta-en": {
+      "full": {
+        "bytes": 118656,
+        "sha256": "cd6086bd396e8f611b5d47c77a5d5c07fb87a88f5d887e86077372d17c1d9461"
+      },
+      "short": {
+        "bytes": 12384,
+        "sha256": "2cae1f1a8f492b6370376c1f5862ff7cddbffca558e9412580b1cb5a3aa439a8"
+      }
+    },
+    "aura-2-zeus-en": {
+      "full": {
+        "bytes": 71136,
+        "sha256": "f081a1c04ef0d246c11955a23e237b3828b1ee994ddc4c4686ca0ee838ea91c0"
+      },
+      "short": {
+        "bytes": 10944,
+        "sha256": "4c88dac2e8eb931d7fb43ebba55a9539d4c0ea5c0d9e4000ce3573265c9fd9d1"
+      }
+    }
+  }
+}
