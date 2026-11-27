@@ -28,6 +28,8 @@
   --accent: #6f5cf2;
   /* White clears 4.5:1 on the darkened accent fill. */
   --on-accent: #ffffff;
+  /* Darker fill for hover/active states; white also clears 4.5:1 here. */
+  --accent-hover: #5f4ce0;
   /* Accent used as foreground text, not as a fill. */
   --accent-text: #a596ff;
   --focus-ring: #a8b3ff;
@@ -36,6 +38,12 @@
   --status-error: #ff7d9d;
   --status-success-text: #57dfb8;
   --status-error-text: #ffb3bb;
+
+  /* Wordle tiles keep explicit pairs independent of the semantic orb colours. */
+  --wordle-correct-bg: #307770;
+  --wordle-correct-text: #f3f6ff;
+  --wordle-present-bg: #846a41;
+  --wordle-present-text: #f3f6ff;
 
   --orb-idle: #4cc9b6;
   --orb-listening: #4da8ff;
@@ -110,6 +118,8 @@
   --accent: #1a5fc8;
   /* White clears 4.5:1 on the accent fill. */
   --on-accent: #ffffff;
+  /* Darker fill for hover/active states; white also clears 4.5:1 here. */
+  --accent-hover: #154fa6;
   /* Accent used as foreground text; the fill value itself clears AA on light surfaces. */
   --accent-text: #1a5fc8;
   --focus-ring: #185ac4;
@@ -120,6 +130,12 @@
   --status-error: #c94767;
   --status-success-text: #0c7653;
   --status-error-text: #b0365a;
+
+  /* Wordle tiles keep explicit pairs independent of the semantic orb colours. */
+  --wordle-correct-bg: #0c7653;
+  --wordle-correct-text: #ffffff;
+  --wordle-present-bg: #e9b454;
+  --wordle-present-text: #122d52;
 
   /* Light counterparts for the phase colours. The dark block's bright values
      leak into light otherwise and fall below 4.5:1 as text on light surfaces. */
@@ -158,12 +174,17 @@
     --border-subtle: #72879e;
     --accent: #1a5fc8;
     --on-accent: #ffffff;
+    --accent-hover: #154fa6;
     --accent-text: #1a5fc8;
     --focus-ring: #185ac4;
     --status-success: #13976d;
     --status-error: #c94767;
     --status-success-text: #0c7653;
     --status-error-text: #b0365a;
+    --wordle-correct-bg: #0c7653;
+    --wordle-correct-text: #ffffff;
+    --wordle-present-bg: #e9b454;
+    --wordle-present-text: #122d52;
     --orb-idle: #0e7169;
     --orb-listening: #1f5fbf;
     --orb-thinking: #6b4bb5;

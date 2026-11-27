@@ -29,7 +29,7 @@
 }
 
 .chat-history .new-chat:hover:enabled {
-  background: color-mix(in srgb, var(--accent) 88%, #fff);
+  background: var(--accent-hover);
 }
 
 .chat-history .new-chat:disabled {

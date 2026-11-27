@@ -21,16 +21,19 @@ const SELECTORS: Record<ThemeBlock, string> = {
 
 /** Parse one flat rule block the same way the browser would. */
 function blockTokens(selector: string): Map<string, string> {
+  let found: Map<string, string> | undefined;
   for (const match of CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const selectors = (match[1] ?? '').split(',').map((part) => part.trim());
     if (!selectors.includes(selector)) continue;
+    if (found) throw new Error(`DUPLICATE_THEME_TOKENS:${selector}`);
     const values = new Map<string, string>();
     for (const declaration of (match[2] ?? '').matchAll(/--([\w-]+)\s*:\s*([^;]+);/g)) {
       values.set(`--${declaration[1]}`, (declaration[2] ?? '').trim().toLowerCase());
     }
-    return values;
+    found = values;
   }
-  throw new Error(`MISSING_THEME_TOKENS:${selector}`);
+  if (!found) throw new Error(`MISSING_THEME_TOKENS:${selector}`);
+  return found;
 }
 
 const TOKENS = Object.fromEntries(THEME_BLOCKS.map((block) => [block, blockTokens(SELECTORS[block])])) as Record<
@@ -67,7 +70,7 @@ function contrast(foreground: string, background: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-const SURFACES = ['--bg-app', '--bg-sidebar', '--surface-elevated'] as const;
+const SURFACES = ['--bg-app', '--bg-sidebar', '--surface-elevated', '--surface-hover', '--surface-raised'] as const;
 
 const ORB_TEXT_TOKENS = [
   '--orb-idle',
@@ -80,9 +83,25 @@ const ORB_TEXT_TOKENS = [
   '--orb-offline',
 ] as const;
 
+const WORDLE_TILE_PAIRS = [
+  ['--wordle-correct-text', '--wordle-correct-bg'],
+  ['--wordle-present-text', '--wordle-present-bg'],
+] as const;
+
 describe.each(THEME_BLOCKS)('%s theme contrast', (block) => {
   it('keeps --on-accent readable on the accent fill', () => {
     expect(contrast(token(block, '--on-accent'), token(block, '--accent')), block).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('keeps --on-accent readable on the accent hover fill', () => {
+    expect(contrast(token(block, '--on-accent'), token(block, '--accent-hover')), block).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(WORDLE_TILE_PAIRS)('keeps %s on %s at AA', (textToken, backgroundToken) => {
+    expect(
+      contrast(token(block, textToken), token(block, backgroundToken)),
+      `${block} ${textToken}`,
+    ).toBeGreaterThanOrEqual(4.5);
   });
 
   it.each(SURFACES)('keeps --accent-text at AA on %s', (surface) => {
