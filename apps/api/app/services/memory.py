@@ -27,6 +27,7 @@ from app.services.budget import guarded_openai_request, reserve_in_transaction
 from app.services.context_assembly import orm_memory_candidates
 from app.services.memory_eligibility import blocked_memory_ids
 from app.services.memory_erasure_lock import lock_owner_memories
+from app.services.memory_scope import visible_in
 
 EMBEDDING_TIMEOUT_SECONDS = 20
 CLAIM_TIMEOUT_SECONDS = 30
@@ -620,6 +621,7 @@ class MemoryService:
                 Memory.status == "active",
                 Memory.embedding.is_not(None),
                 Memory.id.not_in(excluded),
+                visible_in(conversation_id),
             )
             if db.bind.dialect.name == "postgresql":
                 distance = Memory.embedding.cosine_distance(list(vector)).label("distance")

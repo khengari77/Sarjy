@@ -17,6 +17,7 @@ from app.domain.memory_capture import clean_tool_query, parse_tool_fact
 from app.infrastructure.database import Memory
 from app.services.context_operations import MemorySearcher, keyword_search, query_tokens, recent_memories
 from app.services.memory_capture import proposal_for_capture, record_proposal
+from app.services.memory_scope import visible_in
 from app.services.voice_exclusions import discard_pending, hide_target
 
 RECALL_LIMIT = 5
@@ -38,9 +39,13 @@ def _snippet(text: str, limit: int) -> str:
     return collapsed if len(collapsed) <= limit else collapsed[: limit - 1].rstrip() + "…"
 
 
-async def _already_saved(db: AsyncSession, owner_id: str, content: str) -> bool:
+async def _already_saved(db: AsyncSession, owner_id: str, conversation_id: str, content: str) -> bool:
     wanted = " ".join(content.split()).casefold()
-    rows = await db.scalars(select(Memory.content).where(Memory.owner_id == owner_id, Memory.status == "active"))
+    rows = await db.scalars(
+        select(Memory.content).where(
+            Memory.owner_id == owner_id, Memory.status == "active", visible_in(conversation_id)
+        )
+    )
     return any(" ".join(row.split()).casefold() == wanted for row in rows)
 
 
@@ -54,7 +59,7 @@ async def memory_propose_tool(
             "error": "MEMORY_FACT_NOT_REMEMBERABLE",
             "message": "That is not a durable fact the user stated, so nothing was saved. Do not claim it was saved.",
         }
-    if await _already_saved(db, owner_id, capture.text):
+    if await _already_saved(db, owner_id, conversation_id, capture.text):
         return {
             "status": "rejected",
             "error": "MEMORY_ALREADY_SAVED",
@@ -130,6 +135,7 @@ async def memory_recall_tool(
                     Memory.id.in_([item.id for item in candidates] or ["-"]),
                     Memory.owner_id == owner_id,
                     Memory.status == "active",
+                    visible_in(conversation_id),
                 )
             )
         ).all()

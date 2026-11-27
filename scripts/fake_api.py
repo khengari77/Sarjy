@@ -22,6 +22,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def no_content(self, status: int) -> None:
+        self.send_response(status)
+        self.send_header("content-length", "0")
+        self.end_headers()
+
     def do_GET(self) -> None:
         if self.path == "/healthz":
             self.reply(200, {"status": "ok"})
@@ -55,6 +60,9 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def do_DELETE(self) -> None:
+        if self.path.split("?")[0].startswith("/v1/conversations/"):
+            self.no_content(204)
+            return
         if self.path.split("?")[0].startswith("/v1/memories/"):
             self.reply(
                 200, {**self.echo(), "method": "DELETE", "body_bytes": int(self.headers.get("content-length") or 0)}

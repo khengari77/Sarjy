@@ -214,15 +214,39 @@ def seed_memories(file, chat, memories, exclusions=()):
         db.commit()
 
 
-def start_turn(client, chat, owner, file, memories, exclusions=(), text="What is the weather?"):
+def seed_scoped_memory(file, chat, memory_id, content, scope):
+    with closing(sqlite3.connect(file)) as db, db:
+        db.execute(
+            "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,scope,"
+            "created_at,updated_at) VALUES (?, (SELECT owner_id FROM conversations WHERE id=?), ?, "
+            "'text-embedding-3-small', ?, 1, 'active', ?, '2026-11-12T00:00:00+00:00', "
+            "'2026-11-12T00:00:00+00:00')",
+            (memory_id, chat, content, chat, scope),
+        )
+        db.commit()
+
+
+def start_turn(
+    client,
+    chat,
+    owner,
+    file,
+    memories,
+    exclusions=(),
+    text="What is the weather?",
+    *,
+    session_id="session",
+    request_id="request-1",
+):
+    room = f"room-{session_id}"
     with closing(sqlite3.connect(file)) as db, db:
         db.execute(
             "INSERT INTO voice_sessions (id,conversation_id,owner_id,room_name,status,expires_at,pipeline) VALUES (?,?,?,?,?,?,?)",
             (
-                "session",
+                session_id,
                 chat,
                 owner,
-                "room",
+                room,
                 "active",
                 (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
                 json.dumps({}),
@@ -230,10 +254,8 @@ def start_turn(client, chat, owner, file, memories, exclusions=(), text="What is
         )
         db.commit()
     seed_memories(file, chat, memories, exclusions)
-    headers = {"x-agent-secret": "test-service-secret", "x-session-id": "session", "x-room-name": "room"}
-    response = client.post(
-        "/internal/agent/turn/start", headers=headers, json={"request_id": "request-1", "text": text}
-    )
+    headers = {"x-agent-secret": "test-service-secret", "x-session-id": session_id, "x-room-name": room}
+    response = client.post("/internal/agent/turn/start", headers=headers, json={"request_id": request_id, "text": text})
     assert response.status_code == 200, response.text
     return headers, response.json()
 
@@ -266,6 +288,40 @@ def test_turn_snapshot_is_one_revision_with_exclusions_and_weather_policy(tmp_pa
         assert policy["included_memory_ids"] == ["budget", "hotel"]
         assert context["canonical_prompt_sha256"] == context["manifest"]["canonical_prompt_sha256"]
         assert "Trip to Tripoli" not in json.dumps(context["messages"], ensure_ascii=False)
+
+
+def test_turn_prompt_and_snapshot_are_scoped_to_the_conversation(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat_a = client.post("/v1/conversations").json()["id"]
+        chat_b = client.post("/v1/conversations").json()["id"]
+        seed_scoped_memory(file, chat_a, "global", "Global fact", "global")
+        seed_scoped_memory(file, chat_a, "temp-a", "Temporary fact A", "conversation")
+        seed_scoped_memory(file, chat_b, "temp-b", "Temporary fact B", "conversation")
+        seed_scoped_memory(file, chat_b, "temp-b-hidden", "Hidden temporary fact B", "conversation")
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("UPDATE memories SET status='hidden' WHERE id='temp-b-hidden'")
+            db.commit()
+
+        _, result_a = start_turn(
+            client, chat_a, owner, file, memories=(), session_id="session-a", request_id="request-a"
+        )
+        _, result_b = start_turn(
+            client, chat_b, owner, file, memories=(), session_id="session-b", request_id="request-b"
+        )
+
+        context_a = result_a["context"]
+        assert {"global", "temp-a"} <= set(context_a["included_record_ids"])
+        assert "temp-b" not in context_a["included_record_ids"]
+        assert "temp-b-hidden" not in json.dumps(context_a)
+        assert "Temporary fact B" not in json.dumps(context_a)
+        assert "Hidden temporary fact B" not in json.dumps(context_a)
+
+        context_b = result_b["context"]
+        assert {"global", "temp-b"} <= set(context_b["included_record_ids"])
+        assert "temp-a" not in context_b["included_record_ids"]
+        assert "Temporary fact A" not in json.dumps(context_b)
 
 
 def test_weather_boundary_is_denied_for_excluded_and_allowed_for_explicit_or_included(tmp_path, monkeypatch):

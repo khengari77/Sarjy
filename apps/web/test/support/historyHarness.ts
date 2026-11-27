@@ -10,14 +10,24 @@ export async function mockHistory(page: Page, chats = CHATS) {
   let listCalls = 0;
   let created = 0;
   const turns: string[] = [];
+  const deleted = new Set<string>();
   await page.route('**/api/v1/conversations', async (route) => {
     if (route.request().method() === 'GET') {
       listCalls += 1;
-      await route.fulfill({ json: chats });
+      await route.fulfill({ json: chats.filter((chat) => !deleted.has(chat.id)) });
     } else {
       created += 1;
       await route.fulfill({ json: { id: 'c-new', title: 'New conversation', revision: 0 } });
     }
+  });
+  await page.route(/\/api\/v1\/conversations\/[^/?]+(\?.*)?$/, async (route) => {
+    if (route.request().method() !== 'DELETE') {
+      await route.fallback();
+      return;
+    }
+    const id = new URL(route.request().url()).pathname.split('/').pop()!;
+    deleted.add(id);
+    await route.fulfill({ status: 204 });
   });
   await page.route('**/api/v1/conversations/*/turns', async (route) => {
     turns.push(route.request().url());
@@ -29,7 +39,7 @@ export async function mockHistory(page: Page, chats = CHATS) {
   await page.route('**/api/v1/demo-session', async (route) => {
     await route.fulfill({ json: { id: 'owner' } });
   });
-  return { listCalls: () => listCalls, created: () => created, turns };
+  return { listCalls: () => listCalls, created: () => created, deleted: () => [...deleted], turns };
 }
 
 export async function allowMicrophone(page: Page) {

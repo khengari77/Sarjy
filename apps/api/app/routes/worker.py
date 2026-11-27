@@ -49,6 +49,7 @@ from app.services.memory_capture import (
     propose_memory,
     record_proposal,
 )
+from app.services.memory_scope import visible_in
 from app.services.memory_tools import (
     hidden_fact_exists,
     memory_forget_tool,
@@ -575,7 +576,9 @@ def _compile_turn_context(
         raise
 
 
-async def _model_request_memories(db: AsyncSession, owner_id: str, included_ids, candidates) -> list[Memory]:
+async def _model_request_memories(
+    db: AsyncSession, owner_id: str, conversation_id: str, included_ids, candidates
+) -> list[Memory]:
     """The memory rows behind the compiled prompt: those the candidate read loaded, plus any it did not supply."""
     rows = [candidates.rows[memory_id] for memory_id in included_ids if memory_id in candidates.rows]
     unread = [
@@ -586,7 +589,12 @@ async def _model_request_memories(db: AsyncSession, owner_id: str, included_ids,
     if unread:
         rows += (
             await db.scalars(
-                select(Memory).where(Memory.owner_id == owner_id, Memory.id.in_(unread), Memory.status == "active")
+                select(Memory).where(
+                    Memory.owner_id == owner_id,
+                    Memory.id.in_(unread),
+                    Memory.status == "active",
+                    visible_in(conversation_id),
+                )
             )
         ).all()
     return rows
@@ -741,7 +749,9 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
                 revision=settings_row.revision,
             )
         )
-        memory_rows = await _model_request_memories(db, conversation.owner_id, compiled.included_ids, inputs.memories)
+        memory_rows = await _model_request_memories(
+            db, conversation.owner_id, voice.conversation_id, compiled.included_ids, inputs.memories
+        )
         model_request = ModelRequest(
             turn_id=turn.id,
             attempt_id=str(uuid4()),

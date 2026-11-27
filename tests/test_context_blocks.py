@@ -40,13 +40,13 @@ def count_rows(file, tables):
         return {table: db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in tables}
 
 
-def add_memory(file, chat, memory_id, content, status="active", source_turn=None):
+def add_memory(file, chat, memory_id, content, status="active", source_turn=None, scope="global", source_chat=None):
     sql(
         file,
         "INSERT INTO memories (id,owner_id,content,embedding_model,source_turn_id,source_conversation_id,version,status,"
-        "created_at,updated_at) VALUES (?, (SELECT owner_id FROM conversations WHERE id=?), ?, 'text-embedding-3-small', "
-        "?, ?, 1, ?, '2026-11-12T00:00:00+00:00', '2026-11-12T00:00:00+00:00')",
-        (memory_id, chat, content, source_turn, chat, status),
+        "scope,created_at,updated_at) VALUES (?, (SELECT owner_id FROM conversations WHERE id=?), ?, "
+        "'text-embedding-3-small', ?, ?, 1, ?, ?, '2026-11-12T00:00:00+00:00', '2026-11-12T00:00:00+00:00')",
+        (memory_id, chat, content, source_turn, source_chat or chat, status, scope),
     )
 
 
@@ -156,6 +156,29 @@ def test_retraction_is_bounded_and_survives_later_reply_dependency(tmp_path):
         assert reply.status_code == 200, reply.text
         later = start_turn(client, headers, "r3")
         assert "Hello there" in json.dumps(later["messages"])
+
+
+def test_blocks_do_not_show_another_conversations_temporary_memory(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        other = client.post("/v1/conversations").json()["id"]
+        add_memory(file, chat, "global", "Global fact")
+        add_memory(file, chat, "temp-chat", "Temp in chat", scope="conversation")
+        add_memory(file, other, "temp-other", "Temp in other", scope="conversation")
+        add_memory(file, other, "temp-other-hidden", "Hidden temp in other", status="hidden", scope="conversation")
+
+        body = blocks(client, chat)
+        assert {"global", "temp-chat"} <= {block["id"] for block in body["blocks"]}
+        assert "temp-other" not in {block["id"] for block in body["blocks"]}
+        assert "temp-other-hidden" not in {block["id"] for block in body["blocks"]}
+        assert "Temp in other" not in json.dumps(body)
+        assert "Hidden temp in other" not in json.dumps(body)
+
+        mirror = blocks(client, other)
+        assert {"global", "temp-other", "temp-other-hidden"} <= {block["id"] for block in mirror["blocks"]}
+        assert "temp-chat" not in {block["id"] for block in mirror["blocks"]}
+        assert "Temp in chat" not in json.dumps(mirror)
 
 
 def test_blocks_endpoint_states_counts_and_no_writes(tmp_path):

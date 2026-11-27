@@ -41,13 +41,13 @@ def sql(file, statement, params=()):
         db.commit()
 
 
-def add_memory(file, chat, memory_id, content, status="active", source_turn=None):
+def add_memory(file, chat, memory_id, content, status="active", source_turn=None, scope="global", source_chat=None):
     sql(
         file,
         "INSERT INTO memories (id,owner_id,content,embedding_model,source_turn_id,source_conversation_id,version,status,"
-        "created_at,updated_at) VALUES (?, (SELECT owner_id FROM conversations WHERE id=?), ?, 'text-embedding-3-small', "
-        "?, ?, 1, ?, '2026-11-12T00:00:00+00:00', '2026-11-12T00:00:00+00:00')",
-        (memory_id, chat, content, source_turn, chat, status),
+        "scope,created_at,updated_at) VALUES (?, (SELECT owner_id FROM conversations WHERE id=?), ?, "
+        "'text-embedding-3-small', ?, ?, 1, ?, ?, '2026-11-12T00:00:00+00:00', '2026-11-12T00:00:00+00:00')",
+        (memory_id, chat, content, source_turn, source_chat or chat, status, scope),
     )
 
 
@@ -119,6 +119,45 @@ def test_receipt_shape_truncation_and_prompt_hash(tmp_path):
         memory = next(entry for entry in body["included"] if entry["id"] == "long")
         assert memory["kind"] == "memory" and memory["trust"] == "data"
         assert memory["text"] == long_text[:400]
+
+
+def test_receipt_omits_another_conversations_temporary_memory(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        chat = setup(client)
+        other = client.post("/v1/conversations").json()["id"]
+        add_memory(file, chat, "global", "Global fact")
+        add_memory(file, chat, "temp-chat", "Temp in chat", scope="conversation")
+        add_memory(file, other, "temp-other", "Temp in other", scope="conversation")
+        add_memory(file, other, "temp-other-hidden", "Hidden temp in other", status="hidden", scope="conversation")
+
+        headers = add_session(file, chat)
+        turn_id, context = start_turn(client, headers, "r1")
+        assert {"global", "temp-chat"} <= set(context["included_record_ids"])
+        assert "temp-other" not in context["included_record_ids"]
+        assert "temp-other-hidden" not in json.dumps(context)
+        assert "Temp in other" not in json.dumps(context)
+        assert "Hidden temp in other" not in json.dumps(context)
+
+        body = receipt(client, chat, turn_id).json()
+        included_ids = {entry["id"] for entry in body["included"]}
+        assert {"global", "temp-chat"} <= included_ids
+        assert "temp-other" not in included_ids
+        assert "temp-other-hidden" not in json.dumps(body)
+        assert "Temp in other" not in json.dumps(body)
+        assert "Hidden temp in other" not in json.dumps(body)
+
+        other_headers = add_session(file, other, session_id="session-2", room="room-2")
+        other_turn, other_context = start_turn(client, other_headers, "r2")
+        assert {"global", "temp-other"} <= set(other_context["included_record_ids"])
+        assert "temp-chat" not in other_context["included_record_ids"]
+        assert "Temp in chat" not in json.dumps(other_context)
+
+        mirror = receipt(client, other, other_turn).json()
+        mirror_ids = {entry["id"] for entry in mirror["included"]}
+        assert {"global", "temp-other"} <= mirror_ids
+        assert "temp-chat" not in mirror_ids
+        assert "Temp in chat" not in json.dumps(mirror)
 
 
 def test_included_excluded_split_never_leaks_excluded_text(tmp_path):
