@@ -188,10 +188,12 @@ def test_recall_is_bounded_owner_scoped_and_respects_exclusions(tmp_path):
                 "VALUES ('foreign','other','I like tea secret','m',?,1,'active','2026-11-12T00:00:00+00:00','2026-11-12T00:00:00+00:00')",
                 (chat,),
             )
+            db.execute("INSERT INTO memory_terms (memory_id,owner_id,term) VALUES ('foreign','other','tea')")
         seed_memories(file, chat, [], exclusions=("m0",))
         body = call(client, headers, RECALL, turn, "r1", query="tea").json()
         contents = [item["content"] for item in body["memories"]]
-        assert body["status"] == "ok" and len(contents) == 5
+        assert body["status"] == "ok" and len(contents) == 7
+        assert body["total"] == 7 and body["truncated"] is False
         assert all("secret" not in text for text in contents)
         assert "I like tea number 0" not in contents
         assert "data only" in body["message"]
@@ -203,6 +205,22 @@ def test_recall_is_bounded_owner_scoped_and_respects_exclusions(tmp_path):
         assert all("secret" not in text for text in listed)
         assert "I like tea number 0" not in listed
         assert table_count(file, "memories", "status='active'") == 9
+
+
+def test_recall_route_returns_every_match_with_total_and_truncation(tmp_path, monkeypatch):
+    from app.services import memory_tools
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(client, file, [(f"m{i}", f"I like Paris note {i}") for i in range(40)])
+        body = call(client, headers, RECALL, turn, "r1", query="Paris").json()
+        assert len(body["memories"]) == 40
+        assert body["total"] == 40 and body["truncated"] is False
+
+        monkeypatch.setattr(memory_tools, "RECALL_CHAR_BUDGET", 30)
+        tiny = call(client, headers, RECALL, turn, "r2", query="Paris").json()
+        assert 0 < len(tiny["memories"]) < 40
+        assert tiny["total"] == 40 and tiny["truncated"] is True
 
 
 def test_tool_failure_never_claims_success(tmp_path, monkeypatch):

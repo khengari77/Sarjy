@@ -209,6 +209,16 @@ class Memory(Base):
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
 
 
+class MemoryTerm(Base):
+    """Derived lexical terms of one memory (issue #317); the composite primary key is the unique (memory_id, term)."""
+
+    __tablename__ = "memory_terms"
+    __table_args__ = (Index("ix_memory_terms_owner_term", "owner_id", "term"),)
+    memory_id: Mapped[str] = mapped_column(String(36), ForeignKey("memories.id"), primary_key=True)
+    term: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), ForeignKey("identities.id"))
+
+
 class MemoryWriteRequest(Base):
     __tablename__ = "memory_write_requests"
     __table_args__ = (UniqueConstraint("owner_id", "request_key", name="uq_memory_write_owner_request"),)

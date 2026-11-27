@@ -105,6 +105,13 @@ def test_delete_is_a_permanent_tombstone_that_wipes_content_and_embedding(tmp_pa
             f"/v1/memories/{memory}/correct",
             json={"content": "I prefer black tea", "expected_version": 1, "idempotency_key": "c1"},
         ).json()["id"]
+        with closing(sqlite3.connect(file)) as db:
+            assert (
+                db.execute(
+                    "SELECT count(*) FROM memory_terms WHERE memory_id IN (?, ?)", (memory, corrected)
+                ).fetchone()[0]
+                > 0
+            )
         assert client.delete(f"/v1/memories/{corrected}").json() == {
             "id": corrected,
             "status": "deleted",
@@ -116,6 +123,12 @@ def test_delete_is_a_permanent_tombstone_that_wipes_content_and_embedding(tmp_pa
             assert (status, content, subject) == ("deleted", "", None) and embedding in (None, "null")
         with closing(sqlite3.connect(file)) as db:
             ledger = db.execute("SELECT result, embedding FROM memory_write_requests").fetchall()
+            assert (
+                db.execute(
+                    "SELECT count(*) FROM memory_terms WHERE memory_id IN (?, ?)", (memory, corrected)
+                ).fetchone()[0]
+                == 0
+            )
         assert all(result in (None, "null") and emb in (None, "null") for result, emb in ledger)
         assert client.get("/v1/memories").json() == {"items": [], "total": 0, "next_offset": None}
         assert search_ids(client, chat) == []
