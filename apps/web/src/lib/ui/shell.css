@@ -359,3 +359,18 @@
     transition: none;
   }
 }
+
+/* On very short viewports the dock plus the compact Wordle entry can consume
+   the whole column, leaving the stage with ~0px. Let the main column scroll
+   instead of shrinking the stage: `.voice-stage` keeps a positive min-height
+   (chat.css), so the orb/status/caption remain reachable above the dock. */
+@media (max-height: 480px) {
+  .main-column {
+    overflow-y: auto;
+  }
+
+  .stage,
+  .stage-content {
+    flex: 0 0 auto;
+  }
+}
