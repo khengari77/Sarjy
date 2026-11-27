@@ -43,7 +43,7 @@ test.describe('live change toast clears the bottom dock', () => {
         // (a) The toast never steals a control's hit target.
         await expectHit(page.getByRole('button', { name: 'End call', exact: true }), 'End');
         await expectHit(page.getByRole('button', { name: 'Mute', exact: true }), 'Mute');
-        await expectHit(page.getByRole('button', { name: 'Stop', exact: true }), 'Stop');
+        await expectHit(page.getByRole('button', { name: 'Interrupt', exact: true }), 'Interrupt');
         await expectHit(page.getByRole('button', { name: 'Send', exact: true }), 'Send');
 
         // (b) Toast above the whole dock, within the expected band.

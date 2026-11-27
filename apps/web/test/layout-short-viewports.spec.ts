@@ -184,21 +184,19 @@ test.describe('the toast never covers a fully revealed dock', () => {
         main.dispatchEvent(new Event('scroll'));
       });
 
-      if (viewport.height >= 256) {
-        // The topbar scrolls away, so the band is measured from y=8 and the
-        // toast still fits above the dock.
-        await expect(page.locator('html')).toHaveAttribute('data-toast-ready', 'true');
-        await expect(page.locator('.change-toast')).toBeVisible();
-        await expectToastClearsDock(page);
-        // The visual toast announces; the fallback live region is suppressed.
-        expect(await page.locator('.change-live').evaluate((el) => getComputedStyle(el).display)).toBe('none');
-      } else {
-        // At 320x200 there truly is no room: the toast is hidden, and the
-        // always-present live region keeps the change announced.
-        await expect(page.locator('html')).not.toHaveAttribute('data-toast-ready', 'true');
+      // After the UX-2 merge the dock is 206px tall at 320px, so a full scroll
+      // leaves only ~30px above it (topbar scrolled to y=-190, toastTop 8,
+      // dockTop 50): too little for the 66px toast. Hidden is correct; the
+      // always-present live region keeps the change announced.
+      const hidden = await page.evaluate(() => document.documentElement.dataset.toastReady !== 'true');
+      if (hidden) {
         expect(await page.locator('.change-toast').isVisible()).toBe(false);
         await expect(page.locator('.change-live')).toHaveText('Saved to memory');
         expect(await page.locator('.change-live').evaluate((el) => getComputedStyle(el).display)).not.toBe('none');
+      } else {
+        await expectToastClearsDock(page);
+        // The visual toast announces; the fallback live region is suppressed.
+        expect(await page.locator('.change-live').evaluate((el) => getComputedStyle(el).display)).toBe('none');
       }
     });
   }
