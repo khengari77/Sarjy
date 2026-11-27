@@ -12,6 +12,8 @@ export interface AgentStartupOptions {
   startup: StartupSignal;
   isActive(room: Room, epoch: number): boolean;
   emit(state: string): void;
+  /** Called once when the first live agent state resolves. */
+  onReady?(): void;
 }
 
 export async function waitForAgent(options: AgentStartupOptions): Promise<void> {
@@ -25,6 +27,7 @@ export async function waitForAgent(options: AgentStartupOptions): Promise<void> 
     const agent = [...room.remoteParticipants.values()].find((participant) => participant.isAgent);
     const state = agent?.attributes['lk.agent.state'];
     if (state && ['listening', 'thinking', 'speaking'].includes(state)) {
+      options.onReady?.();
       options.emit(state);
       return;
     }

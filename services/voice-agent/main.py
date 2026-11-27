@@ -1821,7 +1821,27 @@ def apply_control(packet, reveal: RevealState) -> None:
 INTRO_WAIT_SECONDS = 15
 
 
-async def play_greeting(session, backend, intro: Mapping[str, Any] | None, wait_for_user) -> str:
+def _record_call_stage(stages: dict[str, int | None] | None, name: str, call_started: float | None) -> None:
+    if stages is None or call_started is None:
+        return
+    stages[name] = elapsed_ms(call_started, time.perf_counter())
+
+
+def _log_call_start_stages(stages: dict[str, int | None] | None) -> None:
+    if stages is None:
+        return
+    logging.info("call_start_stages", extra=stages)
+
+
+async def play_greeting(
+    session,
+    backend,
+    intro: Mapping[str, Any] | None,
+    wait_for_user,
+    *,
+    stages: dict[str, int | None] | None = None,
+    call_started: float | None = None,
+) -> str:
     """Speak the deterministic greeting once the user is in the room; no model turn is started.
 
     Rule: the full introduction is marked seen on the API only when it played to the end. If
@@ -1831,13 +1851,19 @@ async def play_greeting(session, backend, intro: Mapping[str, Any] | None, wait_
     LiveKit transcription shows it in captions. Returns what happened, for tests and logs.
     """
     if not intro or not isinstance(intro.get("text"), str) or not intro["text"]:
+        _log_call_start_stages(stages)
         return "skipped"
     try:
         await asyncio.wait_for(wait_for_user(), timeout=INTRO_WAIT_SECONDS)
+        _record_call_stage(stages, "participant_joined", call_started)
         handle = session.say(intro["text"], allow_interruptions=True, add_to_chat_ctx=False)
+        _record_call_stage(stages, "greeting_first_audio", call_started)
         await handle.wait_for_playout()
+        _record_call_stage(stages, "greeting_done", call_started)
     except (TimeoutError, RuntimeError, ValueError, httpx.HTTPError):
         return "not_played"
+    finally:
+        _log_call_start_stages(stages)
     if handle.interrupted or handle.exception():
         return "interrupted"
     if intro.get("kind") == "full":
@@ -1861,6 +1887,8 @@ def backend_client(base_url: str, headers: dict[str, str]) -> httpx.AsyncClient:
 @server.rtc_session(agent_name=os.environ.get("LIVEKIT_AGENT_NAME", "sarjy"))
 async def entrypoint(ctx: JobContext):
     global FIRST_EVENT_SECONDS
+    call_started = time.perf_counter()
+    stages: dict[str, int | None] = {}
     values = read_worker_environment()
     FIRST_EVENT_SECONDS = first_event_seconds(values)
     require_values(values, "API_INTERNAL_URL", "AGENT_SERVICE_SECRET")
@@ -1874,6 +1902,7 @@ async def entrypoint(ctx: JobContext):
     async with backend_client(values["API_INTERNAL_URL"], headers) as backend:
         response = await backend.post("/internal/agent/bootstrap")
         response.raise_for_status()
+        _record_call_stage(stages, "bootstrap_done", call_started)
         bootstrap = response.json()
         config = bootstrap["pipeline"]
 
@@ -1948,8 +1977,16 @@ async def entrypoint(ctx: JobContext):
         await session.start(
             agent, room=ctx.room, record=False, room_options=room_io.RoomOptions(close_on_disconnect=False)
         )
+        _record_call_stage(stages, "session_started", call_started)
         greeting = asyncio.create_task(
-            play_greeting(session, backend, bootstrap.get("intro"), lambda: ctx.wait_for_participant())
+            play_greeting(
+                session,
+                backend,
+                bootstrap.get("intro"),
+                lambda: ctx.wait_for_participant(),
+                stages=stages,
+                call_started=call_started,
+            )
         )
         agent.pending.add(greeting)
         greeting.add_done_callback(agent.pending.discard)

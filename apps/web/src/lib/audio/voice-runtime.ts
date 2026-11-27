@@ -7,6 +7,7 @@ import { waitForAgent, type StartupSignal } from './agentStartup';
 import { disposeAudioResources } from './disposeAudio';
 import { bindRoomEvents, disconnectRoomInBackground } from './roomLifecycle';
 import { transcriptMetadata } from './transcriptSpeaker';
+import type { CallTimer } from '../voice/callTiming';
 
 export type VoiceEventBody =
   | { type: 'status'; source: 'transport' | 'agent'; text: string }
@@ -21,7 +22,7 @@ export type VoiceEvent = VoiceEventBody & { epoch: number };
 
 export interface VoiceRuntime {
   readonly epoch: number;
-  connect(config: SessionConfig): Promise<void>;
+  connect(config: SessionConfig, timing?: CallTimer): Promise<void>;
   startMicrophone(): Promise<void>;
   stopMicrophone(): Promise<void>;
   interrupt(): Promise<void>;
@@ -58,9 +59,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
 
   subscribe(handler: (event: VoiceEvent) => void) {
     this.handlers.add(handler);
-    return () => {
-      this.handlers.delete(handler);
-    };
+    return () => this.handlers.delete(handler);
   }
 
   private active(room: Room, epoch: number) {
@@ -71,7 +70,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
     for (const handler of this.handlers) handler({ ...event, epoch: this.sessionEpoch } as VoiceEvent);
   }
 
-  async connect(config: SessionConfig) {
+  async connect(config: SessionConfig, timing?: CallTimer) {
     // A failed previous-call teardown must never fail the call replacing it.
     await this.disconnect().catch((error: unknown) =>
       console.warn('[Sarjy] Previous voice call teardown failed', error instanceof Error ? error.name : 'unknown'),
@@ -88,6 +87,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
 
     bindings.on(RoomEvent.TrackSubscribed, (track) => {
       if (!this.active(room, epoch) || track.kind !== Track.Kind.Audio) return;
+      timing?.mark('first_agent_audio');
       const element = track.attach();
       this.audio.add(element);
       document.body.appendChild(element);
@@ -174,6 +174,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
         startup,
         isActive: (candidate, tag) => this.active(candidate, tag),
         emit: (state) => this.emit({ type: 'status', source: 'agent', text: state }),
+        onReady: () => timing?.mark('agent_state_first'),
       });
     } finally {
       if (this.startup === startup) this.startup = null;
@@ -257,8 +258,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
 
   /** Abort an in-flight connection attempt and ignore anything it still emits. */
   async cancelConnect() {
-    this.sessionEpoch += 1;
-    await this.disconnectRoom();
+    await this.disconnect();
   }
 
   async disconnect() {

@@ -1,4 +1,5 @@
 import json
+import logging
 import sqlite3
 from contextlib import closing
 from types import SimpleNamespace
@@ -471,6 +472,22 @@ def test_voice_unavailable_clears_the_preference(tmp_path, livekit_control_plane
         assert response.json()["voice"]["id"] == "aura-2-thalia-en"
         assert response.json()["saved_voice_unavailable"] == "removed"
         assert client.get("/v1/settings").json()["approved_voice_id"] is None
+
+
+def test_call_start_logs_handler_and_substep_timing_once(tmp_path, livekit_control_plane, caplog):
+    with TestClient(create_app(configured(tmp_path))) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        with caplog.at_level(logging.INFO, logger="app.routes.voice"):
+            response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201
+
+    records = [record for record in caplog.records if record.getMessage() == "voice_session_created"]
+    assert len(records) == 1
+    for key in ("server_ms", "admission_ms", "commit_ms", "dispatch_ms"):
+        value = getattr(records[0], key)
+        assert isinstance(value, int)
+        assert value >= 0
 
 
 @pytest.fixture

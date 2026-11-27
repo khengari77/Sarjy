@@ -50,3 +50,34 @@ About 10-12 ms per turn for these steps. This is a lower bound: the worker also 
   -2.5 ms worker decode, less on the wire); build the worker's request once per turn instead of twice (-4 ms); load
   memories as columns instead of ORM objects (-15-25 ms; see `read_context_inputs`).
 - Anything bigger needs fewer or parallel database round trips (#224 section C) or the design changes in #225-#227.
+
+## Measuring call start
+
+These marks are measurement only: they do not change a request, response or user-visible behaviour.
+
+Enable them in the browser with `localStorage.setItem('sarjy:call-timing', '1')`, then press the call button
+and read the single `[Sarjy call-start]` `console.info` line (or `window.__sarjyCallStart`). Development
+builds (`import.meta.env.DEV`) always record; production records only with that flag. Remove it with
+`localStorage.removeItem('sarjy:call-timing')`.
+
+Marks are milliseconds since `press`; the `steps` object is the delta between consecutive marks.
+
+| Mark | Meaning |
+|---|---|
+| `press` | the call button handler started |
+| `conversation_ready` | `ensureConversation` returned (or an existing conversation was used) |
+| `mic_ready` | microphone permission resolved (omitted when the call starts muted) |
+| `session_request_start` | `POST /v1/voice/sessions` is about to be sent |
+| `session_response` | the session response arrived |
+| `room_connected` | the LiveKit room connected and the agent reached `listening`, `thinking` or `speaking` |
+| `mic_started` | the local microphone track started publishing (omitted when muted) |
+| `agent_state_first` | the first agent state in `listening`/`thinking`/`speaking` was observed |
+| `first_agent_audio` | the remote agent audio track subscribed (present only if it happened before the report) |
+
+The API logs `voice_session_created` at info level with `server_ms` and the `admission_ms`, `commit_ms` and
+`dispatch_ms` sub-steps for the same request. It appears in CranL API logs.
+
+The worker logs `call_start_stages` at info level once per call with milliseconds since the job was accepted:
+`bootstrap_done`, `session_started`, `participant_joined`, `greeting_first_audio` (when `session.say` was
+called) and `greeting_done` (after `wait_for_playout`). It appears in the LiveKit Cloud worker logs. A call
+where the greeting never starts still logs the stages it reached.

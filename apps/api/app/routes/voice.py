@@ -1,6 +1,8 @@
 """Voice-session admission, dispatch and cleanup endpoints."""
 
 import json
+import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
@@ -26,6 +28,8 @@ from app.services.voices import (
     resolve_voice,
     saved_voice_outcome,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class StartVoice(BaseModel):
@@ -83,6 +87,7 @@ def register_voice_routes(
 ):
     @app.post("/v1/voice/sessions", status_code=201)
     async def start_voice(body: StartVoice, user=Depends(identity), db: AsyncSession = Depends(database)):
+        started = time.perf_counter()
         await owned(body.conversation_id, user, db)
         if body.language != "en":
             # Aura-2 has no Arabic; never fall back to an English voice silently.
@@ -126,6 +131,7 @@ def register_voice_routes(
             await clear_saved_voice(db, user.id)
         now = datetime.now(UTC)
         rejection = await _admission_rejection(db, user, now)
+        admission_ms = round((time.perf_counter() - started) * 1000)
         if rejection:
             raise HTTPException(429, detail={"code": rejection})
         voice = VoiceSession(
@@ -138,10 +144,13 @@ def register_voice_routes(
             pipeline=pipeline.model_dump(),
         )
         db.add(voice)
+        commit_started = time.perf_counter()
         await db.commit()
+        commit_ms = round((time.perf_counter() - commit_started) * 1000)
         from livekit import api
 
         try:
+            dispatch_started = time.perf_counter()
             async with api.LiveKitAPI(config.livekit_url, config.livekit_api_key, config.livekit_api_secret) as lk:
                 await lk.agent_dispatch.create_dispatch(
                     api.CreateAgentDispatchRequest(
@@ -150,6 +159,7 @@ def register_voice_routes(
                         metadata=json.dumps({"session_id": voice.id}),
                     )
                 )
+            dispatch_ms = round((time.perf_counter() - dispatch_started) * 1000)
             token = (
                 api.AccessToken(config.livekit_api_key, config.livekit_api_secret)
                 .with_identity(user.id)
@@ -164,6 +174,15 @@ def register_voice_routes(
                     )
                 )
                 .to_jwt()
+            )
+            logger.info(
+                "voice_session_created",
+                extra={
+                    "server_ms": round((time.perf_counter() - started) * 1000),
+                    "admission_ms": admission_ms,
+                    "commit_ms": commit_ms,
+                    "dispatch_ms": dispatch_ms,
+                },
             )
             return {
                 "id": voice.id,
