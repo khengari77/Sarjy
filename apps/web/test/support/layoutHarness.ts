@@ -114,7 +114,9 @@ export async function boot(page: Page, turns: Record<string, unknown>[] = []) {
 }
 
 export async function startLive(page: Page) {
-  await page.locator('.orb-button').click();
+  const orb = page.locator('.orb-button');
+  await expect(orb).toBeEnabled();
+  await orb.click();
   await expect(page.getByRole('button', { name: 'End call', exact: true })).toBeVisible();
 }
 
@@ -162,4 +164,57 @@ export async function expectHit(locator: Locator, label: string) {
     { x: box.x + box.width / 2, y: box.y + box.height / 2 },
   );
   expect(hit, `${label} must be the hit target at its centre`).toBe(true);
+}
+
+// The toast sits 12px above the measured dock; the bounds keep it clear of the
+// controls without floating far up the stage.
+export const TOAST_GAP_MIN = 11.5;
+export const TOAST_GAP_MAX = 24;
+// Require a real gap, not merely non-overlapping edges.
+export const CLEARANCE = 4;
+
+export async function expectToastClearsDock(page: Page) {
+  const toast = await boxOf(page.locator('.change-toast'));
+  const dock = await boxOf(page.locator('.stage-controls'));
+  const callControls = await boxOf(page.locator('.controls'));
+  const composer = await boxOf(page.locator('.composer'));
+
+  expect(intersects(toast, dock, CLEARANCE), 'toast must clear the dock by a margin').toBe(false);
+  expect(intersects(toast, callControls, CLEARANCE), 'toast must clear the call controls by a margin').toBe(false);
+  expect(intersects(toast, composer, CLEARANCE), 'toast must clear the composer by a margin').toBe(false);
+
+  const gap = dock.y - (toast.y + toast.height);
+  expect(gap, 'gap above the dock').toBeGreaterThanOrEqual(TOAST_GAP_MIN);
+  expect(gap, 'toast must stay close above the dock').toBeLessThanOrEqual(TOAST_GAP_MAX);
+
+  // Horizontal anchor follows the main column, not the window centre.
+  const column = await boxOf(page.locator('.main-column'));
+  expect(Math.abs(toast.x + toast.width / 2 - (column.x + column.width / 2))).toBeLessThanOrEqual(1);
+}
+
+export async function expectToastInsideViewport(page: Page) {
+  const toast = await boxOf(page.locator('.change-toast'));
+  const viewport = page.viewportSize()!;
+  expect(toast.x, 'toast left inside the viewport').toBeGreaterThanOrEqual(0);
+  expect(toast.y, 'toast top inside the viewport').toBeGreaterThanOrEqual(0);
+  expect(toast.x + toast.width, 'toast right inside the viewport').toBeLessThanOrEqual(viewport.width);
+  expect(toast.y + toast.height, 'toast bottom inside the viewport').toBeLessThanOrEqual(viewport.height);
+  return toast;
+}
+
+/** Hit-test at the element's centre; `hit` is true when the element (or a child) is on top. */
+export async function hitTarget(locator: Locator) {
+  return locator.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const x = rect.x + rect.width / 2;
+    const y = rect.y + rect.height / 2;
+    const node = document.elementFromPoint(x, y);
+    return {
+      x,
+      y,
+      insideViewport: x >= 0 && y >= 0 && x <= innerWidth && y <= innerHeight,
+      hit: node !== null && (node === el || el.contains(node)),
+      node: node ? `${node.tagName}.${(node as HTMLElement).className}` : null,
+    };
+  });
 }

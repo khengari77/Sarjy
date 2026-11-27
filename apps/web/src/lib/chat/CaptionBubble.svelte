@@ -28,9 +28,8 @@
   );
   const label = $derived(arabic ? 'سجل المحادثة' : 'Transcript');
   const showQuote = $derived(captionsVisible && quote !== null);
-  // The button's accessible name carries only a bounded excerpt. The live
-  // region already announces final turns, so repeating the whole caption here
-  // would read it twice and make the control's name unbounded.
+  // The button's accessible name carries only a bounded excerpt of the
+  // caption, so the control's name cannot grow with a long reply.
   const EXCERPT_LENGTH = 200;
   const ariaLabel = $derived.by(() => {
     if (!showQuote || !quote) return label;
@@ -42,7 +41,7 @@
 
 <!-- The bubble is the keyboard-accessible control that opens the right drawer
      on its Transcript tab. Partial text is visible but never announced; the
-     page owns the debounced live region for final state changes. -->
+     label is a bounded excerpt and the full text lives in the transcript. -->
 <button
   class="caption-bubble"
   class:provisional={showQuote && quote?.provisional}

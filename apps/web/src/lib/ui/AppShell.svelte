@@ -7,6 +7,7 @@
   import { createDrawerSession } from './drawerSession.svelte';
   import { createThemeSession } from './themeSession.svelte';
   import { wrapTab } from './drawerFocus';
+  import { publishDockGeometry } from './dockGeometry';
   import './shell.css';
 
   let {
@@ -48,21 +49,22 @@
   let controlsRegion = $state<HTMLElement | null>(null);
   let dialogRegion = $state<HTMLElement | null>(null);
   let mainColumn = $state<HTMLElement | null>(null);
+  let topbar = $state<HTMLElement | null>(null);
 
-  // Floating overlays (the change toast) use the dock's measured height and
-  // the main column's centre, so they clear the controls/composer at every
-  // viewport and stay over the stage when the rail is docked.
+  // Floating overlays (the change toast) use the dock's measured top and the
+  // main column's centre, so they clear the controls/composer and stay over the
+  // stage when the rail is docked. The toast stays hidden until the first valid
+  // measurement, so it never appears at the stale 96px fallback.
   $effect(() => {
     const dock = controlsRegion;
     const column = mainColumn;
     if (!dock || !column) return;
+    // Read `dir` so a language flip re-measures the column even though its
+    // width (and therefore the ResizeObserver) does not change.
+    void dir;
     const root = document.documentElement;
-    const update = () => {
-      const dockRect = dock.getBoundingClientRect();
-      const columnRect = column.getBoundingClientRect();
-      root.style.setProperty('--dock-h', `${window.innerHeight - dockRect.top}px`);
-      root.style.setProperty('--main-column-center', `${columnRect.left + columnRect.width / 2}px`);
-    };
+    const update = () =>
+      publishDockGeometry(root, dock.getBoundingClientRect(), column.getBoundingClientRect(), topbar, innerHeight);
     update();
     const observer = new ResizeObserver(update);
     observer.observe(dock);
@@ -73,6 +75,9 @@
       window.removeEventListener('resize', update);
       root.style.removeProperty('--dock-h');
       root.style.removeProperty('--main-column-center');
+      root.style.removeProperty('--toast-top');
+      root.style.removeProperty('--toast-bottom');
+      delete root.dataset.toastReady;
     };
   });
 
@@ -211,7 +216,7 @@
       <!-- While a modal drawer is open the header and stage are inert: no
            pointer targets, no tab stops and nothing exposed to assistive
            technology. -->
-      <header class="topbar" inert={backgroundInert ? true : undefined}>
+      <header class="topbar" bind:this={topbar} inert={backgroundInert ? true : undefined}>
         <div class="header-left">
           {#if left}
             <button

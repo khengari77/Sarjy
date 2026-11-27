@@ -551,6 +551,11 @@ select {
    the block under the orb only reserves what it renders. */
 @media (max-height: 480px) {
   .voice-stage {
+    /* The shell's main column scrolls here; keep a positive stage height so
+       the orb, status and caption cannot collapse to 0px. */
+    flex: 0 0 auto;
+    min-height: 240px;
+    justify-content: flex-start;
     --below-height: 88px;
     padding-top: 8px;
   }
@@ -574,6 +579,14 @@ select {
 
   .below[data-hero='true'] .idle-pill {
     margin-top: 8px;
+  }
+}
+
+/* At 200% zoom on a short phone the viewport is ~160x128. Keeping the orb at
+   its 96px floor leaves its centre inside the first screenful. */
+@media (max-height: 200px) {
+  .voice-stage {
+    --orb-max: 96px;
   }
 }
 

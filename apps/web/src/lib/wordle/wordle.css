@@ -476,6 +476,14 @@
   padding: 10px 12px 0;
 }
 
+/* At phone-landscape heights the entry would take the stage's whole height;
+   the game stays one tap away from the normal-height layout. */
+@media (max-height: 480px) {
+  .wordle-quick-entry {
+    display: none;
+  }
+}
+
 .wordle-quick-entry .wordle-entry {
   margin: 0;
 }

@@ -51,14 +51,7 @@
 </script>
 
 <footer class="composer">
-  <textarea
-    bind:this={field}
-    bind:value={draft}
-    rows="1"
-    aria-label={placeholder}
-    {placeholder}
-    {disabled}
-    oninput={fit}></textarea>
+  <textarea bind:this={field} bind:value={draft} rows="1" aria-label={placeholder} {placeholder} {disabled}></textarea>
   {#if onmic}
     <button
       type="button"

@@ -30,48 +30,75 @@
   onDestroy(() => timing.destroy());
 </script>
 
-{#if session.change}
-  <div class="change-toast" role="status" aria-live="polite">
-    <span class="change-label">{session.change.label}</span>
-    {#if session.change.undoable}
-      <button
-        type="button"
-        class="change-undo"
-        disabled={session.changeUndoing}
-        onclick={() => void session.undoChange(session.change!.id)}
-      >
-        {words.undo}
-      </button>
-    {/if}
-    <button type="button" class="change-dismiss" aria-label={words.dismiss} onclick={() => session.dismissChange()}>
-      ×
-    </button>
-    {#if session.changeError}
-      <p class="change-error" role="alert">{session.changeError}</p>
+{#if session.change || session.changeStatus}
+  <!-- Mounted outside AppShell's `.shell`, so the layer carries the UI
+       direction itself instead of inheriting the document's LTR. -->
+  <div class="change-toast-layer" dir={arabic ? 'rtl' : 'ltr'}>
+    {#if session.change}
+      <div class="change-toast" role="status" aria-live="polite">
+        <span class="change-label">{session.change.label}</span>
+        {#if session.change.undoable}
+          <button
+            type="button"
+            class="change-undo"
+            disabled={session.changeUndoing}
+            onclick={() => void session.undoChange(session.change!.id)}
+          >
+            {words.undo}
+          </button>
+        {/if}
+        <button type="button" class="change-dismiss" aria-label={words.dismiss} onclick={() => session.dismissChange()}>
+          ×
+        </button>
+        {#if session.changeError}
+          <p class="change-error" role="alert">{session.changeError}</p>
+        {/if}
+      </div>
+    {:else if session.changeStatus}
+      <p class="change-status" role="status">{session.changeStatus}</p>
     {/if}
   </div>
-{:else if session.changeStatus}
-  <p class="change-status" role="status">{session.changeStatus}</p>
 {/if}
 
 <style>
+  /* A fixed band between the topbar and the dock. Anchoring the toast to the
+     band's bottom keeps it above the controls and caps its height: when the
+     dock scrolls below a short viewport the toast sits at the viewport bottom
+     instead of leaving the screen. */
+  .change-toast-layer {
+    position: fixed;
+    top: var(--toast-top, 76px);
+    bottom: var(--toast-bottom, 108px);
+    left: var(--main-column-center, 50%);
+    z-index: 40;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    width: min(520px, calc(100vw - 32px));
+    transform: translateX(-50%);
+    pointer-events: none;
+    visibility: hidden;
+  }
+
+  :global(html[data-toast-ready]) .change-toast-layer {
+    visibility: visible;
+  }
+
   .change-toast,
   .change-status {
-    position: fixed;
-    left: var(--main-column-center, 50%);
-    bottom: calc(var(--dock-h, 96px) + 12px);
-    z-index: 40;
     display: flex;
     align-items: center;
     gap: 10px;
-    max-width: min(520px, calc(100vw - 32px));
+    max-width: 100%;
+    max-height: 100%;
     padding: 10px 12px 10px 16px;
     border: 1px solid var(--border-subtle);
     border-radius: 12px;
     background: var(--surface-elevated);
     color: var(--text-primary);
     box-shadow: 0 10px 30px rgb(0 0 0 / 0.28);
-    transform: translateX(-50%);
+    overflow-y: auto;
+    pointer-events: auto;
     animation: change-in 160ms ease-out;
   }
 
@@ -123,6 +150,14 @@
     color: var(--text-muted);
   }
 
+  /* Touch pointers get the same 44px target as Undo. */
+  @media (pointer: coarse) {
+    .change-dismiss {
+      width: 44px;
+      height: 44px;
+    }
+  }
+
   .change-dismiss:hover {
     background: var(--surface-hover);
   }
@@ -142,11 +177,11 @@
   @keyframes change-in {
     from {
       opacity: 0;
-      transform: translate(-50%, 6px);
+      transform: translateY(6px);
     }
     to {
       opacity: 1;
-      transform: translate(-50%, 0);
+      transform: translateY(0);
     }
   }
 

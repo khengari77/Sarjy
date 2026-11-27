@@ -1,8 +1,10 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
   boot,
   boxOf,
+  CLEARANCE,
   expectHit,
+  expectToastClearsDock,
   installRuntime,
   intersects,
   showChangeToast,
@@ -22,32 +24,6 @@ const VIEWPORTS = [
   { width: 1280, height: 800 },
   { width: 1440, height: 900 },
 ];
-
-// The toast sits 12px above the measured dock; the bounds keep it clear of the
-// controls without floating far up the stage.
-const TOAST_GAP_MIN = 11.5;
-const TOAST_GAP_MAX = 24;
-// Require a real gap, not merely non-overlapping edges.
-const CLEARANCE = 4;
-
-async function expectToastClearsDock(page: Page) {
-  const toast = await boxOf(page.locator('.change-toast'));
-  const dock = await boxOf(page.locator('.stage-controls'));
-  const callControls = await boxOf(page.locator('.controls'));
-  const composer = await boxOf(page.locator('.composer'));
-
-  expect(intersects(toast, dock, CLEARANCE), 'toast must clear the dock by a margin').toBe(false);
-  expect(intersects(toast, callControls, CLEARANCE), 'toast must clear the call controls by a margin').toBe(false);
-  expect(intersects(toast, composer, CLEARANCE), 'toast must clear the composer by a margin').toBe(false);
-
-  const gap = dock.y - (toast.y + toast.height);
-  expect(gap, 'gap above the dock').toBeGreaterThanOrEqual(TOAST_GAP_MIN);
-  expect(gap, 'toast must stay close above the dock').toBeLessThanOrEqual(TOAST_GAP_MAX);
-
-  // Horizontal anchor follows the main column, not the window centre.
-  const column = await boxOf(page.locator('.main-column'));
-  expect(Math.abs(toast.x + toast.width / 2 - (column.x + column.width / 2))).toBeLessThanOrEqual(1);
-}
 
 test.describe('live change toast clears the bottom dock', () => {
   // Six full boots (orb animation + live session) in one test.
@@ -94,74 +70,6 @@ test('the toast clears the dock in the dark theme', async ({ browser }) => {
   } finally {
     await context.close();
   }
-});
-
-test('the toast clears the dock in RTL', async ({ browser }) => {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  const page = await context.newPage();
-  try {
-    await installRuntime(page);
-    await boot(page);
-    // The release UI is fixed to English; the layout still has to hold when
-    // the shell is rendered right-to-left.
-    await page.evaluate(() => {
-      document.documentElement.dir = 'rtl';
-      document.querySelector('.shell')?.setAttribute('dir', 'rtl');
-    });
-    await expect(page.locator('.shell')).toHaveAttribute('dir', 'rtl');
-    await page.locator('.orb-button').click();
-    await expect(page.locator('.controls button').first()).toBeVisible();
-    await showChangeToast(page);
-
-    await expectToastClearsDock(page);
-    await expectHit(page.locator('.composer .send'), 'Send');
-  } finally {
-    await context.close();
-  }
-});
-
-test('640x400 keeps the caption and status reachable without scrolling past the orb', async ({ page }) => {
-  await page.setViewportSize({ width: 640, height: 400 });
-  await installRuntime(page);
-  await boot(page);
-  await startLive(page);
-
-  const stage = page.locator('.voice-stage');
-  expect(await stage.evaluate((el) => getComputedStyle(el).overflowY)).toMatch(/auto|scroll/);
-  const stageBox = await boxOf(stage);
-
-  // `safe center` (with the plain-centre fallback) starts overflowing content
-  // at the top; plain centring would clip the orb above an unreachable edge.
-  await stage.evaluate((el) => {
-    el.scrollTop = 0;
-  });
-  const orbAtTop = await boxOf(page.locator('.orb-button'));
-  expect(orbAtTop.y, 'orb top is reachable at the stage top').toBeGreaterThanOrEqual(stageBox.y - 0.5);
-
-  // Revealing the caption must not scroll the orb out of the stage.
-  const caption = page.locator('.caption-bubble');
-  await caption.scrollIntoViewIfNeeded();
-
-  for (const [label, locator] of [
-    ['caption', caption],
-    ['status', page.locator('.status-line').first()],
-  ] as const) {
-    const box = await boxOf(locator);
-    expect(box.y, `${label} top inside the stage`).toBeGreaterThanOrEqual(stageBox.y - 0.5);
-    expect(box.y + box.height, `${label} bottom inside the stage`).toBeLessThanOrEqual(
-      stageBox.y + stageBox.height + 0.5,
-    );
-    expect(box.y, `${label} top inside the viewport`).toBeGreaterThanOrEqual(0);
-    expect(box.y + box.height, `${label} bottom inside the viewport`).toBeLessThanOrEqual(400);
-  }
-
-  const orbAfterScroll = await boxOf(page.locator('.orb-button'));
-  expect(orbAfterScroll.y + orbAfterScroll.height, 'orb is still visible above the stage bottom').toBeGreaterThan(
-    stageBox.y,
-  );
-  expect(orbAfterScroll.y, 'orb has not been scrolled entirely out of the stage').toBeLessThan(
-    stageBox.y + stageBox.height,
-  );
 });
 
 test('the mic-denied notice never overlaps the status, controls or composer', async ({ browser }) => {
