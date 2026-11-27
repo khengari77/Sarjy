@@ -277,7 +277,7 @@ test('Escape in the right dock leaves the permanently docked history rail open',
 
   await right.click();
   await expect(right).toHaveAttribute('aria-expanded', 'true');
-  await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).focus();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Memory' }).focus();
   await page.keyboard.press('Escape');
   await expect(right).toHaveAttribute('aria-expanded', 'false');
   await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');

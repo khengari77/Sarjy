@@ -121,6 +121,13 @@
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.16);
 }
 
+@media (pointer: coarse) {
+  .theme-control .theme-button {
+    min-width: var(--min-tap-target);
+    min-height: var(--min-tap-target);
+  }
+}
+
 .icon-button,
 .ghost-button {
   font: inherit;

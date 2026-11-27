@@ -1,13 +1,14 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import DrawerCloseButton from './DrawerCloseButton.svelte';
 
   /**
    * Three panels, one concern each:
-   *  - Controls: every interactive setting (voice, speed, captions).
-   *  - Memories: the memory/context search and explorer.
+   *  - Settings: every interactive setting (voice, speed, captions).
+   *  - Memory: the memory/context search and explorer.
    *  - Transcript: the full conversation, opened from the caption bubble.
    * Appearance was removed: its theme control lives in the header and captions
-   * moved into Controls, so the panel would have been empty. The Context
+   * moved into Settings, so the panel would have been empty. The Context
    * inspector was removed by owner decision (2026-11-15): the compiled-context
    * blocks belong to the memory store, not to a fourth tab.
    */
@@ -20,7 +21,7 @@
 
   interface Props {
     arabic?: boolean;
-    /** Functional settings stay reachable in the Controls tab. */
+    /** Functional settings stay reachable in the Settings tab. */
     voicePanel?: Snippet;
     /** Transparent memory/context explorer (#43). Rendered in its own tab;
      *  the argument is true while that tab is visible. */
@@ -29,6 +30,9 @@
     transcriptPanel?: Snippet;
     /** Selected tab, bindable so command navigation can choose it. */
     activeTab?: TabId;
+    /** Closes an overlay drawer. Provided by the shell wiring; when absent no
+     *  close control is rendered because docked panels do not need one. */
+    onclose?: () => void;
   }
 
   let {
@@ -37,11 +41,12 @@
     memoryPanel,
     transcriptPanel,
     activeTab = $bindable<TabId>('controls'),
+    onclose,
   }: Props = $props();
 
   const tabs: Tab[] = [
-    { id: 'memories', label: 'Memories' },
-    { id: 'controls', label: 'Controls' },
+    { id: 'memories', label: 'Memory' },
+    { id: 'controls', label: 'Settings' },
     { id: 'transcript', label: 'Transcript' },
   ];
 
@@ -73,27 +78,30 @@
 </script>
 
 <div class="drawer" dir={arabic ? 'rtl' : 'ltr'}>
-  <div
-    class="tabs"
-    role="tablist"
-    aria-label={arabic ? 'ألواح الذاكرة والإعدادات' : 'Memory and settings panels'}
-    bind:this={tablist}
-  >
-    {#each tabs as tab, index (tab.id)}
-      <button
-        type="button"
-        role="tab"
-        id={`drawer-tab-${tab.id}`}
-        aria-selected={activeTab === tab.id}
-        aria-controls={`drawer-panel-${tab.id}`}
-        tabindex={activeTab === tab.id ? 0 : -1}
-        class="tab"
-        onclick={() => (activeTab = tab.id)}
-        onkeydown={(event) => onTabKeydown(event, index)}
-      >
-        {tab.label}
-      </button>
-    {/each}
+  <div class="drawer-top">
+    {#if onclose}<DrawerCloseButton {arabic} {onclose} />{/if}
+    <div
+      class="tabs"
+      role="tablist"
+      aria-label={arabic ? 'ألواح الذاكرة والإعدادات' : 'Memory and settings panels'}
+      bind:this={tablist}
+    >
+      {#each tabs as tab, index (tab.id)}
+        <button
+          type="button"
+          role="tab"
+          id={`drawer-tab-${tab.id}`}
+          aria-selected={activeTab === tab.id}
+          aria-controls={`drawer-panel-${tab.id}`}
+          tabindex={activeTab === tab.id ? 0 : -1}
+          class="tab"
+          onclick={() => (activeTab = tab.id)}
+          onkeydown={(event) => onTabKeydown(event, index)}
+        >
+          {tab.label}
+        </button>
+      {/each}
+    </div>
   </div>
 
   {#each tabs as tab (tab.id)}
@@ -118,7 +126,7 @@
           {@render memoryPanel(activeTab === 'memories')}
         {:else}
           <section class="placeholder-block">
-            <h2>Memories</h2>
+            <h2>Memory</h2>
             <p>No remembered items are shown yet.</p>
           </section>
         {/if}
@@ -140,15 +148,26 @@
     min-height: 100%;
   }
 
-  .tabs {
+  /* Close first in the DOM and at the inline end visually: row-reverse keeps
+     the tab order and the reading order identical to the focus order. */
+  .drawer-top {
     position: sticky;
     top: 0;
     z-index: 1;
     display: flex;
-    gap: 2px;
-    padding: 10px 12px;
+    flex-direction: row-reverse;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px;
     background: var(--bg-sidebar);
     border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .tabs {
+    display: flex;
+    flex: 1;
+    gap: 2px;
+    min-width: 0;
   }
 
   .tab {
@@ -168,6 +187,12 @@
       background var(--transition-quick),
       color var(--transition-quick),
       border-color var(--transition-quick);
+  }
+
+  @media (pointer: coarse) {
+    .tab {
+      min-height: var(--min-tap-target);
+    }
   }
 
   .tab:hover {

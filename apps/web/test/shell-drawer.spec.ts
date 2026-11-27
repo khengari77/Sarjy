@@ -91,9 +91,9 @@ test('opening a drawer moves focus inside, makes the shell inert and Escape rest
     // stray focus stop.
     await expect(page.locator('.stage-dialog [role="dialog"]')).toHaveCount(0);
 
-    // Focus landed on the first meaningful control inside the drawer, not on
-    // the drawer container itself and not on <body>.
-    await expect(drawer.getByRole('tab', { name: 'Controls' })).toBeFocused();
+    // Focus landed on the first meaningful control inside the drawer — its
+    // close button — not on the container itself and not on <body>.
+    await expect(drawer.getByRole('button', { name: 'Close' })).toBeFocused();
     expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
     expect(await drawer.evaluate((el) => el === document.activeElement)).toBe(false);
 
@@ -137,7 +137,7 @@ test('opening a drawer moves focus inside, makes the shell inert and Escape rest
     const leftDrawer = page.locator('#shell-left');
     await expect(leftDrawer).toBeVisible();
     await expect(leftDrawer).toHaveAttribute('role', 'dialog');
-    await expect(leftDrawer.getByRole('button', { name: /New conversation/ })).toBeFocused();
+    await expect(leftDrawer.getByRole('button', { name: 'Close' })).toBeFocused();
     expect(await isInert(page, '.topbar')).toBe(true);
     expect(await isInert(page, '.stage-content')).toBe(true);
 

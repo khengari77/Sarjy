@@ -146,14 +146,14 @@ test('a memory hidden or restored by voice updates in place without a reload', a
   const panel = await open(page);
   await expect(row(panel, 'Prefers tea over coffee')).toHaveAttribute('data-hidden', 'false');
 
-  await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).click();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Settings' }).click();
   calls.setFacts(FACTS.map((fact) => (fact.id === 'mem-tea' ? { ...fact, status: 'hidden' } : fact)));
-  await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Memory' }).click();
   await expect(row(panel, 'Prefers tea over coffee')).toHaveAttribute('data-hidden', 'true');
   await expect(row(panel, 'Prefers tea over coffee').getByRole('button', { name: 'Restore memory' })).toBeVisible();
 
-  await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).click();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Settings' }).click();
   calls.setFacts(FACTS);
-  await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Memory' }).click();
   await expect(row(panel, 'Prefers tea over coffee')).toHaveAttribute('data-hidden', 'false');
 });

@@ -7,7 +7,7 @@ test('GUI captions action and a voice result converge through the one settings p
 
   await withPage(browser, async (page, backend) => {
     await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
-    await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).click();
+    await page.locator('#shell-right').getByRole('tab', { name: 'Settings' }).click();
     await page.getByRole('checkbox', { name: 'Show captions' }).uncheck();
     await expect(page.locator('[data-command-kind]')).toHaveAttribute('data-command-kind', 'executed');
     guiState = await snapshot(page);

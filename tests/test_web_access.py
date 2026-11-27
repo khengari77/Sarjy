@@ -92,7 +92,7 @@ def test_built_web_requires_review_token_before_proxying():
 
                 wrong = client.get("/?token=wrong")
                 assert wrong.status_code == 200
-                assert "That link is not valid." in wrong.text
+                assert "That access code didn't work. Check it and try again." in wrong.text
                 assert "set-cookie" not in wrong.headers
 
                 exchange = client.get(f"/?token={TOKEN}", follow_redirects=False)
@@ -133,7 +133,7 @@ def test_rejected_token_form_renders_the_door():
                     rejected = submit(token)
                     assert rejected.status_code == 400
                     assert 'id="access-token"' in rejected.text
-                    assert "That link is not valid." in rejected.text
+                    assert "That access code didn't work. Check it and try again." in rejected.text
                     assert "set-cookie" not in rejected.headers
                     assert rejected.headers.get_list("cache-control") == ["no-store"]
 

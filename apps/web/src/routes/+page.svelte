@@ -5,8 +5,9 @@
   import type { ResolvedTheme } from '../lib/ui/theme';
   import type { ThemeControl } from '../lib/ui/themeSession.svelte';
   import AppShell from '../lib/ui/AppShell.svelte';
+  import { closeDrawer } from '../lib/ui/drawerControls';
   import { revealTranscript } from '../lib/ui/revealTranscript';
-  import ConversationList from '../lib/chat/ConversationList.svelte';
+  import HistoryPanel from '../lib/history/HistoryPanel.svelte';
   import VoiceStage from '../lib/chat/VoiceStage.svelte';
   import type { PendingIntent } from '../lib/chat/intent';
   import CallControls from '../lib/chat/CallControls.svelte';
@@ -67,6 +68,17 @@
   let drawerOpener = $state<HTMLElement | null>(null);
   const openTranscript = (opener: HTMLElement) =>
     revealTranscript(opener, panels, commands.state, (control) => (drawerOpener = control));
+
+  // The drawer's own close control mirrors the shell's close path: close the
+  // panel, then hand focus back to the header toggle (or the control that
+  // opened the right panel) once the background is interactive again.
+  const closeLeftPanel = closeDrawer('shell-left', (open) => (panels.history = open));
+  const closeRightPanel = closeDrawer(
+    'shell-right',
+    (open) => (panels.memory_explorer = open),
+    () => drawerOpener,
+    () => (drawerOpener = null),
+  );
   // The shell owns the theme session and hands back its setter; a voice theme
   // command applies through it once and persists in this browser only.
   let shellTheme: ThemeControl | null = null;
@@ -159,11 +171,6 @@
   });
 </script>
 
-<svelte:head>
-  <title>Sarjy — Voice Context Studio</title>
-  <meta name="description" content="An English-first voice assistant with transparent context." />
-</svelte:head>
-
 <AppShell
   bind:leftOpen={panels.history}
   bind:rightOpen={panels.memory_explorer}
@@ -178,18 +185,14 @@
   onthemeready={(control) => (shellTheme = control)}
 >
   {#snippet left()}
-    <ConversationList
-      conversations={conversation.conversations}
-      current={conversation.current}
+    <HistoryPanel
+      {conversation}
+      {voice}
       {arabic}
       {busy}
-      loading={conversation.loading}
-      error={conversation.listError}
-      callConversation={voice.live || voice.connecting ? conversation.current : null}
-      onselect={selection.requestSelect}
-      oncreate={selection.create}
-      onretry={() => run(() => conversations!.reload())}
-      ondelete={selection.remove}
+      {selection}
+      onreload={() => run(() => conversations!.reload())}
+      onclose={closeLeftPanel}
     />
   {/snippet}
 
@@ -275,6 +278,7 @@
       onspeed={(speed) => commands.setSpeakingSpeed(speed)}
       ontoggleCaptions={() => void commands.setCaptions(!commands.state.settings.captions_visible)}
       onmemorymode={(mode) => void commands.setMemoryMode(mode)}
+      onclose={closeRightPanel}
     />
   {/snippet}
 </AppShell>

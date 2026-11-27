@@ -14,6 +14,7 @@
     oncreate,
     onretry,
     ondelete,
+    onclose,
   }: {
     conversations: Conversation[];
     current: string | null;
@@ -26,6 +27,7 @@
     oncreate: () => void;
     onretry: () => void;
     ondelete: (id: string) => Promise<string>;
+    onclose?: () => void;
   } = $props();
 </script>
 
@@ -41,4 +43,5 @@
   {oncreate}
   {onretry}
   {ondelete}
+  {onclose}
 />

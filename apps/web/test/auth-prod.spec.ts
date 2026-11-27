@@ -23,7 +23,7 @@ test('manual token entry works with JavaScript disabled in a production build', 
   const page = await context.newPage();
   await page.goto(`${BASE}/`);
   await expect(page.locator('#access-token')).toBeVisible();
-  await page.getByLabel('Access token').fill(TOKEN);
+  await page.locator('#access-token').fill(TOKEN);
   await page.getByRole('button', { name: 'Enter' }).click();
   await expect(page).toHaveURL(`${BASE}/`);
   await expect(page.locator('#voice-stage')).toBeVisible();

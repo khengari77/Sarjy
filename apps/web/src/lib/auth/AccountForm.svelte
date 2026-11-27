@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { enhance } from '$app/forms';
   import { resolve } from '$app/paths';
   import type { AccountAction } from './account';
   import { OAUTH_PROVIDER_LABELS, type OAuthProvider } from './oauth';
@@ -16,7 +17,10 @@
   let { action, next, email, message, providers }: Props = $props();
   const signUp = $derived(action === 'sign-up');
   const title = $derived(signUp ? 'Create your account' : 'Sign in');
+  const pendingLabel = $derived(signUp ? 'Creating account...' : 'Signing in...');
   const query = $derived(`next=${encodeURIComponent(next)}`);
+  let submitting = $state(false);
+  let showPassword = $state(false);
 </script>
 
 <svelte:head>
@@ -28,7 +32,17 @@
   <div class="entry-orb" aria-hidden="true"></div>
   <section class="entry-panel">
     <h1 class="account-title">{title}</h1>
-    <form method="POST" class="entry-form">
+    <form
+      method="POST"
+      class="entry-form"
+      use:enhance={() => {
+        submitting = true;
+        return async ({ update }) => {
+          await update();
+          submitting = false;
+        };
+      }}
+    >
       <input type="hidden" name="next" value={next} />
       <label for="account-email">Email</label>
       <input
@@ -46,20 +60,31 @@
         aria-describedby={message ? 'account-error' : undefined}
       />
       <label for="account-password">Password</label>
-      <input
-        id="account-password"
-        name="password"
-        type="password"
-        dir="ltr"
-        autocomplete={signUp ? 'new-password' : 'current-password'}
-        minlength={signUp ? 8 : undefined}
-        required
-        aria-invalid={message ? 'true' : undefined}
-        aria-describedby={message ? 'account-error' : signUp ? 'account-hint' : undefined}
-      />
+      <div class="password-field">
+        <input
+          id="account-password"
+          name="password"
+          type={showPassword ? 'text' : 'password'}
+          dir="ltr"
+          autocomplete={signUp ? 'new-password' : 'current-password'}
+          minlength={signUp ? 8 : undefined}
+          required
+          aria-invalid={message ? 'true' : undefined}
+          aria-describedby={message ? 'account-error' : signUp ? 'account-hint' : undefined}
+        />
+        <button
+          type="button"
+          class="password-toggle"
+          aria-pressed={showPassword}
+          aria-label={showPassword ? 'Hide password' : 'Show password'}
+          onclick={() => (showPassword = !showPassword)}
+        >
+          {showPassword ? 'Hide' : 'Show'}
+        </button>
+      </div>
       {#if signUp}<p id="account-hint" class="account-hint">At least 8 characters.</p>{/if}
       <p id="account-error" class="entry-error" role="alert">{message}</p>
-      <button type="submit">{title}</button>
+      <button type="submit" disabled={submitting}>{submitting ? pendingLabel : title}</button>
     </form>
     {#if providers.length > 0}
       <div class="account-providers">

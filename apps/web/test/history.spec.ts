@@ -135,7 +135,10 @@ test('switching chats mid-call requires an explicit end and switch', async ({ pa
 
   // A live call for this chat blocks deletion until it ends.
   await page.getByRole('button', { name: 'Conversation actions for Trip to Paris' }).click();
-  await expect(page.getByRole('menu').getByRole('menuitem', { name: 'Delete' })).toBeDisabled();
+  const callMenu = page.getByRole('menu');
+  await expect(callMenu.getByRole('menuitem', { name: 'Delete' })).toBeDisabled();
+  // The reason is visible helper text inside the menu, not only sr-only copy.
+  await expect(callMenu.getByText('End the call before deleting this chat')).toBeVisible();
   await page.keyboard.press('Escape');
 
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
@@ -181,8 +184,7 @@ test('delete confirms inline, removes the chat and refreshes the list', async ({
   await page.getByRole('button', { name: 'Conversation actions for Trip to Paris' }).click();
   const menu = page.getByRole('menu');
 
-  await expect(menu.getByRole('menuitem', { name: 'Rename' })).toBeDisabled();
-  await expect(menu).toContainText('Rename needs backend support.');
+  await expect(menu.getByRole('menuitem', { name: 'Rename' })).toHaveCount(0);
   const deleteItem = menu.getByRole('menuitem', { name: 'Delete' });
   await expect(deleteItem).toBeEnabled();
 

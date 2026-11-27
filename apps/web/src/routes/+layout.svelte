@@ -12,6 +12,11 @@
   let { children, data, form }: Props = $props();
 </script>
 
+<svelte:head>
+  <title>Sarjy — Voice Context Studio</title>
+  <meta name="description" content="An English-first voice assistant with transparent context." />
+</svelte:head>
+
 {#if data.entry}
   <EntryGate
     error={data.error || !!form?.error}
@@ -19,5 +24,6 @@
     next={form?.next ?? data.next}
   />
 {:else}
+  <a class="skip-link" href="#voice-stage">Skip to voice</a>
   {@render children()}
 {/if}

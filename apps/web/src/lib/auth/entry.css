@@ -72,6 +72,45 @@
   outline-offset: 2px;
 }
 
+.password-field {
+  position: relative;
+  display: flex;
+}
+
+.password-field input {
+  flex: 1;
+  min-width: 0;
+  padding-inline-end: 68px;
+}
+
+.entry-form .password-toggle {
+  position: absolute;
+  inset-inline-end: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: var(--min-tap-target);
+  min-height: var(--min-tap-target);
+  margin: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-caption);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.entry-form .password-toggle:hover {
+  background: var(--surface-hover);
+  filter: none;
+}
+
+.entry-form button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .entry-form button {
   font: inherit;
   min-height: var(--control-height);

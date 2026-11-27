@@ -294,8 +294,8 @@ test('the right drawer exposes the three tabs, closes on Escape and returns focu
   await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
 
   const tabs = page.locator('#shell-right').getByRole('tab');
-  await expect(tabs).toHaveText(['Memories', 'Controls', 'Transcript']);
-  await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
+  await expect(tabs).toHaveText(['Memory', 'Settings', 'Transcript']);
+  await page.locator('#shell-right').getByRole('tab', { name: 'Memory' }).click();
   await expect(page.locator('#shell-right').getByTestId('memory-panel')).toBeVisible();
   await expect(page.locator('#shell-right')).toContainText('Memory & context');
 

@@ -200,7 +200,7 @@ test('turning captions off keeps the session and the transcript reachable', asyn
   await startCall(page);
 
   await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
-  await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).click();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Settings' }).click();
   await page.getByRole('checkbox', { name: 'Show captions' }).uncheck();
   // The quote goes away but the bubble stays as the way into the transcript.
   const bubble = page.getByRole('button', { name: 'Transcript', exact: true });
