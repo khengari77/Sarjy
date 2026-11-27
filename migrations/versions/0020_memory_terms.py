@@ -31,12 +31,22 @@ def _backfill():
         sa.column("term", sa.String),
         sa.column("owner_id", sa.String),
     )
-    rows = connection.execute(
-        sa.select(memories.c.id, memories.c.owner_id, memories.c.content).where(
-            memories.c.status.in_(("active", "hidden", "superseded"))
+    last_id = None
+    while True:
+        # Read one page fully before inserting: streaming a cursor while writing on the same connection is not safe
+        # on every driver.
+        query = (
+            sa.select(memories.c.id, memories.c.owner_id, memories.c.content)
+            .where(memories.c.status.in_(("active", "hidden", "superseded")))
+            .order_by(memories.c.id)
+            .limit(BACKFILL_BATCH)
         )
-    )
-    while batch := rows.fetchmany(BACKFILL_BATCH):
+        if last_id is not None:
+            query = query.where(memories.c.id > last_id)
+        batch = connection.execute(query).fetchall()
+        if not batch:
+            break
+        last_id = batch[-1].id
         values = [
             {"memory_id": memory.id, "term": term, "owner_id": memory.owner_id}
             for memory in batch
