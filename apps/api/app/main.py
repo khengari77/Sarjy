@@ -345,9 +345,17 @@ def create_app(
         )
     )
 
-    from app.routes.memory import changes_router, memory_router
+    from app.routes.memory import changes_router, memory_proposal_router, memory_router
 
     app.include_router(memory_router(database, identity, embedder))
+    app.include_router(
+        memory_proposal_router(
+            database,
+            identity,
+            embedder,
+            secret=config.context_proposal_secret or config.agent_service_secret,
+        )
+    )
     app.include_router(changes_router(database, identity))
 
     from app.routes.context import register_context_routes, register_exclusion_routes

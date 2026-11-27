@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from app.domain.context_operations import sign_proposal, verify_proposal
+from app.domain.contracts import MemoryMode
 from app.domain.memory_capture import (
     MemoryCapture,
     is_referential,
@@ -21,6 +22,7 @@ from app.domain.memory_capture import (
     parse_strict_capture,
     resolve_subject,
 )
+from app.domain.memory_policy import Decision, plan_for_proposal
 from app.infrastructure.database import Memory, MemoryWriteRequest, now
 from app.infrastructure.upsert import insert_ignore
 from app.services.leases import lease_expired, lease_expiry
@@ -255,6 +257,113 @@ async def load_proposal(db: AsyncSession, *, owner_id: str, confirmation_id: str
         return None, None
     proposal = (row.result or {}).get("proposal")
     return (proposal if isinstance(proposal, dict) else None), row.state
+
+
+def _stored_proposal(row: MemoryWriteRequest | None) -> tuple[dict | None, str | None]:
+    """The stored proposal and its signed token, unless the row was scrubbed."""
+    if row is None or not isinstance(row.result, dict) or row.result.get("scrubbed"):
+        return None, None
+    proposal = row.result.get("proposal")
+    if not isinstance(proposal, dict):
+        return None, None
+    token = proposal.get("token")
+    return proposal, token if isinstance(token, str) else None
+
+
+async def pending_proposal(db: AsyncSession, *, owner_id: str, conversation_id: str, secret: str) -> dict | None:
+    """The newest unexpired armed proposal for this conversation, as its owner sees it.
+
+    Reads only the owner's rows for this conversation. The fact comes from the
+    stored proposal snapshot, so it does not need the worker; the signed token
+    supplies the authoritative expiry.
+    """
+    if not secret:
+        return None
+    rows = (
+        await db.scalars(
+            select(MemoryWriteRequest)
+            .where(
+                MemoryWriteRequest.owner_id == owner_id,
+                MemoryWriteRequest.conversation_id == conversation_id,
+                MemoryWriteRequest.state == "proposed",
+            )
+            .order_by(MemoryWriteRequest.created_at.desc(), MemoryWriteRequest.id.desc())
+            .limit(20)
+        )
+    ).all()
+    for row in rows:
+        proposal, token = _stored_proposal(row)
+        if proposal is None or token is None:
+            continue
+        confirmation_id = proposal.get("confirmation_id")
+        fact = proposal.get("text")
+        if not isinstance(confirmation_id, str) or not isinstance(fact, str):
+            continue
+        try:
+            _, payload = _verified(token, secret, owner_id, conversation_id)
+        except MemoryCaptureError:
+            continue
+        return {
+            "id": confirmation_id,
+            "fact": fact,
+            "expires_at": datetime.fromtimestamp(int(payload["exp"]), UTC).isoformat(),
+        }
+    return None
+
+
+async def resolve_proposal(
+    db: AsyncSession,
+    memory_service: MemoryService,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    proposal_id: str,
+    decision: str,
+    secret: str,
+    mode: MemoryMode,
+) -> dict:
+    """Resolve one stored proposal by id with the same rules as the spoken yes/no."""
+    if decision not in {"save", "decline"}:
+        raise MemoryCaptureError("INVALID_DECISION", 422)
+    row = await db.scalar(
+        select(MemoryWriteRequest).where(
+            MemoryWriteRequest.owner_id == owner_id,
+            MemoryWriteRequest.conversation_id == conversation_id,
+            MemoryWriteRequest.request_key == proposal_id,
+        )
+    )
+    proposal, token = _stored_proposal(row)
+    if proposal is None or token is None:
+        raise MemoryCaptureError("MEMORY_PROPOSAL_NOT_FOUND", 404)
+    if decision == "decline":
+        return await confirm_memory(
+            db,
+            memory_service,
+            token=token,
+            decision="discard",
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            source_turn_id=None,
+            secret=secret,
+        )
+    if not secret:
+        raise MemoryCaptureError("MEMORY_CAPTURE_NOT_CONFIGURED", 503)
+    # A proposal armed before the user turned memory off in this chat must not be savable afterwards.
+    if mode == "off":
+        raise MemoryCaptureError("MEMORY_OFF", 409)
+    _, fact, explicit, negated = proposal_summary(token, secret, owner_id, conversation_id)
+    if plan_for_proposal(mode, fact, explicit=explicit, negated=negated) is Decision.SKIP:
+        raise MemoryCaptureError("MEMORY_SENSITIVE", 409)
+    return await confirm_memory(
+        db,
+        memory_service,
+        token=token,
+        decision="save",
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        source_turn_id=None,
+        secret=secret,
+    )
 
 
 async def _ensure_proposal(db: AsyncSession, *, owner_id: str, conversation_id: str, payload: dict, token: str) -> None:
@@ -1512,5 +1621,7 @@ async def _replace_target(
 __all__ = [
     "MemoryCaptureError",
     "confirm_memory",
+    "pending_proposal",
     "propose_memory",
+    "resolve_proposal",
 ]
