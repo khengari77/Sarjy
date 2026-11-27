@@ -113,6 +113,11 @@
     pointer-events: none;
   }
 
+  /* Let the full-width Undo error line wrap onto its own row. */
+  .change-toast {
+    flex-wrap: wrap;
+  }
+
   .change-label {
     min-width: 0;
     overflow: hidden;

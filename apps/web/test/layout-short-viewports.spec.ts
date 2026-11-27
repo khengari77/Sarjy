@@ -164,6 +164,37 @@ test.describe('the toast re-measures when the dock scrolls into view', () => {
   }
 });
 
+test.describe('the toast never covers a fully revealed dock', () => {
+  test.describe.configure({ timeout: 120_000 });
+
+  for (const viewport of [
+    { width: 320, height: 256 },
+    { width: 320, height: 200 },
+  ]) {
+    test(`${viewport.width}x${viewport.height} at full scroll`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await installRuntime(page);
+      await boot(page);
+      await startLive(page);
+      await showChangeToast(page);
+
+      await page.evaluate(() => {
+        const main = document.querySelector<HTMLElement>('.main-column')!;
+        main.scrollTop = main.scrollHeight - main.clientHeight;
+        main.dispatchEvent(new Event('scroll'));
+      });
+
+      const hidden = await page.evaluate(() => document.documentElement.dataset.toastReady !== 'true');
+      if (hidden) {
+        // No 40px band above the dock: the toast is hidden, not drawn over it.
+        expect(await page.locator('.change-toast').isVisible()).toBe(false);
+      } else {
+        await expectToastClearsDock(page);
+      }
+    });
+  }
+});
+
 test('the toast sits below an open drawer', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installRuntime(page);
