@@ -188,6 +188,7 @@ def test_recall_is_bounded_owner_scoped_and_respects_exclusions(tmp_path):
                 "VALUES ('foreign','other','I like tea secret','m',?,1,'active','2026-11-12T00:00:00+00:00','2026-11-12T00:00:00+00:00')",
                 (chat,),
             )
+            db.execute("INSERT INTO memory_terms (memory_id,owner_id,term) VALUES ('foreign','other','tea')")
         seed_memories(file, chat, [], exclusions=("m0",))
         body = call(client, headers, RECALL, turn, "r1", query="tea").json()
         contents = [item["content"] for item in body["memories"]]

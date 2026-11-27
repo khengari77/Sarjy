@@ -26,6 +26,8 @@ from app.services.memory_erasure_lock import lock_owner_memories  # noqa: E402
 from app.services.memory_terms import terms_of  # noqa: E402
 
 BATCH = 500
+# One INSERT binds three parameters per term row; PostgreSQL caps a statement at 32767, so insert in safe chunks.
+INSERT_CHUNK = 1000
 LIVE_STATUSES = ("active", "hidden", "superseded")
 
 
@@ -49,6 +51,17 @@ def _insert_ignoring_conflicts(connection: AsyncConnection, values: list[dict[st
     if connection.dialect.name == "sqlite":
         return sqlite_insert(MemoryTerm).values(values).prefix_with("OR IGNORE")
     return MemoryTerm.__table__.insert().values(values)
+
+
+async def _insert_terms(connection: AsyncConnection, values: list[dict[str, str]]) -> int:
+    """Insert term rows in chunks, returning how many rows the driver reports as actually written."""
+    written = 0
+    for start in range(0, len(values), INSERT_CHUNK):
+        chunk = values[start : start + INSERT_CHUNK]
+        result = await connection.execute(_insert_ignoring_conflicts(connection, chunk))
+        # INSERT ... ON CONFLICT DO NOTHING / OR IGNORE reports written rows; -1 means the driver is not counting.
+        written += result.rowcount if result.rowcount is not None and result.rowcount >= 0 else len(chunk)
+    return written
 
 
 async def backfill(url: str, *, dry_run: bool) -> int:
@@ -95,9 +108,10 @@ async def backfill(url: str, *, dry_run: bool) -> int:
                     if memory_id in live and memory_id not in indexed
                     for term in sorted(terms_of(content))
                 ]
-                inserted += len(values)
-                if values and not dry_run:
-                    await connection.execute(_insert_ignoring_conflicts(connection, values))
+                if dry_run:
+                    inserted += len(values)
+                elif values:
+                    inserted += await _insert_terms(connection, values)
     finally:
         await engine.dispose()
     return inserted

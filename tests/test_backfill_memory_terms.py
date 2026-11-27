@@ -89,6 +89,29 @@ def test_a_memory_deleted_between_read_and_insert_gets_no_terms(tmp_path, monkey
     assert ("m2", "benghazi") in terms
 
 
+def test_large_term_batches_are_chunked_under_the_driver_parameter_limit(tmp_path, monkeypatch):
+    path = tmp_path / "chunked.db"
+    terms = [f"word{index}" for index in range(9)]
+    url = create_database(path, [("m1", "active", " ".join(terms))])
+    script = load_script()
+    monkeypatch.setattr(script, "BATCH", 1)
+    monkeypatch.setattr(script, "INSERT_CHUNK", 2)
+    chunks = []
+    original = script._insert_ignoring_conflicts
+
+    def record(connection, values):
+        chunks.append(len(values))
+        return original(connection, values)
+
+    monkeypatch.setattr(script, "_insert_ignoring_conflicts", record)
+    inserted = asyncio.run(script.backfill(url, dry_run=False))
+    assert inserted == len(terms)
+    assert chunks == [2, 2, 2, 2, 1], "each statement must stay within INSERT_CHUNK rows"
+    with closing(sqlite3.connect(path)) as db:
+        rows = db.execute("SELECT term, count(*) FROM memory_terms GROUP BY term").fetchall()
+    assert sorted(rows) == sorted((term, 1) for term in terms)
+
+
 def test_a_memory_saved_by_the_app_between_read_and_insert_is_not_duplicated(tmp_path, monkeypatch):
     path = tmp_path / "saved-race.db"
     url = create_database(

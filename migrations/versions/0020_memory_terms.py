@@ -47,9 +47,17 @@ def _backfill():
         if not batch:
             break
         last_id = batch[-1].id
+        # Re-check inside the transaction: a memory read before a concurrent erase may now be deleted.
+        memory_ids = [memory.id for memory in batch]
+        live = set(
+            connection.execute(
+                sa.select(memories.c.id).where(memories.c.id.in_(memory_ids), memories.c.status != "deleted")
+            ).scalars()
+        )
         values = [
             {"memory_id": memory.id, "term": term, "owner_id": memory.owner_id}
             for memory in batch
+            if memory.id in live
             for term in terms_of(memory.content)
         ]
         if values:
