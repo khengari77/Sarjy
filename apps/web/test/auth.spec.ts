@@ -39,11 +39,21 @@ test('unauthenticated / is a token door with no app content or cookie', async ()
   expect(response.headers.get('cache-control')).toBe('no-store');
 });
 
+test('the token door keeps its own single title and no skip link', async ({ browser }) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(`${BASE}/`);
+  expect(await page.title()).toBe('Sarjy — Access');
+  expect(await page.locator('title').count()).toBe(1);
+  await expect(page.getByRole('link', { name: 'Skip to voice' })).toHaveCount(0);
+  await context.close();
+});
+
 test('a wrong token shows a generic error and sets no cookie', async () => {
   const response = await exchange('definitely-wrong');
   expect(response.status).toBe(200);
   const body = await response.text();
-  expect(body).toContain('That link is not valid.');
+  expect(body).toContain("That access code didn't work. Check it and try again.");
   expect(response.headers.get('set-cookie')).toBeNull();
 });
 
@@ -119,7 +129,7 @@ test('N exchanges succeed and N+1 is refused', async () => {
   expect(second.status).toBe(303);
   expect(third.status).toBe(200);
   expect(third.headers.get('set-cookie')).toBeNull();
-  expect(await third.text()).toContain('That link is not valid.');
+  expect(await third.text()).toContain("That access code didn't work. Check it and try again.");
   expect(await used()).toBe(2);
 });
 
@@ -181,12 +191,25 @@ test('logout works from the icon-only sign-out button on a phone', async ({ brow
   await context.close();
 });
 
-test('the form is labelled and keyboard-operable', async ({ browser }) => {
+test('the form is labelled and keyboard-operable, with a show/hide token control', async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto(`${BASE}/`);
+  const field = page.locator('#access-token');
+  await expect(field).toHaveAttribute('type', 'password');
   await page.keyboard.press('Tab');
-  await expect(page.getByLabel('Access token')).toBeFocused();
+  await expect(field).toBeFocused();
+  await page.keyboard.press('Tab');
+  const toggle = page.getByRole('button', { name: 'Show access token' });
+  await expect(toggle).toBeFocused();
+  const box = await toggle.boundingBox();
+  expect(box && box.width >= 44 && box.height >= 44).toBe(true);
+  // The page may still be hydrating; retry until the click reaches Svelte.
+  await expect(async () => {
+    await toggle.click();
+    await expect(field).toHaveAttribute('type', 'text', { timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Hide access token' })).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Enter' })).toBeFocused();
   await context.close();
@@ -196,7 +219,7 @@ test('the door works with JavaScript disabled', async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false });
   const page = await context.newPage();
   await page.goto(`${BASE}/`);
-  await page.getByLabel('Access token').fill(TOKEN);
+  await page.locator('#access-token').fill(TOKEN);
   await page.getByRole('button', { name: 'Enter' }).click();
   await expect(page).toHaveURL(`${BASE}/`);
   await expect(page.locator('#voice-stage')).toBeVisible();

@@ -30,8 +30,6 @@ export type Words = {
   memoryModeNote: string;
   undo: string;
   dismiss: string;
-  rename: string;
-  renameNeedsBackend: string;
   delete: string;
   deleteAction: string;
   deleteConfirm: string;
@@ -73,8 +71,6 @@ const EN: BaseWords = {
   memoryModeNote: 'Controls whether new facts are saved from this conversation.',
   undo: 'Undo',
   dismiss: 'Dismiss',
-  rename: 'Rename',
-  renameNeedsBackend: 'Rename needs backend support.',
   delete: 'Delete',
   deleteAction: 'Delete this chat',
   deleteConfirm: 'Delete this chat?',
@@ -114,8 +110,6 @@ const AR: BaseWords = {
   memoryModeNote: 'يتحكم في حفظ المعلومات الجديدة من هذه المحادثة.',
   undo: 'تراجع',
   dismiss: 'تجاهل',
-  rename: 'إعادة التسمية',
-  renameNeedsBackend: 'تتوفّر إعادة التسمية بعد دعم الخادم.',
   delete: 'حذف',
   deleteAction: 'حذف هذه المحادثة',
   deleteConfirm: 'حذف هذه المحادثة؟',

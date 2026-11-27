@@ -244,6 +244,11 @@
   font-size: 13px;
 }
 
+.chat-history .menu button[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .chat-history .menu p {
   margin: 6px 8px 2px;
   color: var(--text-muted);
@@ -412,6 +417,37 @@
 @media (max-width: 767px) {
   .chat-history .sidebar-foot {
     padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* Touch users cannot hover to reveal the row menu, so keep it visible (at a
+   reduced weight) whenever hover is unavailable. */
+@media (hover: none) {
+  .chat-history .menu-toggle {
+    opacity: 0.72;
+  }
+}
+
+@media (pointer: coarse) {
+  .chat-history .chat-item {
+    min-height: var(--min-tap-target);
+  }
+
+  .chat-history .menu-toggle {
+    min-width: var(--min-tap-target);
+    min-height: var(--min-tap-target);
+  }
+
+  .chat-history .clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--min-tap-target);
+    min-height: var(--min-tap-target);
+  }
+
+  .chat-history .menu .menu-actions button {
+    min-height: var(--min-tap-target);
   }
 }
 

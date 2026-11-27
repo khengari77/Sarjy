@@ -6,7 +6,7 @@
   import type { ThemeControl } from '../lib/ui/themeSession.svelte';
   import AppShell from '../lib/ui/AppShell.svelte';
   import { revealTranscript } from '../lib/ui/revealTranscript';
-  import ConversationList from '../lib/chat/ConversationList.svelte';
+  import HistoryPanel from '../lib/history/HistoryPanel.svelte';
   import VoiceStage from '../lib/chat/VoiceStage.svelte';
   import type { PendingIntent } from '../lib/chat/intent';
   import CallControls from '../lib/chat/CallControls.svelte';
@@ -67,6 +67,7 @@
   let drawerOpener = $state<HTMLElement | null>(null);
   const openTranscript = (opener: HTMLElement) =>
     revealTranscript(opener, panels, commands.state, (control) => (drawerOpener = control));
+
   // The shell owns the theme session and hands back its setter; a voice theme
   // command applies through it once and persists in this browser only.
   let shellTheme: ThemeControl | null = null;
@@ -160,10 +161,7 @@
   });
 </script>
 
-<svelte:head>
-  <title>Sarjy — Voice Context Studio</title>
-  <meta name="description" content="An English-first voice assistant with transparent context." />
-</svelte:head>
+<svelte:head><title>Sarjy — Voice Context Studio</title></svelte:head>
 
 <AppShell
   bind:leftOpen={panels.history}
@@ -179,18 +177,13 @@
   onthemeready={(control) => (shellTheme = control)}
 >
   {#snippet left()}
-    <ConversationList
-      conversations={conversation.conversations}
-      current={conversation.current}
+    <HistoryPanel
+      {conversation}
+      {voice}
       {arabic}
       {busy}
-      loading={conversation.loading}
-      error={conversation.listError}
-      callConversation={voice.live || voice.connecting ? conversation.current : null}
-      onselect={selection.requestSelect}
-      oncreate={selection.create}
-      onretry={() => run(() => conversations!.reload())}
-      ondelete={selection.remove}
+      {selection}
+      onreload={() => run(() => conversations!.reload())}
     />
   {/snippet}
 

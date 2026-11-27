@@ -22,6 +22,8 @@ export interface DrawerSessionOptions {
   overlay: () => Panel | null;
   panel: (panel: Panel) => HTMLElement | null;
   trigger: (panel: Panel) => HTMLElement | null;
+  /** The header toggle that owns the panel, used when its opener has unmounted. */
+  toggle: (panel: Panel) => HTMLElement | null;
   /** Always-reachable control strip (call controls, composer). */
   controls: () => HTMLElement | null;
   openState: (panel: Panel) => boolean;
@@ -73,10 +75,11 @@ export function createDrawerSession(options: DrawerSessionOptions) {
   }
 
   /**
-   * Breakpoint crossed between overlay drawers and docked panels. Docked
-   * panels keep the focused element mounted; collapsing docks deliberately
-   * restore focus to the panel's trigger (both docks collapse at phone width,
-   * which is the responsive default even when focus is in neither).
+   * Breakpoint crossed between overlay drawers and docked panels. Docking
+   * opens the always-visible left rail and restores focus if the hidden
+   * overlay close button held it; collapsing docks deliberately restore focus
+   * to the panel's trigger (both docks collapse at phone width, which is the
+   * responsive default even when focus is in neither).
    */
   function onBreakpoint(docked: boolean): void {
     const active = document.activeElement as HTMLElement | null;
@@ -84,27 +87,42 @@ export function createDrawerSession(options: DrawerSessionOptions) {
       (['left', 'right'] as const).find((panel) => active && options.panel(panel)?.contains(active)) ?? null;
 
     if (docked) {
-      options.setOpen('left', options.openState('left') || !options.openState('right'));
+      // The left rail is always docked at this width (its header toggle is
+      // hidden), so it must be open even when only the right drawer was open.
+      options.setOpen('left', true);
+      // Docking hides the overlay close button. If focus was on it, the browser
+      // drops focus to <body>; put it back inside the panel that had focus.
+      const panel = focusIn ?? focused;
+      void tick().then(() => {
+        const current = document.activeElement as HTMLElement | null;
+        const lost =
+          !current ||
+          current === document.body ||
+          (current.offsetParent === null && getComputedStyle(current).display === 'none');
+        if (!lost) return;
+        firstFocusable(options.panel(panel ?? 'left'))?.focus({ preventScroll: true });
+      });
       return;
     }
     options.setOpen('left', false);
     options.setOpen('right', false);
     void tick().then(() => {
-      if (focusIn) options.trigger(focusIn)?.focus({ preventScroll: true });
+      if (!focusIn) return;
+      // The opener can unmount while its panel is open (e.g. the caption
+      // bubble after the call ends); focus must land on a live element.
+      const opener = options.trigger(focusIn);
+      const target = opener?.isConnected ? opener : options.toggle(focusIn);
+      target?.focus({ preventScroll: true });
     });
   }
 
-  /** Escape target for docked panels: the open dock that holds focus. */
+  /**
+   * Escape closes an overlay drawer only. Docked panels are ordinary regions:
+   * closing one from the keyboard would hide it behind a header toggle that is
+   * itself hidden at the dock breakpoint.
+   */
   function escapeTarget(): Panel | null {
-    const modal = options.overlay();
-    if (modal) return modal;
-    const active = document.activeElement as HTMLElement | null;
-    if (!active) return null;
-    for (const panel of ['left', 'right'] as const) {
-      if (!options.openState(panel)) continue;
-      if (options.panel(panel)?.contains(active) || options.trigger(panel) === active) return panel;
-    }
-    return null;
+    return options.overlay();
   }
 
   return { onTab, escapeTarget, onBreakpoint };
