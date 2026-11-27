@@ -188,6 +188,40 @@ test('fits a 360px viewport without horizontal scroll and keeps 44px keys', asyn
   expect(Math.min(...heights)).toBeGreaterThanOrEqual(44);
 });
 
+for (const theme of ['dark', 'light'] as const) {
+  test(`a hovered correct key keeps its fill and an AA label (${theme})`, async ({ page }) => {
+    await mockWordle(page, {
+      guesses: [{ word: 'CRANE', marks: ['absent', 'present', 'absent', 'absent', 'correct'] }],
+    });
+    const dialog = await openWordle(page);
+    await page.evaluate((value) => document.documentElement.setAttribute('data-theme', value), theme);
+    const key = dialog.locator('.wordle-key[data-mark="correct"]').first();
+    await expect(key).toBeVisible();
+    await key.hover();
+    const result = await key.evaluate((node) => {
+      const rgb = (value: string): number[] => (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+      const luminance = (value: string): number => {
+        const [r, g, b] = rgb(value).map((channel) => channel / 255);
+        const linear = [r!, g!, b!].map((channel) =>
+          channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+        );
+        return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+      };
+      const style = getComputedStyle(node);
+      const tile = document.querySelector('.wordle-tile[data-mark="correct"]');
+      const [lighter, darker] = [luminance(style.color), luminance(style.backgroundColor)].sort((a, b) => b - a);
+      return {
+        background: style.backgroundColor,
+        tileBackground: tile ? getComputedStyle(tile).backgroundColor : '',
+        contrast: (lighter! + 0.05) / (darker! + 0.05),
+      };
+    });
+    expect(result.tileBackground).toBe(theme === 'dark' ? 'rgb(48, 119, 113)' : 'rgb(12, 118, 83)');
+    expect(result.background).toBe(result.tileBackground);
+    expect(result.contrast).toBeGreaterThanOrEqual(4.5);
+  });
+}
+
 const THEMES = ['dark', 'light'] as const;
 const WIDTHS = [390, 1440] as const;
 

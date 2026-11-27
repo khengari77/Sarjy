@@ -103,7 +103,7 @@
 
   .composer .send {
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
 
   .composer .mic {

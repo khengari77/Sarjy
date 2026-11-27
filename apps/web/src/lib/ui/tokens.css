@@ -25,20 +25,40 @@
      for functional boundaries against every shell surface, including
      --surface-elevated and --surface-hover. */
   --border-subtle: #75819d;
-  --accent: #7762f6;
+  --accent: #6f5cf2;
+  /* White clears 4.5:1 on the darkened accent fill. */
+  --on-accent: #ffffff;
+  /* Darker fill for hover/active states; white also clears 4.5:1 here. */
+  --accent-hover: #5f4ce0;
+  /* Accent used as foreground text, not as a fill. */
+  --accent-text: #a596ff;
   --focus-ring: #a8b3ff;
 
   --status-success: #57dfb8;
   --status-error: #ff7d9d;
+  --status-success-text: #57dfb8;
+  --status-error-text: #ffb3bb;
+
+  /* Wordle tiles keep explicit pairs independent of the semantic orb colours.
+     Dark fills reproduce origin/main's expressions against dark --bg-app
+     #080f29:
+       color-mix(in srgb, var(--status-success) 50%, var(--bg-app))
+         with --status-success #57dfb8 -> #307771
+       color-mix(in srgb, var(--orb-memory) 55%, var(--bg-app))
+         with --orb-memory #e9b454 -> #846a41 */
+  --wordle-correct-bg: #307771;
+  --wordle-correct-text: #f3f6ff;
+  --wordle-present-bg: #846a41;
+  --wordle-present-text: #f3f6ff;
 
   --orb-idle: #4cc9b6;
   --orb-listening: #4da8ff;
-  --orb-thinking: #a684f7;
+  --orb-thinking: #b09af9;
   --orb-speaking: #4add91;
   --orb-memory: #e9b454;
   --orb-confirmation: #ffa65a;
-  --orb-error: #f25565;
-  --orb-offline: #5e7189;
+  --orb-error: #ff7d8b;
+  --orb-offline: #8fa3b8;
 
   /* Living Cloud render palette (design kit v2.1 `themes.*.orbPalette`).
      orb/palette.ts reads this file directly, so the renderer, the CSS and
@@ -101,13 +121,38 @@
      for functional boundaries against every shell surface, including
      --surface-elevated and --surface-hover. */
   --border-subtle: #72879e;
-  --accent: #2475e6;
+  --accent: #1a5fc8;
+  /* White clears 4.5:1 on the accent fill. */
+  --on-accent: #ffffff;
+  /* Darker fill for hover/active states; white also clears 4.5:1 here. */
+  --accent-hover: #154fa6;
+  /* Accent used as foreground text; the fill value itself clears AA on light surfaces. */
+  --accent-text: #1a5fc8;
   --focus-ring: #185ac4;
 
   /* Kit value #15ab7b is only 2.68:1 on --bg-app; this keeps the hue and
      clears 3:1 for status glyphs. */
   --status-success: #13976d;
   --status-error: #c94767;
+  --status-success-text: #0c7653;
+  --status-error-text: #b0365a;
+
+  /* Wordle tiles keep explicit pairs independent of the semantic orb colours. */
+  --wordle-correct-bg: #0c7653;
+  --wordle-correct-text: #ffffff;
+  --wordle-present-bg: #e9b454;
+  --wordle-present-text: #122d52;
+
+  /* Light counterparts for the phase colours. The dark block's bright values
+     leak into light otherwise and fall below 4.5:1 as text on light surfaces. */
+  --orb-idle: #0e7169;
+  --orb-listening: #1f5fbf;
+  --orb-thinking: #6b4bb5;
+  --orb-speaking: #116b3a;
+  --orb-memory: #8a5a00;
+  --orb-confirmation: #a14a00;
+  --orb-error: #a3233f;
+  --orb-offline: #4d5f75;
 
   /* Sky Prism Living Cloud palette: same slots and intent as the dark theme,
      with the kit's pastel values. */
@@ -133,10 +178,27 @@
     --text-primary: #122d52;
     --text-muted: #4d678a;
     --border-subtle: #72879e;
-    --accent: #2475e6;
+    --accent: #1a5fc8;
+    --on-accent: #ffffff;
+    --accent-hover: #154fa6;
+    --accent-text: #1a5fc8;
     --focus-ring: #185ac4;
     --status-success: #13976d;
     --status-error: #c94767;
+    --status-success-text: #0c7653;
+    --status-error-text: #b0365a;
+    --wordle-correct-bg: #0c7653;
+    --wordle-correct-text: #ffffff;
+    --wordle-present-bg: #e9b454;
+    --wordle-present-text: #122d52;
+    --orb-idle: #0e7169;
+    --orb-listening: #1f5fbf;
+    --orb-thinking: #6b4bb5;
+    --orb-speaking: #116b3a;
+    --orb-memory: #8a5a00;
+    --orb-confirmation: #a14a00;
+    --orb-error: #a3233f;
+    --orb-offline: #4d5f75;
     --orb-palette-1: #9cdbff;
     --orb-palette-2: #7cdcc7;
     --orb-palette-3: #ffd37e;
