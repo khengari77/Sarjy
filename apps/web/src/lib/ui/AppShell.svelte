@@ -8,6 +8,7 @@
   import { createThemeSession } from './themeSession.svelte';
   import { wrapTab } from './drawerFocus';
   import { publishDockGeometry } from './dockGeometry';
+  import { DRAWER_CLOSE_CONTEXT, type ClosePanel } from './drawerCloseContext';
   import './shell.css';
 
   let {
@@ -88,6 +89,9 @@
   // belongs to the shell's modal layer: it is portalled into this sibling
   // region so it is never inside the inert stage. Modal focus belongs to it.
   setContext<() => HTMLElement | null>('shell-dialog-region', () => dialogRegion);
+  // Both drawer close controls call this one implementation, so focus restore
+  // and the pending-close token behave identically for Escape and the button.
+  setContext<ClosePanel>(DRAWER_CLOSE_CONTEXT, closePanel);
 
   // A panel below the dock breakpoint is a modal drawer: the rest of the shell
   // leaves the accessibility tree and the tab order (see `inert` below), and
@@ -109,6 +113,7 @@
     overlay: () => overlayPanel,
     panel: (panel) => (panel === 'left' ? leftPanel : rightPanel),
     trigger: (panel) => (panel === 'left' ? leftButton : (rightOpener ?? rightButton)),
+    toggle: (panel) => (panel === 'left' ? leftButton : rightButton),
     controls: () => controlsRegion,
     openState: (panel) => (panel === 'left' ? leftOpen : rightOpen),
     setOpen: (panel, open) => {
@@ -150,11 +155,16 @@
    */
   async function closePanel(panel: 'left' | 'right') {
     const token = ++focusRestoreToken;
+    const opener = panel === 'left' ? leftButton : rightOpener;
+    const fallback = panel === 'left' ? leftButton : rightButton;
     if (panel === 'left') leftOpen = false;
     else rightOpen = false;
     await tick();
     if (token !== focusRestoreToken) return;
-    (panel === 'left' ? leftButton : (rightOpener ?? rightButton))?.focus({ preventScroll: true });
+    // The opener can unmount while the panel is open (e.g. the caption bubble
+    // after the call ends); focus must land on a live element, never <body>.
+    const target = opener?.isConnected ? opener : fallback;
+    target?.focus({ preventScroll: true });
   }
 
   function onViewportChange(event: MediaQueryListEvent) {
@@ -262,7 +272,7 @@
         </div>
       </header>
 
-      <main class="stage" id="voice-stage">
+      <main class="stage" id="voice-stage" tabindex="-1">
         <div class="stage-content" inert={backgroundInert ? true : undefined}>
           {#if stage}{@render stage()}{/if}
         </div>
@@ -297,7 +307,6 @@
     <button
       class="scrim"
       aria-label="Close panels"
-      aria-hidden="true"
       tabindex="-1"
       onclick={() => void closePanel(overlayPanel === 'left' ? 'left' : 'right')}
     ></button>

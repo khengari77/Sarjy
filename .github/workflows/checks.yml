@@ -37,6 +37,7 @@ jobs:
         env:
           CI: "true"
       - run: pnpm --dir apps/web test:browser
+      - run: pnpm --dir apps/web test:account
       - run: pnpm --dir apps/web test:proxy
       - name: Reviewer gate (dev + production build)
         run: pnpm --dir apps/web test:auth

@@ -14,7 +14,7 @@ test('past REVIEW_ACCESS_EXPIRES_AT the token and valid-signature sessions are r
   const exchange = await fetch(`${BASE}/?token=${encodeURIComponent(TOKEN)}`, { redirect: 'manual' });
   expect(exchange.status).toBe(200);
   expect(exchange.headers.get('set-cookie')).toBeNull();
-  expect(await exchange.text()).toContain('That link is not valid.');
+  expect(await exchange.text()).toContain("That access code didn't work. Check it and try again.");
 
   // A cookie with a valid signature but an instant beyond the authoritative
   // `REVIEW_ACCESS_EXPIRES_AT` must still be treated as absent.

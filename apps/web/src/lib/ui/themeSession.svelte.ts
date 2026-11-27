@@ -28,6 +28,21 @@ export function createThemeSession(onResolved?: (theme: ResolvedTheme) => void) 
   });
 
   /**
+   * Stamp the resolved theme and keep the single theme-color meta in step.
+   * The app.html media variants are only the pre-hydration default; once the
+   * resolved theme is known, the user's choice (not the OS) owns the chrome.
+   */
+  function apply() {
+    const attributes = applyTheme(document.documentElement, preference, systemDark);
+    const metas = Array.from(document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'));
+    const meta = metas.shift();
+    for (const extra of metas) extra.remove();
+    if (!meta) return;
+    meta.removeAttribute('media');
+    meta.setAttribute('content', attributes.theme === 'light' ? '#dceaf7' : '#080f29');
+  }
+
+  /**
    * Apply one explicit preference (the header's sun/moon buttons or a voice
    * command) and persist it. `system` stays reachable by activating the
    * already-selected mode again; see AppShell's `choose`.
@@ -35,7 +50,7 @@ export function createThemeSession(onResolved?: (theme: ResolvedTheme) => void) 
   function set(next: ThemePreference) {
     preference = next;
     storeTheme(browserStorage(), next);
-    applyTheme(document.documentElement, preference, systemDark);
+    apply();
   }
 
   function cycle() {
@@ -47,11 +62,11 @@ export function createThemeSession(onResolved?: (theme: ResolvedTheme) => void) 
     const system = window.matchMedia('(prefers-color-scheme: dark)');
     preference = readStoredTheme(browserStorage());
     systemDark = system.matches;
-    applyTheme(document.documentElement, preference, systemDark);
+    apply();
 
     const onSchemeChange = (event: MediaQueryListEvent) => {
       systemDark = event.matches;
-      if (preference === 'system') applyTheme(document.documentElement, preference, systemDark);
+      if (preference === 'system') apply();
     };
     system.addEventListener('change', onSchemeChange);
     return () => system.removeEventListener('change', onSchemeChange);

@@ -129,6 +129,6 @@ export async function waitForShell(page: Page) {
 
 export async function openMemoryTab(page: Page) {
   await page.getByRole('button', { name: 'Show memory and settings' }).click();
-  await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Memory' }).click();
   return page.locator('#shell-right').getByTestId('memory-panel');
 }

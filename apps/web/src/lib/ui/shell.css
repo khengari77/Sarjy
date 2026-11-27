@@ -47,7 +47,7 @@
   justify-content: space-between;
   gap: 12px;
   min-height: var(--header-height);
-  padding: 8px 24px;
+  padding: 8px max(24px, env(safe-area-inset-right)) 8px max(24px, env(safe-area-inset-left));
   padding-top: max(8px, env(safe-area-inset-top));
   background: transparent;
   position: relative;
@@ -121,6 +121,13 @@
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.16);
 }
 
+@media (pointer: coarse) {
+  .theme-control .theme-button {
+    min-width: var(--min-tap-target);
+    min-height: var(--min-tap-target);
+  }
+}
+
 .icon-button,
 .ghost-button {
   font: inherit;
@@ -146,6 +153,13 @@
   border-radius: 50%;
   font-size: 17px;
   line-height: 1;
+}
+
+@media (pointer: coarse) {
+  .topbar .icon-button {
+    width: var(--min-tap-target);
+    min-height: var(--min-tap-target);
+  }
 }
 
 /* The dock breakpoint keeps the left rail permanently docked, so the drawer
@@ -176,12 +190,15 @@
 .sidebar-left {
   width: var(--sidebar-left-width);
   flex: 0 0 auto;
+  padding-inline-start: env(safe-area-inset-left);
 }
 
 .sidebar-right {
   width: var(--sidebar-right-width);
   flex: 0 0 auto;
   overflow-y: auto;
+  padding-inline-end: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
   border-inline-end: none;
   border-inline-start: 1px solid var(--border-subtle);
 }
@@ -250,6 +267,7 @@
      clickable while a drawer is open (#37), without covering the drawer. */
   position: relative;
   z-index: 26;
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .scrim {
@@ -304,7 +322,7 @@
 
 @media (max-width: 767px) {
   .topbar {
-    padding-inline: 16px;
+    padding-inline: max(16px, env(safe-area-inset-left)) max(16px, env(safe-area-inset-right));
   }
 
   .header-actions {

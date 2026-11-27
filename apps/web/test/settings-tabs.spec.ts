@@ -1,10 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// The right drawer has four panels, one concern each. Controls holds every
+// The right drawer has three panels, one concern each. Settings holds every
 // interactive setting we actually have: voice, speed and captions. Memory
-// search lives only in Memories; Context is the compiled-context inspector.
+// search lives only in Memory; Context is the compiled-context inspector.
 // Appearance was removed because theme lives in the header and captions moved
-// to Controls, leaving the panel empty.
+// to Settings, leaving the panel empty.
 
 async function waitForShell(page: Page) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -38,7 +38,7 @@ test('controls keeps voice, speed and captions together without memory search', 
 
   const drawer = page.locator('#shell-right');
   const tabs = drawer.getByRole('tab');
-  await expect(tabs).toHaveText(['Memories', 'Controls', 'Transcript']);
+  await expect(tabs).toHaveText(['Memory', 'Settings', 'Transcript']);
   await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
 
   const controls = page.locator('#drawer-panel-controls');
@@ -51,7 +51,7 @@ test('controls keeps voice, speed and captions together without memory search', 
   await expect(controls).not.toContainText('Search saved facts');
 
   const memories = page.locator('#drawer-panel-memories');
-  await drawer.getByRole('tab', { name: 'Memories' }).click();
+  await drawer.getByRole('tab', { name: 'Memory' }).click();
   await expect(memories).toContainText('Memory & context');
   await expect(memories.getByRole('search')).toBeVisible();
   await expect(memories).not.toContainText('Choose voice');
