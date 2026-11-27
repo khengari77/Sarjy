@@ -41,6 +41,18 @@ def row(file, memory_id):
         ).fetchone()
 
 
+def seed_temporary(file, conversation_id, memory_id, content):
+    with closing(sqlite3.connect(file)) as db, db:
+        owner = db.execute("SELECT owner_id FROM conversations WHERE id=?", (conversation_id,)).fetchone()[0]
+        db.execute(
+            "INSERT INTO memories (id,owner_id,content,scope,embedding_model,source_conversation_id,version,status,"
+            "created_at,updated_at) VALUES (?,?,?,'conversation',?,?,1,'active',"
+            "'2026-11-12T00:00:00+00:00','2026-11-12T00:00:00+00:00')",
+            (memory_id, owner, content, "text-embedding-3-small", conversation_id),
+        )
+        db.commit()
+
+
 def search_ids(client, chat, query="tea"):
     response = client.post("/v1/memories/search", json={"conversation_id": chat, "query": query})
     return [item["id"] for item in response.json()]
@@ -250,3 +262,24 @@ def test_a_correction_chain_longer_than_the_old_cap_is_erased_to_its_first_versi
         await engine.dispose()
 
     asyncio.run(main())
+
+
+def test_panel_hide_unhide_and_delete_act_on_a_temporary_memory_of_another_conversation(tmp_path):
+    # The UI routes take a direct id: they are owner-level by design, not conversation-scoped.
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        client.post("/v1/demo-session")
+        client.post("/v1/conversations")
+        other_chat = client.post("/v1/conversations").json()["id"]
+        seed_temporary(file, other_chat, "temp-b", "I prefer green tea")
+
+        assert client.post("/v1/memories/temp-b/hide").json() == {
+            "id": "temp-b",
+            "status": "hidden",
+            "changed": True,
+        }
+        assert row(file, "temp-b")[0] == "hidden"
+        assert client.post("/v1/memories/temp-b/unhide").json()["status"] == "active"
+        assert row(file, "temp-b")[0] == "active"
+        assert client.delete("/v1/memories/temp-b").json()["status"] == "deleted"
+        assert row(file, "temp-b")[0] == "deleted"
