@@ -1063,6 +1063,39 @@
         }
       }
     },
+    "/v1/voice/sessions/{session_id}/intro-complete": {
+      "post": {
+        "summary": "Intro Complete",
+        "description": "Browser confirmation that the full introduction played. Idempotent.",
+        "operationId": "intro_complete_v1_voice_sessions__session_id__intro_complete_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/development/reserve": {
       "post": {
         "summary": "Development Reservation",
@@ -4592,6 +4625,15 @@
           "response_preference": {
             "$ref": "#/components/schemas/ResponsePreference",
             "default": "automatic"
+          },
+          "intro_delivery": {
+            "type": "string",
+            "enum": [
+              "worker",
+              "browser"
+            ],
+            "title": "Intro Delivery",
+            "default": "worker"
           }
         },
         "type": "object",

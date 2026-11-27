@@ -38,6 +38,7 @@ from app.services.budget import reserve as reserve_development_budget
 from app.services.command_classification import StoredClassifier, classification_key
 from app.services.commands import command_request_id, handle_finalized_utterance
 from app.services.context_assembly import location_evidence, read_context_inputs
+from app.services.intro import mark_intro_seen
 from app.services.memory import MemoryService
 from app.services.memory_auto import auto_commit_memory
 from app.services.memory_capture import (
@@ -498,6 +499,7 @@ def _register_session_routes(app, *, database, guard):
     @app.post("/internal/agent/bootstrap")
     async def bootstrap(request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db)
+        stored = {**voice.pipeline, "bootstrapped": True}
         changed = await db.execute(
             update(VoiceSession)
             .where(
@@ -505,18 +507,21 @@ def _register_session_routes(app, *, database, guard):
                 VoiceSession.status.in_(["starting", "active"]),
                 VoiceSession.expires_at > datetime.now(UTC).isoformat(),
             )
-            .values(status="active")
+            .values(status="active", pipeline=stored)
         )
         await db.commit()
         if not changed.rowcount:
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
-        pipeline = normalize_pipeline(voice.pipeline)
+        pipeline = normalize_pipeline(stored)
         row = await db.get(UserSetting, voice.owner_id)
-        intro = intro_for(
-            pipeline.get("llm", {}).get("language", "en"),
-            seen=row is not None and row.intro_seen_at is not None,
-            tts_provider=(pipeline.get("tts") or {}).get("provider"),
-        )
+        if pipeline.get("intro_delivery") == "browser":
+            intro = None
+        else:
+            intro = intro_for(
+                pipeline.get("llm", {}).get("language", "en"),
+                seen=row is not None and row.intro_seen_at is not None,
+                tts_provider=(pipeline.get("tts") or {}).get("provider"),
+            )
         return {
             "pipeline": pipeline,
             "instructions": pipeline_instructions(pipeline),
@@ -528,13 +533,7 @@ def _register_session_routes(app, *, database, guard):
     async def intro_played(request: Request, db: AsyncSession = Depends(database)):
         """Worker confirmation that the full introduction played to the end. Idempotent."""
         voice = await guard(request, db)
-        row = await db.get(UserSetting, voice.owner_id)
-        if row is None:
-            row = UserSetting(owner_id=voice.owner_id)
-            db.add(row)
-        if row.intro_seen_at is None:
-            row.intro_seen_at = datetime.now(UTC).isoformat()
-            await db.commit()
+        await mark_intro_seen(db, voice.owner_id)
         return {"ok": True}
 
 

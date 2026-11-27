@@ -12,10 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response_policy
+from app.domain.intro import intro_for
 from app.domain.pipeline import PipelineConfig, validate_pipeline
-from app.domain.sessions import admission_error
+from app.domain.sessions import admission_error, call_is_live
 from app.infrastructure.database import SessionGate, UserSetting, VoiceSession
 from app.services.actions import clear_saved_voice
+from app.services.intro import mark_intro_seen
 from app.services.pipeline_settings import configured_keys, default_llm, default_tts
 from app.services.session_cleanup import cleanup_room
 from app.services.voices import (
@@ -34,6 +36,7 @@ class StartVoice(BaseModel):
     voice_id: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     response_tier: int | None = Field(default=None, ge=1, le=len(TIER_CAPS))
     response_preference: ResponsePreference = ResponsePreference.AUTOMATIC
+    intro_delivery: Literal["worker", "browser"] = "worker"
 
 
 async def _admission_rejection(db: AsyncSession, user, now: datetime) -> str | None:
@@ -76,6 +79,42 @@ async def _resolve_call_voice(config: Settings, catalog: VoiceProvider, requeste
         return await catalog.require(config.default_voice_id), "default", outcome
     except VoiceCatalogError as fallback:
         raise _voice_error(fallback, "default") from fallback
+
+
+def _plan_intro(body: StartVoice, *, seen: bool, tts_provider: str, voice_id: str):
+    """Stored pipeline keys and the browser response fields for a delivered greeting."""
+    if body.intro_delivery != "browser":
+        return {}, {}
+    intro = intro_for(body.language, seen=seen, tts_provider=tts_provider)
+    if intro is None:
+        return {}, {"intro": None}
+    return (
+        {"intro_delivery": "browser", "intro_kind": intro["kind"]},
+        {"intro": {**intro, "asset": f"{voice_id}/{intro['kind']}.mp3"}},
+    )
+
+
+def _browser_intro_is_complete(voice: VoiceSession) -> bool:
+    """The full browser greeting may be marked seen only for a live, bootstrapped call."""
+    pipeline = voice.pipeline
+    return (
+        call_is_live(voice.status, voice.expires_at, datetime.now(UTC).isoformat())
+        and pipeline.get("intro_delivery") == "browser"
+        and pipeline.get("intro_kind") == "full"
+        and pipeline.get("bootstrapped") is True
+    )
+
+
+def _register_intro_complete_route(app, *, database, identity):
+    @app.post("/v1/voice/sessions/{session_id}/intro-complete", status_code=204)
+    async def intro_complete(session_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
+        """Browser confirmation that the full introduction played. Idempotent."""
+        voice = await db.get(VoiceSession, session_id)
+        if not voice or voice.owner_id != user.id:
+            raise HTTPException(404)
+        if _browser_intro_is_complete(voice):
+            await mark_intro_seen(db, voice.owner_id)
+        return None
 
 
 def register_voice_routes(
@@ -128,6 +167,14 @@ def register_voice_routes(
         rejection = await _admission_rejection(db, user, now)
         if rejection:
             raise HTTPException(429, detail={"code": rejection})
+        stored_pipeline = pipeline.model_dump()
+        intro_extra, intro_response = _plan_intro(
+            body,
+            seen=settings_row is not None and settings_row.intro_seen_at is not None,
+            tts_provider=pipeline.tts.provider,
+            voice_id=voice_id,
+        )
+        stored_pipeline.update(intro_extra)
         voice = VoiceSession(
             id=str(uuid4()),
             owner_id=user.id,
@@ -135,7 +182,7 @@ def register_voice_routes(
             room_name="sarjy-" + str(uuid4()),
             status="starting",
             expires_at=(now + timedelta(minutes=10)).isoformat(),
-            pipeline=pipeline.model_dump(),
+            pipeline=stored_pipeline,
         )
         db.add(voice)
         await db.commit()
@@ -174,6 +221,7 @@ def register_voice_routes(
                 "voice_language": voice_language,
                 "voice_source": voice_source,
                 "saved_voice_unavailable": saved_voice_unavailable,
+                **intro_response,
             }
         except Exception:
             await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id).values(status="failed"))
@@ -203,3 +251,5 @@ def register_voice_routes(
         except ValueError as exc:
             raise HTTPException(503, detail={"code": str(exc), "cleanup": "pending"}) from exc
         return {"status": voice.status, "cleanup": outcome}
+
+    _register_intro_complete_route(app, database=database, identity=identity)
