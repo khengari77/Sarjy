@@ -14,7 +14,6 @@ from app.main import create_app
 from app.services.memory_terms import search_all_memories, terms_of
 from app.services.memory_visibility import delete_memory
 from app.services.voice_exclusions import (
-    HIDE_CHUNK_SIZE,
     _apply_pending,
     _finish_pending,
     _hide_memories_in_chunks,
@@ -146,6 +145,55 @@ def test_other_owners_and_other_chats_temporary_memories_are_never_hidden(tmp_pa
     asyncio.run(run())
 
 
+def test_confirm_hides_neither_another_owners_nor_another_chats_tampered_ids(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "tampered-confirm.db")
+        try:
+            async with sessions() as db:
+                await seed(
+                    db,
+                    [
+                        row("p1", "I travelled to Paris", offset=1),
+                        row("foreign", "Paris foreign", owner_id="bob", conversation_id="b1", offset=2),
+                        row("temp-b", "Paris elsewhere", conversation_id="a2", scope="conversation", offset=3),
+                    ],
+                )
+                await db.commit()
+
+            async with sessions() as db:
+                preview = await hide_target(
+                    db,
+                    owner_id="alice",
+                    conversation_id="a1",
+                    target="Paris",
+                    request_id="preview",
+                    secret=SECRET,
+                )
+                assert preview.detail == "MEMORY_HIDE_PROPOSED"
+                pending = await _pending(db, owner_id="alice", conversation_id="a1")
+                assert pending is not None
+                payload = dict(pending.payload or {})
+                payload["memory_ids"] = [*payload["memory_ids"], "foreign", "temp-b"]
+                payload["count"] = len(payload["memory_ids"])
+                pending.payload = payload
+                await db.commit()
+
+            async with sessions() as db:
+                applied = await resolve_confirmation(
+                    db, owner_id="alice", conversation_id="a1", confirmed=True, request_id="confirm", secret=SECRET
+                )
+                assert applied is not None and applied.detail == "MEMORY_HIDDEN"
+                assert await _statuses(db, ["p1", "foreign", "temp-b"]) == {
+                    "p1": "hidden",
+                    "foreign": "active",
+                    "temp-b": "active",
+                }
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
 def test_oldest_match_beyond_the_old_500_row_window_is_found_and_hidden(tmp_path):
     async def run():
         engine, sessions = await database(tmp_path / "oldest.db")
@@ -227,7 +275,7 @@ def test_ten_thousand_ids_are_hidden_in_bind_safe_chunks(tmp_path, monkeypatch):
                 await seed(db, [row("p1", "I travelled to Paris", offset=1)])
                 await db.commit()
             monkeypatch.setattr(voice_exclusions, "HIDE_CHUNK_SIZE", 37)
-            assert HIDE_CHUNK_SIZE == 500
+            assert voice_exclusions.HIDE_CHUNK_SIZE == 37
             ids = ["p1"] + [f"missing-{index:05d}" for index in range(9_999)]
             async with sessions() as db:
                 hidden = await _hide_memories_in_chunks(db, owner_id="alice", conversation_id="a1", memory_ids=ids)
@@ -655,6 +703,33 @@ def test_chat_scope_zero_is_honest_and_writes_nothing(tmp_path):
         assert memory_status(file, "g1") == "active"
         with closing(sqlite3.connect(file)) as db:
             assert db.execute("SELECT count(*) FROM context_operations").fetchone()[0] == 0
+
+
+def test_chat_scope_keeps_a_budget_note_out_of_the_clear(tmp_path):
+    file, settings = configured(tmp_path, "chat-budget")
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        seed_sql(
+            file,
+            chat,
+            [("budget", "Budget 500 USD for this trip"), ("temp-1", "A temporary note here")],
+            scope="conversation",
+        )
+
+        preview = preview_forget(file, chat, "", "preview", scope="chat")
+        assert preview.kind is CommandKind.NEEDS_CONFIRMATION
+        assert preview.detail == "MEMORY_HIDE_PROPOSED"
+        assert preview.spoken == (
+            "I found 1 temporary memory from this chat; I'll keep 1 budget note unless you name it. Clear it?"
+        )
+        assert memory_status(file, "budget") == memory_status(file, "temp-1") == "active"
+
+        applied = voice(client, chat, "Yes.", "confirm")
+        assert applied["detail"] == "MEMORY_HIDDEN"
+        assert applied["spoken"] == "Cleared 1 temporary memory from this chat. Say undo to bring it back."
+        assert memory_status(file, "temp-1") == "hidden"
+        assert memory_status(file, "budget") == "active"
 
 
 def test_double_yes_keeps_the_first_response(tmp_path):

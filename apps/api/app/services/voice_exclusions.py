@@ -411,9 +411,14 @@ def _preview_spoken(
     budget_kept: int = 0,
 ) -> str:
     if scope == "chat":
-        noun = "temporary memory" if count == 1 else "temporary memories"
-        action = "Clear it?" if count == 1 else "Clear them?"
-        return f"I found {count} {noun} from this chat. {action}"
+        found = hideable if hideable is not None else count
+        noun = "temporary memory" if found == 1 else "temporary memories"
+        if budget_kept:
+            note = "1 budget note" if budget_kept == 1 else f"{budget_kept} budget notes"
+            action = "Clear it?" if found == 1 else ("Clear the other one?" if hideable == 1 else "Clear the others?")
+            return f"I found {found} {noun} from this chat; I'll keep {note} unless you name it. {action}"
+        action = "Clear it?" if found == 1 else "Clear them?"
+        return f"I found {found} {noun} from this chat. {action}"
     topic = _snippet(target, 80)
     noun = "memory" if count == 1 else "memories"
     if budget_kept:
@@ -526,23 +531,22 @@ async def hide_target(
             f"I couldn't find anything about {_snippet(target, 80)}; nothing was changed.",
         )
     total_matches = len(candidates)
-    hideable = list(candidates)
+    hideable = []
     budget_kept = 0
-    if scope == "topic":
-        # Budget records may be removed only by exact id or full content authority, never by a
-        # topic substring. Keep them out of the bulk hide and say so before asking.
-        hideable = []
-        for candidate in candidates:
-            if candidate.is_budget and not budget_removal_authorized(candidate.id, candidate.content, (target,)):
-                budget_kept += 1
-            else:
-                hideable.append(candidate)
-        if not hideable:
-            return _unchanged(
-                request_id,
-                "MEMORY_TARGET_NOT_FOUND",
-                "The only match is a budget note; name it exactly to forget it. Nothing was changed.",
-            )
+    # Budget records may be removed only by exact id or full content authority, never by a
+    # topic substring or a chat sweep. Keep them out of the bulk hide and say so before asking.
+    authority = (target,) if scope == "topic" else ()
+    for candidate in candidates:
+        if candidate.is_budget and not budget_removal_authorized(candidate.id, candidate.content, authority):
+            budget_kept += 1
+        else:
+            hideable.append(candidate)
+    if not hideable:
+        return _unchanged(
+            request_id,
+            "MEMORY_TARGET_NOT_FOUND",
+            "The only match is a budget note; name it exactly to forget it. Nothing was changed.",
+        )
     if not secret:
         return _unsupported(
             request_id,
