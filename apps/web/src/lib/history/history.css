@@ -251,6 +251,39 @@
   line-height: 1.4;
 }
 
+.chat-history .menu .menu-confirm-title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.chat-history .menu .menu-actions {
+  display: flex;
+  gap: 6px;
+  margin: 8px 8px 2px;
+}
+
+.chat-history .menu .menu-actions button {
+  flex: 1;
+  width: auto;
+  text-align: center;
+  border: 1px solid var(--border-subtle);
+}
+
+.chat-history .menu .menu-actions button:hover:enabled {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.chat-history .menu .menu-actions .danger {
+  color: var(--status-error);
+}
+
+.chat-history .menu .menu-error {
+  color: var(--status-error);
+  font-size: 11px;
+}
+
 .chat-history .empty {
   display: flex;
   flex-direction: column;
