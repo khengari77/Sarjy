@@ -21,7 +21,7 @@
   border-radius: var(--radius-control);
   border: 1px solid transparent;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   cursor: pointer;
   transition:
     background var(--transition-quick),
@@ -171,7 +171,7 @@
 
 .chat-history .chat-item.chosen .chat-glyph,
 .chat-history .chat-item[aria-current='page'] .chat-glyph {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .chat-history .chat-item:disabled {
@@ -276,11 +276,11 @@
 }
 
 .chat-history .menu .menu-actions .danger {
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .chat-history .menu .menu-error {
-  color: var(--status-error);
+  color: var(--status-error-text);
   font-size: 11px;
 }
 

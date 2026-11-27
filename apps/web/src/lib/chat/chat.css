@@ -343,7 +343,7 @@ h1 {
 
 .segmented-button[data-active='true'] {
   background: var(--surface-raised);
-  color: var(--accent);
+  color: var(--accent-text);
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.16);
 }
 
@@ -497,7 +497,7 @@ select {
 
 .voice-error {
   margin: 0;
-  color: #ffb3bb;
+  color: var(--status-error-text);
   font-size: 13px;
 }
 

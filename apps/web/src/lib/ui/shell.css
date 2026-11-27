@@ -117,7 +117,7 @@
 
 .theme-button[data-active='true'] {
   background: var(--surface-raised);
-  color: var(--accent);
+  color: var(--accent-text);
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.16);
 }
 
