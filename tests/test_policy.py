@@ -262,6 +262,15 @@ def test_instructions_cover_every_capability(language):
 
 
 @pytest.mark.parametrize("language", ["en", "ar"])
+def test_instructions_name_the_forget_topic_and_scope_arguments(language):
+    # This prompt is also the fallback when Jev is unavailable and nothing is forced.
+    text = BASE_INSTRUCTIONS[language]
+    assert "propose_forget(topic, scope)" in text
+    assert "propose_forget(query)" not in text
+    assert "this_chat" in text and "everything" in text
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
 def test_wordle_rules_follow_the_popup_state(language):
     policy = resolve_response_policy(ResponsePreference.AUTOMATIC, 3)
     opened = compose_system_message(language, policy, wordle_open=True)

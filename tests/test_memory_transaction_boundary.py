@@ -101,7 +101,7 @@ def test_postgres_preserves_uncommitted_caller_title():
                 await caller.commit()
             async with factory() as db:
                 assert (await db.get(Conversation, conversation)).title == "Edited title"
-                claim = await db.scalar(select(MemoryWriteRequest))
+                claim = await db.scalar(select(MemoryWriteRequest).where(MemoryWriteRequest.owner_id == owner))
                 assert claim.state == "completed"
         finally:
             await engine.dispose()

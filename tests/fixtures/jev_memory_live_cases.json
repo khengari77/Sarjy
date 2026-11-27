@@ -58,5 +58,45 @@
  {
   "text": "Don't forget to call mom tomorrow",
   "expected": "none"
+ },
+ {
+  "text": "Wipe everything you know about me",
+  "expected": "forget"
+ },
+ {
+  "text": "I'd like you to drop the Paris stuff",
+  "expected": "forget"
+ },
+ {
+  "text": "Forget everything I just told you",
+  "expected": "forget"
+ },
+ {
+  "text": "Erase my medical history",
+  "expected": "forget"
+ },
+ {
+  "text": "انسَ ما قلته عن الشاي",
+  "expected": "forget"
+ },
+ {
+  "text": "Forget it",
+  "expected": "none"
+ },
+ {
+  "text": "Forget about it",
+  "expected": "none"
+ },
+ {
+  "text": "I forgot my keys",
+  "expected": "none"
+ },
+ {
+  "text": "How do I forget someone",
+  "expected": "none"
+ },
+ {
+  "text": "What's the capital of France",
+  "expected": "none"
  }
 ]

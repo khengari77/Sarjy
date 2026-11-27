@@ -2,12 +2,15 @@
 
 The model supplies an untrusted ``fact`` or ``query``.  Code validates it with
 the same deterministic domain checks as the regex fast path, then returns the
-existing signed proposal (remember) or exclusion proposal (forget).  Nothing is
-saved or excluded here: consent arrives on a later user turn.  Recall is a
-read-only, owner-scoped, bounded lookup.
+existing signed proposal (remember) or a counted forget preview that hides
+globally.  Nothing is saved or hidden here: consent arrives on a later user
+turn.  Recall is a read-only, owner-scoped lookup.
 """
 
 from __future__ import annotations
+
+import re
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,24 +18,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.commands import CommandKind
 from app.domain.memory_capture import clean_tool_query, parse_tool_fact
 from app.infrastructure.database import Memory
-from app.services.context_operations import MemorySearcher, keyword_search, query_tokens, recent_memories
+from app.services.context_operations import MemorySearcher, query_tokens, recent_memories
 from app.services.memory_capture import proposal_for_capture, record_proposal
 from app.services.memory_scope import visible_in
-from app.services.memory_terms import search_all_memories
-from app.services.voice_exclusions import discard_pending, hide_target
+from app.services.memory_terms import REFERENTIAL, search_all_memories, terms_of
+from app.services.voice_exclusions import (
+    GLOBAL_RETRACTION_SPOKEN,
+    discard_pending,
+    hide_target,
+)
 
 RECALL_LIMIT = 5
 RECALL_SNIPPET_CHARS = 200
 RECALL_CHAR_BUDGET = 6000
-MEMORY_HIDDEN = "MEMORY_HIDDEN"
 
 NOT_SAVED_NOTE = (
     "Nothing has been saved yet. The application will now ask the user to confirm; "
     "do not say or imply it is saved, and do not add your own question."
 )
 FORGET_NOTE = (
-    "The application handles this and will speak the exact line to the user (a hidden memory can be brought "
-    "back with undo). Do not add your own confirmation or question."
+    "The application handles this and will speak the exact line to the user (the preview asks once before anything "
+    "changes, and a later undo brings it back). Do not add your own confirmation or question."
 )
 
 
@@ -77,33 +83,78 @@ async def memory_propose_tool(
     return {"status": "proposed", "proposal": proposal, "message": NOT_SAVED_NOTE}
 
 
+_SENTENTIAL_FORGET = re.compile(r"\b(?:forget|forgot|forgotten|don'?t|do not)\b", re.IGNORECASE)
+_ASK_WHAT_TO_FORGET = "Nothing was changed. Ask the user what they want forgotten."
+
+
+def _searchable(query: str) -> bool:
+    """Whether the cleaned topic names something the uncapped lexical search can match."""
+    wanted = terms_of(query) - REFERENTIAL
+    if len(query.strip()) != 1:
+        wanted = {term for term in wanted if len(term) > 1}
+    return bool(wanted)
+
+
 async def memory_forget_tool(
     db: AsyncSession,
     *,
     owner_id: str,
     conversation_id: str,
     request_id: str,
-    query: str,
-    search: MemorySearcher = keyword_search,
+    topic: str = "",
+    scope: Literal["topic", "this_chat", "everything"] = "topic",
+    secret: str,
+    search: MemorySearcher | None = None,
 ) -> dict:
-    cleaned = clean_tool_query(query)
-    if cleaned is None:
+    if scope == "everything":
+        # Never hide every memory by voice: point to Settings and leave no hide armed.
+        await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
         return {
-            "status": "rejected",
-            "error": "MEMORY_QUERY_INVALID",
-            "message": "Nothing was changed. Ask the user what they want forgotten.",
+            "status": "not_hidden",
+            "detail": "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE",
+            "spoken": GLOBAL_RETRACTION_SPOKEN,
+            "message": FORGET_NOTE,
         }
-    result = await hide_target(
-        db,
-        owner_id=owner_id,
-        conversation_id=conversation_id,
-        target=cleaned,
-        request_id=request_id,
-        search=search,
-    )
-    hidden = result.kind is CommandKind.EXECUTED and result.detail == MEMORY_HIDDEN
+    if scope == "this_chat":
+        result = await hide_target(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            target="",
+            request_id=request_id,
+            secret=secret,
+            scope="chat",
+            search=search,
+        )
+    elif scope == "topic":
+        cleaned = clean_tool_query(topic)
+        if cleaned is None or _SENTENTIAL_FORGET.search(cleaned) or not _searchable(cleaned):
+            await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
+            return {
+                "status": "not_hidden",
+                "detail": "MEMORY_TARGET_UNSPECIFIED",
+                "message": _ASK_WHAT_TO_FORGET,
+            }
+        result = await hide_target(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            target=cleaned,
+            request_id=request_id,
+            secret=secret,
+            scope="topic",
+            search=search,
+        )
+    else:
+        await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
+        return {
+            "status": "not_hidden",
+            "detail": "MEMORY_TARGET_UNSPECIFIED",
+            "message": _ASK_WHAT_TO_FORGET,
+        }
+    proposed = result.kind is CommandKind.NEEDS_CONFIRMATION and result.detail == "MEMORY_HIDE_PROPOSED"
     return {
-        "status": "hidden" if hidden else "not_hidden",
+        "status": "proposed" if proposed else "not_hidden",
         "detail": result.detail,
         "spoken": result.spoken,
         "message": FORGET_NOTE,
