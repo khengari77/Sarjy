@@ -17,7 +17,8 @@ from app.domain.commands import (
 )
 from app.domain.context_operations import verify_proposal
 from app.main import create_app
-from app.services.voice_exclusions import propose_exclusion
+from app.services.memory_visibility import HIDE_OPERATION
+from app.services.voice_exclusions import UNDO_SCAN_LIMIT, propose_exclusion
 from fastapi.testclient import TestClient
 
 SECRET = "test-proposal-secret"
@@ -71,19 +72,73 @@ def voice(client, conversation, text, *, request, revision=0):
     )
 
 
-def seed(file, conversation_id, rows, owner_id=None):
+def seed(file, conversation_id, rows, owner_id=None, scope="global", status="active"):
     with closing(sqlite3.connect(file)) as db, db:
         owner = (
             owner_id or db.execute("SELECT owner_id FROM conversations WHERE id=?", (conversation_id,)).fetchone()[0]
         )
         for record_id, content in rows:
             db.execute(
-                "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,"
-                "created_at,updated_at) VALUES (?,?,?,?,?,1,'active','2026-11-12T00:00:00+00:00',"
+                "INSERT INTO memories (id,owner_id,content,scope,embedding_model,source_conversation_id,version,status,"
+                "created_at,updated_at) VALUES (?,?,?,?,?,?,1,?,'2026-11-12T00:00:00+00:00',"
                 "'2026-11-12T00:00:00+00:00')",
-                (record_id, owner, content, "text-embedding-3-small", conversation_id),
+                (record_id, owner, content, scope, "text-embedding-3-small", conversation_id, status),
             )
         db.commit()
+
+
+def seed_operation(
+    file,
+    *,
+    operation_id,
+    owner_id,
+    conversation_id,
+    command_type,
+    created_at,
+    payload=None,
+    outcome="applied",
+    revision_after=None,
+):
+    with closing(sqlite3.connect(file)) as db, db:
+        db.execute(
+            "INSERT INTO context_operations (id,owner_id,conversation_id,command_type,payload,revision_before,"
+            "revision_after,idempotency_key,outcome,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                operation_id,
+                owner_id,
+                conversation_id,
+                command_type,
+                json.dumps(payload or {}),
+                0,
+                revision_after,
+                f"idem-{operation_id}",
+                outcome,
+                created_at,
+            ),
+        )
+        db.commit()
+
+
+def seed_exclusion(file, *, exclusion_id, owner_id, conversation_id, memory_id, operation_id):
+    with closing(sqlite3.connect(file)) as db, db:
+        db.execute(
+            "INSERT INTO context_exclusions (id,owner_id,conversation_id,memory_id,operation_id,scope,active,"
+            "created_at) VALUES (?,?,?,?,?,'conversation',1,'2026-11-12T00:00:00+00:00')",
+            (exclusion_id, owner_id, conversation_id, memory_id, operation_id),
+        )
+        db.commit()
+
+
+def memory_status(file, memory_id):
+    with closing(sqlite3.connect(file)) as db, db:
+        return db.execute("SELECT status FROM memories WHERE id=?", (memory_id,)).fetchone()[0]
+
+
+def exclusion_active(file, operation_id):
+    with closing(sqlite3.connect(file)) as db, db:
+        return bool(
+            db.execute("SELECT active FROM context_exclusions WHERE operation_id=?", (operation_id,)).fetchone()[0]
+        )
 
 
 def seed_owner(file, owner_id):
@@ -392,3 +447,153 @@ def test_an_unrelated_turn_disarms_the_pending_proposal_so_a_later_yes_changes_n
         assert counts(file) == (0, 0, 0, 1)
         _, outcome = latest_proposal(file)
         assert outcome == "superseded"
+
+
+def test_undo_last_hide_from_one_conversation_never_restores_or_quotes_another_chats_temporary_memory(tmp_path):
+    file, settings = configured(tmp_path, "paired-undo")
+    with TestClient(create_app(settings)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat_a = client.post("/v1/conversations").json()["id"]
+        chat_b = client.post("/v1/conversations").json()["id"]
+        seed(file, chat_a, [("global-fact", "My favourite colour is blue")], scope="global", status="hidden")
+        seed(file, chat_a, [("temp-a", "A-only secret")], scope="conversation", status="hidden")
+        seed(file, chat_b, [("temp-b", "B-only note")], scope="conversation", status="hidden")
+        # A's temporary memory was hidden most recently; B must step over it.
+        seed_operation(
+            file,
+            operation_id="hide-temp-a",
+            owner_id=owner,
+            conversation_id=chat_a,
+            command_type=HIDE_OPERATION,
+            payload={"memory_id": "temp-a"},
+            created_at="2026-11-12T00:00:03+00:00",
+        )
+        seed_operation(
+            file,
+            operation_id="hide-temp-b",
+            owner_id=owner,
+            conversation_id=chat_b,
+            command_type=HIDE_OPERATION,
+            payload={"memory_id": "temp-b"},
+            created_at="2026-11-12T00:00:02+00:00",
+        )
+        seed_operation(
+            file,
+            operation_id="hide-global",
+            owner_id=owner,
+            conversation_id=chat_a,
+            command_type=HIDE_OPERATION,
+            payload={"memory_id": "global-fact"},
+            created_at="2026-11-12T00:00:01+00:00",
+        )
+
+        first = voice(client, chat_b, "Undo", request="undo-b-1").json()["result"]
+        assert first["detail"] == "MEMORY_UNHIDDEN"
+        assert "B-only note" in first["spoken"]
+        assert "A-only secret" not in first["spoken"]
+        assert memory_status(file, "temp-b") == "active"
+        assert memory_status(file, "temp-a") == "hidden"
+        assert memory_status(file, "global-fact") == "hidden"
+
+        second = voice(client, chat_b, "Undo", request="undo-b-2").json()["result"]
+        assert second["detail"] == "MEMORY_UNHIDDEN"
+        assert "My favourite colour is blue" in second["spoken"]
+        assert memory_status(file, "global-fact") == "active"
+        assert memory_status(file, "temp-a") == "hidden"
+
+        third = voice(client, chat_b, "Undo", request="undo-b-3").json()["result"]
+        assert third["detail"] == "NO_HIDDEN_MEMORY"
+        assert "A-only secret" not in json.dumps(third)
+        assert memory_status(file, "temp-a") == "hidden"
+
+
+def test_restore_from_one_conversation_never_speaks_or_restores_another_chats_temporary_memory(tmp_path):
+    file, settings = configured(tmp_path, "paired-restore")
+    with TestClient(create_app(settings)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat_a = client.post("/v1/conversations").json()["id"]
+        chat_b = client.post("/v1/conversations").json()["id"]
+        seed(file, chat_a, [("temp-a", "A-only secret")], scope="conversation")
+        seed(file, chat_b, [("temp-b", "B-only note")], scope="conversation")
+        # The most recent B exclusion points at A's temporary memory; the real B one is older.
+        seed_operation(
+            file,
+            operation_id="op-exclude-a",
+            owner_id=owner,
+            conversation_id=chat_b,
+            command_type="exclude",
+            created_at="2026-11-12T00:00:02+00:00",
+            revision_after=0,
+        )
+        seed_operation(
+            file,
+            operation_id="op-exclude-b",
+            owner_id=owner,
+            conversation_id=chat_b,
+            command_type="exclude",
+            created_at="2026-11-12T00:00:01+00:00",
+            revision_after=0,
+        )
+        seed_exclusion(
+            file,
+            exclusion_id="ex-temp-a",
+            owner_id=owner,
+            conversation_id=chat_b,
+            memory_id="temp-a",
+            operation_id="op-exclude-a",
+        )
+        seed_exclusion(
+            file,
+            exclusion_id="ex-temp-b",
+            owner_id=owner,
+            conversation_id=chat_b,
+            memory_id="temp-b",
+            operation_id="op-exclude-b",
+        )
+
+        question = voice(client, chat_b, "Restore excluded memories.", request="restore-b").json()["result"]
+        assert question["detail"] == "MEMORY_RESTORE_PROPOSED"
+        assert "B-only note" in question["spoken"]
+        assert "A-only secret" not in question["spoken"]
+        assert "0 memories" not in question["spoken"]
+
+        restored = voice(client, chat_b, "Yes.", request="restore-b-confirm").json()["result"]
+        assert restored["detail"] == "MEMORY_RESTORED"
+        assert exclusion_active(file, "op-exclude-a") is True
+        assert exclusion_active(file, "op-exclude-b") is False
+        assert memory_status(file, "temp-a") == "active"
+
+
+def test_undo_last_hide_steps_over_more_foreign_temporary_hides_than_one_scan_page(tmp_path):
+    file, settings = configured(tmp_path, "deep-undo")
+    with TestClient(create_app(settings)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat_a = client.post("/v1/conversations").json()["id"]
+        chat_b = client.post("/v1/conversations").json()["id"]
+        seed(file, chat_b, [("old-global", "My favourite colour is blue")], scope="global", status="hidden")
+        seed_operation(
+            file,
+            operation_id="hide-old-global",
+            owner_id=owner,
+            conversation_id=chat_b,
+            command_type=HIDE_OPERATION,
+            payload={"memory_id": "old-global"},
+            created_at="2026-11-12T00:00:00+00:00",
+        )
+        for index in range(UNDO_SCAN_LIMIT + 2):
+            seed(file, chat_a, [(f"temp-a-{index}", f"A-only {index}")], scope="conversation", status="hidden")
+            seed_operation(
+                file,
+                operation_id=f"hide-temp-a-{index}",
+                owner_id=owner,
+                conversation_id=chat_a,
+                command_type=HIDE_OPERATION,
+                payload={"memory_id": f"temp-a-{index}"},
+                created_at=f"2026-11-12T00:01:{index:02d}+00:00",
+            )
+
+        undone = voice(client, chat_b, "Undo", request="undo-deep").json()["result"]
+        assert undone["detail"] == "MEMORY_UNHIDDEN"
+        assert "My favourite colour is blue" in undone["spoken"]
+        assert memory_status(file, "old-global") == "active"
+        assert memory_status(file, "temp-a-0") == "hidden"

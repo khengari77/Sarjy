@@ -10,6 +10,7 @@ replayed or cross-conversation token never changes context state.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -31,6 +32,7 @@ from app.services.context_operations import (
     keyword_search,
     undo_operation,
 )
+from app.services.memory_scope import visible_in
 from app.services.memory_visibility import HIDE_OPERATION, UNHIDE_OPERATION, hide_memory, unhide_memory
 
 EXCLUDE_PROPOSAL = "exclude_proposal"
@@ -434,17 +436,11 @@ async def hide_target(
 
 
 UNDO_SCAN_LIMIT = 10
+UNDO_SCAN_PAGES = 5
 
 
-async def undo_last_hide(db: AsyncSession, *, owner_id: str, conversation_id: str, request_id: str) -> CommandResult:
-    """Unhide the owner's most recent hide (any conversation); one step, no consent."""
-    replay = await _replay_proposal(
-        db, owner_id=owner_id, conversation_id=conversation_id, command_type=UNHIDE_OPERATION, request_id=request_id
-    )
-    if replay is not None:
-        return replay
-    await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
-    operations = (
+async def _hide_operations_page(db: AsyncSession, owner_id: str, offset: int) -> Sequence[ContextOperation]:
+    return (
         await db.scalars(
             select(ContextOperation)
             .where(
@@ -454,18 +450,45 @@ async def undo_last_hide(db: AsyncSession, *, owner_id: str, conversation_id: st
             )
             .order_by(ContextOperation.created_at.desc(), ContextOperation.id.desc())
             .limit(UNDO_SCAN_LIMIT)
+            .offset(offset)
         )
     ).all()
+
+
+async def undo_last_hide(db: AsyncSession, *, owner_id: str, conversation_id: str, request_id: str) -> CommandResult:
+    """Unhide the most recent hide visible in this conversation; one step, no consent."""
+    replay = await _replay_proposal(
+        db, owner_id=owner_id, conversation_id=conversation_id, command_type=UNHIDE_OPERATION, request_id=request_id
+    )
+    if replay is not None:
+        return replay
+    await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
+    # The scan is owner-wide and cannot filter by visibility in SQL (the memory id lives in the payload), so it pages:
+    # a run of newer hides of other conversations' temporary memories must not hide an older visible one.
+    operations = [
+        operation
+        for offset in range(0, UNDO_SCAN_LIMIT * UNDO_SCAN_PAGES, UNDO_SCAN_LIMIT)
+        for operation in await _hide_operations_page(db, owner_id, offset)
+    ]
     for operation in operations:
         memory_id = (operation.payload or {}).get("memory_id")
         if not isinstance(memory_id, str):
+            continue
+        content = await db.scalar(
+            select(Memory.content).where(
+                Memory.id == memory_id,
+                Memory.owner_id == owner_id,
+                visible_in(conversation_id),
+            )
+        )
+        if content is None:
+            # Another conversation's temporary memory: never unhide or quote it here.
             continue
         try:
             result = await unhide_memory(db, owner_id, memory_id)
         except HTTPException:
             await db.rollback()
             continue
-        content = await db.scalar(select(Memory.content).where(Memory.id == memory_id, Memory.owner_id == owner_id))
         operation.outcome = "undone"
         response = (
             _applied(request_id, "MEMORY_UNHIDDEN", f"Brought back '{_snippet(content or '', 80)}'.", memory_id)
@@ -509,6 +532,9 @@ async def _latest_active_exclusion(
                     ContextExclusion.owner_id == owner_id,
                     ContextExclusion.conversation_id == conversation_id,
                     ContextExclusion.active.is_(True),
+                    ContextExclusion.memory_id.in_(
+                        select(Memory.id).where(Memory.owner_id == owner_id, visible_in(conversation_id))
+                    ),
                 )
             )
         ).all()
