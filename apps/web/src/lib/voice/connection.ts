@@ -2,7 +2,7 @@ import type { SessionConfig } from '../api';
 import { ensureMicrophoneAccess } from '../audio/microphone';
 import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
 import type { CommandResult } from '../commands/commandStore';
-import { errorCode, isAgentRecoverableError, setVoiceError } from './errors';
+import { errorCode, isAgentClearableError, setVoiceError } from './errors';
 import { startSessionAttempt } from './sessionAttempt';
 import { createSessionReleaser } from './sessionRelease';
 import { cancelConnection } from './cancelConnection';
@@ -81,7 +81,7 @@ function handleVoiceEvent(
       // boundary: the microphone is still off.
       const healthy =
         event.text === 'idle' || event.text === 'listening' || event.text === 'thinking' || event.text === 'speaking';
-      if (healthy && isAgentRecoverableError(state.voiceErrorCode)) state.voiceErrorCode = '';
+      if (healthy && isAgentClearableError(state.voiceErrorCode)) state.voiceErrorCode = '';
     } else {
       state.agentState = null;
       state.transportStatus = event.text;

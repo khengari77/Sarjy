@@ -4,11 +4,11 @@
  * live phase so a denied microphone cannot paint the orb red for the rest of
  * the call.
  *
- * Produced today: CONNECTION_LOST (transport/startup) and
- * SESSION_RELEASE_FAILED (failed release). The microphone, transcript and
- * budget codes below are recoverable. SESSION_ENDED, SESSION_EXPIRED,
- * TOKEN_EXPIRED, ACCOUNT_SESSION_REQUIRED, HTTP_401 and HTTP_403 are reserved:
- * no web producer exists yet, and this PR deliberately does not add one.
+ * Produced today: CONNECTION_LOST (transport/startup), SESSION_RELEASE_FAILED
+ * (failed release), HTTP_401/HTTP_403 (api.ts response status) and
+ * ACCOUNT_SESSION_REQUIRED (api.ts/sessionAttempt/+page). SESSION_ENDED,
+ * SESSION_EXPIRED and TOKEN_EXPIRED are reserved: no web producer exists yet,
+ * and this PR deliberately does not add one.
  */
 const FATAL_VOICE_ERRORS = new Set([
   'CONNECTION_LOST',
@@ -21,13 +21,6 @@ const FATAL_VOICE_ERRORS = new Set([
   'HTTP_403',
 ]);
 
-/** Recoverable errors caused by the agent/transport, not the local microphone. */
-const AGENT_RECOVERABLE_ERRORS = new Set([
-  'TRANSCRIPT_UNAVAILABLE',
-  'DAILY_BUDGET_EXHAUSTED',
-  'BUDGET_SERVICE_UNAVAILABLE',
-]);
-
 export function isFatalVoiceError(code: string): boolean {
   return FATAL_VOICE_ERRORS.has(code);
 }
@@ -36,8 +29,9 @@ export function isMicrophoneErrorCode(code: string): boolean {
   return code.startsWith('MICROPHONE_');
 }
 
-export function isAgentRecoverableError(code: string): boolean {
-  return AGENT_RECOVERABLE_ERRORS.has(code);
+/** Recoverable, non-microphone errors that a healthy agent/interrupt clears. */
+export function isAgentClearableError(code: string): boolean {
+  return code !== '' && !isFatalVoiceError(code) && !isMicrophoneErrorCode(code);
 }
 
 /**

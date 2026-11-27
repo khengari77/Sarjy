@@ -1,6 +1,6 @@
 import type { ConnectionDeps, VoiceState } from './connection';
 import {
-  isAgentRecoverableError,
+  isAgentClearableError,
   isFatalVoiceError,
   isMicrophoneErrorCode,
   microphoneErrorCode,
@@ -51,17 +51,18 @@ export async function interruptVoice(state: VoiceState, deps: ConnectionDeps) {
   await deps.getRuntime().interrupt();
   if (!ownsLive(state, sessionId)) return;
   state.agentState = 'listening';
-  if (isAgentRecoverableError(state.voiceErrorCode)) state.voiceErrorCode = '';
+  if (isAgentClearableError(state.voiceErrorCode)) state.voiceErrorCode = '';
 }
 
 /** Retry the microphone without tearing down a live call. */
 export async function retryVoiceMicrophone(state: VoiceState, deps: ConnectionDeps) {
-  if (!state.live || !state.muted || microphoneActions.has(state)) return;
+  if (!state.live || microphoneActions.has(state)) return;
   const sessionId = state.live.id;
+  const wasMuted = state.muted;
   microphoneActions.add(state);
   try {
     await deps.getRuntime().startMicrophone();
-    if (!ownsLive(state, sessionId) || !state.muted) return;
+    if (!ownsLive(state, sessionId) || state.muted !== wasMuted) return;
     state.muted = false;
     deps.meters.startMicMeter();
     clearMicrophoneError(state);

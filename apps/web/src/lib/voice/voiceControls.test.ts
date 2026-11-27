@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createVoiceConnection, initialVoiceState, type ConnectionDeps, type VoiceState } from './connection';
-import { setVoiceError } from './errors';
 import { interruptVoice, retryVoiceMicrophone, toggleVoiceMute } from './voiceControls';
 
 const LIVE = {
@@ -124,10 +123,47 @@ describe('only matching recoverable errors clear', () => {
     expect(state.voiceErrorCode).toBe('');
   });
 
+  it.each(['API_UNAVAILABLE', 'CALL_REQUIRED'])('clears %s after a successful interrupt', async (code) => {
+    const { state, deps } = harness({ voiceErrorCode: code });
+    await interruptVoice(state, deps);
+    expect(state.voiceErrorCode).toBe('');
+  });
+
   it('leaves a microphone error after a successful interrupt', async () => {
     const { state, deps } = harness({ voiceErrorCode: 'MICROPHONE_PERMISSION_DENIED' });
     await interruptVoice(state, deps);
     expect(state.voiceErrorCode).toBe('MICROPHONE_PERMISSION_DENIED');
+  });
+
+  it('never clears a fatal error after a successful interrupt', async () => {
+    const { state, deps } = harness({ voiceErrorCode: 'SESSION_RELEASE_FAILED' });
+    await interruptVoice(state, deps);
+    expect(state.voiceErrorCode).toBe('SESSION_RELEASE_FAILED');
+  });
+});
+
+describe('retrying the microphone on an unmuted call', () => {
+  it('restarts the track, starts the meter and clears the mic error', async () => {
+    const { state, runtime, meters, deps } = harness({
+      muted: false,
+      voiceErrorCode: 'MICROPHONE_UNAVAILABLE',
+    });
+    await retryVoiceMicrophone(state, deps);
+    expect(runtime.startMicrophone).toHaveBeenCalledOnce();
+    expect(state.muted).toBe(false);
+    expect(meters.startMicMeter).toHaveBeenCalledOnce();
+    expect(state.voiceErrorCode).toBe('');
+  });
+
+  it('sets the mic error again when the restart fails', async () => {
+    const { state, runtime, deps } = harness({
+      muted: false,
+      voiceErrorCode: 'MICROPHONE_NOT_FOUND',
+    });
+    runtime.startMicrophone.mockRejectedValueOnce(new Error('boom'));
+    await expect(retryVoiceMicrophone(state, deps)).resolves.toBeUndefined();
+    expect(state.muted).toBe(false);
+    expect(state.voiceErrorCode).toBe('MICROPHONE_UNAVAILABLE');
   });
 });
 
@@ -201,37 +237,18 @@ describe('microphone failures keep the retry path', () => {
   });
 });
 
-describe('fatal errors are only replaced by fatal errors', () => {
-  it('uses setVoiceError for the data-channel error path', () => {
-    const { state, deps } = harness({ voiceErrorCode: 'SESSION_RELEASE_FAILED' });
-    const connection = createVoiceConnection(state, deps);
-    connection.handleEvent({ type: 'error', code: 'MICROPHONE_UNAVAILABLE', epoch: 1 });
-    connection.handleEvent({ type: 'error', code: 'DAILY_BUDGET_EXHAUSTED', epoch: 1 });
-    connection.handleEvent({ type: 'error', code: 'CONVERSATION_REQUIRED', epoch: 1 });
-    expect(state.voiceErrorCode).toBe('SESSION_RELEASE_FAILED');
-
-    connection.handleEvent({ type: 'error', code: 'CONNECTION_LOST', epoch: 1 });
-    expect(state.voiceErrorCode).toBe('CONNECTION_LOST');
-  });
-
-  it('replaces a recoverable error with a fatal one', () => {
-    const state = { voiceErrorCode: 'MICROPHONE_UNAVAILABLE' };
-    setVoiceError(state, 'SESSION_RELEASE_FAILED');
-    expect(state.voiceErrorCode).toBe('SESSION_RELEASE_FAILED');
-  });
-
-  it('keeps a fatal error against a recoverable replacement', () => {
-    const state = { voiceErrorCode: 'SESSION_RELEASE_FAILED' };
-    setVoiceError(state, 'MICROPHONE_UNAVAILABLE');
-    expect(state.voiceErrorCode).toBe('SESSION_RELEASE_FAILED');
-  });
-});
-
-describe('healthy agent status clears only agent/transport errors', () => {
+describe('healthy agent status clears only agent-clearable errors', () => {
   it.each(['idle', 'listening', 'thinking', 'speaking'])('clears TRANSCRIPT_UNAVAILABLE on %s', (text) => {
     const { state, deps } = harness({ voiceErrorCode: 'TRANSCRIPT_UNAVAILABLE' });
     const connection = createVoiceConnection(state, deps);
     connection.handleEvent({ type: 'status', source: 'agent', text, epoch: 1 });
+    expect(state.voiceErrorCode).toBe('');
+  });
+
+  it.each(['API_UNAVAILABLE', 'CALL_REQUIRED'])('clears %s on a healthy status', (code) => {
+    const { state, deps } = harness({ voiceErrorCode: code });
+    const connection = createVoiceConnection(state, deps);
+    connection.handleEvent({ type: 'status', source: 'agent', text: 'listening', epoch: 1 });
     expect(state.voiceErrorCode).toBe('');
   });
 

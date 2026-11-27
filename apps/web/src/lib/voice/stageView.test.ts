@@ -19,9 +19,23 @@ describe('deriveStage', () => {
   });
 
   it('lets a fatal error outrank the phase and offers retry', () => {
-    const voice = { ...initialVoiceState(), voiceErrorCode: 'PIPELINE_NOT_CONFIGURED' };
+    const live = {
+      id: 'sess-1',
+      url: 'ws://fake.invalid',
+      token: 'token',
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      voice: { id: 'voice-1', name: 'Voice', languages: [] },
+      voice_language: 'en' as const,
+      voice_source: 'default' as const,
+    };
+    const voice = {
+      ...initialVoiceState(),
+      live,
+      agentState: 'listening' as const,
+      voiceErrorCode: 'CONNECTION_LOST',
+    };
     const stage = deriveStage(voice, false, 'none', 'light');
-    expect(stage.presentation.effectivePhase).not.toBe('idle');
+    expect(stage.presentation.effectivePhase).toBe('error');
     expect(stage.presentation.enabledActions).toEqual(['retry']);
   });
 
