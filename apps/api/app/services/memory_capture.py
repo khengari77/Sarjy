@@ -354,7 +354,7 @@ async def _require_replace_target(
     capture: MemoryCapture,
     target_id: str,
     target_version: int,
-) -> None:
+) -> Memory:
     """The requested target must still be the single visible conflict the user was shown."""
     if (
         await _exact_content(db, owner_id=owner_id, conversation_id=conversation_id, capture=capture, status="active")
@@ -374,6 +374,7 @@ async def _require_replace_target(
         raise MemoryCaptureError(
             "MEMORY_PROPOSAL_TARGET_CHANGED", 409, target_id=target_id, target_version=target_version
         )
+    return conflicts[0]
 
 
 async def _confirm_replace_decision(
@@ -382,41 +383,41 @@ async def _confirm_replace_decision(
     *,
     owner_id: str,
     conversation_id: str,
-    token: str,
+    capture: MemoryCapture,
+    payload: dict,
     secret: str,
-    target_id: str,
-    target_version: int,
+    target: Memory,
 ) -> dict:
-    """Save once, then follow the clarification token's replace path, bound to the shown target."""
+    """Arm the clarification token, then let the replace path be the only writer."""
+    token, _ = await _arm_clarification(
+        db,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        capture=capture,
+        payload=payload,
+        secret=secret,
+        target=target,
+    )
     try:
         result = await confirm_memory(
             db,
             memory_service,
             token=token,
-            decision="save",
-            owner_id=owner_id,
-            conversation_id=conversation_id,
-            source_turn_id=None,
-            secret=secret,
-        )
-    except MemoryCaptureError as error:
-        replacement = error.details.get("token")
-        if error.code != "MEMORY_CLARIFICATION_REQUIRED" or not isinstance(replacement, str):
-            raise
-        if error.details.get("target_id") != target_id or error.details.get("target_version") != target_version:
-            raise MemoryCaptureError(
-                "MEMORY_PROPOSAL_TARGET_CHANGED", 409, target_id=target_id, target_version=target_version
-            ) from error
-        result = await confirm_memory(
-            db,
-            memory_service,
-            token=replacement,
             decision="replace",
             owner_id=owner_id,
             conversation_id=conversation_id,
             source_turn_id=None,
             secret=secret,
         )
+    except MemoryCaptureError as error:
+        if error.code == "TARGET_CHANGED":
+            raise MemoryCaptureError(
+                "MEMORY_PROPOSAL_TARGET_CHANGED",
+                409,
+                target_id=target.id,
+                target_version=target.version,
+            ) from error
+        raise
     if result.get("status") == "already_saved":
         raise MemoryCaptureError("MEMORY_PROPOSAL_STALE", 409)
     return result
@@ -437,8 +438,8 @@ async def _resolve_replace_proposal(
     replayed = await _replayed_decision(db, owner_id=owner_id, confirmation_id=proposal_id, decision="replace")
     if replayed is not None:
         return replayed
-    capture, _ = _verified(token, secret, owner_id, conversation_id)
-    await _require_replace_target(
+    capture, payload = _verified(token, secret, owner_id, conversation_id)
+    target = await _require_replace_target(
         db,
         owner_id=owner_id,
         conversation_id=conversation_id,
@@ -451,10 +452,10 @@ async def _resolve_replace_proposal(
         memory_service,
         owner_id=owner_id,
         conversation_id=conversation_id,
-        token=token,
+        capture=capture,
+        payload=payload,
         secret=secret,
-        target_id=target_id,
-        target_version=target_version,
+        target=target,
     )
 
 
@@ -1482,7 +1483,7 @@ def _conflict_rows(rows: list[Memory], capture: MemoryCapture) -> list[Memory]:
     ]
 
 
-async def _clarify(
+async def _arm_clarification(
     db: AsyncSession,
     *,
     owner_id: str,
@@ -1491,7 +1492,8 @@ async def _clarify(
     payload: dict,
     secret: str,
     target: Memory,
-) -> None:
+) -> tuple[str, int]:
+    """Mint and record one clarification revision, returning its signed token and revision."""
     clarified, revision = _clarification_token(payload, secret, target=target)
     revised = {**payload, "revision": revision, "target_id": target.id, "target_version": target.version}
     prior = await _decision(db, payload["confirmation_id"], revision, owner_id)
@@ -1508,6 +1510,28 @@ async def _clarify(
         )
     elif prior.outcome != "awaiting_confirmation":
         raise MemoryCaptureError("DECISION_ALREADY_FINAL", 409, outcome=prior.outcome)
+    return clarified, revision
+
+
+async def _clarify(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    capture: MemoryCapture,
+    payload: dict,
+    secret: str,
+    target: Memory,
+) -> None:
+    clarified, revision = await _arm_clarification(
+        db,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        capture=capture,
+        payload=payload,
+        secret=secret,
+        target=target,
+    )
     raise MemoryCaptureError(
         "MEMORY_CLARIFICATION_REQUIRED",
         409,

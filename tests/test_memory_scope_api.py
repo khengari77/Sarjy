@@ -9,6 +9,7 @@ from app.domain.context_operations import sign_proposal, verify_proposal
 from app.domain.memory_capture import parse_capture
 from app.main import create_app
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from test_memory import FakeEmbedder
 from test_memory_capture import add_turn_session, configured, memory_rows, set_mode, turn
 
@@ -729,4 +730,55 @@ def test_replace_is_stale_when_the_proposed_fact_already_exists(tmp_path):
         refused = decide(client, chat, proposal["confirmation_id"], "replace", target_id=shown, target_version=1)
         assert refused.status_code == 409
         assert refused.json()["detail"]["code"] == "MEMORY_PROPOSAL_STALE"
+        assert memory_records(file) == before
+
+
+@pytest.mark.parametrize("status", ["hidden", "deleted"])
+def test_replace_writes_nothing_when_the_target_disappears_after_the_gate(tmp_path, monkeypatch, status):
+    from app.services import memory_capture
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        shown = create_global(client, chat, "My name is Sam", f"disappear-sam-{status}")
+        proposal = arm(client, file, chat, owner, "My name is Alex", f"disappear-{status}")
+        assert client.get(PROPOSAL.format(chat=chat)).json()["pending"]["replaces"]["id"] == shown
+        original = memory_capture._require_replace_target
+
+        async def disappear_after_gate(db, **kwargs):
+            target = await original(db, **kwargs)
+            await db.execute(
+                text("UPDATE memories SET status=:status WHERE id=:id"),
+                {"status": status, "id": target.id},
+            )
+            await db.commit()
+            return target
+
+        monkeypatch.setattr(memory_capture, "_require_replace_target", disappear_after_gate)
+        before = memory_records(file)
+        refused = decide(client, chat, proposal["confirmation_id"], "replace", target_id=shown, target_version=1)
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["detail"]["code"] == "MEMORY_PROPOSAL_TARGET_CHANGED"
+        after = memory_records(file)
+        assert len(after) == len(before)
+        assert not [row for row in after if row[0] == "My name is Alex"]
+        assert [row for row in after if row[0] == "My name is Sam"][0][3] == status
+
+
+def test_replace_rejects_a_visible_non_conflict_target(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        create_global(client, chat, "My name is Sam", "non-conflict-sam")
+        unrelated = create_global(client, chat, "I live in Benghazi", "non-conflict-location")
+        proposal = arm(client, file, chat, owner, "My name is Alex", "non-conflict")
+        before = memory_records(file)
+
+        refused = decide(client, chat, proposal["confirmation_id"], "replace", target_id=unrelated, target_version=1)
+        assert refused.status_code == 409
+        assert refused.json()["detail"]["code"] == "MEMORY_PROPOSAL_TARGET_CHANGED"
         assert memory_records(file) == before
