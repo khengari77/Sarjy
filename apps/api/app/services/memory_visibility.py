@@ -31,6 +31,7 @@ from app.infrastructure.database import (
     now,
 )
 from app.services.memory_erasure_lock import lock_owner_memories
+from app.services.memory_terms import delete_terms
 
 ACTIVE = "active"
 HIDDEN = "hidden"
@@ -292,6 +293,8 @@ async def scrub_copies(db: AsyncSession, owner_id: str, erased: list[Erased]) ->
     deleted = set(ids)
     texts = {item.content for item in erased if item.content}
     keys = [item.request_key for item in erased if item.request_key]
+    # Terms are derived copies of the content: they leave with it, in the same transaction.
+    await delete_terms(db, ids)
     if keys:
         await db.execute(
             update(MemoryWriteRequest)

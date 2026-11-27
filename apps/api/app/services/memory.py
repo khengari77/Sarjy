@@ -28,6 +28,7 @@ from app.services.context_assembly import orm_memory_candidates
 from app.services.memory_eligibility import blocked_memory_ids
 from app.services.memory_erasure_lock import lock_owner_memories
 from app.services.memory_scope import visible_in
+from app.services.memory_terms import write_terms
 
 EMBEDDING_TIMEOUT_SECONDS = 20
 CLAIM_TIMEOUT_SECONDS = 30
@@ -446,6 +447,7 @@ class MemoryService:
             )
             db.add(memory)
             await db.flush()
+            await write_terms(db, memory_id=memory.id, owner_id=owner_id, content=content)
             result = memory_result(memory)
             row.state, row.result, row.updated_at = "completed", asdict(result), now()
             return result

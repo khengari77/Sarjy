@@ -166,6 +166,7 @@ async def _postgres_migration():
             "user_settings",
             "setting_revisions",
             "memory_write_requests",
+            "memory_terms",
             "reviewer_invitations",
             "reviewer_attempt_windows",
             "reviewer_source_attempt_windows",
@@ -460,3 +461,64 @@ def test_memory_mode_migration_is_additive_and_reversible(tmp_path):
             ).fetchall()
             == before
         )
+
+
+def test_memory_terms_migration_creates_backfills_and_drops(tmp_path):
+    from app.services.memory_terms import terms_of
+
+    path = tmp_path / "memory-terms.db"
+    url = f"sqlite+aiosqlite:///{path}"
+    run_alembic(url, "upgrade", "0019_conversation_memory_mode")
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "INSERT INTO identities (id, token_hash, expires_at)"
+            " VALUES ('owner-1', 'hash', '2030-01-01T00:00:00+00:00')"
+        )
+        connection.execute(
+            "INSERT INTO conversations (id, owner_id, title, revision, created_at)"
+            " VALUES ('conversation-1', 'owner-1', 'Tripoli trip', 3, '2026-11-11T00:00:00+00:00')"
+        )
+        rows = [
+            ("active-1", "active", "I prefer café in Paris"),
+            ("hidden-1", "hidden", "My passport is X123"),
+            ("deleted-1", "deleted", ""),
+            ("superseded-1", "superseded", "Old fact"),
+        ]
+        for memory_id, status, content in rows:
+            connection.execute(
+                "INSERT INTO memories"
+                " (id, owner_id, content, embedding_model, source_conversation_id, version, status, created_at, updated_at)"
+                " VALUES (?, 'owner-1', ?, 'text-embedding-3-small', 'conversation-1', 1, ?,"
+                " '2026-11-11T00:00:00+00:00', '2026-11-11T00:00:00+00:00')",
+                (memory_id, content, status),
+            )
+
+    run_alembic(url, "upgrade", "head")
+    with closing(sqlite3.connect(path)) as connection:
+        terms = connection.execute("SELECT memory_id, term FROM memory_terms ORDER BY memory_id, term").fetchall()
+        expected = sorted(
+            (memory_id, term)
+            for memory_id, status, content in rows
+            if status != "deleted"
+            for term in terms_of(content)
+        )
+        assert terms == expected
+        # A superseded fact comes back on undo, so it is indexed; a deleted one has no content to index.
+        assert connection.execute("SELECT count(*) FROM memory_terms WHERE memory_id = 'deleted-1'").fetchone() == (0,)
+        assert (
+            connection.execute("SELECT count(*) FROM memory_terms WHERE memory_id = 'superseded-1'").fetchone()[0] > 0
+        )
+        indexes = {row[1] for row in connection.execute("PRAGMA index_list(memory_terms)")}
+        assert "ix_memory_terms_owner_term" in indexes
+    run_alembic(url, "check")
+
+    run_alembic(url, "downgrade", "0019_conversation_memory_mode")
+    with closing(sqlite3.connect(path)) as connection:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "memory_terms" not in tables
+        assert connection.execute("SELECT id, content FROM memories").fetchall() == [
+            ("active-1", "I prefer café in Paris"),
+            ("hidden-1", "My passport is X123"),
+            ("deleted-1", ""),
+            ("superseded-1", "Old fact"),
+        ]
