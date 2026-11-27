@@ -20,14 +20,19 @@ export function publishDockGeometry(
 
   const measuredTopbar = topbar?.getBoundingClientRect().height ?? 0;
   const topbarHeight = measuredTopbar > 0 ? measuredTopbar : 68;
-  const dockHeight = Math.max(0, Math.min(viewportHeight, viewportHeight - dockRect.top));
-  const dockTop = Math.min(viewportHeight, Math.max(topbarHeight + 8, dockRect.top));
-  root.style.setProperty('--dock-h', `${dockHeight}px`);
+  const toastTop = topbarHeight + 8;
+  // When the dock scrolls up past the topbar the toast has no room above it;
+  // put it at the viewport's bottom edge instead of collapsing the band.
+  const dockAboveTopbar = dockRect.top <= topbarHeight;
+  const dockTop = Math.min(viewportHeight, Math.max(toastTop, dockRect.top));
+  const preferredBottom = dockAboveTopbar ? 8 : Math.max(8, viewportHeight - dockTop + 12);
+  // Keep at least 48px between the toast's top and its bottom edge so the band
+  // can never collapse to a negative/zero height.
+  const maxBottom = Math.max(8, viewportHeight - toastTop - 48);
+  const toastBottom = Math.min(preferredBottom, maxBottom);
   root.style.setProperty('--main-column-center', `${columnRect.left + columnRect.width / 2}px`);
-  root.style.setProperty('--toast-top', `${topbarHeight + 8}px`);
-  // Keep the toast above the dock, but never above the topbar: when the dock
-  // scrolls below a short viewport, the toast sits at the viewport bottom.
-  root.style.setProperty('--toast-bottom', `${Math.max(8, viewportHeight - dockTop + 12)}px`);
+  root.style.setProperty('--toast-top', `${toastTop}px`);
+  root.style.setProperty('--toast-bottom', `${toastBottom}px`);
   root.dataset.toastReady = 'true';
   return true;
 }

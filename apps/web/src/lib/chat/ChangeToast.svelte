@@ -32,7 +32,9 @@
 
 {#if session.change || session.changeStatus}
   <!-- Mounted outside AppShell's `.shell`, so the layer carries the UI
-       direction itself instead of inheriting the document's LTR. -->
+       direction itself instead of inheriting the document's LTR. Requires
+       AppShell to be mounted with its controls snippet: the band is measured
+       from that dock. -->
   <div class="change-toast-layer" dir={arabic ? 'rtl' : 'ltr'}>
     {#if session.change}
       <div class="change-toast" role="status" aria-live="polite">
@@ -70,7 +72,9 @@
     top: var(--toast-top, 76px);
     bottom: var(--toast-bottom, 108px);
     left: var(--main-column-center, 50%);
-    z-index: 40;
+    /* Above the controls strip (26), below the drawers (30); the scrim (25)
+       is below both. An open modal drawer must win the hit test over the toast. */
+    z-index: 29;
     display: flex;
     align-items: flex-end;
     justify-content: center;

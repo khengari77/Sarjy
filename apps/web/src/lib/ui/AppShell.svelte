@@ -69,11 +69,14 @@
     const observer = new ResizeObserver(update);
     observer.observe(dock);
     observer.observe(column);
+    // At <=480px the main column itself scrolls; the dock's viewport top (and
+    // therefore the toast band) changes without a resize.
+    column.addEventListener('scroll', update, { passive: true });
     window.addEventListener('resize', update);
     return () => {
       observer.disconnect();
+      column.removeEventListener('scroll', update);
       window.removeEventListener('resize', update);
-      root.style.removeProperty('--dock-h');
       root.style.removeProperty('--main-column-center');
       root.style.removeProperty('--toast-top');
       root.style.removeProperty('--toast-bottom');

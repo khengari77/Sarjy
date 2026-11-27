@@ -34,16 +34,13 @@ test.describe('toast horizontal bounds in LTR and RTL', () => {
       await startLive(page);
       await showChangeToast(page);
 
-      // The layer must not inherit the document's LTR: it carries the UI
-      // direction explicitly. (Removing the attribute breaks this assertion.)
-      expect(await page.locator('.change-toast-layer').getAttribute('dir')).toMatch(/^(ltr|rtl)$/);
       await expectToastInsideViewport(page);
       await expectToastClearsDock(page);
     });
   }
 });
 
-test('the toast follows the main column when the shell flips to RTL', async ({ page }) => {
+test('the toast layer follows the shell dir', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await installRuntime(page);
   await boot(page);
@@ -126,6 +123,75 @@ test.describe('short viewports keep the stage reachable', () => {
         });
       }
     });
+  }
+});
+
+test.describe('the toast re-measures when the dock scrolls into view', () => {
+  test.describe.configure({ timeout: 120_000 });
+
+  for (const viewport of [
+    { width: 320, height: 256 },
+    { width: 640, height: 400 },
+  ]) {
+    test(`${viewport.width}x${viewport.height}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await installRuntime(page);
+      await boot(page);
+      await startLive(page);
+      await showChangeToast(page);
+
+      // Scroll just enough to show ~112px of the dock. At 320px this leaves
+      // the minimum toast band; at 640px both scroll to the end.
+      await page.evaluate(() => {
+        const main = document.querySelector<HTMLElement>('.main-column')!;
+        const dock = document.querySelector<HTMLElement>('.stage-controls')!;
+        const target = dock.getBoundingClientRect().top - (innerHeight - 112);
+        const max = main.scrollHeight - main.clientHeight;
+        main.scrollTop = Math.max(0, Math.min(max, main.scrollTop + target));
+        main.dispatchEvent(new Event('scroll'));
+      });
+
+      await expect
+        .poll(async () => {
+          const toast = await boxOf(page.locator('.change-toast'));
+          const dock = await boxOf(page.locator('.stage-controls'));
+          return dock.y - (toast.y + toast.height);
+        })
+        .toBeGreaterThanOrEqual(11.5);
+
+      await expectToastClearsDock(page);
+    });
+  }
+});
+
+test('the toast sits below an open drawer', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installRuntime(page);
+  await boot(page);
+  await showChangeToast(page);
+
+  await page.getByRole('button', { name: 'Show memory and settings' }).click();
+  await expect(page.locator('#shell-right')).toHaveAttribute('data-open', 'true');
+
+  const zIndexes = await page.evaluate(() => ({
+    toast: Number(getComputedStyle(document.querySelector('.change-toast-layer')!).zIndex),
+    drawer: Number(getComputedStyle(document.querySelector('#shell-right')!).zIndex),
+    controls: Number(getComputedStyle(document.querySelector('.stage-controls')!).zIndex),
+  }));
+  expect(zIndexes.toast, 'toast above the controls strip').toBeGreaterThan(zIndexes.controls);
+  expect(zIndexes.toast, 'toast below the modal drawer').toBeLessThan(zIndexes.drawer);
+
+  const toast = await boxOf(page.locator('.change-toast'));
+  const drawer = await boxOf(page.locator('#shell-right'));
+  if (intersects(toast, drawer)) {
+    const toastOnTop = await page.evaluate(
+      ({ x, y }) => {
+        const node = document.elementFromPoint(x, y);
+        return node !== null && node.closest('.change-toast') !== null;
+      },
+      { x: toast.x + toast.width / 2, y: toast.y + toast.height / 2 },
+    );
+    expect(toastOnTop, 'an open drawer wins the hit test over the toast').toBe(false);
   }
 });
 
