@@ -70,6 +70,7 @@
   const statusText = $derived(arabic ? presentation.statusLabel.ar : presentation.statusLabel.en);
   const healthyPhase = $derived(
     !connectionLost &&
+      voiceErrorCode === '' &&
       (presentation.effectivePhase === 'listening' ||
         presentation.effectivePhase === 'thinking' ||
         presentation.effectivePhase === 'speaking'),
@@ -221,7 +222,7 @@
 {#snippet notices()}
   <div class="stage-notices">
     {#if audioBlocked}
-      <div class="stage-notice">
+      <div class="stage-notice" role="status">
         <span>{words.audioBlocked}</span>
         <button class="primary-button" onclick={onenableaudio}>
           {arabic ? 'تشغيل الصوت' : 'Enable audio'}
@@ -229,7 +230,7 @@
       </div>
     {/if}
     {#if voiceErrorText}
-      <div class="stage-notice" role="status" data-code={voiceErrorCode}>
+      <div class="stage-notice" data-code={voiceErrorCode}>
         <span>{voiceErrorText}</span>
         {#if voiceErrorCode.startsWith('MICROPHONE_')}
           <button class="ghost-button" disabled={busy} onclick={onretrymic}>
@@ -239,7 +240,7 @@
       </div>
     {/if}
     {#if connectionLost && live}
-      <div class="stage-notice" role="status" data-code="CONNECTION_LOST">
+      <div class="stage-notice" data-code="CONNECTION_LOST">
         <span>{arabic ? 'انقطع الاتصال.' : 'Connection lost.'}</span>
         <button class="ghost-button" disabled={busy} onclick={onreconnect}>
           {arabic ? 'إعادة الاتصال' : 'Reconnect'}

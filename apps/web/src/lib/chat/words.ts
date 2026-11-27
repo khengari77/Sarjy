@@ -1,3 +1,5 @@
+import { friendlyVoiceError } from '../audio/livekitAdapter';
+
 export type Words = {
   new: string;
   title: string;
@@ -40,7 +42,9 @@ export type Words = {
   deleting: string;
 };
 
-const EN: Words = {
+type BaseWords = Omit<Words, 'audioBlocked'>;
+
+const EN: BaseWords = {
   new: 'New conversation',
   title: 'Meet Sarjy',
   welcomeBack: 'Welcome back',
@@ -49,7 +53,6 @@ const EN: Words = {
   connected: 'Connected',
   reconnecting: 'Reconnecting…',
   offline: 'Offline',
-  audioBlocked: 'The browser blocked audio playback. Select “Enable audio” to continue.',
   cancelConnecting: 'Cancel connecting',
   placeholder: 'Write a message…',
   send: 'Send',
@@ -82,7 +85,7 @@ const EN: Words = {
   deleting: 'Deleting…',
 };
 
-const AR: Words = {
+const AR: BaseWords = {
   new: 'محادثة جديدة',
   title: 'تعرّف على سَرْجي',
   welcomeBack: 'أهلًا بعودتك',
@@ -91,7 +94,6 @@ const AR: Words = {
   connected: 'متصل',
   reconnecting: 'جارٍ إعادة الاتصال…',
   offline: 'غير متصل',
-  audioBlocked: 'منع المتصفح تشغيل الصوت. اختر «تشغيل الصوت» للمتابعة.',
   cancelConnecting: 'إلغاء الاتصال',
   placeholder: 'اكتب رسالتك…',
   send: 'إرسال',
@@ -125,5 +127,8 @@ const AR: Words = {
 };
 
 export function wordsFor(arabic: boolean): Words {
-  return arabic ? AR : EN;
+  return {
+    ...(arabic ? AR : EN),
+    audioBlocked: friendlyVoiceError('AUDIO_PLAYBACK_BLOCKED', arabic),
+  };
 }

@@ -2,7 +2,7 @@ import type { SessionConfig } from '../api';
 import { ensureMicrophoneAccess } from '../audio/microphone';
 import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
 import type { CommandResult } from '../commands/commandStore';
-import { errorCode, isFatalVoiceError } from './errors';
+import { errorCode, isAgentRecoverableError, setVoiceError } from './errors';
 import { startSessionAttempt } from './sessionAttempt';
 import { createSessionReleaser } from './sessionRelease';
 import { cancelConnection } from './cancelConnection';
@@ -76,10 +76,12 @@ function handleVoiceEvent(
   if (event.type === 'status') {
     if (event.source === 'agent') {
       state.agentState = event.text;
-      // A healthy agent event proves the call recovered from a recoverable
-      // error (denied unmute, failed interrupt, transcript unavailable).
-      const healthy = event.text === 'listening' || event.text === 'thinking' || event.text === 'speaking';
-      if (healthy && !isFatalVoiceError(state.voiceErrorCode)) state.voiceErrorCode = '';
+      // A healthy agent event only clears errors caused by the agent/transport.
+      // Microphone errors clear on a successful unmute/retry, not a turn
+      // boundary: the microphone is still off.
+      const healthy =
+        event.text === 'idle' || event.text === 'listening' || event.text === 'thinking' || event.text === 'speaking';
+      if (healthy && isAgentRecoverableError(state.voiceErrorCode)) state.voiceErrorCode = '';
     } else {
       state.agentState = null;
       state.transportStatus = event.text;
@@ -91,7 +93,7 @@ function handleVoiceEvent(
       }
     }
   }
-  if (event.type === 'error') state.voiceErrorCode = event.code;
+  if (event.type === 'error') setVoiceError(state, event.code);
   if (event.type === 'audio-blocked') state.audioBlocked = true;
   if (event.type === 'command') deps.applyCommand(event.command);
   if (event.type === 'resync') deps.resyncSettings();

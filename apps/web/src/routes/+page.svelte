@@ -16,7 +16,7 @@
   import { createAnnouncement } from '../lib/chat/announcement.svelte';
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
-  import { errorCode } from '../lib/voice/errors';
+  import { errorCode, setVoiceError } from '../lib/voice/errors';
   import { storeLanguage } from '../lib/preferences';
   import { createCatalogStore, initialCatalogState } from '../lib/voice/catalog';
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
@@ -89,7 +89,7 @@
     }
   }
 
-  const onVoiceError = (error: unknown) => (voice.voiceErrorCode = errorCode(error));
+  const onVoiceError = (error: unknown) => setVoiceError(voice, errorCode(error));
 
   function handleOrb() {
     activateOrb(presentation, {
