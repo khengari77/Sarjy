@@ -21,8 +21,11 @@ export const PHASE_LABELS: Record<VoicePhase, LocalizedText> = {
   listening: { en: 'Listening…', ar: 'أستمع…' },
   thinking: { en: 'Thinking…', ar: 'أفكر…' },
   speaking: { en: 'Speaking…', ar: 'أتحدث…' },
-  disconnected: { en: 'Connection lost', ar: 'انقطع الاتصال' },
+  disconnected: { en: 'Offline', ar: 'غير متصل' },
 };
+
+/** Spoken/announced while the transport is reconnecting during a live call. */
+export const RECONNECTING_LABEL: LocalizedText = { en: 'Reconnecting…', ar: 'جارٍ إعادة الاتصال…' };
 
 export const OVERLAY_LABELS: Partial<Record<OrbOverlay, LocalizedText>> = {
   memory_work: { en: 'Checking memory…', ar: 'أراجع الذاكرة…' },
@@ -44,7 +47,7 @@ export const PHASE_ARIA: Record<VoicePhase | 'error', LocalizedText> = {
   listening: { en: 'Listening.', ar: 'أستمع.' },
   thinking: { en: 'Thinking.', ar: 'أفكر.' },
   speaking: { en: 'Speaking.', ar: 'أتحدث.' },
-  disconnected: { en: 'Disconnected.', ar: 'انقطع الاتصال.' },
+  disconnected: { en: 'Offline.', ar: 'غير متصل.' },
   error: { en: 'Something went wrong.', ar: 'حدث خطأ ما.' },
 };
 
