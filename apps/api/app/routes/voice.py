@@ -15,6 +15,7 @@ from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response
 from app.domain.intro import intro_for
 from app.domain.pipeline import PipelineConfig, validate_pipeline
 from app.domain.sessions import admission_error, call_is_live
+from app.domain.voices import VOICE_ID_PATTERN
 from app.infrastructure.database import SessionGate, UserSetting, VoiceSession
 from app.services.actions import clear_saved_voice
 from app.services.intro import mark_intro_seen
@@ -86,7 +87,7 @@ def _plan_intro(body: StartVoice, *, seen: bool, tts_provider: str, voice_id: st
     if body.intro_delivery != "browser":
         return {}, {}
     intro = intro_for(body.language, seen=seen, tts_provider=tts_provider)
-    if intro is None:
+    if intro is None or VOICE_ID_PATTERN.fullmatch(voice_id) is None:
         return {}, {"intro": None}
     return (
         {"intro_delivery": "browser", "intro_kind": intro["kind"]},

@@ -514,7 +514,7 @@ def _register_session_routes(app, *, database, guard):
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
         pipeline = normalize_pipeline(stored)
         row = await db.get(UserSetting, voice.owner_id)
-        if pipeline.get("intro_delivery") == "browser":
+        if stored.get("intro_delivery") == "browser":
             intro = None
         else:
             intro = intro_for(
