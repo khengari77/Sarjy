@@ -96,6 +96,13 @@ def test_terms_of_normalises_accents_case_arabic_diacritics_and_stopwords():
     assert len(next(iter(terms_of("x" * 100)))) == 64
 
 
+def test_contraction_fragments_are_never_indexed_or_searched():
+    assert terms_of("I've told you") == frozenset({"told"})
+    assert terms_of("you're") == frozenset()
+    assert terms_of("we'll") == frozenset({"we"})
+    assert terms_of("it's") == frozenset()
+
+
 def test_oldest_matches_are_found_beyond_the_old_preview_window(tmp_path):
     async def run():
         engine, sessions = await database(tmp_path / "oldest.db")

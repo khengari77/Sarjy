@@ -21,12 +21,10 @@ from dataclasses import dataclass
 from typing import Final
 
 from app.domain.commands import (
-    memory_request_is_global,
     memory_restore_requested,
     memory_undo_requested,
     parse_exact_command,
     parse_exclusion_confirmation,
-    parse_memory_exclusion_target,
     parse_voice_gender,
     parse_voice_selection,
 )
@@ -52,10 +50,8 @@ def should_classify_early(text: str) -> bool:
         ui_text_is_eligible(text)
         and parse_exact_command(text) is None
         and parse_exclusion_confirmation(text) is None
-        and not memory_request_is_global(text)
         and not memory_restore_requested(text)
         and not memory_undo_requested(text)
-        and parse_memory_exclusion_target(text) is None
         and parse_voice_gender(text) is None
         and parse_voice_selection(text) is None
     )

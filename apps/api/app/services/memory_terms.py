@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.context_operations import MemoryCandidate, classify
+from app.domain.contracts import SCOPE_CONVERSATION
 from app.infrastructure.database import Memory, MemoryTerm
 from app.services.memory_eligibility import blocked_memory_ids_select
 from app.services.memory_scope import visible_in
@@ -101,6 +102,8 @@ REFERENTIAL = frozenset(
 _ARABIC_MARKS = re.compile(r"[\u0610-\u061a\u064b-\u065f\u0670\u0640]")
 # Letters and digits, never the underscore: "user_name" is two terms.
 _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
+# Apostrophe suffixes ("you've" -> "ve", "it's" -> "s") are not words: they must never be indexed or searched.
+CONTRACTION_FRAGMENTS = frozenset({"ve", "re", "ll", "d", "m", "s", "t"})
 
 
 def terms_of(text: str) -> frozenset[str]:
@@ -110,7 +113,11 @@ def terms_of(text: str) -> frozenset[str]:
     # Dropping every combining mark removes Latin accents ("café" -> "cafe") and Arabic harakat alike.
     normalised = "".join(character for character in normalised if not unicodedata.combining(character))
     normalised = _ARABIC_MARKS.sub("", normalised)
-    return frozenset(token[:TERM_MAX_CHARS] for token in _TOKEN.findall(normalised) if token not in STOPWORDS)
+    return frozenset(
+        token[:TERM_MAX_CHARS]
+        for token in _TOKEN.findall(normalised)
+        if token not in STOPWORDS and not (len(token) <= 2 and token in CONTRACTION_FRAGMENTS)
+    )
 
 
 async def write_terms(db: AsyncSession, *, memory_id: str, owner_id: str, content: str) -> None:
@@ -125,6 +132,47 @@ async def delete_terms(db: AsyncSession, memory_ids: Iterable[str]) -> None:
     ids = list(dict.fromkeys(memory_ids))
     if ids:
         await db.execute(delete(MemoryTerm).where(MemoryTerm.memory_id.in_(ids)))
+
+
+async def temporary_memories(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+) -> Sequence[MemoryCandidate]:
+    """Every active temporary memory that belongs to this chat, owner-scoped.
+
+    The chat-scope forgetting preview uses this. Global memories and another chat's
+    temporary rows are never included; the same lineage/exclusion filter as the lexical
+    search keeps a blocked row from being counted.
+    """
+    rows = (
+        (
+            await db.execute(
+                select(Memory)
+                .where(
+                    Memory.owner_id == owner_id,
+                    Memory.scope == SCOPE_CONVERSATION,
+                    Memory.source_conversation_id == conversation_id,
+                    Memory.status == "active",
+                    Memory.id.not_in(blocked_memory_ids_select(owner_id, conversation_id)),
+                )
+                .order_by(Memory.updated_at.desc(), Memory.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return tuple(
+        MemoryCandidate(
+            id=memory.id,
+            content=memory.content,
+            source_turn_id=memory.source_turn_id,
+            score=0.0,
+            kind=classify(memory.content),
+        )
+        for memory in rows
+    )
 
 
 async def search_all_memories(

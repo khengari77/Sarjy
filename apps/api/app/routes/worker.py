@@ -167,6 +167,13 @@ class MemoryQueryInput(MemoryToolBase):
     query: str = Field(min_length=1, max_length=500)
 
 
+class MemoryForgetInput(MemoryToolBase):
+    topic: str = Field(default="", max_length=500)
+    scope: Literal["topic", "this_chat", "everything"] = "topic"
+    # Deploy-window compatibility: an older worker sends query instead of topic.
+    query: str = Field(default="", max_length=500)
+
+
 class CommandInput(BaseModel):
     turn_id: str = Field(min_length=1, max_length=100)
 
@@ -1198,17 +1205,30 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
         return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)
 
     @app.post("/internal/agent/tool/memory-forget")
-    async def agent_memory_forget(body: MemoryQueryInput, request: Request, db: AsyncSession = Depends(database)):
+    async def agent_memory_forget(body: MemoryForgetInput, request: Request, db: AsyncSession = Depends(database)):
+        topic = body.topic or body.query
+        scope = "topic" if body.query and not body.topic else body.scope
+
         async def effect(owner_id, conversation_id):
             return await memory_forget_tool(
                 db,
                 owner_id=owner_id,
                 conversation_id=conversation_id,
                 request_id=body.request_id,
-                query=body.query,
+                topic=topic,
+                scope=scope,
+                secret=secret,
             )
 
-        return await _run_memory_tool(guard, db, request, body, "memory_forget", {"query": body.query}, effect)
+        return await _run_memory_tool(
+            guard,
+            db,
+            request,
+            body,
+            "memory_forget",
+            {"topic": topic, "scope": scope},
+            effect,
+        )
 
     @app.post("/internal/agent/tool/memory-recall")
     async def agent_memory_recall(body: MemoryQueryInput, request: Request, db: AsyncSession = Depends(database)):
