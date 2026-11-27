@@ -102,6 +102,43 @@ def test_replaying_the_same_token_returns_the_same_change_and_writes_once(tmp_pa
         cm.__exit__(None, None, None)
 
 
+@pytest.mark.parametrize("blind_checks", [3, 4])
+def test_a_racing_replay_of_one_token_returns_the_same_change_instead_of_a_500(tmp_path, monkeypatch, blind_checks):
+    # 4 blind checks: the replay reaches the duplicate INSERT and recovers from the IntegrityError.
+    # 3 blind checks: the re-check under the owner lock sees the committed row and returns without inserting; the
+    # IntegrityError class is then replaced by one nothing raises, so the real error would escape if that
+    # re-check were removed.
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        proposal = proposal_of(client, headers, "My name is Sam", "fact-1")
+
+        from app.services import memory_auto
+
+        real_journalled = memory_auto._journalled
+        calls = 0
+
+        async def blind_for_both_checks(db, owner_id, key):
+            # Both requests passed the early check before either committed its journal row. The first four checks
+            # are the two early checks and the two re-checks under the owner lock; only the last re-read sees the row.
+            nonlocal calls
+            calls += 1
+            if calls <= blind_checks:
+                return None
+            return await real_journalled(db, owner_id, key)
+
+        monkeypatch.setattr(memory_auto, "_journalled", blind_for_both_checks)
+        if blind_checks == 3:
+            monkeypatch.setattr(memory_auto, "IntegrityError", type("NeverRaised", (Exception,), {}))
+        first = auto(client, headers, proposal["token"])
+        second = auto(client, headers, proposal["token"])
+        assert first.status_code == 200 and second.status_code == 200, second.text
+        assert second.json()["change"]["id"] == first.json()["change"]["id"]
+        assert second.json()["change"]["memory_id"] == first.json()["change"]["memory_id"]
+        assert count_rows(file, "context_operations") == 1
+    finally:
+        cm.__exit__(None, None, None)
+
+
 def test_a_conflicting_fact_replaces_the_earlier_one_in_auto(tmp_path):
     cm, client, file, headers = started(tmp_path, "auto")
     try:
@@ -529,31 +566,201 @@ def test_a_credential_cannot_be_confirmed_even_in_ask_mode(tmp_path):
         cm.__exit__(None, None, None)
 
 
+def turn_snapshots(file):
+    with closing(sqlite3.connect(file)) as db:
+        return [row[0] for row in db.execute("SELECT snapshot FROM turns") if row[0]]
+
+
 def _copies(file):
     """Where each table that can carry a copy of a fact still mentions it."""
     with closing(sqlite3.connect(file)) as db:
-        return {
+        copies = {
             table: any("Sam" in str(value) for row in db.execute(f"SELECT * FROM {table}") for value in row)
-            for table in ("memory_write_requests", "memory_capture_decisions", "context_operations", "turns")
+            for table in ("memory_write_requests", "memory_capture_decisions", "context_operations")
         }
+    copies["turns"] = any("Sam" in snapshot for snapshot in turn_snapshots(file))
+    return copies
 
 
 def test_undo_scrubs_the_proposal_decision_and_prompt_copies_so_a_later_delete_has_nothing_left(tmp_path):
     # Undo tombstones the row, so a later permanent delete returns early; the copies must already be gone.
     cm, client, file, headers = started(tmp_path, "auto")
     try:
-        change = save_via_auto(client, headers, "My name is Sam", "fact-1")
-        assert _copies(file)["memory_write_requests"]
+        # Propose from a turn that does not itself say the fact, so the transcript holds no "Sam" and the only
+        # snapshot copy is the one a later turn compiles from the saved memory.
+        proposal = forged_proposal(client, headers, file, "My name is Sam", "fact-1")
+        saved = auto(client, headers, proposal["token"])
+        assert saved.status_code == 200, saved.text
+        change = saved.json()["change"]
+        turn(client, headers, "what do you know about me", "fact-2")
+
+        before = _copies(file)
+        # Every copy the final assertion calls gone existed first, or that assertion proves nothing.
+        assert before["memory_write_requests"] and before["memory_capture_decisions"]
+        assert before["context_operations"] and before["turns"]
 
         assert client.post(f"/v1/changes/{change['id']}/undo").status_code == 200
         assert client.delete(f"/v1/memories/{change['memory_id']}").status_code == 200
 
-        # Only the user's own utterance in the transcript still says it; no memory copy does.
+        assert all("Sam" not in snapshot for snapshot in turn_snapshots(file))
         assert _copies(file) == {
             "memory_write_requests": False,
             "memory_capture_decisions": False,
             "context_operations": False,
-            "turns": True,
+            "turns": False,
         }
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def propose_tool(client, headers, fact, request_id, turn_id):
+    return client.post(
+        PROPOSE, headers=headers, json={"turn_id": turn_id, "request_id": request_id, "fact": fact}
+    ).json()
+
+
+def test_in_auto_mode_the_propose_tool_saves_an_ordinary_fact_without_asking(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        body = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
+        # "saved" arms nothing in the worker: no question is spoken for it.
+        assert body["status"] == "saved" and "proposal" not in body and body["change_id"]
+        assert "undo" in body["message"].lower() and "do not ask" in body["message"].lower()
+        assert active_contents(file) == ["I live in Benghazi"]
+        assert operations(file) == [("memory_auto_save", "applied")]
+        # The same tool call replayed (a worker retry) is the same answer and writes nothing twice.
+        again = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
+        assert again == body and active_contents(file) == ["I live in Benghazi"]
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_in_ask_mode_and_for_facts_that_need_consent_the_propose_tool_still_only_proposes(tmp_path):
+    for mode, fact in (("ask", "I live in Benghazi"), ("auto", "I take metformin every day")):
+        sub = tmp_path / f"{mode}-{fact[:6]}"
+        sub.mkdir()
+        cm, client, file, headers = started(sub, mode)
+        try:
+            turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+            body = propose_tool(client, headers, fact, "p1", turn_id)
+            assert body["status"] == "proposed" and body["proposal"]["token"], (mode, fact)
+            assert active_contents(file) == [] and operations(file) == []
+        finally:
+            cm.__exit__(None, None, None)
+
+
+def test_auto_propose_asks_when_a_fact_contradicts_a_saved_one_and_changes_nothing(tmp_path):
+    """A contradiction is the user's decision in every mode: the proposal comes back and the app asks."""
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        first = propose_tool(client, headers, "I live in Cairo", "p1", turn_id)
+        assert first["status"] == "saved"
+        second = propose_tool(client, headers, "I live in Benghazi", "p2", turn_id)
+        assert second["status"] == "proposed" and second["proposal"]["token"]
+        assert active_contents(file) == ["I live in Cairo"]
+        assert operations(file) == [("memory_auto_save", "applied")]
+        # The journal entry of the first (non-conflicting) save still undoes it.
+        undone = client.post(f"/v1/changes/{first['change_id']}/undo")
+        assert undone.status_code == 200, undone.text
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_a_failed_auto_save_never_claims_a_save_and_never_falls_back_to_a_question(tmp_path, monkeypatch):
+    from app.routes import worker as worker_module
+    from app.services.memory_capture import MemoryCaptureError
+
+    async def refuse(*args, **kwargs):
+        raise MemoryCaptureError("MEMORY_CAPTURE_NOT_CONFIGURED", 503)
+
+    monkeypatch.setattr(worker_module, "auto_commit_memory", refuse)
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        body = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
+        assert body["status"] == "rejected" and body["error"] == "MEMORY_SAVE_FAILED"
+        assert "proposal" not in body and "do not claim" in body["message"].lower()
+        assert "could not confirm" in body["message"].lower()  # an attempted write is never reported as "nothing saved"
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_auto_propose_still_asks_for_a_third_party_fact_another_script_and_a_hidden_fact(tmp_path):
+    """A model proposal is never 'explicit'; the English keyword net cannot judge other scripts; a hidden fact stays hidden."""
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        third = propose_tool(client, headers, "My boss is getting divorced", "p1", turn_id)
+        assert third["status"] == "proposed", third
+        arabic = propose_tool(client, headers, "أنا أسكن في طرابلس", "p2", turn_id)
+        assert arabic["status"] == "proposed", arabic
+        assert active_contents(file) == [] and operations(file) == []
+
+        saved = propose_tool(client, headers, "I like green tea", "p3", turn_id)
+        assert saved["status"] == "saved"
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("UPDATE memories SET status = 'hidden' WHERE content = 'I like green tea'")
+        again = propose_tool(client, headers, "I like green tea", "p4", turn_id)
+        assert again["status"] == "proposed", again
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_auto_propose_never_re_adds_a_hidden_fact_even_where_lower_and_casefold_differ(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        assert propose_tool(client, headers, "I live in Straßburg", "p1", turn_id)["status"] == "saved"
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("UPDATE memories SET status = 'hidden' WHERE content = 'I live in Straßburg'")
+        # ß case-folds to "ss": SQL lower() would not match it, the Python comparison does.
+        again = propose_tool(client, headers, "I live in STRASSBURG", "p2", turn_id)
+        assert again["status"] == "proposed", again
+        assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_auto_propose_asks_for_a_negated_fact_and_for_a_fact_with_no_letters(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        assert propose_tool(client, headers, "I live in Cairo", "p1", turn_id)["status"] == "saved"
+        negated = propose_tool(client, headers, "I no longer live in Cairo", "p2", turn_id)
+        assert negated["status"] == "proposed", negated
+        digits = propose_tool(client, headers, "My number is 4111 1111 1111 1111", "p3", turn_id)
+        assert digits["status"] == "proposed", digits  # nine or more digits in a row: a card, phone or ID number
+        assert propose_tool(client, headers, "I was born in 1999", "p4", turn_id)["status"] == "saved"
+        assert sorted(active_contents(file)) == ["I live in Cairo", "I was born in 1999"]
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_a_memory_turned_off_just_before_the_write_wins(tmp_path, monkeypatch):
+    """The mode is re-read right before the write: a concurrent 'turn memory off' is never overtaken."""
+    from app.routes import worker as worker_module
+
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
+        with closing(sqlite3.connect(file)) as db:
+            owner = db.execute("SELECT owner_id FROM user_settings").fetchone()[0]
+        original = worker_module.proposal_conflicts
+
+        async def conflicts_then_off(*args, **kwargs):
+            result = await original(*args, **kwargs)
+            with closing(sqlite3.connect(file)) as db, db:
+                db.execute("UPDATE user_settings SET memory_mode = 'off' WHERE owner_id = ?", (owner,))
+            return result
+
+        monkeypatch.setattr(worker_module, "proposal_conflicts", conflicts_then_off)
+        body = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
+        assert body["status"] == "rejected" and body["error"] == "MEMORY_OFF", body
+        assert active_contents(file) == []
     finally:
         cm.__exit__(None, None, None)

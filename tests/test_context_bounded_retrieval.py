@@ -34,7 +34,7 @@ from app.services.context_assembly import (
     _dependency_closure,
     read_context_inputs,
 )
-from app.services.context_operations import PREVIEW_SEARCH_ROW_LIMIT, keyword_search
+from app.services.context_operations import PREVIEW_SEARCH_ROW_LIMIT, keyword_search, recent_memories
 from app.services.memory import SEARCH_CANDIDATE_LIMIT, MemoryService
 from sqlalchemy import event, insert, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -139,17 +139,28 @@ async def seed_turns(db, conversation_id: str, count: int, *, prefix: str = "tur
 
 
 async def seed_memories(
-    db, owner_id: str, conversation_id: str, count: int, *, status: str = "active", prefix: str = "mem"
+    db,
+    owner_id: str,
+    conversation_id: str,
+    count: int,
+    *,
+    status: str = "active",
+    prefix: str = "mem",
+    scope: str = "global",
+    content_prefix: str = "Memory",
+    source_conversation_id: str | None = None,
 ) -> list[str]:
+    source = source_conversation_id or conversation_id
     rows = [
         {
             "id": f"{prefix}-{status}-{index:05d}",
             "owner_id": owner_id,
-            "content": f"Memory {index}",
+            "content": f"{content_prefix} {index}",
             "embedding_model": "text-embedding-3-small",
-            "source_conversation_id": conversation_id,
+            "source_conversation_id": source,
             "version": 1,
             "status": status,
+            "scope": scope,
             "created_at": stamp(index),
             "updated_at": stamp(index),
         }
@@ -951,6 +962,124 @@ def test_bounded_inputs_preserve_compiler_revision_and_hash_invariants(tmp_path)
             validate_assembly(4, compiled.manifest, snapshot)
             assert compiled.manifest["context_revision"] == 4
             assert compiled.included_ids[-1] == "current"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_exact_id_and_closure_reads_hide_another_conversations_temporary_memory(tmp_path):
+    from app.domain.context import ContextCandidate
+    from app.routes.worker import _model_request_memories
+    from app.services.context_assembly import MemoryCandidates, _closure_page, _memory_rows_for_ids
+
+    async def run():
+        engine, sessions = await database(tmp_path / "scope-ids.db")
+        try:
+            async with sessions() as db:
+                db.add(Conversation(id="chat-b", owner_id="alice"))
+                await db.flush()
+                await seed_memories(
+                    db,
+                    "alice",
+                    "chat-b",
+                    1,
+                    prefix="temp",
+                    scope="conversation",
+                    source_conversation_id="chat-b",
+                )
+                await db.commit()
+            async with sessions() as db:
+                assert await _memory_rows_for_ids(db, "alice", "chat", ["temp-active-00000"]) == []
+                visible = await _memory_rows_for_ids(db, "alice", "chat-b", ["temp-active-00000"])
+                assert [row.id for row in visible] == ["temp-active-00000"]
+
+                hidden, _ = await _closure_page(
+                    db,
+                    owner_id="alice",
+                    conversation_id="chat",
+                    chunk=["temp-active-00000"],
+                    loaded={},
+                    tools={},
+                    frontier=set(),
+                    budget=100,
+                    fetched=0,
+                )
+                assert hidden is True
+                resolved, _ = await _closure_page(
+                    db,
+                    owner_id="alice",
+                    conversation_id="chat-b",
+                    chunk=["temp-active-00000"],
+                    loaded={},
+                    tools={},
+                    frontier=set(),
+                    budget=100,
+                    fetched=0,
+                )
+                assert resolved is False
+
+                candidate = ContextCandidate(
+                    id="temp-active-00000",
+                    role="memory",
+                    text="Temporary",
+                    origin="memory",
+                    status="active",
+                )
+                candidates = MemoryCandidates(included=(candidate,))
+                assert await _model_request_memories(db, "alice", "chat", [candidate.id], candidates) == []
+                unread = await _model_request_memories(db, "alice", "chat-b", [candidate.id], candidates)
+                assert [row.id for row in unread] == [candidate.id]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_scope_predicate_precedes_the_preview_window(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "scope-window.db")
+        try:
+            async with sessions() as db:
+                db.add(Conversation(id="chat-b", owner_id="alice"))
+                await db.flush()
+                # 600 newer temporary rows in another conversation would fill the
+                # 500-row preview window before an older visible global row.
+                await seed_memories(
+                    db,
+                    "alice",
+                    "chat-b",
+                    600,
+                    prefix="foreign",
+                    scope="conversation",
+                    content_prefix="Trip foreign",
+                    source_conversation_id="chat-b",
+                )
+                await db.execute(
+                    insert(Memory),
+                    [
+                        {
+                            "id": "global-old",
+                            "owner_id": "alice",
+                            "content": "Trip global old",
+                            "embedding_model": "text-embedding-3-small",
+                            "source_conversation_id": "chat",
+                            "version": 1,
+                            "status": "active",
+                            "scope": "global",
+                            "created_at": stamp(-1),
+                            "updated_at": stamp(-1),
+                        }
+                    ],
+                )
+                await db.commit()
+            async with sessions() as db:
+                hits = await keyword_search(db, owner_id="alice", conversation_id="chat", query="trip", limit=20)
+                assert [hit.id for hit in hits] == ["global-old"]
+                recent = await recent_memories(db, owner_id="alice", conversation_id="chat", limit=20)
+                assert [item.id for item in recent] == ["global-old"]
+                mirror = await keyword_search(db, owner_id="alice", conversation_id="chat-b", query="trip", limit=20)
+                assert mirror and all(hit.id.startswith("foreign-") for hit in mirror)
         finally:
             await engine.dispose()
 

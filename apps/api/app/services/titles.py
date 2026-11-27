@@ -185,6 +185,8 @@ async def _title_sources(
         # A user rename is authoritative forever: no provider call, no write.
         if conversation is None:
             return None
+        if conversation.deleted_at is not None:
+            return False
         if conversation.title != SENTINEL_TITLE:
             return False
         user_turn = await _first_turn(db, conversation_id, "user")
@@ -251,7 +253,11 @@ async def _generate_title(
         async with sessions() as db:
             changed = await db.execute(
                 update(Conversation)
-                .where(Conversation.id == conversation_id, Conversation.title == SENTINEL_TITLE)
+                .where(
+                    Conversation.id == conversation_id,
+                    Conversation.title == SENTINEL_TITLE,
+                    Conversation.deleted_at.is_(None),
+                )
                 .values(title=title)
             )
             await db.commit()

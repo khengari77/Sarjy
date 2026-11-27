@@ -77,7 +77,8 @@ def test_propose_memory_rejects_untrusted_facts_without_a_proposal(tmp_path):
 def test_operation_key_replay_and_conflict_for_every_tool(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
-        _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+        owner, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+        set_mode(file, owner, "ask")  # these cover the ask-first flow; auto saves a proposed fact without a question
         cases = [
             (PROPOSE, "fact", "I work at Acme", "I work at Initech"),
             (FORGET, "query", "tea", "coffee"),
@@ -165,7 +166,8 @@ def test_undo_unhides_the_latest_hide_and_a_stray_yes_changes_nothing(tmp_path):
 def test_hiding_does_not_need_consent_and_leaves_remember_consent_untouched(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
-        _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+        owner, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+        set_mode(file, owner, "ask")  # these cover the ask-first flow; auto saves a proposed fact without a question
         assert call(client, headers, PROPOSE, turn, "p1", fact="I work at Acme").json()["status"] == "proposed"
         assert call(client, headers, FORGET, turn, "f1", query="tea").json()["status"] == "hidden"
         assert table_count(file, "memories", "status='active'") == 0
@@ -225,7 +227,8 @@ def test_tool_failure_never_claims_success(tmp_path, monkeypatch):
 def test_already_saved_fact_is_rejected_but_a_hidden_one_is_not_counted(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
-        _, _, headers, turn = setup(client, file, [("name", "My name is Abdulrahma")])
+        owner, _, headers, turn = setup(client, file, [("name", "My name is Abdulrahma")])
+        set_mode(file, owner, "ask")  # these cover the ask-first flow; auto saves a proposed fact without a question
         body = call(client, headers, PROPOSE, turn, "p1", fact="  my NAME is   abdulrahma ").json()
         assert body["status"] == "rejected" and body["error"] == "MEMORY_ALREADY_SAVED"
         assert "proposal" not in body and "already saved" in body["message"]
@@ -233,6 +236,38 @@ def test_already_saved_fact_is_rejected_but_a_hidden_one_is_not_counted(tmp_path
         assert call(client, headers, FORGET, turn, "f1", query="name").json()["status"] == "hidden"
         again = call(client, headers, PROPOSE, turn, "p2", fact="My name is Abdulrahma").json()
         assert again["status"] == "proposed"
+
+
+def test_already_saved_ignores_a_temporary_memory_in_another_chat(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, chat, headers, turn = setup(client, file)
+        other = client.post("/v1/conversations").json()["id"]
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute(
+                "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,scope,"
+                "created_at,updated_at) VALUES ('temp-other', (SELECT owner_id FROM conversations WHERE id=?), "
+                "'My name is Abdulrahma', 'text-embedding-3-small', ?, 1, 'active', 'conversation', "
+                "'2026-11-12T00:00:00+00:00', '2026-11-12T00:00:00+00:00')",
+                (other, other),
+            )
+            db.commit()
+
+        body = call(client, headers, PROPOSE, turn, "p1", fact="My name is Abdulrahma").json()
+        assert body["status"] == "proposed"
+
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute(
+                "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,scope,"
+                "created_at,updated_at) VALUES ('temp-chat', (SELECT owner_id FROM conversations WHERE id=?), "
+                "'My name is Abdulrahma', 'text-embedding-3-small', ?, 1, 'active', 'conversation', "
+                "'2026-11-12T00:00:01+00:00', '2026-11-12T00:00:01+00:00')",
+                (chat, chat),
+            )
+            db.commit()
+
+        again = call(client, headers, PROPOSE, turn, "p2", fact="My name is Abdulrahma").json()
+        assert again["status"] == "rejected" and again["error"] == "MEMORY_ALREADY_SAVED"
 
 
 def test_forgetting_and_recalling_keep_working_when_memory_is_off(tmp_path):

@@ -348,6 +348,46 @@ def test_accounts_migration_is_additive_and_reversible(tmp_path):
     assert content() == before
 
 
+def test_conversation_delete_scope_migration_is_additive_and_reversible(tmp_path):
+    path = tmp_path / "conversation-delete.db"
+    url = f"sqlite+aiosqlite:///{path}"
+    run_alembic(url, "upgrade", "0017_memory_mode")
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "INSERT INTO identities (id, token_hash, expires_at)"
+            " VALUES ('owner-1', 'hash', '2030-01-01T00:00:00+00:00')"
+        )
+        connection.execute(
+            "INSERT INTO conversations (id, owner_id, title, revision, created_at)"
+            " VALUES ('chat-1', 'owner-1', 'Trip', 4, '2026-11-11T00:00:00+00:00')"
+        )
+        connection.execute(
+            "INSERT INTO memories"
+            " (id, owner_id, content, embedding_model, source_conversation_id, version, status, created_at, updated_at)"
+            " VALUES ('m1', 'owner-1', 'I prefer tea', 'text-embedding-3-small', 'chat-1', 1, 'active',"
+            " '2026-11-11T00:00:00+00:00', '2026-11-11T00:00:00+00:00')"
+        )
+        before = connection.execute("SELECT id, title, revision FROM conversations").fetchall()
+
+    run_alembic(url, "upgrade", "head")
+    with closing(sqlite3.connect(path)) as connection:
+        conversation_columns = {row[1]: row for row in connection.execute("PRAGMA table_info(conversations)")}
+        memory_columns = {row[1]: row for row in connection.execute("PRAGMA table_info(memories)")}
+        assert conversation_columns["deleted_at"][3] == 0
+        assert memory_columns["scope"][3] == 1
+        assert connection.execute("SELECT deleted_at FROM conversations").fetchall() == [(None,)]
+        assert connection.execute("SELECT scope FROM memories").fetchall() == [("global",)]
+        assert connection.execute("SELECT id, title, revision FROM conversations").fetchall() == before
+    run_alembic(url, "check")
+
+    run_alembic(url, "downgrade", "0017_memory_mode")
+    with closing(sqlite3.connect(path)) as connection:
+        assert "deleted_at" not in {row[1] for row in connection.execute("PRAGMA table_info(conversations)")}
+        assert "scope" not in {row[1] for row in connection.execute("PRAGMA table_info(memories)")}
+        assert connection.execute("SELECT id, title, revision FROM conversations").fetchall() == before
+        assert connection.execute("SELECT id, content FROM memories").fetchall() == [("m1", "I prefer tea")]
+
+
 def test_memory_mode_migration_is_additive_and_reversible(tmp_path):
     path = tmp_path / "memory-mode.db"
     url = f"sqlite+aiosqlite:///{path}"

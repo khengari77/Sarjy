@@ -48,6 +48,7 @@ from app.infrastructure.database import (
 )
 from app.services.authorization import owned_conversation
 from app.services.memory_eligibility import blocked_memory_ids
+from app.services.memory_scope import visible_in
 
 SCOPE = "conversation"
 EXCLUDE = "exclude"
@@ -206,7 +207,7 @@ async def keyword_search(
     rows = (
         await db.scalars(
             select(Memory)
-            .where(Memory.owner_id == owner_id, Memory.status == "active")
+            .where(Memory.owner_id == owner_id, Memory.status == "active", visible_in(conversation_id))
             .order_by(Memory.created_at.desc(), Memory.id.desc())
             .limit(PREVIEW_SEARCH_ROW_LIMIT)
         )
@@ -242,7 +243,7 @@ async def recent_memories(
     rows = (
         await db.scalars(
             select(Memory)
-            .where(Memory.owner_id == owner_id, Memory.status == "active")
+            .where(Memory.owner_id == owner_id, Memory.status == "active", visible_in(conversation_id))
             .order_by(Memory.created_at.desc(), Memory.id.desc())
             .limit(PREVIEW_SEARCH_ROW_LIMIT)
         )
@@ -340,7 +341,12 @@ async def create_exclusion_proposal(
     rows = (
         await db.scalars(
             select(Memory)
-            .where(Memory.id.in_(ids), Memory.owner_id == owner_id, Memory.status == "active")
+            .where(
+                Memory.id.in_(ids),
+                Memory.owner_id == owner_id,
+                Memory.status == "active",
+                visible_in(conversation_id),
+            )
             .order_by(Memory.id)
         )
     ).all()
@@ -431,6 +437,7 @@ async def create_proposal(
                 Memory.id.in_([candidate.id for candidate in candidates] or ["-"]),
                 Memory.owner_id == owner_id,
                 Memory.status == "active",
+                visible_in(conversation_id),
             )
         )
     ).all()
@@ -507,6 +514,7 @@ async def confirm_proposal(
     await _authorize_exclusion_rows(
         db,
         owner_id,
+        conversation_id,
         excluded_ids,
         kept_ids,
         keep=keep_authority,
@@ -640,6 +648,7 @@ def _validate_exclusion(
 async def _authorize_exclusion_rows(
     db: AsyncSession,
     owner_id: str,
+    conversation_id: str,
     excluded_ids,
     kept_ids,
     *,
@@ -653,6 +662,7 @@ async def _authorize_exclusion_rows(
                     Memory.id.in_(list(kept_ids)),
                     Memory.owner_id == owner_id,
                     Memory.status == "active",
+                    visible_in(conversation_id),
                 )
             )
         ).all()
@@ -664,6 +674,7 @@ async def _authorize_exclusion_rows(
                 Memory.id.in_(list(excluded_ids) or ["-"]),
                 Memory.owner_id == owner_id,
                 Memory.status == "active",
+                visible_in(conversation_id),
             )
         )
     ).all()

@@ -24,6 +24,16 @@ export type Words = {
   memoryModeNote: string;
   undo: string;
   dismiss: string;
+  rename: string;
+  renameNeedsBackend: string;
+  delete: string;
+  deleteAction: string;
+  deleteConfirm: string;
+  deleteWarning: string;
+  deleteActive: string;
+  deleteFailed: string;
+  cancel: string;
+  deleting: string;
 };
 
 const EN: Words = {
@@ -52,6 +62,16 @@ const EN: Words = {
   memoryModeNote: 'Controls whether new facts are saved from this conversation.',
   undo: 'Undo',
   dismiss: 'Dismiss',
+  rename: 'Rename',
+  renameNeedsBackend: 'Rename needs backend support.',
+  delete: 'Delete',
+  deleteAction: 'Delete this chat',
+  deleteConfirm: 'Delete this chat?',
+  deleteWarning: 'It and its temporary memories are erased permanently. Permanent memories are kept.',
+  deleteActive: 'End the call before deleting this chat',
+  deleteFailed: 'Could not delete this chat. Try again.',
+  cancel: 'Cancel',
+  deleting: 'Deleting…',
 };
 
 const AR: Words = {
@@ -80,6 +100,16 @@ const AR: Words = {
   memoryModeNote: 'يتحكم في حفظ المعلومات الجديدة من هذه المحادثة.',
   undo: 'تراجع',
   dismiss: 'تجاهل',
+  rename: 'إعادة التسمية',
+  renameNeedsBackend: 'تتوفّر إعادة التسمية بعد دعم الخادم.',
+  delete: 'حذف',
+  deleteAction: 'حذف هذه المحادثة',
+  deleteConfirm: 'حذف هذه المحادثة؟',
+  deleteWarning: 'ستُحذف المحادثة وذكرياتها المؤقتة نهائيًا. تُحفظ الذكريات الدائمة.',
+  deleteActive: 'أنهِ المكالمة قبل حذف هذه المحادثة',
+  deleteFailed: 'تعذّر حذف هذه المحادثة. حاول مرة أخرى.',
+  cancel: 'إلغاء',
+  deleting: 'جارٍ الحذف…',
 };
 
 export function wordsFor(arabic: boolean): Words {

@@ -1,6 +1,8 @@
 """Worker-only endpoints for bootstrap, turns, weather and budget reservations."""
 
 import logging
+import re
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
@@ -26,12 +28,14 @@ from app.domain.intro import intro_for
 from app.domain.memory_policy import Decision, Sensitivity, classify_sensitivity, plan_for_proposal
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
+from app.domain.sessions import call_is_live
 from app.domain.tool_operations import ToolOperationState, terminal_state
 from app.domain.weather_permissions import decide_weather_request
 from app.infrastructure.database import Conversation, Memory, Turn, TurnMetric, UserSetting, VoiceSession
 from app.infrastructure.upsert import insert_ignore
 from app.routes.wordle_tools import register_wordle_tool_routes
 from app.services.budget import reserve as reserve_development_budget
+from app.services.command_classification import StoredClassifier, classification_key
 from app.services.commands import command_request_id, handle_finalized_utterance
 from app.services.context_assembly import location_evidence, read_context_inputs
 from app.services.memory import MemoryService
@@ -40,11 +44,18 @@ from app.services.memory_capture import (
     MemoryCaptureError,
     confirm_memory,
     load_proposal,
+    proposal_conflicts,
     proposal_summary,
     propose_memory,
     record_proposal,
 )
-from app.services.memory_tools import memory_forget_tool, memory_propose_tool, memory_recall_tool
+from app.services.memory_scope import visible_in
+from app.services.memory_tools import (
+    hidden_fact_exists,
+    memory_forget_tool,
+    memory_propose_tool,
+    memory_recall_tool,
+)
 from app.services.titles import generate_conversation_title
 from app.services.tool_operations import (
     ToolOperationError,
@@ -186,7 +197,29 @@ def _session_is_active(voice: VoiceSession | None, room_name: str | None, *, all
     if voice is None:
         return False
     statuses, cutoff = _session_window(allow_ended)
-    return voice.room_name == room_name and voice.status in statuses and voice.expires_at > cutoff
+    return voice.room_name == room_name and call_is_live(voice.status, voice.expires_at, cutoff, statuses=statuses)
+
+
+async def _live_conversation(db: AsyncSession, conversation_id: str, *, share: bool = False):
+    """The conversation, or 404 when it is missing or tombstoned; late worker writes must not repopulate text.
+
+    ``share`` takes a shared row lock held to the end of the request: a delete (which locks the row for update) either
+    finished first, so this 404s, or waits until this write has committed and then erases it. Writers may overlap each
+    other; only a delete is held off. Only valid where the request session itself commits the write (``finalize``).
+    ``memory/confirm``, ``memory/auto`` and ``memory-propose`` commit the request session early and write through
+    separate sessions, so a lock here would be released too soon: they only get this check. A delete that lands in that
+    instant can leave a proposal, decision, ledger or tool-call row holding the fact text (also for a fact that never
+    becomes a memory), which no later delete cleans. Nothing is exposed (the conversation is invisible and read-only),
+    but it is an erasure gap: before temporary memories get a producer, move the live check (and a shared lock) into
+    the writing transaction (tracked in issue #302).
+    """
+    statement = select(Conversation).where(Conversation.id == conversation_id)
+    if share:
+        statement = statement.with_for_update(read=True, of=Conversation)
+    conversation = await db.scalar(statement.execution_options(populate_existing=True))
+    if conversation is None or conversation.deleted_at is not None:
+        raise HTTPException(404)
+    return conversation
 
 
 def _session_guard(config: Settings):
@@ -232,7 +265,7 @@ def register_worker_routes(
         secret=_memory_secret(config),
     )
     _register_tool_routes(app, config=config, database=database, guard=guard)
-    _register_memory_tool_routes(app, config=config, database=database, guard=guard)
+    _register_memory_tool_routes(app, config=config, database=database, guard=guard, embedder=embedder)
     _register_memory_routes(app, config=config, database=database, guard=guard, embedder=embedder)
     _register_auto_memory_route(app, config=config, database=database, guard=guard, embedder=embedder)
     if wordle_source is not None:
@@ -355,9 +388,7 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
     @app.post("/internal/agent/memory/confirm")
     async def confirm_memory_route(body: MemoryConfirm, request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db, allow_ended=True)
-        conversation = await db.get(Conversation, voice.conversation_id)
-        if conversation is None:
-            raise HTTPException(404)
+        conversation = await _live_conversation(db, voice.conversation_id)
         if body.decision != "discard":
             # A proposal armed before the user turned memory off must not be savable afterwards.
             row = await db.get(UserSetting, conversation.owner_id)
@@ -388,9 +419,7 @@ def _register_auto_memory_route(app, *, config: Settings, database, guard, embed
     async def auto_memory_route(body: MemoryAuto, request: Request, db: AsyncSession = Depends(database)):
         """Commit a proposal without a spoken question. Only valid in ``auto`` mode and only when the policy says save."""
         voice = await guard(request, db, allow_ended=True)
-        conversation = await db.get(Conversation, voice.conversation_id)
-        if conversation is None:
-            raise HTTPException(404)
+        conversation = await _live_conversation(db, voice.conversation_id)
         row = await db.get(UserSetting, conversation.owner_id)
         mode = row.memory_mode if row is not None else "auto"
         if mode == "off":
@@ -504,6 +533,7 @@ def _register_session_routes(app, *, database, guard):
 
 
 async def _record_turn_metrics(db: AsyncSession, voice: VoiceSession, body: TurnMetricsInput):
+    await _live_conversation(db, voice.conversation_id)
     turn = await db.get(Turn, body.turn_id)
     if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
         raise HTTPException(404)
@@ -546,7 +576,9 @@ def _compile_turn_context(
         raise
 
 
-async def _model_request_memories(db: AsyncSession, owner_id: str, included_ids, candidates) -> list[Memory]:
+async def _model_request_memories(
+    db: AsyncSession, owner_id: str, conversation_id: str, included_ids, candidates
+) -> list[Memory]:
     """The memory rows behind the compiled prompt: those the candidate read loaded, plus any it did not supply."""
     rows = [candidates.rows[memory_id] for memory_id in included_ids if memory_id in candidates.rows]
     unread = [
@@ -557,7 +589,12 @@ async def _model_request_memories(db: AsyncSession, owner_id: str, included_ids,
     if unread:
         rows += (
             await db.scalars(
-                select(Memory).where(Memory.owner_id == owner_id, Memory.id.in_(unread), Memory.status == "active")
+                select(Memory).where(
+                    Memory.owner_id == owner_id,
+                    Memory.id.in_(unread),
+                    Memory.status == "active",
+                    visible_in(conversation_id),
+                )
             )
         ).all()
     return rows
@@ -570,7 +607,7 @@ async def _locked_turn_context(db: AsyncSession, conversation_id: str, request_i
             select(Conversation, Turn, UserSetting)
             .outerjoin(Turn, and_(Turn.conversation_id == Conversation.id, Turn.request_id == request_id))
             .outerjoin(UserSetting, UserSetting.owner_id == Conversation.owner_id)
-            .where(Conversation.id == conversation_id)
+            .where(Conversation.id == conversation_id, Conversation.deleted_at.is_(None))
             .with_for_update(of=Conversation)
         )
     ).one_or_none()
@@ -599,6 +636,7 @@ async def _locked_turn_context_for_session(
                 VoiceSession.room_name == room_name,
                 VoiceSession.status.in_(statuses),
                 VoiceSession.expires_at > cutoff,
+                Conversation.deleted_at.is_(None),
             )
             .with_for_update(of=Conversation)
         )
@@ -623,6 +661,17 @@ async def _turn_start_context(db: AsyncSession, request: Request, request_id: st
     return conversation, existing, settings_row, voice
 
 
+def _start_early_classification(app, conversation_id: str, body: AgentInput) -> None:
+    """Authorized and not a replay: Jev needs only the text, so it runs while the rest of turn/start compiles.
+
+    Not in Wordle mode: the worker answers a guess locally and never asks /command about that turn.
+    """
+    if not body.wordle_open:
+        app.state.classification_store.start(
+            classification_key(conversation_id, body.request_id), body.text, app.state.ui_classifier
+        )
+
+
 def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
     @app.post("/internal/agent/turn/start")
     async def turn_start(body: AgentInput, request: Request, db: AsyncSession = Depends(database)):
@@ -636,6 +685,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
                 owner_id=conversation.owner_id,
                 turn=existing,
             )
+        _start_early_classification(app, voice.conversation_id, body)
         turn = Turn(
             id=str(uuid4()),
             conversation_id=voice.conversation_id,
@@ -699,7 +749,9 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
                 revision=settings_row.revision,
             )
         )
-        memory_rows = await _model_request_memories(db, conversation.owner_id, compiled.included_ids, inputs.memories)
+        memory_rows = await _model_request_memories(
+            db, conversation.owner_id, voice.conversation_id, compiled.included_ids, inputs.memories
+        )
         model_request = ModelRequest(
             turn_id=turn.id,
             attempt_id=str(uuid4()),
@@ -761,6 +813,7 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
         db: AsyncSession = Depends(database),
     ):
         voice = await guard(request, db, allow_ended=True)
+        await _live_conversation(db, voice.conversation_id, share=True)
         user_turn = await db.get(Turn, body.turn_id)
         if not user_turn or user_turn.conversation_id != voice.conversation_id:
             raise HTTPException(404)
@@ -829,7 +882,11 @@ def _register_command_routes(app, *, config, database, guard, catalog, approved_
                 select(VoiceSession, Turn, Conversation)
                 .join(Turn, Turn.conversation_id == VoiceSession.conversation_id)
                 .join(Conversation, Conversation.id == Turn.conversation_id)
-                .where(VoiceSession.id == request.headers.get("x-session-id", ""), Turn.id == body.turn_id)
+                .where(
+                    VoiceSession.id == request.headers.get("x-session-id", ""),
+                    Turn.id == body.turn_id,
+                    Conversation.deleted_at.is_(None),
+                )
             )
         ).first()
         if (
@@ -843,9 +900,7 @@ def _register_command_routes(app, *, config, database, guard, catalog, approved_
             turn = await db.get(Turn, body.turn_id)
             if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
                 raise HTTPException(404)
-            conversation = await db.get(Conversation, turn.conversation_id)
-            if conversation is None:
-                raise HTTPException(404)
+            conversation = await _live_conversation(db, turn.conversation_id)
         else:
             _, turn, conversation = row
         snapshot = turn.snapshot or {}
@@ -857,7 +912,12 @@ def _register_command_routes(app, *, config, database, guard, catalog, approved_
         if not isinstance(settings_revision, int):
             settings_row = await db.get(UserSetting, conversation.owner_id)
             settings_revision = settings_row.revision if settings_row is not None else 0
-        classifier = _RecordingClassifier(getattr(app.state, "ui_classifier", None))
+        inner = getattr(app.state, "ui_classifier", None)
+        if inner is not None:
+            inner = StoredClassifier(
+                inner, app.state.classification_store, classification_key(turn.conversation_id, turn.request_id)
+            )
+        classifier = _RecordingClassifier(inner)
         result = await handle_finalized_utterance(
             db,
             owner_id=conversation.owner_id,
@@ -933,6 +993,7 @@ def _register_tool_routes(app, *, config, database, guard):
                 raise HTTPException(404)
         else:
             _, turn = row
+        await _live_conversation(db, turn.conversation_id)
         policy = (turn.snapshot or {}).get("weather_policy") or {}
         decision = decide_weather_request(
             city=body.city,
@@ -1012,9 +1073,9 @@ async def _finish_tool_operation(db: AsyncSession, key: str, effect) -> dict:
 
 async def _run_memory_tool(guard, db: AsyncSession, request: Request, body, name: str, arguments: dict, effect):
     voice = await guard(request, db)
-    conversation = await db.get(Conversation, voice.conversation_id)
+    conversation = await _live_conversation(db, voice.conversation_id)
     turn = await db.get(Turn, body.turn_id)
-    if conversation is None or not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
+    if not turn or turn.conversation_id != voice.conversation_id or turn.role != "user":
         raise HTTPException(404)
     try:
         claim = await claim_tool_operation(
@@ -1031,8 +1092,86 @@ async def _run_memory_tool(guard, db: AsyncSession, request: Request, body, name
     )
 
 
-def _register_memory_tool_routes(app, *, config: Settings, database, guard):
-    """Model-facing memory tools. Every route is propose-only or read-only."""
+MEMORY_OFF_NOTE = "Memory is turned off, so nothing was saved. Tell the user memory is off; do not claim it was saved."
+AUTO_SAVED_NOTE = (
+    "Saved. Tell the user in one short sentence what you remembered; the app shows an undo. "
+    "Do not ask a question and do not offer to save it again."
+)
+ALREADY_SAVED_NOTE = "That is already saved. Tell the user it is already saved; do not propose it again."
+AUTO_SAVE_FAILED_NOTE = (
+    "The save could not be confirmed. Tell the user you could not confirm it was saved; do not claim it was saved "
+    "and do not ask them to confirm."
+)
+
+
+_LONG_NUMBER = re.compile(r"\d(?:[\s.-]?\d){8,}")
+
+
+def _has_long_number(text: str) -> bool:
+    """Nine or more digits in a row (a card, phone or ID number): never saved without asking, whatever the words say."""
+    return _LONG_NUMBER.search(text) is not None
+
+
+def _latin_only(text: str) -> bool:
+    """The keyword safety net only knows English, so a fact in another script is never judged safe by it."""
+    letters = [char for char in text if char.isalpha()]
+    return bool(letters) and all(unicodedata.name(char, "").startswith("LATIN") for char in letters)
+
+
+async def _save_without_asking(db, config: Settings, embedder, proposed: dict, *, owner_id, conversation_id) -> dict:
+    """``auto`` mode: a fact the policy and the keyword safety net both clear is saved now, not asked about.
+
+    Anything doubtful keeps its proposal, so the app asks as before: a fact the policy asks about (a model-proposed
+    fact is never ``explicit``, so another person's detail asks), one that contradicts a saved fact (the user decides
+    in every mode), one the owner hid (a forgotten fact is never silently re-added), and one the English-only
+    keyword net cannot judge (another script). The mode is re-read just before the write. Once a save was attempted
+    a failure never falls back to a question or to a claim that it was saved.
+    """
+    proposal = proposed["proposal"]
+    secret = _memory_secret(config)
+    _, fact, _, negated = proposal_summary(proposal["token"], secret, owner_id, conversation_id)
+    if (
+        plan_for_proposal("auto", fact, explicit=False, negated=negated) is not Decision.SAVE
+        or not _latin_only(fact)
+        or _has_long_number(fact)
+    ):
+        return proposed
+    if await proposal_conflicts(
+        db, token=proposal["token"], secret=secret, owner_id=owner_id, conversation_id=conversation_id
+    ):
+        return proposed
+    if await hidden_fact_exists(db, owner_id, fact):
+        return proposed
+    setting = await db.scalar(
+        select(UserSetting).where(UserSetting.owner_id == owner_id).execution_options(populate_existing=True)
+    )
+    mode = setting.memory_mode if setting is not None else "auto"
+    if mode == "off":
+        return {"status": "rejected", "error": "MEMORY_OFF", "message": MEMORY_OFF_NOTE}
+    if mode != "auto":
+        return proposed
+    try:
+        saved = await auto_commit_memory(
+            db,
+            MemoryService(db, embedder),
+            token=proposal["token"],
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            secret=secret,
+            mode="auto",
+        )
+    except (MemoryCaptureError, ValueError, HTTPException):
+        await db.rollback()
+        return {"status": "rejected", "error": "MEMORY_SAVE_FAILED", "message": AUTO_SAVE_FAILED_NOTE}
+    change = saved.get("change")
+    if not change:
+        # A concurrent save of the same fact won: there is nothing to undo and nothing new was written.
+        return {"status": "rejected", "error": "MEMORY_ALREADY_SAVED", "message": ALREADY_SAVED_NOTE}
+    return {"status": "saved", "change_id": change.get("id"), "message": AUTO_SAVED_NOTE}
+
+
+def _register_memory_tool_routes(app, *, config: Settings, database, guard, embedder):
+    """Model-facing memory tools. Propose asks, except in ``auto`` mode where the policy may save at once."""
     secret = _memory_secret(config)
 
     @app.post("/internal/agent/tool/memory-propose")
@@ -1040,12 +1179,7 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
         async def effect(owner_id, conversation_id):
             row = await db.get(UserSetting, owner_id)
             if row is not None and row.memory_mode == "off":
-                return {
-                    "status": "rejected",
-                    "error": "MEMORY_OFF",
-                    "message": "Memory is turned off, so nothing was saved. Tell the user memory is off; "
-                    "do not claim it was saved.",
-                }
+                return {"status": "rejected", "error": "MEMORY_OFF", "message": MEMORY_OFF_NOTE}
             if classify_sensitivity(body.fact) is Sensitivity.CREDENTIAL:
                 # Never record it as a proposal: that would store the text we promise not to keep.
                 return {"status": "rejected", "error": "MEMORY_SENSITIVE", "message": SENSITIVE_TOOL_NOTE}
@@ -1057,6 +1191,11 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard):
                 fact=body.fact,
                 secret=secret,
             )
+            mode = row.memory_mode if row is not None else "auto"
+            if result.get("status") == "proposed" and mode == "auto":
+                return await _save_without_asking(
+                    db, config, embedder, result, owner_id=owner_id, conversation_id=conversation_id
+                )
             return result
 
         return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)
