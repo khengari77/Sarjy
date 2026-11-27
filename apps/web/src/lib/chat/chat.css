@@ -47,21 +47,29 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  /* The orb zone is a fixed-size block (orb + one fixed slot below it), so
-     it simply centres: nothing in it can grow, and the stage never scrolls. */
+  /* Centred while the content fits; `safe` keeps the top reachable when a
+     short viewport (or a wrapped notice) makes the stage scroll. The plain
+     centre line is the fallback for browsers that do not parse `safe`. */
   justify-content: center;
+  justify-content: safe center;
   width: 100%;
   max-width: var(--stage-max-width);
   margin: 0 auto;
   /* Kit rhythm: the orb sits a little below the geometric centre. */
   padding: 46px 20px 0;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   text-align: center;
   /* Size container: --orb-size is derived from the stage's own height. */
   container-type: size;
   --below-height: 148px;
   --orb-max: var(--orb-desktop);
+  /* Breathing margin between the orb block and the stage edge. */
+  --orb-clearance: 24px;
+  /* Extra room an error notice needs under the orb: one wrapped 13px notice
+     line (~39px), the 34px retry button and ~6px gaps, rounded up. */
+  --notice-height: 104px;
 }
 
 .stage-waves {
@@ -94,11 +102,25 @@ button:disabled {
   place-items: center;
   flex: 0 0 auto;
   /* Kit orbDesktop (290) / orbMobile (220), shrunk when the stage is too short
-     to also fit the fixed block under the orb and a margin (cqh is the content
-     box, so the stage's top padding is already excluded). */
-  --orb-size: clamp(148px, calc(100cqh - var(--below-height) - 24px), var(--orb-max));
+     to also fit the block under the orb and a margin (cqh is the content box,
+     so the stage's top padding is already excluded). */
+  --orb-size: clamp(96px, calc(100cqh - var(--below-height) - var(--orb-clearance)), var(--orb-max));
   width: var(--orb-size);
   height: var(--orb-size);
+}
+
+/* An error notice needs its own room under the orb. Reserve it in the orb's
+   height so the notice and status stay inside the stage rather than spilling
+   over the controls on short phones. Tall viewports still clamp at --orb-max,
+   so the normal idle/live look is unchanged. At the default rhythm the reserve
+   is the below block (148px) plus the clearance (24px) plus the notice block
+   (104px), i.e. the old 276px constant. */
+.voice-stage:has(.stage-notices) .orb-wrap {
+  --orb-size: clamp(
+    96px,
+    calc(100cqh - var(--below-height) - var(--orb-clearance) - var(--notice-height)),
+    var(--orb-max)
+  );
 }
 
 /* One soft, filled halo disc behind the orb: no outline rings. */
@@ -207,15 +229,16 @@ button:disabled {
   width: 100%;
 }
 
-/* One fixed-height block under the orb. Hero (idle) and live content both
-   fit it, so switching state never moves the orb or the composer. */
+/* A minimum-height block under the orb. Hero (idle) and live content both fit
+   it; when a notice needs more room, the block grows and the stage scrolls
+   instead of clipping it. */
 .below {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   width: 100%;
-  height: var(--below-height);
+  min-height: var(--below-height);
   flex: 0 0 auto;
   padding-top: 24px;
 }
@@ -232,13 +255,15 @@ button:disabled {
   margin-top: 20px;
 }
 
-/* Exactly one quoted line lives here, whatever the reply length. */
+/* The caption lives here. The bubble is positioned from this slot so a
+   three-line reply grows down without moving the orb or the composer. */
 .caption-slot {
+  position: relative;
   display: flex;
   align-items: flex-start;
   justify-content: center;
   width: 100%;
-  height: 48px;
+  min-height: 48px;
   margin-top: 14px;
 }
 
@@ -357,19 +382,28 @@ h1 {
 
 /* The quoted caption is a round-cornered control that opens the transcript. */
 .caption-bubble {
+  /* The bubble grows down from the slot without changing the orb/composer
+     geometry; a long reply is scrollable instead of truncated. */
+  position: absolute;
+  top: 0;
+  left: 50%;
   display: block;
   width: 100%;
   max-width: 556px;
-  height: 48px;
-  padding: 0 24px;
+  min-height: 48px;
+  /* Three lines; the fourth scrolls inside the bubble. */
+  max-height: 92px;
+  padding: 12px 24px;
+  transform: translateX(-50%);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
   background: var(--surface-elevated);
   color: var(--text-primary);
   font: inherit;
   font-size: 15px;
-  line-height: 46px;
+  line-height: 22px;
   text-align: center;
+  overflow-y: auto;
   cursor: pointer;
   transition:
     background var(--transition-quick),
@@ -382,9 +416,8 @@ h1 {
 
 .caption-bubble .caption-text {
   display: block;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .caption-bubble.quiet {
@@ -508,6 +541,39 @@ select {
 
   .composer {
     padding-inline: 14px;
+  }
+}
+
+/* Short viewports (landscape handsets, split windows) leave the stage very
+   little height once the dock is measured. Compact the tall-screen rhythm
+   instead of pushing the status and caption below the fold: the orb keeps its
+   96px floor, the redundant "Connected" chip yields to the live phase line, and
+   the block under the orb only reserves what it renders. */
+@media (max-height: 480px) {
+  .voice-stage {
+    --below-height: 88px;
+    padding-top: 8px;
+  }
+
+  .below,
+  .below[data-hero='true'] {
+    padding-top: 4px;
+  }
+
+  .caption-slot {
+    margin-top: 4px;
+  }
+
+  .connected-pill {
+    display: none;
+  }
+
+  .below[data-hero='true'] .intro {
+    margin-top: 4px;
+  }
+
+  .below[data-hero='true'] .idle-pill {
+    margin-top: 8px;
   }
 }
 
