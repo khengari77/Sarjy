@@ -79,14 +79,14 @@
   border: 0;
   border-radius: var(--radius-control);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   letter-spacing: 0.04em;
   cursor: pointer;
-  transition: filter var(--transition-quick);
+  transition: background-color var(--transition-quick);
 }
 
 .entry-form button:hover {
-  filter: brightness(1.08);
+  background: var(--accent-hover);
 }
 
 .entry-form button:active {
@@ -97,7 +97,7 @@
   min-height: 1.25em;
   margin: 0;
   font-size: var(--font-size-body);
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 @media (prefers-reduced-motion: reduce) {

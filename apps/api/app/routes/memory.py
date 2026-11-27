@@ -5,8 +5,11 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.services.authorization import owned_conversation
 from app.services.memory import MemoryResult, MemoryService
 from app.services.memory_auto import ChangeConflict, ChangeNotFound, undo_change
+from app.services.memory_capture import MemoryCaptureError, pending_proposal, resolve_proposal
+from app.services.memory_mode import load_effective_memory_mode
 from app.services.memory_visibility import delete_memory, hide_memory, unhide_memory
 
 
@@ -39,6 +42,7 @@ class MemoryListItem(BaseModel):
     kind: str
     version: int = Field(ge=1)
     status: str
+    scope: Literal["global", "conversation"]
     source_conversation_id: str
     source_turn_id: str | None
     supersedes_id: str | None
@@ -80,6 +84,42 @@ class MemoryVisibility(BaseModel):
     changed: bool
 
 
+class MemoryProposalReplacement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    version: int = Field(ge=1)
+    content: str
+
+
+class PendingMemoryProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    fact: str
+    expires_at: str
+    replaces: MemoryProposalReplacement | None = None
+
+
+class MemoryProposalPending(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pending: PendingMemoryProposal | None
+
+
+class MemoryProposalDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    proposal_id: str = Field(min_length=1, max_length=100)
+    decision: Literal["save", "decline", "replace"]
+    # Required for replace: the exact visible fact the user was shown.
+    target_id: str | None = Field(default=None, min_length=1, max_length=100)
+    target_version: int | None = Field(default=None, ge=1)
+
+
+class MemoryProposalDecisionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str
+    memory: MemoryResult | None = None
+    idempotent: bool | None = None
+
+
 def memory_router(database, identity, embedder):
     router = APIRouter()
 
@@ -89,11 +129,17 @@ def memory_router(database, identity, embedder):
         limit: int = Query(default=50, ge=1, le=100),
         offset: int = Query(default=0, ge=0, le=1_000_000),
         status: Literal["active", "hidden", "superseded"] | None = Query(default=None),
+        scope: Literal["global", "conversation"] | None = Query(default=None),
         user=Depends(identity),
         db=Depends(database),
     ):
         return await MemoryService(db, embedder).list_memories(
-            user.id, limit=limit, offset=offset, conversation_id=conversation_id, status=status
+            user.id,
+            limit=limit,
+            offset=offset,
+            conversation_id=conversation_id,
+            status=status,
+            scope=scope,
         )
 
     @router.post("/v1/conversations/{conversation_id}/memories", response_model=MemoryResult, status_code=201)
@@ -150,6 +196,50 @@ def memory_router(database, identity, embedder):
     @router.delete("/v1/memories/{memory_id}", response_model=MemoryVisibility)
     async def delete(memory_id: str, user=Depends(identity), db=Depends(database)):
         return await _visibility(delete_memory, memory_id, user, db)
+
+    return router
+
+
+def memory_proposal_router(database, identity, embedder, *, secret: str = ""):
+    router = APIRouter()
+
+    @router.get("/v1/conversations/{conversation_id}/memory-proposal", response_model=MemoryProposalPending)
+    async def get_memory_proposal(conversation_id: str, user=Depends(identity), db=Depends(database)):
+        await owned_conversation(db, user.id, conversation_id)
+        try:
+            pending = await pending_proposal(db, owner_id=user.id, conversation_id=conversation_id, secret=secret)
+        except MemoryCaptureError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code, **exc.details}) from exc
+        return MemoryProposalPending(pending=pending)
+
+    @router.post(
+        "/v1/conversations/{conversation_id}/memory-proposal/decision",
+        response_model=MemoryProposalDecisionResult,
+    )
+    async def decide_memory_proposal(
+        conversation_id: str, body: MemoryProposalDecision, user=Depends(identity), db=Depends(database)
+    ):
+        await owned_conversation(db, user.id, conversation_id)
+        mode = await load_effective_memory_mode(db, conversation_id)
+        try:
+            return await resolve_proposal(
+                db,
+                MemoryService(db, embedder),
+                owner_id=user.id,
+                conversation_id=conversation_id,
+                proposal_id=body.proposal_id,
+                decision=body.decision,
+                secret=secret,
+                mode=mode,
+                target_id=body.target_id,
+                target_version=body.target_version,
+            )
+        except MemoryCaptureError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code, **exc.details}) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                429 if str(exc) == "DAILY_BUDGET_EXHAUSTED" else 422, detail={"code": str(exc)}
+            ) from exc
 
     return router
 

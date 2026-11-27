@@ -19,6 +19,7 @@ from fastapi import HTTPException
 from sqlalchemy import Text, cast, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.commands import CommandKind, CommandResult
 from app.domain.context import prompt_sha256
 from app.domain.memory_changes import AUTO_SAVE
 from app.infrastructure.database import (
@@ -31,12 +32,22 @@ from app.infrastructure.database import (
     now,
 )
 from app.services.memory_erasure_lock import lock_owner_memories
+from app.services.memory_terms import delete_terms
 
 ACTIVE = "active"
 HIDDEN = "hidden"
 DELETED = "deleted"
 HIDE_OPERATION = "memory_hide"
 UNHIDE_OPERATION = "memory_unhide"
+RESTORE_PROPOSAL = "restore_proposal"
+EXCLUDE_PROPOSAL = "exclude_proposal"
+SCRUBBED_OPERATION_TYPES = (
+    HIDE_OPERATION,
+    UNHIDE_OPERATION,
+    AUTO_SAVE,
+    RESTORE_PROPOSAL,
+    EXCLUDE_PROPOSAL,
+)
 
 
 @dataclass(frozen=True)
@@ -286,12 +297,25 @@ async def _scrub_snapshots(db: AsyncSession, owner_id: str, deleted: set[str], t
             turn.snapshot = _rehashed(scrubbed)
 
 
+def _scrubbed_operation_response(*, payload: dict) -> dict:
+    stored = payload.get("response")
+    identifier = stored.get("request_id") if isinstance(stored, dict) else None
+    return CommandResult(
+        request_id=identifier if isinstance(identifier, str) and identifier else "scrubbed",
+        kind=CommandKind.UNCHANGED,
+        spoken="Some of those memories were deleted. Nothing was changed.",
+        detail="MEMORY_SCRUBBED",
+    ).model_dump(mode="json")
+
+
 async def scrub_copies(db: AsyncSession, owner_id: str, erased: list[Erased]) -> None:
     """Wipe every stored copy of facts whose memory rows are being tombstoned (delete and undo both call this)."""
     ids = [item.id for item in erased]
     deleted = set(ids)
     texts = {item.content for item in erased if item.content}
     keys = [item.request_key for item in erased if item.request_key]
+    # Terms are derived copies of the content: they leave with it, in the same transaction.
+    await delete_terms(db, ids)
     if keys:
         await db.execute(
             update(MemoryWriteRequest)
@@ -306,16 +330,48 @@ async def scrub_copies(db: AsyncSession, owner_id: str, erased: list[Erased]) ->
         await db.scalars(
             select(ContextOperation).where(
                 ContextOperation.owner_id == owner_id,
-                ContextOperation.command_type.in_((HIDE_OPERATION, UNHIDE_OPERATION, AUTO_SAVE)),
+                ContextOperation.command_type.in_(SCRUBBED_OPERATION_TYPES),
             )
         )
     ).all()
     for operation in operations:
-        if (operation.payload or {}).get("memory_id") in ids:
+        payload = dict(operation.payload or {})
+        listed = payload.get("memory_ids")
+        if isinstance(listed, list):
+            erased_in_list = sum(1 for item in listed if isinstance(item, str) and item in deleted)
+            if not erased_in_list:
+                continue
+            remaining = [item for item in listed if isinstance(item, str) and item not in deleted]
+            # The topic query and the spoken line can quote the erased fact; drop the query and keep
+            # only a generic response, so a later undo replays without the erased text.
+            payload.pop("query", None)
+            payload["memory_ids"] = remaining
+            payload["count"] = max(len(remaining), int(payload.get("count") or 0))
+            payload["erased_count"] = int(payload.get("erased_count") or 0) + erased_in_list
+            payload["scrubbed"] = True
+            if remaining:
+                payload["response"] = _scrubbed_operation_response(payload=payload)
+            else:
+                payload.pop("response", None)
+                if operation.outcome in {"applied", "proposed"} and operation.command_type in (
+                    HIDE_OPERATION,
+                    AUTO_SAVE,
+                ):
+                    operation.outcome = "deleted"
+            operation.payload = payload
+            continue
+        if payload.get("memory_id") in ids:
             # Spoken lines quote the memory; keep the id (for audit) and drop the text.
-            operation.payload = {"memory_id": (operation.payload or {}).get("memory_id"), "scrubbed": True}
+            operation.payload = {"memory_id": payload.get("memory_id"), "scrubbed": True}
             if operation.outcome == "applied" and operation.command_type in (HIDE_OPERATION, AUTO_SAVE):
                 operation.outcome = "deleted"
+            continue
+        if operation.command_type == RESTORE_PROPOSAL:
+            stored = payload.get("response")
+            spoken = stored.get("spoken") if isinstance(stored, dict) else ""
+            if isinstance(spoken, str) and any(text and (text in spoken or text[:80] in spoken) for text in texts):
+                payload["response"] = _scrubbed_operation_response(payload=payload)
+                operation.payload = payload
 
 
 async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> VisibilityResult:

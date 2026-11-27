@@ -1,6 +1,7 @@
 """Hide / unhide / delete: global, reversible hide; tombstone delete; nothing hidden resurfaces."""
 
 import asyncio
+import json
 import sqlite3
 from contextlib import closing
 
@@ -15,6 +16,7 @@ from test_memory import FakeEmbedder
 from test_memory_capture import set_mode
 
 PROPOSE = "/internal/agent/tool/memory-propose"
+FORGET = "/internal/agent/tool/memory-forget"
 RECALL = "/internal/agent/tool/memory-recall"
 
 
@@ -105,6 +107,13 @@ def test_delete_is_a_permanent_tombstone_that_wipes_content_and_embedding(tmp_pa
             f"/v1/memories/{memory}/correct",
             json={"content": "I prefer black tea", "expected_version": 1, "idempotency_key": "c1"},
         ).json()["id"]
+        with closing(sqlite3.connect(file)) as db:
+            assert (
+                db.execute(
+                    "SELECT count(*) FROM memory_terms WHERE memory_id IN (?, ?)", (memory, corrected)
+                ).fetchone()[0]
+                > 0
+            )
         assert client.delete(f"/v1/memories/{corrected}").json() == {
             "id": corrected,
             "status": "deleted",
@@ -116,6 +125,12 @@ def test_delete_is_a_permanent_tombstone_that_wipes_content_and_embedding(tmp_pa
             assert (status, content, subject) == ("deleted", "", None) and embedding in (None, "null")
         with closing(sqlite3.connect(file)) as db:
             ledger = db.execute("SELECT result, embedding FROM memory_write_requests").fetchall()
+            assert (
+                db.execute(
+                    "SELECT count(*) FROM memory_terms WHERE memory_id IN (?, ?)", (memory, corrected)
+                ).fetchone()[0]
+                == 0
+            )
         assert all(result in (None, "null") and emb in (None, "null") for result, emb in ledger)
         assert client.get("/v1/memories").json() == {"items": [], "total": 0, "next_offset": None}
         assert search_ids(client, chat) == []
@@ -190,13 +205,21 @@ def test_a_hidden_or_deleted_memory_surfaces_nowhere(tmp_path, how):
     assert asyncio.run(keyword()) == ()
 
 
-def test_voice_forget_hides_everywhere_and_delete_by_voice_is_refused(tmp_path):
+def test_forget_tool_hides_everywhere_and_delete_by_voice_is_refused(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
-        client.post("/v1/demo-session")
+        owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
         other_chat = client.post("/v1/conversations").json()["id"]
         memory = create(client, chat, "I prefer green tea", "k1")
+        headers, first = start_turn(client, chat, owner, file, memories=(), text="Forget the green tea")
+
+        def forget(topic, request):
+            return client.post(
+                FORGET,
+                headers=headers,
+                json={"turn_id": first["turn_id"], "request_id": request, "topic": topic},
+            ).json()
 
         def say(text, request):
             return client.post(
@@ -214,16 +237,59 @@ def test_voice_forget_hides_everywhere_and_delete_by_voice_is_refused(tmp_path):
         assert refusal["kind"] == "unsupported" and "trash icon" in refusal["spoken"]
         assert row(file, memory)[0] == "active"
 
-        hidden = say("Forget the green tea.", "f1")["result"]
+        preview = forget("the green tea", "f1")
+        assert preview["status"] == "proposed" and preview["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert preview["spoken"] == "I found 1 memory about the green tea. Hide it?"
+        assert forget("the green tea", "f1") == preview
+        assert row(file, memory)[0] == "active"
+
+        hidden = say("Yes.", "y1")["result"]
         assert hidden["detail"] == "MEMORY_HIDDEN" and hidden["changed"] is True
-        assert hidden["spoken"] == "Hidden 'I prefer green tea'. Say undo to bring it back."
-        assert say("Forget the green tea.", "f1")["result"] == hidden
+        assert hidden["spoken"] == "Hidden 1 memory about the green tea. Say undo to bring it back."
         assert row(file, memory)[0] == "hidden" and search_ids(client, other_chat) == []
 
-        assert say("Yes.", "y1") == {"handled": False}
+        assert say("Yes.", "stray-yes") == {"handled": False}
         undone = say("Bring it back.", "u1")["result"]
         assert undone["detail"] == "MEMORY_UNHIDDEN" and row(file, memory)[0] == "active"
         assert say("Undo", "u2")["result"]["detail"] == "NO_HIDDEN_MEMORY"
+
+
+def test_deleting_a_memory_scrubs_a_pending_restore_question(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        memory = create(client, chat, "I prefer green tea", "k1")
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute(
+                "INSERT INTO context_operations (id,owner_id,conversation_id,command_type,payload,revision_before,"
+                "revision_after,idempotency_key,outcome,created_at) VALUES "
+                "('restore-op',?,?,'restore_proposal',?,0,NULL,'restore-key','proposed',"
+                "'2026-11-12T00:00:00+00:00')",
+                (
+                    owner,
+                    chat,
+                    json.dumps(
+                        {
+                            "kind": "restore",
+                            "token": "token",
+                            "operation_id": "hide-op",
+                            "expires_at": 9999999999,
+                            "response": {
+                                "request_id": "restore-question",
+                                "kind": "needs_confirmation",
+                                "spoken": "Restore 'I prefer green tea' to this conversation? Say yes to restore, or no.",
+                            },
+                        }
+                    ),
+                ),
+            )
+            db.commit()
+
+        assert client.delete(f"/v1/memories/{memory}").json()["status"] == "deleted"
+        with closing(sqlite3.connect(file)) as db:
+            payload = db.execute("SELECT payload FROM context_operations WHERE id='restore-op'").fetchone()[0]
+        assert "I prefer green tea" not in payload
 
 
 def test_no_model_tool_can_delete():

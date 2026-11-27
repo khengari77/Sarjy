@@ -35,6 +35,14 @@ FORCED_MEMORY_TOOLS: Final[dict[str, str]] = {
     "forget": "propose_forget",
     "recall": "recall",
 }
+# Forget only previews and asks once before anything changes, and recall is read-only, so a
+# slightly less certain answer can safely reach their tools. Remember may save without asking
+# in auto mode, so it keeps the single UI-command confidence threshold.
+FORCED_MEMORY_THRESHOLDS: Final[dict[str, float]] = {
+    "remember": CONFIDENCE_THRESHOLD,
+    "forget": 0.75,
+    "recall": 0.75,
+}
 MULTIPLE_COMMANDS_SPOKEN: Final = "I can only make one change at a time. Which one should I do first?"
 # A confident "open Wordle" answer becomes this command detail; the worker runs the real play.
 WORDLE_OPEN_DETAIL: Final = "WORDLE_OPEN"
@@ -146,8 +154,10 @@ UI_QUESTIONS: Final[dict[str, dict[str, Any]]] = {
             "remember": "Asks to remember, save, store, keep in mind or note a fact about the user for later, including a "
             "polite 'could you ...' request. Needs a concrete fact. Not 'remember to <task>', 'remember when ...', 'remember me' with no fact, or reminders.",
             "forget": (
-                "Asks to forget, delete, remove, scrap, drop, erase, disregard or stop using something remembered "
-                "or said earlier about the user ('scrap what I said about tea')."
+                "Asks the assistant to forget, delete, remove, scrap, drop, erase, disregard or stop using something "
+                "it remembers or was told earlier about the user ('scrap what I said about tea', 'wipe everything you "
+                "know about me'). Not the figures of speech 'forget it' and 'forget about it', not statements such as "
+                "'I forgot my keys', and not reminders ('don't forget to buy milk')."
             ),
             "recall": (
                 "Asks what the assistant remembers or knows about the user, or whether it remembers a fact about "

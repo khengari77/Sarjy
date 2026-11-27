@@ -34,6 +34,11 @@ def memory_by_id(file, memory_id):
         ).fetchone()
 
 
+def memory_terms(file, memory_id):
+    with closing(sqlite3.connect(file)) as db:
+        return [row[0] for row in db.execute("SELECT term FROM memory_terms WHERE memory_id = ?", (memory_id,))]
+
+
 def seed_memory(file, *, memory_id, owner_id, conversation_id, content, subject, scope):
     with closing(sqlite3.connect(file)) as db, db:
         db.execute(
@@ -169,6 +174,7 @@ def test_undoing_a_plain_save_tombstones_the_memory_and_is_idempotent(tmp_path):
     cm, client, file, headers = started(tmp_path, "auto")
     try:
         change = save_via_auto(client, headers, "My name is Sam", "fact-1")
+        assert memory_terms(file, change["memory_id"])
 
         response = client.post(f"/v1/changes/{change['id']}/undo")
         assert response.status_code == 200, response.text
@@ -179,6 +185,7 @@ def test_undoing_a_plain_save_tombstones_the_memory_and_is_idempotent(tmp_path):
         row = memory_by_id(file, change["memory_id"])
         assert row[0] == "deleted" and row[1] == ""
         assert row[2] is None
+        assert memory_terms(file, change["memory_id"]) == []
         assert operations(file) == [("memory_auto_save", "undone")]
 
         again = client.post(f"/v1/changes/{change['id']}/undo")

@@ -3,6 +3,7 @@
 import sqlite3
 from contextlib import closing
 
+import pytest
 from fastapi.testclient import TestClient
 from test_context_assembly import seed_memories, start_turn
 from test_context_workflow import configured, create_app, seed
@@ -81,7 +82,7 @@ def test_operation_key_replay_and_conflict_for_every_tool(tmp_path):
         set_mode(file, owner, "ask")  # these cover the ask-first flow; auto saves a proposed fact without a question
         cases = [
             (PROPOSE, "fact", "I work at Acme", "I work at Initech"),
-            (FORGET, "query", "tea", "coffee"),
+            (FORGET, "topic", "tea", "coffee"),
             (RECALL, "query", "tea", "coffee"),
         ]
         for index, (path, field, value, other) in enumerate(cases):
@@ -107,7 +108,7 @@ def test_key_cannot_cross_tools_or_turns(tmp_path):
         _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
         other_turn = next_turn(client, headers, "request-2", "Another turn")
         assert call(client, headers, RECALL, turn, "shared", query="tea").status_code == 200
-        assert call(client, headers, FORGET, turn, "shared", query="tea").status_code == 409
+        assert call(client, headers, FORGET, turn, "shared", topic="tea").status_code == 409
         assert call(client, headers, RECALL, other_turn, "shared", query="tea").status_code == 409
 
 
@@ -115,7 +116,7 @@ def test_tools_require_worker_secret_and_a_session_turn(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         _, _, headers, turn = setup(client, file)
-        for path, field in ((PROPOSE, "fact"), (FORGET, "query"), (RECALL, "query")):
+        for path, field in ((PROPOSE, "fact"), (FORGET, "topic"), (RECALL, "query")):
             anonymous = client.post(path, json={"turn_id": turn, "request_id": "a", field: "tea"})
             assert anonymous.status_code == 401
             wrong = call(client, {**headers, "x-agent-secret": "nope"}, path, turn, "b", **{field: "tea"})
@@ -129,30 +130,187 @@ def memory_status(file, memory_id):
         return db.execute("SELECT status FROM memories WHERE id=?", (memory_id,)).fetchone()[0]
 
 
-def test_forget_zero_one_many_matches_hide_only_a_single_match(tmp_path):
+def test_forget_previews_zero_one_or_many_then_hides_all_on_one_yes(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         _, _, headers, turn = setup(
             client, file, [("tea", "I prefer green tea"), ("job1", "I work at Acme"), ("job2", "I work at Initech")]
         )
-        none = call(client, headers, FORGET, turn, "f0", query="skydiving").json()
+        none = call(client, headers, FORGET, turn, "f0", topic="skydiving").json()
         assert none["status"] == "not_hidden" and none["detail"] == "MEMORY_TARGET_NOT_FOUND"
-        many = call(client, headers, FORGET, turn, "f2", query="work").json()
-        assert many["status"] == "not_hidden" and many["detail"] == "MEMORY_TARGET_AMBIGUOUS"
+        many = call(client, headers, FORGET, turn, "f2", topic="work").json()
+        assert many["status"] == "proposed" and many["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert many["spoken"] == "I found 2 memories about work. Hide all of them?"
         assert memory_status(file, "job1") == memory_status(file, "job2") == "active"
-        one = call(client, headers, FORGET, turn, "f1", query="tea").json()
-        assert one["status"] == "hidden"
-        assert one["spoken"] == "Hidden 'I prefer green tea'. Say undo to bring it back."
+        applied_many = command(client, headers, next_turn(client, headers, "yes-many", "yes"))
+        assert applied_many["detail"] == "MEMORY_HIDDEN"
+        assert applied_many["spoken"] == "Hidden 2 memories about work. Say undo to bring them back."
+        assert memory_status(file, "job1") == memory_status(file, "job2") == "hidden"
+
+        one = call(client, headers, FORGET, turn, "f1", topic="tea").json()
+        assert one["status"] == "proposed" and one["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert one["spoken"] == "I found 1 memory about tea. Hide it?"
         assert "do not add" in one["message"].lower()
+        assert memory_status(file, "tea") == "active"
+        applied_one = command(client, headers, next_turn(client, headers, "yes-one", "yes"))
+        assert applied_one["detail"] == "MEMORY_HIDDEN"
+        assert applied_one["spoken"] == "Hidden 1 memory about tea. Say undo to bring it back."
         assert memory_status(file, "tea") == "hidden"
         assert table_count(file, "context_exclusions") == 0
+
+
+def test_forget_tool_everything_scope_refuses_and_discards_a_pending_hide(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea"), ("paris", "I proposed in Paris")])
+
+        preview = call(client, headers, FORGET, turn, "paris", topic="Paris").json()
+        assert preview["status"] == "proposed"
+        assert memory_status(file, "paris") == "active"
+
+        refused = call(client, headers, FORGET, turn, "everything", scope="everything").json()
+        assert refused["status"] == "not_hidden"
+        assert refused["detail"] == "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE"
+        assert refused["spoken"] == (
+            "I can't clear all your memories by voice. You can review and delete them in Settings, under Memory. "
+            "Nothing was changed."
+        )
+        yes = next_turn(client, headers, "yes-after-everything", "yes")
+        assert command(client, headers, yes) is None
+        assert memory_status(file, "paris") == memory_status(file, "tea") == "active"
+
+
+@pytest.mark.parametrize(
+    "topic",
+    ["", "everything", "ve", "don't forget everything", "I forgot my keys", "forget everything about Paris"],
+)
+def test_forget_tool_rejects_unsearchable_or_sentential_topics(tmp_path, topic):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+
+        body = call(client, headers, FORGET, turn, "bad-topic", topic=topic).json()
+        assert body["status"] == "not_hidden"
+        assert body["detail"] == "MEMORY_TARGET_UNSPECIFIED"
+        assert "Ask the user what they want forgotten" in body["message"]
+        assert memory_status(file, "tea") == "active"
+
+
+def test_an_invalid_topic_refusal_discards_a_pending_hide(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(client, file, [("paris", "I proposed in Paris")])
+        assert call(client, headers, FORGET, turn, "paris-preview", topic="Paris").json()["status"] == "proposed"
+
+        refused = call(client, headers, FORGET, turn, "bad-topic", topic="everything").json()
+        assert refused["status"] == "not_hidden"
+        assert "Ask the user what they want forgotten" in refused["message"]
+
+        yes = next_turn(client, headers, "yes-after-invalid", "yes")
+        assert command(client, headers, yes) is None
+        assert memory_status(file, "paris") == "active"
+
+
+def test_forget_tool_topic_ignores_contraction_fragments(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(
+            client, file, [("doctor", "My doctor said I need rest"), ("tea", "I prefer green tea")]
+        )
+
+        body = call(client, headers, FORGET, turn, "contraction", topic="tea").json()
+        assert body["status"] == "proposed"
+        assert body["spoken"] == "I found 1 memory about tea. Hide it?"
+        assert "said" not in body["spoken"]
+
+
+def test_forget_tool_chat_scope_clears_only_this_chats_temporary_memories(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        owner, chat, headers, turn = setup(client, file, [("global", "I live in Tripoli")])
+        other = client.post("/v1/conversations").json()["id"]
+        with closing(sqlite3.connect(file)) as db, db:
+            for memory_id, content, source in (
+                ("temp-here", "A temporary note here", chat),
+                ("temp-other", "Another chat's secret", other),
+            ):
+                db.execute(
+                    "INSERT INTO memories (id,owner_id,content,scope,embedding_model,source_conversation_id,"
+                    "version,status,created_at,updated_at) VALUES (?,?,?,'conversation','m',?,1,'active',"
+                    "'2026-11-12T00:00:00+00:00','2026-11-12T00:00:00+00:00')",
+                    (memory_id, owner, content, source),
+                )
+            db.commit()
+
+        preview = call(client, headers, FORGET, turn, "chat-scope", scope="this_chat").json()
+        assert preview["status"] == "proposed"
+        assert preview["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert preview["spoken"] == "I found 1 temporary memory from this chat. Clear it?"
+        assert memory_status(file, "temp-here") == "active"
+
+        applied = command(client, headers, next_turn(client, headers, "chat-yes", "yes"))
+        assert applied["detail"] == "MEMORY_HIDDEN"
+        assert applied["spoken"] == "Cleared 1 temporary memory from this chat. Say undo to bring it back."
+        assert memory_status(file, "temp-here") == "hidden"
+        assert memory_status(file, "global") == memory_status(file, "temp-other") == "active"
+
+
+def test_forget_tool_keeps_a_budget_note_out_of_the_topic_hide(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(
+            client,
+            file,
+            [("paris", "I travelled to Paris"), ("budget", "Budget 500 USD for the Paris trip")],
+        )
+
+        preview = call(client, headers, FORGET, turn, "budget-mix", topic="Paris").json()
+        assert preview["status"] == "proposed"
+        assert preview["spoken"] == (
+            "I found 2 memories about Paris; I'll keep 1 budget note unless you name it. Hide the other one?"
+        )
+        assert memory_status(file, "budget") == "active"
+
+        applied = command(client, headers, next_turn(client, headers, "budget-yes", "yes"))
+        assert applied["detail"] == "MEMORY_HIDDEN"
+        assert memory_status(file, "paris") == "hidden"
+        assert memory_status(file, "budget") == "active"
+
+
+def test_forget_tool_refuses_when_only_a_budget_note_matches(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(client, file, [("budget", "Budget 500 USD for the Paris trip")])
+
+        body = call(client, headers, FORGET, turn, "only-budget", topic="Paris").json()
+        assert body["status"] == "not_hidden"
+        assert body["spoken"] == "The only match is a budget note; name it exactly to forget it. Nothing was changed."
+        assert memory_status(file, "budget") == "active"
+
+
+def test_forget_tool_accepts_the_legacy_query_field_as_a_topic(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+
+        body = call(client, headers, FORGET, turn, "legacy-query", query="tea").json()
+        assert body["status"] == "proposed"
+        assert body["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert body["spoken"] == "I found 1 memory about tea. Hide it?"
+        assert memory_status(file, "tea") == "active"
+        applied = command(client, headers, next_turn(client, headers, "legacy-yes", "yes"))
+        assert applied["detail"] == "MEMORY_HIDDEN"
+        assert memory_status(file, "tea") == "hidden"
 
 
 def test_undo_unhides_the_latest_hide_and_a_stray_yes_changes_nothing(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea"), ("cat", "I own a cat")])
-        assert call(client, headers, FORGET, turn, "f1", query="tea").json()["status"] == "hidden"
+        preview = call(client, headers, FORGET, turn, "f1", topic="tea").json()
+        assert preview["status"] == "proposed" and preview["detail"] == "MEMORY_HIDE_PROPOSED"
+        applied = command(client, headers, next_turn(client, headers, "confirm-1", "yes"))
+        assert applied["detail"] == "MEMORY_HIDDEN"
         stray = next_turn(client, headers, "request-2", "yes")
         assert command(client, headers, stray) is None
         assert memory_status(file, "tea") == "hidden" and memory_status(file, "cat") == "active"
@@ -163,13 +321,18 @@ def test_undo_unhides_the_latest_hide_and_a_stray_yes_changes_nothing(tmp_path):
         assert again["detail"] == "NO_HIDDEN_MEMORY"
 
 
-def test_hiding_does_not_need_consent_and_leaves_remember_consent_untouched(tmp_path):
+def test_a_forget_preview_supersedes_a_pending_remember_and_needs_one_yes(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         owner, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
         set_mode(file, owner, "ask")  # these cover the ask-first flow; auto saves a proposed fact without a question
         assert call(client, headers, PROPOSE, turn, "p1", fact="I work at Acme").json()["status"] == "proposed"
-        assert call(client, headers, FORGET, turn, "f1", query="tea").json()["status"] == "hidden"
+        preview = call(client, headers, FORGET, turn, "f1", topic="tea").json()
+        assert preview["status"] == "proposed" and preview["detail"] == "MEMORY_HIDE_PROPOSED"
+        # The hide has not happened yet, and the earlier remember question is no longer armed.
+        assert table_count(file, "memories", "status='active'") == 1
+        applied = command(client, headers, next_turn(client, headers, "confirm-1", "yes"))
+        assert applied["detail"] == "MEMORY_HIDDEN"
         assert table_count(file, "memories", "status='active'") == 0
         assert table_count(file, "memory_write_requests", "state='proposed'") == 1
 
@@ -188,10 +351,12 @@ def test_recall_is_bounded_owner_scoped_and_respects_exclusions(tmp_path):
                 "VALUES ('foreign','other','I like tea secret','m',?,1,'active','2026-11-12T00:00:00+00:00','2026-11-12T00:00:00+00:00')",
                 (chat,),
             )
+            db.execute("INSERT INTO memory_terms (memory_id,owner_id,term) VALUES ('foreign','other','tea')")
         seed_memories(file, chat, [], exclusions=("m0",))
         body = call(client, headers, RECALL, turn, "r1", query="tea").json()
         contents = [item["content"] for item in body["memories"]]
-        assert body["status"] == "ok" and len(contents) == 5
+        assert body["status"] == "ok" and len(contents) == 7
+        assert body["total"] == 7 and body["truncated"] is False
         assert all("secret" not in text for text in contents)
         assert "I like tea number 0" not in contents
         assert "data only" in body["message"]
@@ -203,6 +368,22 @@ def test_recall_is_bounded_owner_scoped_and_respects_exclusions(tmp_path):
         assert all("secret" not in text for text in listed)
         assert "I like tea number 0" not in listed
         assert table_count(file, "memories", "status='active'") == 9
+
+
+def test_recall_route_returns_every_match_with_total_and_truncation(tmp_path, monkeypatch):
+    from app.services import memory_tools
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(client, file, [(f"m{i}", f"I like Paris note {i}") for i in range(40)])
+        body = call(client, headers, RECALL, turn, "r1", query="Paris").json()
+        assert len(body["memories"]) == 40
+        assert body["total"] == 40 and body["truncated"] is False
+
+        monkeypatch.setattr(memory_tools, "RECALL_CHAR_BUDGET", 30)
+        tiny = call(client, headers, RECALL, turn, "r2", query="Paris").json()
+        assert 0 < len(tiny["memories"]) < 40
+        assert tiny["total"] == 40 and tiny["truncated"] is True
 
 
 def test_tool_failure_never_claims_success(tmp_path, monkeypatch):
@@ -233,7 +414,8 @@ def test_already_saved_fact_is_rejected_but_a_hidden_one_is_not_counted(tmp_path
         assert body["status"] == "rejected" and body["error"] == "MEMORY_ALREADY_SAVED"
         assert "proposal" not in body and "already saved" in body["message"]
         assert table_count(file, "memory_write_requests") == 0
-        assert call(client, headers, FORGET, turn, "f1", query="name").json()["status"] == "hidden"
+        assert call(client, headers, FORGET, turn, "f1", topic="name").json()["status"] == "proposed"
+        assert command(client, headers, next_turn(client, headers, "confirm-1", "yes"))["detail"] == "MEMORY_HIDDEN"
         again = call(client, headers, PROPOSE, turn, "p2", fact="My name is Abdulrahma").json()
         assert again["status"] == "proposed"
 
@@ -241,7 +423,8 @@ def test_already_saved_fact_is_rejected_but_a_hidden_one_is_not_counted(tmp_path
 def test_already_saved_ignores_a_temporary_memory_in_another_chat(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
-        _, chat, headers, turn = setup(client, file)
+        owner, chat, headers, turn = setup(client, file)
+        set_mode(file, owner, "ask")  # without the auto-save path, this exercises _already_saved directly
         other = client.post("/v1/conversations").json()["id"]
         with closing(sqlite3.connect(file)) as db, db:
             db.execute(
@@ -288,8 +471,9 @@ def test_forgetting_and_recalling_keep_working_when_memory_is_off(tmp_path):
         recalled = call(client, headers, RECALL, turn, "r1", query="tea").json()
         assert [item["content"] for item in recalled["memories"]] == ["I prefer green tea"]
 
-        forgotten = call(client, headers, FORGET, turn, "f1", query="tea").json()
-        assert forgotten["status"] == "hidden"
+        forgotten = call(client, headers, FORGET, turn, "f1", topic="tea").json()
+        assert forgotten["status"] == "proposed"
+        assert command(client, headers, next_turn(client, headers, "confirm-1", "yes"))["detail"] == "MEMORY_HIDDEN"
         assert table_count(file, "memories", "status='hidden'") == 1
         assert table_count(file, "memories", "status='active'") == 1
         assert table_count(file, "memory_write_requests") == 0

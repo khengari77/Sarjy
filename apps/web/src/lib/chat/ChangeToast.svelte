@@ -154,7 +154,7 @@
     align-items: center;
     min-height: 44px;
     padding: 4px 8px;
-    color: var(--accent);
+    color: var(--accent-text);
     font-weight: 600;
   }
 
@@ -190,7 +190,7 @@
   .change-error {
     flex-basis: 100%;
     margin: 2px 0 0;
-    color: #ffb3bb;
+    color: var(--status-error-text);
     font-size: 12px;
   }
 

@@ -129,6 +129,12 @@ def test_threshold_is_inclusive_and_family_and_detail_gate_independently():
     assert evaluate_ui_classification(UiClassification(**clarification)) is None
 
 
+def test_ui_commands_keep_the_single_confidence_threshold():
+    result = classification(family="theme", theme="dark", p=0.80)
+    assert evaluate_ui_classification(result) is None
+    assert evaluate_ui_classification(classification(family="theme", theme="dark", p=0.85)) is not None
+
+
 def recorded(route, family, detail, memory_op="none"):
     """Build a classification from (choice, probability) pairs as recorded live."""
 

@@ -14,6 +14,7 @@ from app.domain.context_operations import (
     verify_proposal,
 )
 from app.main import create_app as real_create_app
+from app.services.memory_terms import terms_of
 from fastapi.testclient import TestClient
 
 
@@ -126,6 +127,7 @@ def seed(
     ),
 ):
     with closing(sqlite3.connect(file)) as db, db:
+        owner_id = db.execute("SELECT owner_id FROM conversations WHERE id=?", (chat,)).fetchone()[0]
         for record_id, content in rows:
             db.execute(
                 "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,created_at,updated_at) "
@@ -133,6 +135,11 @@ def seed(
                 "'2026-11-12T00:00:00+00:00', '2026-11-12T00:00:00+00:00')",
                 (record_id, chat, content, chat),
             )
+            for term in terms_of(content):
+                db.execute(
+                    "INSERT INTO memory_terms (memory_id, owner_id, term) VALUES (?, ?, ?)",
+                    (record_id, owner_id, term),
+                )
         db.execute("UPDATE memories SET embedding=?", (json.dumps([1.0] + [0.0] * 1535),))
         db.commit()
 

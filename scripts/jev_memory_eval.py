@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 import httpx
-from app.domain.ui_routing import CONFIDENCE_THRESHOLD, FORCED_MEMORY_TOOLS, build_ui_request, parse_ui_response
+from app.domain.ui_routing import FORCED_MEMORY_THRESHOLDS, FORCED_MEMORY_TOOLS, build_ui_request, parse_ui_response
 from app.services.jev import JEV_ENDPOINT
 
 CASES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "jev_memory_live_cases.json"
@@ -41,9 +41,13 @@ def main() -> None:
             latencies.append(round((time.monotonic() - started) * 1000))
             result = parse_ui_response(body) if body else None
             answer = result.memory_op if result else None
+            threshold = FORCED_MEMORY_THRESHOLDS.get(answer.choice) if answer else None
             fired = (
                 answer.choice
-                if answer and answer.choice in FORCED_MEMORY_TOOLS and answer.probability >= CONFIDENCE_THRESHOLD
+                if answer
+                and answer.choice in FORCED_MEMORY_TOOLS
+                and threshold is not None
+                and answer.probability >= threshold
                 else "none"
             )
             if fired == case["expected"]:

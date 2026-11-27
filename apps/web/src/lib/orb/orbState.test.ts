@@ -59,7 +59,7 @@ describe('priority matrix', () => {
         expect(presentation.effectivePhase).toBe('disconnected');
         expect(presentation.accent).toBeNull();
         expect(presentation.accentOnly).toBe(false);
-        expect(presentation.statusLabel.en).toBe('Connection lost');
+        expect(presentation.statusLabel.en).toBe('Offline');
         expect(presentation.showMicSlash).toBe(false);
         expect(presentation.enabledActions).toEqual(['reconnect']);
       }
