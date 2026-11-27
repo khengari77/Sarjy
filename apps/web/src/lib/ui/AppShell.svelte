@@ -77,6 +77,7 @@
     overlay: () => overlayPanel,
     panel: (panel) => (panel === 'left' ? leftPanel : rightPanel),
     trigger: (panel) => (panel === 'left' ? leftButton : (rightOpener ?? rightButton)),
+    toggle: (panel) => (panel === 'left' ? leftButton : rightButton),
     controls: () => controlsRegion,
     openState: (panel) => (panel === 'left' ? leftOpen : rightOpen),
     setOpen: (panel, open) => {

@@ -264,6 +264,7 @@ test('tablet drawers overlay without squeezing the orb', async ({ page }) => {
 
   await page.locator('.scrim').click({ position: { x: 880, y: 300 } });
   await expect(page.getByRole('button', { name: 'Show conversations' })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: 'Show conversations' })).toBeFocused();
 });
 
 test('the right dock toggles while the history rail stays docked', async ({ page }) => {

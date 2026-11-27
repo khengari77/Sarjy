@@ -287,6 +287,23 @@ test('resizing across the dock breakpoint keeps focus inside the drawer or resto
   expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
 });
 
+test('docking with only the right drawer open keeps the left rail and keeps focus in a panel', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 720 });
+  await page.goto('/');
+  await waitForShell(page);
+
+  // Only the right drawer is open, and its Close button holds focus.
+  await rightTrigger(page).click();
+  await expect(page.locator('#shell-right').getByRole('button', { name: 'Close' })).toBeFocused();
+
+  // Widen without touching anything: the left rail must dock open (its header
+  // toggle is hidden) and the display:none close button must not drop focus.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(page.locator('#shell-left')).toBeVisible();
+  await expect.poll(() => insideDrawer(page, 'shell-right')).toBe(true);
+  expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).not.toBe('Close');
+});
+
 test('Escape in the stage does not close a docked panel behind a stage dialog', async ({ page }) => {
   // Docked panels only consume Escape when focus is in the panel or on its
   // trigger; nested stage dialogs (transcript, intent confirm) keep their own

@@ -106,6 +106,54 @@ test('delete asks first: Escape cancels and returns focus, Delete removes the ro
   expect(calls.visibility).toEqual([{ id: 'mem-riyadh', method: 'DELETE', action: 'delete' }]);
 });
 
+test('at overlay width the delete dialog keeps focus and swallows Escape and Tab while deleting', async ({ page }) => {
+  const calls = await mockApi(page);
+  await page.setViewportSize({ width: 900, height: 720 });
+  await page.goto('/');
+  await waitForShell(page);
+  const panel = await openMemoryTab(page);
+
+  const hold = calls.holdVisibility();
+  const riyadh = row(panel, 'Lives in Riyadh');
+  await riyadh.getByRole('button', { name: 'Delete memory' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete this memory?' });
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+
+  await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(dialog.getByText('Deleting…')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Deleting…' })).toBeDisabled();
+  // Cancel stays focusable but inert while the delete runs; deleting the
+  // focused button must not leave focus on <body>.
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toHaveAttribute('aria-disabled', 'true');
+  await expect.poll(() => dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+
+  // The drawer behind the portalled dialog must not react to either key.
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  await expect(page.locator('#shell-right')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show memory and settings' })).toHaveAttribute('aria-expanded', 'true');
+  await expect.poll(() => dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+
+  await page.keyboard.press('Tab');
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+
+  // The window capture must swallow both keys even when the target is outside
+  // the dialog, so neither the shell nor the drawer behind can act on them.
+  for (const key of ['Escape', 'Tab']) {
+    const prevented = await page.evaluate((pressed) => {
+      const event = new KeyboardEvent('keydown', { key: pressed, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(event);
+      return event.defaultPrevented;
+    }, key);
+    expect(prevented, `${key} must be swallowed while deleting`).toBe(true);
+  }
+
+  hold.release();
+  await expect(dialog).toHaveCount(0);
+  await expect(riyadh).toHaveCount(0);
+});
+
 test('a failed call leaves the row unchanged with a short inline message', async ({ page }) => {
   const calls = await mockApi(page);
   const panel = await open(page);

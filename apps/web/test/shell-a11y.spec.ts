@@ -96,10 +96,18 @@ test('the row menu follows the menu button keyboard pattern', async ({ page }) =
   const deleteItem = menu.getByRole('menuitem', { name: 'Delete' });
   await expect(deleteItem).toBeFocused();
 
-  // Home/End/Arrow stay inside the menu rather than falling back to the page.
+  // Arrow/Home/End are consumed by the menu handler. With a single item focus
+  // cannot move, so assert the handler really cancels the key's default action
+  // (otherwise this passes even if focus management were removed).
   for (const key of ['ArrowDown', 'ArrowUp', 'Home', 'End']) {
-    await page.keyboard.press(key);
+    const prevented = await page.evaluate((pressed) => {
+      const event = new KeyboardEvent('keydown', { key: pressed, bubbles: true, cancelable: true });
+      document.activeElement?.dispatchEvent(event);
+      return event.defaultPrevented;
+    }, key);
+    expect(prevented, `${key} must be consumed inside the menu`).toBe(true);
     await expect(deleteItem).toBeFocused();
+    expect(await menu.evaluate((el) => el.contains(document.activeElement))).toBe(true);
   }
 
   await page.keyboard.press('Escape');
