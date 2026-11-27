@@ -3705,6 +3705,31 @@
               "replace"
             ],
             "title": "Decision"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          },
+          "target_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Version"
           }
         },
         "additionalProperties": false,
@@ -3776,6 +3801,11 @@
             "type": "string",
             "title": "Id"
           },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
           "content": {
             "type": "string",
             "title": "Content"
@@ -3785,6 +3815,7 @@
         "type": "object",
         "required": [
           "id",
+          "version",
           "content"
         ],
         "title": "MemoryProposalReplacement"

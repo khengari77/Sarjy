@@ -417,7 +417,9 @@ class MemoryService:
                 # over cannot commit the memory row it protects.
                 await guard(db)
             version = 1
+            previous = None
             if previous_id is not None:
+                previous = await db.get(Memory, previous_id)
                 changed = await db.execute(
                     update(Memory)
                     .where(
@@ -431,6 +433,12 @@ class MemoryService:
                 if changed.rowcount != 1:
                     raise HTTPException(409, detail={"code": "MEMORY_VERSION_CONFLICT"})
                 version = expected_version + 1
+            # A correction stays where the fact lived: a temporary fact is not
+            # promoted to global, and a temporary fact keeps its source chat.
+            scope = SCOPE_GLOBAL if previous is None else previous.scope
+            source_conversation_id = conversation_id
+            if previous is not None and previous.scope == SCOPE_CONVERSATION:
+                source_conversation_id = previous.source_conversation_id
             memory = Memory(
                 id=str(uuid4()),
                 owner_id=owner_id,
@@ -440,7 +448,8 @@ class MemoryService:
                 embedding=list(validate_embedding(claim["embedding"])),
                 embedding_model=EMBEDDING_MODEL,
                 source_turn_id=source_turn_id,
-                source_conversation_id=conversation_id,
+                source_conversation_id=source_conversation_id,
+                scope=scope,
                 version=version,
                 status="active",
                 supersedes_id=previous_id,

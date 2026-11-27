@@ -87,6 +87,7 @@ class MemoryVisibility(BaseModel):
 class MemoryProposalReplacement(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
+    version: int = Field(ge=1)
     content: str
 
 
@@ -107,6 +108,9 @@ class MemoryProposalDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     proposal_id: str = Field(min_length=1, max_length=100)
     decision: Literal["save", "decline", "replace"]
+    # Required for replace: the exact visible fact the user was shown.
+    target_id: str | None = Field(default=None, min_length=1, max_length=100)
+    target_version: int | None = Field(default=None, ge=1)
 
 
 class MemoryProposalDecisionResult(BaseModel):
@@ -227,6 +231,8 @@ def memory_proposal_router(database, identity, embedder, *, secret: str = ""):
                 decision=body.decision,
                 secret=secret,
                 mode=mode,
+                target_id=body.target_id,
+                target_version=body.target_version,
             )
         except MemoryCaptureError as exc:
             raise HTTPException(exc.status, detail={"code": exc.code, **exc.details}) from exc

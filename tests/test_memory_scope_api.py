@@ -15,6 +15,7 @@ from test_memory_capture import add_turn_session, configured, memory_rows, set_m
 PROPOSAL = "/v1/conversations/{chat}/memory-proposal"
 DECISION = "/v1/conversations/{chat}/memory-proposal/decision"
 CONFIRM = "/internal/agent/memory/confirm"
+PROPOSE = "/internal/agent/tool/memory-propose"
 
 
 def stamp():
@@ -72,8 +73,11 @@ def arm(client, file, chat, owner, text, request_id):
     return proposal
 
 
-def decide(client, chat, proposal_id, decision):
-    return client.post(DECISION.format(chat=chat), json={"proposal_id": proposal_id, "decision": decision})
+def decide(client, chat, proposal_id, decision, **extra):
+    return client.post(
+        DECISION.format(chat=chat),
+        json={"proposal_id": proposal_id, "decision": decision, **extra},
+    )
 
 
 def spoken_confirm(client, headers, token, decision="save"):
@@ -84,6 +88,17 @@ def create_global(client, chat, content, key):
     response = client.post(f"/v1/conversations/{chat}/memories", json={"content": content, "idempotency_key": key})
     assert response.status_code == 201, response.text
     return response.json()["id"]
+
+
+def propose_tool(client, file, chat, owner, text, request_id):
+    headers = add_turn_session(file, chat, owner, identifier=f"session-{request_id}")
+    turn_id = turn(client, headers, "hello there", request_id).json()["turn_id"]
+    response = client.post(
+        PROPOSE,
+        headers=headers,
+        json={"turn_id": turn_id, "request_id": f"{request_id}-p", "fact": text},
+    )
+    return response
 
 
 def expire_proposal(file, confirmation_id, settings):
@@ -359,18 +374,20 @@ def test_cross_chat_temporary_contradiction_is_neither_quoted_nor_blocking(tmp_p
             assert ("My name is Sam", chat_a, "conversation", "active", 1) in memory_records(file)
 
 
-def test_cross_chat_temporary_exact_duplicate_does_not_suppress_a_new_memory(tmp_path):
+@pytest.mark.parametrize("mode", ["ask", "auto"])
+def test_cross_chat_temporary_exact_duplicate_does_not_suppress_a_new_memory(tmp_path, mode):
     for label in ("decision", "spoken"):
-        folder = tmp_path / label
+        folder = tmp_path / f"{label}-{mode}"
         folder.mkdir()
         file, settings = configured(folder)
         with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
             owner = client.post("/v1/demo-session").json()["id"]
+            set_mode(file, owner, mode)
             chat_a = client.post("/v1/conversations").json()["id"]
             seed_temporary(file, chat_a, "temp-a-location", "I live in Benghazi", subject="location")
 
             chat_b = client.post("/v1/conversations").json()["id"]
-            proposal, headers = arm_for(client, file, chat_b, owner, "I live in Benghazi", label)
+            proposal, headers = arm_for(client, file, chat_b, owner, "I live in Benghazi", f"{label}-{mode}")
             if label == "decision":
                 saved = decide(client, chat_b, proposal["confirmation_id"], "save")
             else:
@@ -379,6 +396,29 @@ def test_cross_chat_temporary_exact_duplicate_does_not_suppress_a_new_memory(tmp
             assert saved.json()["status"] == "saved"
             assert ("I live in Benghazi", chat_b, "global", "active", 1) in memory_records(file)
             assert ("I live in Benghazi", chat_a, "conversation", "active", 1) in memory_records(file)
+
+
+def test_auto_save_ignores_other_chat_temporary_duplicate_but_honours_global(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        set_mode(file, owner, "auto")
+        chat_a = client.post("/v1/conversations").json()["id"]
+        seed_temporary(file, chat_a, "temp-a-location", "I live in Benghazi", subject="location")
+
+        chat_b = client.post("/v1/conversations").json()["id"]
+        auto_saved = propose_tool(client, file, chat_b, owner, "I live in Benghazi", "auto-b")
+        assert auto_saved.status_code == 200, auto_saved.text
+        assert auto_saved.json()["status"] == "saved"
+        assert ("I live in Benghazi", chat_b, "global", "active", 1) in memory_records(file)
+
+        create_global(client, chat_a, "I live in Tripoli", "global-tripoli")
+        chat_c = client.post("/v1/conversations").json()["id"]
+        blocked = propose_tool(client, file, chat_c, owner, "I live in Tripoli", "auto-c")
+        assert blocked.status_code == 200, blocked.text
+        assert blocked.json()["status"] == "rejected"
+        assert blocked.json()["error"] == "MEMORY_ALREADY_SAVED"
+        assert not [row for row in memory_records(file) if row[0] == "I live in Tripoli" and row[1] == chat_c]
 
 
 def test_decision_replace_supersedes_a_visible_fact_and_replays(tmp_path):
@@ -391,9 +431,9 @@ def test_decision_replace_supersedes_a_visible_fact_and_replays(tmp_path):
         proposal = arm(client, file, chat, owner, "My name is Alex", "replace-1")
 
         pending = client.get(PROPOSAL.format(chat=chat)).json()["pending"]
-        assert pending["replaces"] == {"id": old_id, "content": "My name is Sam"}
+        assert pending["replaces"] == {"id": old_id, "version": 1, "content": "My name is Sam"}
 
-        replaced = decide(client, chat, proposal["confirmation_id"], "replace")
+        replaced = decide(client, chat, proposal["confirmation_id"], "replace", target_id=old_id, target_version=1)
         assert replaced.status_code == 200, replaced.text
         assert replaced.json()["status"] == "corrected"
         assert replaced.json()["memory"]["supersedes_id"] == old_id
@@ -402,7 +442,7 @@ def test_decision_replace_supersedes_a_visible_fact_and_replays(tmp_path):
         assert len([row for row in records if row[0] == "My name is Alex" and row[3] == "active"]) == 1
         assert client.get(PROPOSAL.format(chat=chat)).json() == {"pending": None}
 
-        replay = decide(client, chat, proposal["confirmation_id"], "replace")
+        replay = decide(client, chat, proposal["confirmation_id"], "replace", target_id=old_id, target_version=1)
         assert replay.status_code == 200, replay.text
         assert replay.json()["status"] == "corrected" and replay.json()["idempotent"] is True
         assert len([row for row in memory_records(file) if row[0] == "My name is Alex" and row[3] == "active"]) == 1
@@ -437,11 +477,13 @@ def test_invisible_other_chat_conflict_is_not_offered_as_a_replacement(tmp_path)
         assert response.json()["pending"]["replaces"] is None
         assert "My name is Sam" not in response.text
 
-        replaced = decide(client, chat_b, proposal["confirmation_id"], "replace")
-        assert replaced.status_code == 200, replaced.text
-        assert replaced.json()["status"] == "saved"
-        assert ("My name is Alex", chat_b, "global", "active", 1) in memory_records(file)
+        replaced = decide(
+            client, chat_b, proposal["confirmation_id"], "replace", target_id="temp-a-name", target_version=1
+        )
+        assert replaced.status_code == 409
+        assert replaced.json()["detail"]["code"] == "MEMORY_PROPOSAL_TARGET_CHANGED"
         assert ("My name is Sam", chat_a, "conversation", "active", 1) in memory_records(file)
+        assert not [row for row in memory_records(file) if row[0] == "My name is Alex"]
 
 
 def test_pending_replaces_a_visible_temporary_fact_in_the_same_chat(tmp_path):
@@ -453,7 +495,7 @@ def test_pending_replaces_a_visible_temporary_fact_in_the_same_chat(tmp_path):
         arm(client, file, chat, owner, "My name is Alex", "temp-replace")
 
         pending = client.get(PROPOSAL.format(chat=chat)).json()["pending"]
-        assert pending["replaces"] == {"id": "temp-name", "content": "My name is Sam"}
+        assert pending["replaces"] == {"id": "temp-name", "version": 1, "content": "My name is Sam"}
 
 
 def test_decision_rechecks_credential_sensitivity(tmp_path):
@@ -532,3 +574,159 @@ def test_pending_proposal_requires_the_capture_secret(tmp_path):
         response = client.get(PROPOSAL.format(chat=chat))
         assert response.status_code == 503
         assert response.json()["detail"]["code"] == "MEMORY_CAPTURE_NOT_CONFIGURED"
+        for decision in ("save", "decline", "replace"):
+            extra = {"target_id": "unknown", "target_version": 1} if decision == "replace" else {}
+            refused = decide(client, chat, "unknown-proposal", decision, **extra)
+            assert refused.status_code == 503, refused.text
+            assert refused.json()["detail"]["code"] == "MEMORY_CAPTURE_NOT_CONFIGURED"
+
+
+def test_pending_replaces_uses_the_indexed_lookup_only(tmp_path, monkeypatch):
+    from app.services import memory_capture
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        shown = create_global(client, chat, "My name is Sam", "indexed-sam")
+        arm(client, file, chat, owner, "My name is Alex", "indexed-alex")
+
+        def legacy_scan(*args, **kwargs):
+            raise AssertionError("pending must not run the legacy NULL-subject scan")
+
+        monkeypatch.setattr(memory_capture, "_contradictions", legacy_scan)
+        pending = client.get(PROPOSAL.format(chat=chat)).json()["pending"]
+        assert pending["replaces"] == {"id": shown, "version": 1, "content": "My name is Sam"}
+
+
+def test_replace_target_must_match_the_fact_the_user_was_shown(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        old_id = create_global(client, chat, "My name is Sam", "shown-sam")
+        proposal = arm(client, file, chat, owner, "My name is Alex", "stale-target")
+        assert client.get(PROPOSAL.format(chat=chat)).json()["pending"]["replaces"] == {
+            "id": old_id,
+            "version": 1,
+            "content": "My name is Sam",
+        }
+
+        corrected = client.post(
+            f"/v1/memories/{old_id}/correct",
+            json={"content": "My name is Samir", "expected_version": 1, "idempotency_key": "correct-shown"},
+        )
+        assert corrected.status_code == 200, corrected.text
+
+        refused = decide(client, chat, proposal["confirmation_id"], "replace", target_id=old_id, target_version=1)
+        assert refused.status_code == 409
+        assert refused.json()["detail"]["code"] == "MEMORY_PROPOSAL_TARGET_CHANGED"
+        records = memory_records(file)
+        assert ("My name is Samir", chat, "global", "active", 2) in records
+        assert not [row for row in records if row[0] == "My name is Alex"]
+
+
+def test_replace_with_two_visible_conflicts_fails_closed(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        first = create_global(client, chat, "My name is Sam", "multi-sam")
+        create_global(client, chat, "My name is Alex", "multi-alex")
+        proposal = arm(client, file, chat, owner, "My name is Omar", "multi-omar")
+        assert client.get(PROPOSAL.format(chat=chat)).json()["pending"]["replaces"] is None
+        before = memory_records(file)
+
+        refused = decide(client, chat, proposal["confirmation_id"], "replace", target_id=first, target_version=1)
+        assert refused.status_code == 409
+        assert refused.json()["detail"]["code"] == "MEMORY_MULTIPLE_TARGETS"
+        assert memory_records(file) == before
+
+
+def test_replace_keeps_a_temporary_fact_temporary(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat_a = client.post("/v1/conversations").json()["id"]
+        chat_b = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat_a, "temp-sam", "My name is Sam", subject="attribute:name")
+        proposal = arm(client, file, chat_a, owner, "My name is Alex", "temp-replace-decision")
+        assert client.get(PROPOSAL.format(chat=chat_a)).json()["pending"]["replaces"] == {
+            "id": "temp-sam",
+            "version": 1,
+            "content": "My name is Sam",
+        }
+
+        replaced = decide(
+            client, chat_a, proposal["confirmation_id"], "replace", target_id="temp-sam", target_version=1
+        )
+        assert replaced.status_code == 200, replaced.text
+        records = memory_records(file)
+        assert ("My name is Sam", chat_a, "conversation", "superseded", 1) in records
+        assert ("My name is Alex", chat_a, "conversation", "active", 2) in records
+
+        visible_a = client.get(
+            "/v1/memories",
+            params={"scope": "conversation", "conversation_id": chat_a, "status": "active"},
+        ).json()["items"]
+        assert {item["content"] for item in visible_a} == {"My name is Alex"}
+        visible_b = client.get("/v1/memories", params={"scope": "conversation", "conversation_id": chat_b}).json()[
+            "items"
+        ]
+        assert visible_b == []
+        assert client.get("/v1/memories", params={"scope": "global"}).json()["items"] == []
+
+
+def test_legacy_correct_keeps_a_temporary_fact_temporary(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        client.post("/v1/demo-session")
+        chat_a = client.post("/v1/conversations").json()["id"]
+        chat_b = client.post("/v1/conversations").json()["id"]
+        seed_temporary(file, chat_a, "temp-legacy", "My name is Sam", subject="attribute:name")
+
+        corrected = client.post(
+            "/v1/memories/temp-legacy/correct",
+            json={"content": "My name is Samir", "expected_version": 1, "idempotency_key": "legacy-correct"},
+        )
+        assert corrected.status_code == 200, corrected.text
+        records = memory_records(file)
+        assert ("My name is Sam", chat_a, "conversation", "superseded", 1) in records
+        assert ("My name is Samir", chat_a, "conversation", "active", 2) in records
+
+        visible_a = client.get(
+            "/v1/memories",
+            params={"scope": "conversation", "conversation_id": chat_a, "status": "active"},
+        ).json()["items"]
+        assert {item["content"] for item in visible_a} == {"My name is Samir"}
+        visible_b = client.get("/v1/memories", params={"scope": "conversation", "conversation_id": chat_b}).json()[
+            "items"
+        ]
+        assert visible_b == []
+        assert client.get("/v1/memories", params={"scope": "global"}).json()["items"] == []
+
+
+def test_replace_is_stale_when_the_proposed_fact_already_exists(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        shown = create_global(client, chat, "My name is Sam", "stale-sam")
+        create_global(client, chat, "My name is Alex", "stale-alex")
+        proposal = arm(client, file, chat, owner, "My name is Alex", "stale-existing")
+        assert client.get(PROPOSAL.format(chat=chat)).json()["pending"]["replaces"] == {
+            "id": shown,
+            "version": 1,
+            "content": "My name is Sam",
+        }
+        before = memory_records(file)
+
+        refused = decide(client, chat, proposal["confirmation_id"], "replace", target_id=shown, target_version=1)
+        assert refused.status_code == 409
+        assert refused.json()["detail"]["code"] == "MEMORY_PROPOSAL_STALE"
+        assert memory_records(file) == before

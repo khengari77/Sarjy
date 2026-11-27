@@ -307,13 +307,13 @@ async def pending_proposal(db: AsyncSession, *, owner_id: str, conversation_id: 
         replaces = None
         try:
             conflicts = _conflict_rows(
-                await _contradictions(db, owner_id=owner_id, conversation_id=conversation_id, capture=capture),
+                await _indexed_contradictions(db, owner_id=owner_id, conversation_id=conversation_id, capture=capture),
                 capture,
             )
         except MemoryCaptureError:
             conflicts = []
         if len(conflicts) == 1:
-            replaces = {"id": conflicts[0].id, "content": conflicts[0].content}
+            replaces = {"id": conflicts[0].id, "version": conflicts[0].version, "content": conflicts[0].content}
         return {
             "id": confirmation_id,
             "fact": fact,
@@ -346,6 +346,118 @@ async def _replayed_decision(db: AsyncSession, *, owner_id: str, confirmation_id
     return None
 
 
+async def _require_replace_target(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    capture: MemoryCapture,
+    target_id: str,
+    target_version: int,
+) -> None:
+    """The requested target must still be the single visible conflict the user was shown."""
+    if (
+        await _exact_content(db, owner_id=owner_id, conversation_id=conversation_id, capture=capture, status="active")
+        is not None
+    ):
+        raise MemoryCaptureError("MEMORY_PROPOSAL_STALE", 409)
+    conflicts = _conflict_rows(
+        await _contradictions(db, owner_id=owner_id, conversation_id=conversation_id, capture=capture), capture
+    )
+    if len(conflicts) > 1:
+        raise MemoryCaptureError(
+            "MEMORY_MULTIPLE_TARGETS",
+            409,
+            targets=[{"id": row.id, "version": row.version} for row in conflicts],
+        )
+    if len(conflicts) != 1 or conflicts[0].id != target_id or conflicts[0].version != target_version:
+        raise MemoryCaptureError(
+            "MEMORY_PROPOSAL_TARGET_CHANGED", 409, target_id=target_id, target_version=target_version
+        )
+
+
+async def _confirm_replace_decision(
+    db: AsyncSession,
+    memory_service: MemoryService,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    token: str,
+    secret: str,
+    target_id: str,
+    target_version: int,
+) -> dict:
+    """Save once, then follow the clarification token's replace path, bound to the shown target."""
+    try:
+        result = await confirm_memory(
+            db,
+            memory_service,
+            token=token,
+            decision="save",
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            source_turn_id=None,
+            secret=secret,
+        )
+    except MemoryCaptureError as error:
+        replacement = error.details.get("token")
+        if error.code != "MEMORY_CLARIFICATION_REQUIRED" or not isinstance(replacement, str):
+            raise
+        if error.details.get("target_id") != target_id or error.details.get("target_version") != target_version:
+            raise MemoryCaptureError(
+                "MEMORY_PROPOSAL_TARGET_CHANGED", 409, target_id=target_id, target_version=target_version
+            ) from error
+        result = await confirm_memory(
+            db,
+            memory_service,
+            token=replacement,
+            decision="replace",
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            source_turn_id=None,
+            secret=secret,
+        )
+    if result.get("status") == "already_saved":
+        raise MemoryCaptureError("MEMORY_PROPOSAL_STALE", 409)
+    return result
+
+
+async def _resolve_replace_proposal(
+    db: AsyncSession,
+    memory_service: MemoryService,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    proposal_id: str,
+    token: str,
+    secret: str,
+    target_id: str,
+    target_version: int,
+) -> dict:
+    replayed = await _replayed_decision(db, owner_id=owner_id, confirmation_id=proposal_id, decision="replace")
+    if replayed is not None:
+        return replayed
+    capture, _ = _verified(token, secret, owner_id, conversation_id)
+    await _require_replace_target(
+        db,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        capture=capture,
+        target_id=target_id,
+        target_version=target_version,
+    )
+    return await _confirm_replace_decision(
+        db,
+        memory_service,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        token=token,
+        secret=secret,
+        target_id=target_id,
+        target_version=target_version,
+    )
+
+
 async def resolve_proposal(
     db: AsyncSession,
     memory_service: MemoryService,
@@ -356,9 +468,15 @@ async def resolve_proposal(
     decision: str,
     secret: str,
     mode: MemoryMode,
+    target_id: str | None = None,
+    target_version: int | None = None,
 ) -> dict:
     """Resolve one stored proposal by id with the same rules as the spoken yes/no."""
+    if not secret:
+        raise MemoryCaptureError("MEMORY_CAPTURE_NOT_CONFIGURED", 503)
     if decision not in {"save", "decline", "replace"}:
+        raise MemoryCaptureError("INVALID_DECISION", 422)
+    if decision == "replace" and (not target_id or target_version is None):
         raise MemoryCaptureError("INVALID_DECISION", 422)
     row = await db.scalar(
         select(MemoryWriteRequest).where(
@@ -381,8 +499,6 @@ async def resolve_proposal(
             source_turn_id=None,
             secret=secret,
         )
-    if not secret:
-        raise MemoryCaptureError("MEMORY_CAPTURE_NOT_CONFIGURED", 503)
     # A proposal armed before the user turned memory off in this chat must not be savable afterwards.
     if mode == "off":
         raise MemoryCaptureError("MEMORY_OFF", 409)
@@ -390,35 +506,17 @@ async def resolve_proposal(
     if plan_for_proposal(mode, fact, explicit=explicit, negated=negated) is Decision.SKIP:
         raise MemoryCaptureError("MEMORY_SENSITIVE", 409)
     if decision == "replace":
-        replayed = await _replayed_decision(db, owner_id=owner_id, confirmation_id=proposal_id, decision="replace")
-        if replayed is not None:
-            return replayed
-        try:
-            result = await confirm_memory(
-                db,
-                memory_service,
-                token=token,
-                decision="save",
-                owner_id=owner_id,
-                conversation_id=conversation_id,
-                source_turn_id=None,
-                secret=secret,
-            )
-        except MemoryCaptureError as error:
-            replacement = error.details.get("token")
-            if error.code != "MEMORY_CLARIFICATION_REQUIRED" or not isinstance(replacement, str):
-                raise
-            result = await confirm_memory(
-                db,
-                memory_service,
-                token=replacement,
-                decision="replace",
-                owner_id=owner_id,
-                conversation_id=conversation_id,
-                source_turn_id=None,
-                secret=secret,
-            )
-        return result
+        return await _resolve_replace_proposal(
+            db,
+            memory_service,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+            token=token,
+            secret=secret,
+            target_id=target_id,
+            target_version=target_version,
+        )
     return await confirm_memory(
         db,
         memory_service,
@@ -949,23 +1047,34 @@ async def _exact_content(
     return await db.scalar(query.order_by(Memory.updated_at.desc()).limit(1))
 
 
+async def _indexed_contradictions(
+    db: AsyncSession, *, owner_id: str, conversation_id: str, capture: MemoryCapture
+) -> list[Memory]:
+    """Active visible memories with the same resolved subject, using only the indexed lookup."""
+    if capture.subject is None:
+        return []
+    return list(
+        (
+            await db.scalars(
+                select(Memory)
+                .where(
+                    Memory.owner_id == owner_id,
+                    Memory.status == "active",
+                    Memory.subject == capture.subject,
+                    visible_in(conversation_id),
+                )
+                .order_by(Memory.updated_at.desc(), Memory.id)
+            )
+        ).all()
+    )
+
+
 async def _contradictions(
     db: AsyncSession, *, owner_id: str, conversation_id: str, capture: MemoryCapture
 ) -> list[Memory]:
+    rows = await _indexed_contradictions(db, owner_id=owner_id, conversation_id=conversation_id, capture=capture)
     if capture.subject is None:
         return []
-    rows = (
-        await db.scalars(
-            select(Memory)
-            .where(
-                Memory.owner_id == owner_id,
-                Memory.status == "active",
-                Memory.subject == capture.subject,
-                visible_in(conversation_id),
-            )
-            .order_by(Memory.updated_at.desc(), Memory.id)
-        )
-    ).all()
     # Legacy rows created before the subject column are NULL. Page them
     # deterministically so an old contradiction cannot hide behind newer
     # unrelated rows; if the hard cap is reached without exhaustion, fail
@@ -1586,7 +1695,12 @@ async def _replace_target(
     recovery_only: bool = False,
 ) -> dict:
     target = await db.scalar(
-        select(Memory).where(Memory.id == target_id, Memory.owner_id == owner_id, Memory.status == "active")
+        select(Memory).where(
+            Memory.id == target_id,
+            Memory.owner_id == owner_id,
+            Memory.status == "active",
+            visible_in(conversation_id),
+        )
     )
     # Durable recovery before target validation: the effect may have committed
     # while its decision receipt did not. A matching corrected row is the
@@ -1623,11 +1737,13 @@ async def _replace_target(
             result=response,
         )
         return response
+    if target is None:
+        raise MemoryCaptureError("TARGET_CHANGED", 409, target_id=target_id)
     if recovery_only:
         # Without an awaiting confirmation row, only a previously committed
         # effect may be reported. A missing row never authorizes a new write.
         raise MemoryCaptureError("MEMORY_FRESH_CONFIRMATION_REQUIRED", 409, target_id=target_id)
-    if target is None or target.version != target_version:
+    if target.version != target_version:
         raise MemoryCaptureError("TARGET_CHANGED", 409, target_id=target_id)
     # Validate before claiming so an already-stale clarification is not turned
     # into an in-progress claim; the correction itself still re-checks version.
