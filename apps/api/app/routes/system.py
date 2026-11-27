@@ -7,16 +7,20 @@ from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.dependencies import ACCOUNT_COOKIE, COOKIE
+from app.domain.contracts import MemoryMode
 from app.domain.pipeline import KEYS, PRESET, PipelineConfig, validate_pipeline
-from app.infrastructure.database import Conversation, Identity, ToolCall, Turn
+from app.infrastructure.database import Conversation, Identity, ToolCall, Turn, UserSetting
 from app.services.accounts import AccountSessionRequired, authorize_account
+from app.services.authorization import owned_conversation
 from app.services.conversation_delete import delete_conversation
+from app.services.memory_mode import effective_memory_mode
 from app.services.pipeline_settings import configured_keys, default_llm, default_tts, tts_credential_key
 from app.services.reviewer_access import ReviewerAccessDenied, ReviewerSessionRequired, authorize
 from app.services.voices import VoiceCatalog, VoiceCatalogError, VoiceProvider
@@ -81,6 +85,21 @@ def _register_identity_routes(app, *, config: Settings, database, clock):
         return {"id": user.id}
 
 
+class MemoryModeUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: MemoryMode | None
+
+
+def _conversation_payload(conversation: Conversation, account_mode: str | None) -> dict:
+    return {
+        "id": conversation.id,
+        "title": conversation.title,
+        "revision": conversation.revision,
+        "memory_mode": conversation.memory_mode,
+        "effective_memory_mode": effective_memory_mode(conversation.memory_mode, account_mode),
+    }
+
+
 def _register_conversation_routes(app, *, database, identity, owned):
     @app.get("/v1/conversations")
     async def conversations(user=Depends(identity), db: AsyncSession = Depends(database)):
@@ -91,7 +110,9 @@ def _register_conversation_routes(app, *, database, identity, owned):
                 .order_by(Conversation.created_at.desc())
             )
         ).all()
-        return [{"id": c.id, "title": c.title, "revision": c.revision} for c in rows]
+        setting = await db.get(UserSetting, user.id)
+        account_mode = setting.memory_mode if setting is not None else None
+        return [_conversation_payload(conversation, account_mode) for conversation in rows]
 
     @app.post("/v1/conversations", status_code=201)
     async def new_conversation(user=Depends(identity), db: AsyncSession = Depends(database)):
@@ -99,6 +120,21 @@ def _register_conversation_routes(app, *, database, identity, owned):
         db.add(conversation)
         await db.commit()
         return {"id": conversation.id, "title": conversation.title, "revision": conversation.revision}
+
+    @app.put("/v1/conversations/{conversation_id}/memory-mode")
+    async def set_memory_mode(
+        conversation_id: str,
+        body: MemoryModeUpdate,
+        user=Depends(identity),
+        db: AsyncSession = Depends(database),
+    ):
+        conversation = await owned_conversation(db, user.id, conversation_id, lock=True)
+        if conversation.memory_mode != body.mode:
+            conversation.memory_mode = body.mode
+            conversation.revision += 1
+            await db.commit()
+        setting = await db.get(UserSetting, user.id)
+        return _conversation_payload(conversation, setting.memory_mode if setting is not None else None)
 
     @app.delete("/v1/conversations/{conversation_id}", status_code=204)
     async def delete(conversation_id: str, user=Depends(identity), db: AsyncSession = Depends(database)):
