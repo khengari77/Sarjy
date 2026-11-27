@@ -423,7 +423,8 @@ def test_already_saved_fact_is_rejected_but_a_hidden_one_is_not_counted(tmp_path
 def test_already_saved_ignores_a_temporary_memory_in_another_chat(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
-        _, chat, headers, turn = setup(client, file)
+        owner, chat, headers, turn = setup(client, file)
+        set_mode(file, owner, "ask")  # without the auto-save path, this exercises _already_saved directly
         other = client.post("/v1/conversations").json()["id"]
         with closing(sqlite3.connect(file)) as db, db:
             db.execute(
