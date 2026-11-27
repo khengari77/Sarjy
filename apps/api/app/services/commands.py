@@ -167,12 +167,13 @@ async def handle_finalized_utterance(
         )
     if isinstance(action, SetMemoryMode):
         if action.scope == "chat":
-            mode = action.mode or "default"
+            # The dispatch key is (owner, request_id): the caller's per-turn id is unique across conversations, so two
+            # chats at the same revision never collide, and a replay of this turn returns the recorded outcome.
             return await _run_conversation_memory_mode(
                 db,
                 owner_id=owner_id,
                 conversation_id=conversation_id,
-                request_id=f"memory_mode:{expected_revision}:{mode}",
+                request_id=request_id,
                 expected_revision=expected_revision,
                 action=action,
                 handlers=handlers,

@@ -352,7 +352,9 @@ async def dispatch_setting(db, *, owner_id, request_id, expected_revision, actio
     resurfacing a stale-revision conflict for a write that already committed.
     """
 
-    if not isinstance(action, SETTING_ACTIONS):
+    if not isinstance(action, SETTING_ACTIONS) or (isinstance(action, SetMemoryMode) and action.scope != "account"):
+        # A chat-scoped memory mode belongs to one conversation: it never goes through the owner-level settings path
+        # (it would be a silent no-op there).
         raise HTTPException(422, detail={"code": "INVALID_SETTING_ACTION"})
     key = _setting_key(owner_id, request_id)
     fingerprint = _setting_fingerprint(expected_revision, action)
@@ -540,15 +542,28 @@ def _navigation_result(action) -> dict:
 
 
 async def _apply_conversation_memory_mode(db, conversation, expected_revision, action):
-    """Set or clear one conversation's override; the account default is never written."""
-    if conversation.revision != expected_revision:
-        raise HTTPException(409, detail={"code": "REVISION_CONFLICT"})
+    """Set or clear one conversation's override; the account default is never written.
+
+    One conditional UPDATE (revision compare-and-set, live conversation only), so a concurrent PUT or command cannot
+    both win from the same revision.
+    """
     before = conversation.memory_mode
     after = action.mode
     changed = before != after
     if changed:
-        conversation.memory_mode = after
-        conversation.revision += 1
+        updated = await db.execute(
+            update(Conversation)
+            .where(
+                Conversation.id == conversation.id,
+                Conversation.revision == expected_revision,
+                Conversation.deleted_at.is_(None),
+            )
+            .values(memory_mode=after, revision=Conversation.revision + 1)
+        )
+        if updated.rowcount != 1:
+            raise HTTPException(409, detail={"code": "REVISION_CONFLICT"})
+    elif conversation.revision != expected_revision:
+        raise HTTPException(409, detail={"code": "REVISION_CONFLICT"})
     row = await db.get(UserSetting, conversation.owner_id)
     return {
         "kind": action.kind,

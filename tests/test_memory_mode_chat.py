@@ -247,3 +247,78 @@ def test_the_propose_tool_re_reads_the_chat_mode_just_before_it_saves(tmp_path, 
         assert memory_rows(file) == []
     finally:
         cm.__exit__(None, None, None)
+
+
+def command_for(client, headers, text, request_id):
+    turn_id = turn(client, headers, text, request_id).json()["turn_id"]
+    return client.post("/internal/agent/command", headers=headers, json={"turn_id": turn_id})
+
+
+def chat_mode(file, chat):
+    with closing(sqlite3.connect(file)) as db:
+        return db.execute("SELECT memory_mode FROM conversations WHERE id = ?", (chat,)).fetchone()[0]
+
+
+def test_two_chats_at_the_same_revision_can_each_turn_memory_off_by_voice(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        first_chat = only_chat(client)
+        with closing(sqlite3.connect(file)) as db:
+            owner = db.execute("SELECT owner_id FROM conversations WHERE id = ?", (first_chat,)).fetchone()[0]
+        second_chat = client.post("/v1/conversations").json()["id"]
+        second_headers = add_turn_session(file, second_chat, owner, identifier="session-2")
+
+        first = command_for(client, headers, "turn memory off", "cmd-1")
+        second = command_for(client, second_headers, "turn memory off", "cmd-2")
+        for response in (first, second):
+            assert response.status_code == 200, response.text
+            result = response.json()["command"]
+            assert result["kind"] == "executed", result
+            assert "this chat" in result["spoken"].lower(), result
+        assert chat_mode(file, first_chat) == "off" and chat_mode(file, second_chat) == "off"
+        assert account_mode(file) == "auto"
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_a_chat_scoped_memory_mode_is_refused_by_the_owner_level_settings_endpoint(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        revision = client.get("/v1/settings").json()["revision"]
+        response = client.post(
+            "/v1/settings/actions",
+            json={
+                "request_id": "chat-scope-1",
+                "expected_revision": revision,
+                "action": {"kind": "SetMemoryMode", "mode": "off", "scope": "chat"},
+            },
+        )
+        assert response.status_code == 422, response.text
+        assert account_mode(file) == "auto"
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_a_deleted_chat_has_no_effective_memory_mode(tmp_path):
+    import asyncio
+
+    from app.services.memory_mode import load_effective_memory_mode
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        chat = only_chat(client)
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("UPDATE conversations SET deleted_at = '2026-11-27T00:00:00+00:00' WHERE id = ?", (chat,))
+
+        async def read():
+            engine = create_async_engine(f"sqlite+aiosqlite:///{file}")
+            try:
+                async with async_sessionmaker(engine)() as db:
+                    return await load_effective_memory_mode(db, chat)
+            finally:
+                await engine.dispose()
+
+        assert asyncio.run(read()) == "off"
+    finally:
+        cm.__exit__(None, None, None)

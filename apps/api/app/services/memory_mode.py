@@ -31,7 +31,9 @@ def effective_memory_mode(conversation_mode: str | None, account_mode: str | Non
 
 async def load_effective_memory_mode(db: AsyncSession, conversation_id: str) -> MemoryMode:
     conversation = await db.scalar(
-        select(Conversation).where(Conversation.id == conversation_id).execution_options(populate_existing=True)
+        select(Conversation)
+        .where(Conversation.id == conversation_id, Conversation.deleted_at.is_(None))
+        .execution_options(populate_existing=True)
     )
     if conversation is None:
         return "off"
