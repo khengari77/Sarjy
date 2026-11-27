@@ -271,9 +271,11 @@ def _retraction_candidates_from_rows(rows: Sequence[Memory], *, conversation_id:
 
     Applies the same predicate (hidden, from this conversation), order (newest
     ``updated_at`` then id) and limit as ``retraction_candidates``' SQL. The turn
-    start passes the owner's blocked rows, which is correct only because
-    ``blocked_memory_rows`` seeds every hidden memory of the owner: if that read is
-    ever bounded or scoped, retraction blocks would silently change.
+    start passes the blocked rows visible in this conversation (``blocked_memory_rows``
+    is scoped by ``visible_in``). That is enough because a retraction also requires
+    ``source_conversation_id == conversation_id``, and a hidden memory from this
+    conversation is always visible in it. If that read is ever bounded further,
+    retraction blocks would silently change.
     ``test_retractions_from_blocked_rows_match_the_query`` pins that dependency.
     """
     hidden = [row for row in rows if row.status == "hidden" and row.source_conversation_id == conversation_id]
