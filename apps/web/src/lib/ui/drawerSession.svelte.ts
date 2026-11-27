@@ -94,17 +94,13 @@ export function createDrawerSession(options: DrawerSessionOptions) {
     });
   }
 
-  /** Escape target for docked panels: the open dock that holds focus. */
+  /**
+   * Escape closes an overlay drawer only. Docked panels are ordinary regions:
+   * closing one from the keyboard would hide it behind a header toggle that is
+   * itself hidden at the dock breakpoint.
+   */
   function escapeTarget(): Panel | null {
-    const modal = options.overlay();
-    if (modal) return modal;
-    const active = document.activeElement as HTMLElement | null;
-    if (!active) return null;
-    for (const panel of ['left', 'right'] as const) {
-      if (!options.openState(panel)) continue;
-      if (options.panel(panel)?.contains(active) || options.trigger(panel) === active) return panel;
-    }
-    return null;
+    return options.overlay();
   }
 
   return { onTab, escapeTarget, onBreakpoint };

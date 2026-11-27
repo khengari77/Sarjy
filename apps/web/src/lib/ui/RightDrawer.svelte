@@ -30,9 +30,6 @@
     transcriptPanel?: Snippet;
     /** Selected tab, bindable so command navigation can choose it. */
     activeTab?: TabId;
-    /** Closes an overlay drawer. Provided by the shell wiring; when absent no
-     *  close control is rendered because docked panels do not need one. */
-    onclose?: () => void;
   }
 
   let {
@@ -41,7 +38,6 @@
     memoryPanel,
     transcriptPanel,
     activeTab = $bindable<TabId>('controls'),
-    onclose,
   }: Props = $props();
 
   const tabs: Tab[] = [
@@ -79,7 +75,7 @@
 
 <div class="drawer" dir={arabic ? 'rtl' : 'ltr'}>
   <div class="drawer-top">
-    {#if onclose}<DrawerCloseButton {arabic} {onclose} />{/if}
+    <DrawerCloseButton {arabic} panel="right" />
     <div
       class="tabs"
       role="tablist"
@@ -158,7 +154,7 @@
     flex-direction: row-reverse;
     align-items: center;
     gap: 4px;
-    padding: 6px 8px;
+    padding: max(6px, env(safe-area-inset-top)) 8px 6px;
     background: var(--bg-sidebar);
     border-bottom: 1px solid var(--border-subtle);
   }

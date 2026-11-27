@@ -53,6 +53,22 @@ test('an overlay drawer has a 44px close control that restores focus to its togg
   await expect(toggle).toBeFocused();
 });
 
+test('Escape leaves a docked rail open with focus inside it', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/');
+  await waitForShell(page);
+
+  const rail = page.locator('#shell-left');
+  await expect(rail).toBeVisible();
+  const search = rail.getByRole('searchbox', { name: 'Search conversations' });
+  await search.focus();
+  await page.keyboard.press('Escape');
+
+  await expect(rail).toBeVisible();
+  await expect(rail).toHaveAttribute('data-open', 'true');
+  await expect(search).toBeFocused();
+});
+
 test('the drawer tabs are renamed while their ARIA ids stay stable', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
@@ -112,7 +128,37 @@ test('the mobile viewport and theme-color metadata are declared', async ({ page 
   expect(colors).toContain('#080f29');
 });
 
-test('the skip link is the first tab stop, becomes visible and targets the stage', async ({ page }) => {
+test('the studio has exactly one page title', async ({ page }) => {
+  await page.goto('/');
+  await waitForShell(page);
+  expect(await page.title()).toBe('Sarjy — Voice Context Studio');
+  expect(await page.locator('title').count()).toBe(1);
+});
+
+test('the reviewer page has exactly one title and no skip link', async ({ page }) => {
+  await page.goto('/review');
+  expect(await page.title()).toBe('Reviewer access');
+  expect(await page.locator('title').count()).toBe(1);
+  await expect(page.getByRole('link', { name: 'Skip to voice' })).toHaveCount(0);
+});
+
+test('the theme-color meta follows the resolved theme, not the OS preference', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/');
+  await waitForShell(page);
+  const meta = page.locator('meta[name="theme-color"]');
+  // Hydration collapses the media variants into one meta the session owns.
+  await expect(meta).toHaveCount(1);
+  await expect(meta).toHaveAttribute('content', '#080f29');
+
+  await page.getByRole('button', { name: 'Theme: Light', exact: true }).click();
+  await expect(meta).toHaveAttribute('content', '#dceaf7');
+
+  await page.getByRole('button', { name: 'Theme: Dark', exact: true }).click();
+  await expect(meta).toHaveAttribute('content', '#080f29');
+});
+
+test('the skip link is the first tab stop and moves focus to the stage', async ({ page }) => {
   await page.goto('/');
   await waitForShell(page);
 
@@ -121,12 +167,15 @@ test('the skip link is the first tab stop, becomes visible and targets the stage
   await expect(skip).toBeFocused();
   await expect(skip).toHaveAttribute('href', '#voice-stage');
   await expect(skip).toBeInViewport();
+
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('voice-stage');
 });
 
 test.describe('coarse pointer', () => {
   test.use({ hasTouch: true, viewport: { width: 900, height: 720 } });
 
-  test('drawer tabs, theme buttons, rows, menu toggle and search clear meet 44px', async ({ page }) => {
+  test('drawer tabs, theme buttons, header toggles, rows, menu toggle and search clear meet 44px', async ({ page }) => {
     await mockHistory(page);
     await gotoHistory(page);
     expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
@@ -138,15 +187,30 @@ test.describe('coarse pointer', () => {
       expect(box!.height).toBeGreaterThanOrEqual(44);
     }
 
-    await page.getByRole('button', { name: 'Show conversations' }).click();
-    const drawer = page.locator('#shell-left');
-    await expect(drawer).toBeVisible();
+    for (const label of ['Show conversations', 'Show memory and settings']) {
+      const box = await page.getByRole('button', { name: label }).boundingBox();
+      expect(box, `${label} header toggle`).not.toBeNull();
+      expect(box!.width).toBeGreaterThanOrEqual(44);
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+    }
 
-    for (const tab of await drawer.getByRole('tab').all()) {
+    await page.getByRole('button', { name: 'Show memory and settings' }).click();
+    const right = page.locator('#shell-right');
+    await expect(right).toBeVisible();
+    const tabs = right.getByRole('tab');
+    await expect(tabs).toHaveCount(3);
+    for (const tab of await tabs.all()) {
       const box = await tab.boundingBox();
       expect(box, 'drawer tab').not.toBeNull();
       expect(box!.height).toBeGreaterThanOrEqual(44);
     }
+
+    // The header is inert while an overlay drawer is open.
+    await right.getByRole('button', { name: 'Close' }).click();
+    await expect(right).toBeHidden();
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    const drawer = page.locator('#shell-left');
+    await expect(drawer).toBeVisible();
 
     const rowBox = await drawer.getByRole('button', { name: 'Trip to Paris', exact: true }).boundingBox();
     expect(rowBox, 'conversation row').not.toBeNull();

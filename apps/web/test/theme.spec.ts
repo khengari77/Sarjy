@@ -281,7 +281,7 @@ test('the right dock toggles while the history rail stays docked', async ({ page
   await expect(left).toHaveAttribute('data-open', 'true');
 });
 
-test('the right drawer exposes the three tabs, closes on Escape and returns focus', async ({ page }) => {
+test('the right dock exposes tabs, ignores Escape and closes from its toggle', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/');
   await waitForOrb(page);
@@ -299,7 +299,11 @@ test('the right drawer exposes the three tabs, closes on Escape and returns focu
   await expect(page.locator('#shell-right').getByTestId('memory-panel')).toBeVisible();
   await expect(page.locator('#shell-right')).toContainText('Memory & context');
 
+  // Docked panels ignore Escape: closing one would hide it behind a toggle
+  // that is itself display:none at this breakpoint.
   await page.keyboard.press('Escape');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await trigger.click();
   await expect(trigger).toHaveAttribute('aria-expanded', 'false');
   await expect(trigger).toBeFocused();
 });

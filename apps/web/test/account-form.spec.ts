@@ -20,6 +20,18 @@ async function waitForHydratedPasswordToggle(page: Page): Promise<void> {
   await expect(password).toHaveAttribute('type', 'password');
 }
 
+test('account pages keep their own single title and no skip link', async ({ page }) => {
+  await page.goto('/sign-in');
+  expect(await page.title()).toBe('Sarjy — Sign in');
+  expect(await page.locator('title').count()).toBe(1);
+  await expect(page.getByRole('link', { name: 'Skip to voice' })).toHaveCount(0);
+
+  await page.goto('/sign-up');
+  expect(await page.title()).toBe('Sarjy — Create your account');
+  expect(await page.locator('title').count()).toBe(1);
+  await expect(page.getByRole('link', { name: 'Skip to voice' })).toHaveCount(0);
+});
+
 test('the sign-in form shows a pending state and a show/hide password toggle', async ({ page }) => {
   await page.goto('/sign-in');
 

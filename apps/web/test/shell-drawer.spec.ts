@@ -320,9 +320,10 @@ test('Escape in the stage does not close a docked panel behind a stage dialog', 
   await expect(page.locator('#shell-right')).toBeVisible();
   await expect(composer).toBeFocused();
 
-  // ... but Escape from the visible trigger itself still closes that dock.
+  // Escape never closes a docked panel: its header toggle is hidden at this
+  // breakpoint, so closing would strand the panel behind an unreachable control.
   await right.focus();
   await page.keyboard.press('Escape');
-  await expect(right).toHaveAttribute('aria-expanded', 'false');
+  await expect(right).toHaveAttribute('aria-expanded', 'true');
   await expect(right).toBeFocused();
 });

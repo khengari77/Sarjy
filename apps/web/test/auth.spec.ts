@@ -39,6 +39,16 @@ test('unauthenticated / is a token door with no app content or cookie', async ()
   expect(response.headers.get('cache-control')).toBe('no-store');
 });
 
+test('the token door keeps its own single title and no skip link', async ({ browser }) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(`${BASE}/`);
+  expect(await page.title()).toBe('Sarjy — Access');
+  expect(await page.locator('title').count()).toBe(1);
+  await expect(page.getByRole('link', { name: 'Skip to voice' })).toHaveCount(0);
+  await context.close();
+});
+
 test('a wrong token shows a generic error and sets no cookie', async () => {
   const response = await exchange('definitely-wrong');
   expect(response.status).toBe(200);

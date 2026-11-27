@@ -1,6 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import type { Snippet } from 'svelte';
+  import { page } from '$app/state';
   import EntryGate from '../lib/auth/EntryGate.svelte';
 
   interface Props {
@@ -10,10 +11,11 @@
   }
 
   let { children, data, form }: Props = $props();
+  // The skip link only makes sense where the studio's stage landmark exists.
+  const showSkipLink = $derived(!data.entry && page.url.pathname === '/');
 </script>
 
 <svelte:head>
-  <title>Sarjy — Voice Context Studio</title>
   <meta name="description" content="An English-first voice assistant with transparent context." />
 </svelte:head>
 
@@ -24,6 +26,6 @@
     next={form?.next ?? data.next}
   />
 {:else}
-  <a class="skip-link" href="#voice-stage">Skip to voice</a>
+  {#if showSkipLink}<a class="skip-link" href="#voice-stage">Skip to voice</a>{/if}
   {@render children()}
 {/if}

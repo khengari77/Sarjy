@@ -136,9 +136,16 @@ test('switching chats mid-call requires an explicit end and switch', async ({ pa
   // A live call for this chat blocks deletion until it ends.
   await page.getByRole('button', { name: 'Conversation actions for Trip to Paris' }).click();
   const callMenu = page.getByRole('menu');
-  await expect(callMenu.getByRole('menuitem', { name: 'Delete' })).toBeDisabled();
-  // The reason is visible helper text inside the menu, not only sr-only copy.
+  const blockedDelete = callMenu.getByRole('menuitem', { name: 'Delete' });
+  await expect(blockedDelete).toHaveAttribute('aria-disabled', 'true');
+  // aria-disabled keeps the item focusable, so keyboard and AT users can reach
+  // the reason instead of having Delete skipped as a native disabled control.
+  await expect(blockedDelete).toBeFocused();
+  await expect(blockedDelete).toHaveAccessibleDescription('End the call before deleting this chat');
   await expect(callMenu.getByText('End the call before deleting this chat')).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(callMenu.getByText('Delete this chat?')).toHaveCount(0);
+  await expect(blockedDelete).toBeFocused();
   await page.keyboard.press('Escape');
 
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
@@ -227,6 +234,11 @@ test('the delete confirmation cannot be dismissed while the delete is in flight'
     const menu = page.getByRole('menu');
     await menu.getByRole('menuitem', { name: 'Delete' }).click();
     await menu.getByRole('button', { name: 'Delete this chat' }).click();
+    await expect(menu.getByText('Deleting…')).toBeVisible();
+
+    // Tab must not dismiss the pending delete either.
+    await page.keyboard.press('Tab');
+    await expect(menu).toBeVisible();
     await expect(menu.getByText('Deleting…')).toBeVisible();
 
     // With focus inside the sidebar the shell would close this dock on Escape: the menu must consume it.

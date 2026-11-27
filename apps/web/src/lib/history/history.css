@@ -244,6 +244,11 @@
   font-size: 13px;
 }
 
+.chat-history .menu button[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .chat-history .menu p {
   margin: 6px 8px 2px;
   color: var(--text-muted);

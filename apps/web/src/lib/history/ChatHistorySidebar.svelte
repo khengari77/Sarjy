@@ -25,8 +25,6 @@
     onretry: () => void;
     /** Returns an empty string on success, or a delete failure code. */
     ondelete: (id: string) => Promise<string>;
-    /** Closes an overlay drawer. Docked rails render no close control. */
-    onclose?: () => void;
   }
 
   let {
@@ -41,7 +39,6 @@
     oncreate,
     onretry,
     ondelete,
-    onclose,
   }: Props = $props();
 
   let query = $state('');
@@ -97,12 +94,16 @@
     menuOpenFor = id;
     confirmingDelete = null;
     deleteError = '';
-    const last = event.key === 'ArrowUp';
-    void tick().then(() => focusMenuItem(menuElement, last));
+    void tick().then(() => focusMenuItem(menuElement, event.key === 'ArrowUp'));
   }
 
   function onMenuKeydown(event: KeyboardEvent) {
     if (event.key === 'Tab') {
+      // An in-flight delete owns the menu: neither Tab nor Escape may drop it.
+      if (deletingId) {
+        event.preventDefault();
+        return;
+      }
       // Close first and let Tab continue from the trigger, so focus never
       // falls to <body> when the menu unmounts.
       menuTrigger?.focus();
@@ -173,7 +174,7 @@
 </script>
 
 <div class="sidebar-inner chat-history" dir={arabic ? 'rtl' : 'ltr'} bind:this={listElement}>
-  {#if onclose}<DrawerCloseButton {arabic} {onclose} />{/if}
+  <DrawerCloseButton {arabic} panel="left" />
 
   <button class="new-chat" disabled={busy} onclick={oncreate}>
     <svg class="new-chat-icon" aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none">
@@ -257,14 +258,15 @@
               {:else}
                 <button
                   role="menuitem"
-                  disabled={busy || callConversation === chat.id}
+                  disabled={busy}
+                  aria-disabled={callConversation === chat.id ? 'true' : undefined}
                   aria-describedby={callConversation === chat.id ? `delete-active-${chat.id}` : undefined}
                   onclick={() => askDelete(chat.id)}
                 >
                   {words.delete}
                 </button>
                 {#if callConversation === chat.id}
-                  <p id={`delete-active-${chat.id}`}>{words.deleteActive}</p>
+                  <p id={`delete-active-${chat.id}`} role="none">{words.deleteActive}</p>
                 {/if}
               {/if}
             </div>

@@ -30,7 +30,6 @@
     onspeed: (speed: number) => Promise<boolean>;
     ontoggleCaptions: () => void;
     onmemorymode: (mode: MemoryMode) => void;
-    onclose?: () => void;
   }
 
   let {
@@ -54,11 +53,10 @@
     onspeed,
     ontoggleCaptions,
     onmemorymode,
-    onclose,
   }: Props = $props();
 </script>
 
-<RightDrawer {arabic} {onclose} bind:activeTab>
+<RightDrawer {arabic} bind:activeTab>
   {#snippet memoryPanel(active)}
     <MemoryPanel {conversationId} {active} revision={memoryRevision} />
   {/snippet}

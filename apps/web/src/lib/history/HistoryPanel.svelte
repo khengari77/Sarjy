@@ -11,10 +11,9 @@
     busy: boolean;
     selection: ReturnType<typeof createSelectionController>;
     onreload: () => void;
-    onclose?: () => void;
   }
 
-  let { conversation, voice, arabic, busy, selection, onreload, onclose }: Props = $props();
+  let { conversation, voice, arabic, busy, selection, onreload }: Props = $props();
 </script>
 
 <ConversationList
@@ -29,5 +28,4 @@
   oncreate={selection.create}
   onretry={onreload}
   ondelete={selection.remove}
-  {onclose}
 />

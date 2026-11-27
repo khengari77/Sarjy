@@ -1,15 +1,22 @@
 <script lang="ts">
+  import { getContext } from 'svelte';
+  import { DRAWER_CLOSE_CONTEXT, type ClosePanel } from './drawerCloseContext';
+
   /**
    * The overlay drawer's close control. It is rendered first in each drawer so
    * it becomes the first focusable element; docked panels hide it because the
-   * header toggle already owns closing.
+   * header toggle already owns closing. The shell supplies the one close
+   * implementation, so this renders only inside the shell.
    */
-  let { arabic = false, onclose }: { arabic?: boolean; onclose: () => void } = $props();
+  let { arabic = false, panel }: { arabic?: boolean; panel: 'left' | 'right' } = $props();
+  const closePanel = getContext<ClosePanel | undefined>(DRAWER_CLOSE_CONTEXT);
 </script>
 
-<button type="button" class="drawer-close" aria-label={arabic ? 'إغلاق' : 'Close'} onclick={onclose}>
-  <span aria-hidden="true">✕</span>
-</button>
+{#if closePanel}
+  <button type="button" class="drawer-close" aria-label={arabic ? 'إغلاق' : 'Close'} onclick={() => closePanel(panel)}>
+    <span aria-hidden="true">✕</span>
+  </button>
+{/if}
 
 <style>
   .drawer-close {
