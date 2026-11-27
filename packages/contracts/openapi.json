@@ -566,6 +566,85 @@
         }
       }
     },
+    "/v1/conversations/{conversation_id}/memory-mode": {
+      "put": {
+        "summary": "Set Memory Mode",
+        "operationId": "set_memory_mode_v1_conversations__conversation_id__memory_mode_put",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryModeUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{conversation_id}": {
+      "delete": {
+        "summary": "Delete",
+        "operationId": "delete_v1_conversations__conversation_id__delete",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/conversations/{conversation_id}/turns": {
       "get": {
         "summary": "Turns",
@@ -3449,6 +3528,32 @@
         ],
         "title": "MemoryListItem"
       },
+      "MemoryModeUpdate": {
+        "properties": {
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "ask",
+                  "auto"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "MemoryModeUpdate"
+      },
       "MemoryOpAnswer": {
         "properties": {
           "choice": {
@@ -3963,18 +4068,32 @@
             "type": "string"
           },
           "mode": {
-            "enum": [
-              "off",
-              "ask",
-              "auto"
+            "anyOf": [
+              {
+                "enum": [
+                  "off",
+                  "ask",
+                  "auto"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Mode",
+            "default": null,
+            "title": "Mode"
+          },
+          "scope": {
+            "default": "account",
+            "enum": [
+              "chat",
+              "account"
+            ],
+            "title": "Scope",
             "type": "string"
           }
         },
-        "required": [
-          "mode"
-        ],
         "title": "SetMemoryMode",
         "type": "object"
       },

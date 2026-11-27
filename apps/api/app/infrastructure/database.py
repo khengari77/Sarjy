@@ -124,6 +124,7 @@ class Conversation(Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
     title: Mapped[str] = mapped_column(String(120), default="New conversation")
     revision: Mapped[int] = mapped_column(Integer, default=0)
+    memory_mode: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), default=now)
     deleted_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
@@ -206,6 +207,16 @@ class Memory(Base):
     scope: Mapped[str] = mapped_column(String(12), default=SCOPE_GLOBAL, server_default=SCOPE_GLOBAL)
     created_at: Mapped[str] = mapped_column(String(40), default=now)
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
+
+
+class MemoryTerm(Base):
+    """Derived lexical terms of one memory (issue #317); the composite primary key is the unique (memory_id, term)."""
+
+    __tablename__ = "memory_terms"
+    __table_args__ = (Index("ix_memory_terms_owner_term", "owner_id", "term"),)
+    memory_id: Mapped[str] = mapped_column(String(36), ForeignKey("memories.id"), primary_key=True)
+    term: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), ForeignKey("identities.id"))
 
 
 class MemoryWriteRequest(Base):

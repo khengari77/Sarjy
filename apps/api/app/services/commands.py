@@ -166,6 +166,18 @@ async def handle_finalized_utterance(
             spoken=None,
         )
     if isinstance(action, SetMemoryMode):
+        if action.scope == "chat":
+            # The dispatch key is (owner, request_id): the caller's per-turn id is unique across conversations, so two
+            # chats at the same revision never collide, and a replay of this turn returns the recorded outcome.
+            return await _run_conversation_memory_mode(
+                db,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                request_id=request_id,
+                expected_revision=expected_revision,
+                action=action,
+                handlers=handlers,
+            )
         return await _run_setting(
             db,
             owner_id=owner_id,
@@ -361,6 +373,35 @@ async def _run_setting(
     except Exception:
         return unknown_result(request_id=request_id, detail="SETTING_DELIVERY_UNKNOWN", action=action)
     return _describe(request_id=request_id, action=action, raw=raw, spoken=spoken)
+
+
+async def _run_conversation_memory_mode(
+    db,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    request_id: str,
+    expected_revision: int,
+    action: Action,
+    handlers,
+) -> CommandResult:
+    try:
+        raw = await dispatch_action(
+            db,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            request_id=request_id,
+            expected_revision=expected_revision,
+            action=action,
+            handlers=handlers,
+        )
+    except (VoiceCatalogError, ContextOperationError) as exc:
+        return failed_result(request_id=request_id, detail=exc.code, action=action)
+    except HTTPException as exc:
+        return _http_failure(request_id=request_id, action=action, exc=exc)
+    except Exception:
+        return unknown_result(request_id=request_id, detail="SETTING_DELIVERY_UNKNOWN", action=action)
+    return _describe(request_id=request_id, action=action, raw=raw, spoken=None)
 
 
 async def _run_navigation(

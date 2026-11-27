@@ -59,24 +59,37 @@ _EXACT_COMMANDS: dict[str, Action] = {
     "show my conversations": ShowConversationHistory(),
     "open the memory explorer": OpenMemoryExplorer(),
     "show the memory explorer": OpenMemoryExplorer(),
-    # Memory mode, whole utterances only. "Don't remember anything" is deliberately absent: it is ambiguous
-    # between turning memory off and pausing one chat.
-    "turn memory off": SetMemoryMode(mode="off"),
-    "turn off memory": SetMemoryMode(mode="off"),
-    "memory off": SetMemoryMode(mode="off"),
-    "stop remembering things": SetMemoryMode(mode="off"),
-    "stop saving memories": SetMemoryMode(mode="off"),
-    "ask before remembering": SetMemoryMode(mode="ask"),
-    "ask me before remembering": SetMemoryMode(mode="ask"),
-    "ask me before you remember things": SetMemoryMode(mode="ask"),
-    "ask me before saving memories": SetMemoryMode(mode="ask"),
-    "only remember when i ask": SetMemoryMode(mode="ask"),
-    "remember things automatically": SetMemoryMode(mode="auto"),
-    "remember automatically": SetMemoryMode(mode="auto"),
-    "save memories automatically": SetMemoryMode(mode="auto"),
-    "turn memory on": SetMemoryMode(mode="auto"),
-    "turn on memory": SetMemoryMode(mode="auto"),
-    "memory on": SetMemoryMode(mode="auto"),
+    # Memory mode, whole utterances only. An unqualified request applies to this
+    # chat; "by default", "always", "in my settings" and similar phrases change
+    # the account default instead. "Don't remember anything" is deliberately
+    # absent: it is ambiguous between turning memory off and pausing one chat.
+    "turn memory off": SetMemoryMode(mode="off", scope="chat"),
+    "turn off memory": SetMemoryMode(mode="off", scope="chat"),
+    "memory off": SetMemoryMode(mode="off", scope="chat"),
+    "stop remembering things": SetMemoryMode(mode="off", scope="chat"),
+    "stop saving memories": SetMemoryMode(mode="off", scope="chat"),
+    "don't save anything in this chat": SetMemoryMode(mode="off", scope="chat"),
+    "don't save anything in this conversation": SetMemoryMode(mode="off", scope="chat"),
+    "keep memory off": SetMemoryMode(mode="off", scope="chat"),
+    "ask before remembering": SetMemoryMode(mode="ask", scope="chat"),
+    "ask me before remembering": SetMemoryMode(mode="ask", scope="chat"),
+    "ask me before you remember things": SetMemoryMode(mode="ask", scope="chat"),
+    "ask me before saving memories": SetMemoryMode(mode="ask", scope="chat"),
+    "only remember when i ask": SetMemoryMode(mode="ask", scope="chat"),
+    "keep asking before remembering": SetMemoryMode(mode="ask", scope="chat"),
+    "remember things automatically": SetMemoryMode(mode="auto", scope="chat"),
+    "remember automatically": SetMemoryMode(mode="auto", scope="chat"),
+    "save memories automatically": SetMemoryMode(mode="auto", scope="chat"),
+    "turn memory on": SetMemoryMode(mode="auto", scope="chat"),
+    "turn on memory": SetMemoryMode(mode="auto", scope="chat"),
+    "memory on": SetMemoryMode(mode="auto", scope="chat"),
+    "keep memory on": SetMemoryMode(mode="auto", scope="chat"),
+    "go back to my default memory setting": SetMemoryMode(mode=None, scope="chat"),
+    "go back to my default memory settings": SetMemoryMode(mode=None, scope="chat"),
+    "return to my default memory setting": SetMemoryMode(mode=None, scope="chat"),
+    "use my default memory setting": SetMemoryMode(mode=None, scope="chat"),
+    "clear this chat's memory mode": SetMemoryMode(mode=None, scope="chat"),
+    "clear the memory mode for this chat": SetMemoryMode(mode=None, scope="chat"),
     # Theme is browser-local and never a server preference. Every row is a
     # whole utterance, so "dark mode and hide captions" is not a command.
     "dark mode": SetTheme(theme="dark"),
@@ -107,6 +120,16 @@ _THEME_NAMES: dict[str, ThemeName] = {
     "auto": "system",
     "automatic": "system",
 }
+# An unqualified memory-mode request changes this chat; one of these qualifiers
+# explicitly asks for the account default instead.
+_MEMORY_MODE_ACCOUNT_QUALIFIERS = (
+    "by default",
+    "always",
+    "from now on for everything",
+    "in my settings",
+    "for my account",
+    "for everything",
+)
 _THEME_SETTING = re.compile(
     r"^(?:(?:switch|change|set|turn|go|flip|put)(?: it| the theme| the app| the display| the screen"
     r"| the interface| the ui)?(?: back)?(?: to| on)?|use|make it|enable|activate)"
@@ -332,11 +355,34 @@ def normalize_utterance(text: str, *, fold: bool = True) -> str:
     return value
 
 
+def _memory_mode_with_scope(normalized: str) -> SetMemoryMode | None:
+    """Strip an explicit account qualifier, then read the base phrase as a mode request."""
+    phrase = normalized
+    scope: Literal["chat", "account"] = "chat"
+    changed = True
+    while changed:
+        changed = False
+        for qualifier in _MEMORY_MODE_ACCOUNT_QUALIFIERS:
+            if phrase.startswith(f"{qualifier} "):
+                phrase, scope, changed = phrase[len(qualifier) + 1 :], "account", True
+            elif phrase.endswith(f" {qualifier}"):
+                phrase, scope, changed = phrase[: -(len(qualifier) + 1)], "account", True
+    base = _EXACT_COMMANDS.get(phrase)
+    if not isinstance(base, SetMemoryMode):
+        return None
+    if base.mode is None:
+        return base
+    return SetMemoryMode(mode=base.mode, scope=scope)
+
+
 def parse_exact_command(text: str) -> Action | None:
     normalized = normalize_utterance(text)
     action = _EXACT_COMMANDS.get(normalized)
     if action is not None:
         return action
+    memory_mode = _memory_mode_with_scope(normalized)
+    if memory_mode is not None:
+        return memory_mode
     theme = _THEME_SETTING.match(normalized)
     if theme is not None:
         return SetTheme(theme=_THEME_NAMES[theme.group("theme") or theme.group("bare")])
@@ -502,16 +548,34 @@ def unknown_result(*, request_id: str, detail: str, action: Action | None = None
 
 
 def _memory_mode_outcome(action: SetMemoryMode, kind: CommandKind) -> str:
+    if action.mode is None:
+        return (
+            "Memory already follows your default setting."
+            if kind is CommandKind.UNCHANGED
+            else ("Memory now follows your default setting.")
+        )
+    if action.scope == "chat":
+        if kind is CommandKind.UNCHANGED:
+            return {
+                "off": "Memory is already off for this chat.",
+                "ask": "I already ask before remembering in this chat.",
+                "auto": "I already remember automatically in this chat.",
+            }[action.mode]
+        return {
+            "off": "Memory is off for this chat.",
+            "ask": "I'll ask before remembering in this chat.",
+            "auto": "I'll remember things automatically in this chat.",
+        }[action.mode]
     if kind is CommandKind.UNCHANGED:
         return {
-            "off": "Memory is already off.",
-            "ask": "I already ask before remembering.",
-            "auto": "I already remember automatically.",
+            "off": "Memory is already off by default.",
+            "ask": "I already ask before remembering by default.",
+            "auto": "I already remember automatically by default.",
         }[action.mode]
     return {
-        "off": "Memory is off. I won't save anything.",
-        "ask": "I'll ask before remembering.",
-        "auto": "I'll remember things automatically.",
+        "off": "Memory is off by default.",
+        "ask": "I'll ask before remembering by default.",
+        "auto": "I'll remember things automatically by default.",
     }[action.mode]
 
 

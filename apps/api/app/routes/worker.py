@@ -49,6 +49,7 @@ from app.services.memory_capture import (
     propose_memory,
     record_proposal,
 )
+from app.services.memory_mode import effective_memory_mode, load_effective_memory_mode
 from app.services.memory_scope import visible_in
 from app.services.memory_tools import (
     hidden_fact_exists,
@@ -373,13 +374,12 @@ async def _replayed_turn_response(db: AsyncSession, *, owner_id: str, turn):
     }
 
 
-def _refuse_unsaveable(token: str, config: Settings, owner_id: str, conversation_id: str, row) -> None:
+def _refuse_unsaveable(token: str, config: Settings, owner_id: str, conversation_id: str, mode: str) -> None:
     """A credential is never saved in any mode, so even a spoken "yes" cannot confirm one."""
     try:
         _, text, explicit, negated = proposal_summary(token, _memory_secret(config), owner_id, conversation_id)
     except MemoryCaptureError:
         return  # confirm_memory reports an invalid token itself
-    mode = row.memory_mode if row is not None else "auto"
     if plan_for_proposal(mode, text, explicit=explicit, negated=negated) is Decision.SKIP:
         raise HTTPException(409, detail={"code": "MEMORY_SENSITIVE"})
 
@@ -390,11 +390,11 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
         voice = await guard(request, db, allow_ended=True)
         conversation = await _live_conversation(db, voice.conversation_id)
         if body.decision != "discard":
-            # A proposal armed before the user turned memory off must not be savable afterwards.
-            row = await db.get(UserSetting, conversation.owner_id)
-            if row is not None and row.memory_mode == "off":
+            # A proposal armed before the user turned memory off in this chat must not be savable afterwards.
+            mode = await load_effective_memory_mode(db, voice.conversation_id)
+            if mode == "off":
                 raise HTTPException(409, detail={"code": "MEMORY_OFF"})
-            _refuse_unsaveable(body.token, config, conversation.owner_id, voice.conversation_id, row)
+            _refuse_unsaveable(body.token, config, conversation.owner_id, voice.conversation_id, mode)
         try:
             return await confirm_memory(
                 db,
@@ -420,8 +420,7 @@ def _register_auto_memory_route(app, *, config: Settings, database, guard, embed
         """Commit a proposal without a spoken question. Only valid in ``auto`` mode and only when the policy says save."""
         voice = await guard(request, db, allow_ended=True)
         conversation = await _live_conversation(db, voice.conversation_id)
-        row = await db.get(UserSetting, conversation.owner_id)
-        mode = row.memory_mode if row is not None else "auto"
+        mode = await load_effective_memory_mode(db, voice.conversation_id)
         if mode == "off":
             raise HTTPException(409, detail={"code": "MEMORY_OFF"})
         try:
@@ -701,7 +700,9 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
             # Wordle mode: a guess such as "crane" is never a fact about the user, so nothing is proposed.
             memory_mode="off"
             if body.wordle_open
-            else (settings_row.memory_mode if settings_row is not None else "auto"),
+            else effective_memory_mode(
+                conversation.memory_mode, settings_row.memory_mode if settings_row is not None else None
+            ),
             owner_id=conversation.owner_id,
             conversation_id=voice.conversation_id,
             turn=turn,
@@ -1142,10 +1143,7 @@ async def _save_without_asking(db, config: Settings, embedder, proposed: dict, *
         return proposed
     if await hidden_fact_exists(db, owner_id, fact):
         return proposed
-    setting = await db.scalar(
-        select(UserSetting).where(UserSetting.owner_id == owner_id).execution_options(populate_existing=True)
-    )
-    mode = setting.memory_mode if setting is not None else "auto"
+    mode = await load_effective_memory_mode(db, conversation_id)
     if mode == "off":
         return {"status": "rejected", "error": "MEMORY_OFF", "message": MEMORY_OFF_NOTE}
     if mode != "auto":
@@ -1177,8 +1175,8 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
     @app.post("/internal/agent/tool/memory-propose")
     async def agent_memory_propose(body: MemoryProposeInput, request: Request, db: AsyncSession = Depends(database)):
         async def effect(owner_id, conversation_id):
-            row = await db.get(UserSetting, owner_id)
-            if row is not None and row.memory_mode == "off":
+            mode = await load_effective_memory_mode(db, conversation_id)
+            if mode == "off":
                 return {"status": "rejected", "error": "MEMORY_OFF", "message": MEMORY_OFF_NOTE}
             if classify_sensitivity(body.fact) is Sensitivity.CREDENTIAL:
                 # Never record it as a proposal: that would store the text we promise not to keep.
@@ -1191,7 +1189,6 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
                 fact=body.fact,
                 secret=secret,
             )
-            mode = row.memory_mode if row is not None else "auto"
             if result.get("status") == "proposed" and mode == "auto":
                 return await _save_without_asking(
                     db, config, embedder, result, owner_id=owner_id, conversation_id=conversation_id
