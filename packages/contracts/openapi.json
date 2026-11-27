@@ -3701,7 +3701,8 @@
             "type": "string",
             "enum": [
               "save",
-              "decline"
+              "decline",
+              "replace"
             ],
             "title": "Decision"
           }
@@ -3723,14 +3724,12 @@
           "memory": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/MemoryResult"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Memory"
+            ]
           },
           "idempotent": {
             "anyOf": [
@@ -3744,7 +3743,7 @@
             "title": "Idempotent"
           }
         },
-        "additionalProperties": true,
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "status"
@@ -3770,6 +3769,25 @@
           "pending"
         ],
         "title": "MemoryProposalPending"
+      },
+      "MemoryProposalReplacement": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "content"
+        ],
+        "title": "MemoryProposalReplacement"
       },
       "MemoryProposeInput": {
         "properties": {
@@ -4081,6 +4099,16 @@
           "expires_at": {
             "type": "string",
             "title": "Expires At"
+          },
+          "replaces": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryProposalReplacement"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,

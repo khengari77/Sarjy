@@ -84,11 +84,18 @@ class MemoryVisibility(BaseModel):
     changed: bool
 
 
+class MemoryProposalReplacement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    content: str
+
+
 class PendingMemoryProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
     fact: str
     expires_at: str
+    replaces: MemoryProposalReplacement | None = None
 
 
 class MemoryProposalPending(BaseModel):
@@ -99,13 +106,13 @@ class MemoryProposalPending(BaseModel):
 class MemoryProposalDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     proposal_id: str = Field(min_length=1, max_length=100)
-    decision: Literal["save", "decline"]
+    decision: Literal["save", "decline", "replace"]
 
 
 class MemoryProposalDecisionResult(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
     status: str
-    memory: dict | None = None
+    memory: MemoryResult | None = None
     idempotent: bool | None = None
 
 
@@ -195,9 +202,11 @@ def memory_proposal_router(database, identity, embedder, *, secret: str = ""):
     @router.get("/v1/conversations/{conversation_id}/memory-proposal", response_model=MemoryProposalPending)
     async def get_memory_proposal(conversation_id: str, user=Depends(identity), db=Depends(database)):
         await owned_conversation(db, user.id, conversation_id)
-        return MemoryProposalPending(
-            pending=await pending_proposal(db, owner_id=user.id, conversation_id=conversation_id, secret=secret)
-        )
+        try:
+            pending = await pending_proposal(db, owner_id=user.id, conversation_id=conversation_id, secret=secret)
+        except MemoryCaptureError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code, **exc.details}) from exc
+        return MemoryProposalPending(pending=pending)
 
     @router.post(
         "/v1/conversations/{conversation_id}/memory-proposal/decision",

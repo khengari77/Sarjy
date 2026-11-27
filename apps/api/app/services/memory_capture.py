@@ -27,6 +27,7 @@ from app.infrastructure.database import Memory, MemoryWriteRequest, now
 from app.infrastructure.upsert import insert_ignore
 from app.services.leases import lease_expired, lease_expiry
 from app.services.memory import MemoryService, memory_result
+from app.services.memory_scope import visible_in
 
 CAPTURE_KIND = "memory_capture"
 PROPOSAL_TTL_SECONDS = 600
@@ -278,7 +279,7 @@ async def pending_proposal(db: AsyncSession, *, owner_id: str, conversation_id: 
     supplies the authoritative expiry.
     """
     if not secret:
-        return None
+        raise MemoryCaptureError("MEMORY_CAPTURE_NOT_CONFIGURED", 503)
     rows = (
         await db.scalars(
             select(MemoryWriteRequest)
@@ -300,14 +301,48 @@ async def pending_proposal(db: AsyncSession, *, owner_id: str, conversation_id: 
         if not isinstance(confirmation_id, str) or not isinstance(fact, str):
             continue
         try:
-            _, payload = _verified(token, secret, owner_id, conversation_id)
+            capture, payload = _verified(token, secret, owner_id, conversation_id)
         except MemoryCaptureError:
             continue
+        replaces = None
+        try:
+            conflicts = _conflict_rows(
+                await _contradictions(db, owner_id=owner_id, conversation_id=conversation_id, capture=capture),
+                capture,
+            )
+        except MemoryCaptureError:
+            conflicts = []
+        if len(conflicts) == 1:
+            replaces = {"id": conflicts[0].id, "content": conflicts[0].content}
         return {
             "id": confirmation_id,
             "fact": fact,
             "expires_at": datetime.fromtimestamp(int(payload["exp"]), UTC).isoformat(),
+            "replaces": replaces,
         }
+    return None
+
+
+async def _replayed_decision(db: AsyncSession, *, owner_id: str, confirmation_id: str, decision: str) -> dict | None:
+    """The stored outcome of a terminal proposal revision, or ``None`` while it is still pending.
+
+    A ``replace`` request may have completed as a plain save (no visible
+    conflict), so replay accepts either stored decision before refusing.
+    """
+    candidates = ("replace", "save") if decision == "replace" else (decision,)
+    last_error: MemoryCaptureError | None = None
+    for candidate in candidates:
+        try:
+            replayed = await _resolved_proposal_response(
+                db, owner_id=owner_id, confirmation_id=confirmation_id, decision=candidate
+            )
+        except MemoryCaptureError as exc:
+            last_error = exc
+            continue
+        if replayed is not None:
+            return replayed
+    if last_error is not None:
+        raise last_error
     return None
 
 
@@ -323,7 +358,7 @@ async def resolve_proposal(
     mode: MemoryMode,
 ) -> dict:
     """Resolve one stored proposal by id with the same rules as the spoken yes/no."""
-    if decision not in {"save", "decline"}:
+    if decision not in {"save", "decline", "replace"}:
         raise MemoryCaptureError("INVALID_DECISION", 422)
     row = await db.scalar(
         select(MemoryWriteRequest).where(
@@ -354,6 +389,36 @@ async def resolve_proposal(
     _, fact, explicit, negated = proposal_summary(token, secret, owner_id, conversation_id)
     if plan_for_proposal(mode, fact, explicit=explicit, negated=negated) is Decision.SKIP:
         raise MemoryCaptureError("MEMORY_SENSITIVE", 409)
+    if decision == "replace":
+        replayed = await _replayed_decision(db, owner_id=owner_id, confirmation_id=proposal_id, decision="replace")
+        if replayed is not None:
+            return replayed
+        try:
+            result = await confirm_memory(
+                db,
+                memory_service,
+                token=token,
+                decision="save",
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                source_turn_id=None,
+                secret=secret,
+            )
+        except MemoryCaptureError as error:
+            replacement = error.details.get("token")
+            if error.code != "MEMORY_CLARIFICATION_REQUIRED" or not isinstance(replacement, str):
+                raise
+            result = await confirm_memory(
+                db,
+                memory_service,
+                token=replacement,
+                decision="replace",
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                source_turn_id=None,
+                secret=secret,
+            )
+        return result
     return await confirm_memory(
         db,
         memory_service,
@@ -867,11 +932,16 @@ async def _exact_content(
     db: AsyncSession,
     *,
     owner_id: str,
+    conversation_id: str,
     capture: MemoryCapture,
     status: str | None = None,
     source_turn_id: str | None = None,
 ) -> Memory | None:
-    query = select(Memory).where(Memory.owner_id == owner_id, func.lower(Memory.content) == capture.text.casefold())
+    query = select(Memory).where(
+        Memory.owner_id == owner_id,
+        func.lower(Memory.content) == capture.text.casefold(),
+        visible_in(conversation_id),
+    )
     if status is not None:
         query = query.where(Memory.status == status)
     if source_turn_id is not None:
@@ -879,7 +949,9 @@ async def _exact_content(
     return await db.scalar(query.order_by(Memory.updated_at.desc()).limit(1))
 
 
-async def _contradictions(db: AsyncSession, *, owner_id: str, capture: MemoryCapture) -> list[Memory]:
+async def _contradictions(
+    db: AsyncSession, *, owner_id: str, conversation_id: str, capture: MemoryCapture
+) -> list[Memory]:
     if capture.subject is None:
         return []
     rows = (
@@ -889,6 +961,7 @@ async def _contradictions(db: AsyncSession, *, owner_id: str, capture: MemoryCap
                 Memory.owner_id == owner_id,
                 Memory.status == "active",
                 Memory.subject == capture.subject,
+                visible_in(conversation_id),
             )
             .order_by(Memory.updated_at.desc(), Memory.id)
         )
@@ -908,6 +981,7 @@ async def _contradictions(db: AsyncSession, *, owner_id: str, capture: MemoryCap
                     Memory.status == "active",
                     Memory.subject.is_(None),
                     Memory.id > last_id,
+                    visible_in(conversation_id),
                 )
                 .order_by(Memory.id)
                 .limit(LEGACY_SUBJECT_SCAN)
@@ -935,7 +1009,7 @@ async def proposal_conflicts(db: AsyncSession, *, token: str, secret: str, owner
     """
     capture, _ = _verified(token, secret, owner_id, conversation_id)
     try:
-        return bool(await _contradictions(db, owner_id=owner_id, capture=capture))
+        return bool(await _contradictions(db, owner_id=owner_id, conversation_id=conversation_id, capture=capture))
     except MemoryCaptureError:
         return True
 
@@ -1187,7 +1261,9 @@ async def _recover_clarification(
     target_version: int,
 ) -> dict:
     """Report a committed clarification effect, or refuse to write anew."""
-    applied = await _exact_content(db, owner_id=owner_id, capture=capture, status="active")
+    applied = await _exact_content(
+        db, owner_id=owner_id, conversation_id=conversation_id, capture=capture, status="active"
+    )
     if applied is not None and applied.supersedes_id == target_id:
         response = {"status": "corrected", "memory": asdict(memory_result(applied))}
         await _record_decision(
@@ -1349,7 +1425,9 @@ async def _write_consented(
     secret: str,
 ) -> dict:
     key = _request_key(owner_id, proposed_turn, capture.text)
-    active_same = await _exact_content(db, owner_id=owner_id, capture=capture, status="active")
+    active_same = await _exact_content(
+        db, owner_id=owner_id, conversation_id=conversation_id, capture=capture, status="active"
+    )
     if active_same is not None:
         response = {"status": "already_saved", "memory": asdict(memory_result(active_same))}
         await _record_decision(
@@ -1363,7 +1441,9 @@ async def _write_consented(
             result=response,
         )
         return response
-    replay = await _exact_content(db, owner_id=owner_id, capture=capture, source_turn_id=proposed_turn)
+    replay = await _exact_content(
+        db, owner_id=owner_id, conversation_id=conversation_id, capture=capture, source_turn_id=proposed_turn
+    )
     if replay is not None:
         response = {"status": "already_saved", "memory": asdict(memory_result(replay))}
         await _record_decision(
@@ -1377,7 +1457,7 @@ async def _write_consented(
             result=response,
         )
         return response
-    previous = await _contradictions(db, owner_id=owner_id, capture=capture)
+    previous = await _contradictions(db, owner_id=owner_id, conversation_id=conversation_id, capture=capture)
     conflicting = _conflict_rows(previous, capture)
     if len(conflicting) > 1:
         # Never pick one contradictory active row silently.
@@ -1511,7 +1591,9 @@ async def _replace_target(
     # Durable recovery before target validation: the effect may have committed
     # while its decision receipt did not. A matching corrected row is the
     # successful outcome for a replacement.
-    applied = await _exact_content(db, owner_id=owner_id, capture=capture, status="active")
+    applied = await _exact_content(
+        db, owner_id=owner_id, conversation_id=conversation_id, capture=capture, status="active"
+    )
     if applied is not None and applied.supersedes_id == target_id:
         response = {"status": "corrected", "memory": asdict(memory_result(applied))}
         await _record_decision(
