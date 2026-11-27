@@ -23,6 +23,10 @@ function rect(top: number, height: number, width = 1000): DOMRect {
   return { top, height, left: 0, width } as DOMRect;
 }
 
+function topbarWithBottom(bottom: number): HTMLElement {
+  return { getBoundingClientRect: () => ({ bottom, height: 68 }) as DOMRect } as unknown as HTMLElement;
+}
+
 const C = Number.parseFloat;
 
 describe('publishDockGeometry', () => {
@@ -32,8 +36,23 @@ describe('publishDockGeometry', () => {
     expect(dataset.toastReady).toBe('true');
     const top = C(values.get('--toast-top')!);
     const bottom = C(values.get('--toast-bottom')!);
-    expect(top + bottom).toBeLessThanOrEqual(900);
+    // Visible means the layer keeps at least its 40px minimum band.
+    expect(top + 40).toBeLessThanOrEqual(900 - bottom);
     expect(900 - bottom).toBeLessThanOrEqual(700 - 12);
+  });
+
+  it('measures the band from a visible topbar bottom', () => {
+    const { root, values } = fakeRoot();
+    expect(publishDockGeometry(root, rect(700, 150), rect(0, 900), topbarWithBottom(68), 900)).toBe(true);
+    expect(values.get('--toast-top')).toBe('76px');
+  });
+
+  it('uses the scrolled-away topbar position (320x256 at full scroll)', () => {
+    const { root, values, dataset } = fakeRoot();
+    expect(publishDockGeometry(root, rect(112, 150), rect(0, 256), topbarWithBottom(-60), 256)).toBe(true);
+    expect(dataset.toastReady).toBe('true');
+    expect(values.get('--toast-top')).toBe('8px');
+    expect(values.get('--toast-bottom')).toBe('156px');
   });
 
   it('hides when the dock leaves less than 40px of band (320x256, dockTop 108)', () => {

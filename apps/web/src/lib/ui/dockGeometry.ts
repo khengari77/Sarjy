@@ -21,9 +21,11 @@ export function publishDockGeometry(
     return false;
   }
 
-  const measuredTopbar = topbar?.getBoundingClientRect().height ?? 0;
-  const topbarHeight = measuredTopbar > 0 ? measuredTopbar : 68;
-  const toastTop = topbarHeight + 8;
+  // The topbar lives inside the scrolling main column on short viewports, so
+  // measure where its bottom edge is now, not its static height.
+  const measuredTopbar = topbar?.getBoundingClientRect();
+  const topbarEdge = measuredTopbar && measuredTopbar.height > 0 ? Math.max(0, measuredTopbar.bottom) : 68;
+  const toastTop = topbarEdge + 8;
   const centre = columnRect.left + columnRect.width / 2;
 
   const show = (bottom: number) => {

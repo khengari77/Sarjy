@@ -31,6 +31,11 @@
 </script>
 
 {#if session.change || session.changeStatus}
+  <!-- The visual toast may be hidden when no room is left above the dock;
+       this live region keeps the message in the accessibility tree. -->
+  <p class="sr-only change-live" role="status" aria-live="polite">
+    {session.change?.label ?? session.changeStatus}
+  </p>
   <!-- Mounted outside AppShell's `.shell`, so the layer carries the UI
        direction itself instead of inheriting the document's LTR. Requires
        AppShell to be mounted with its controls snippet: the band is measured
@@ -86,6 +91,12 @@
 
   :global(html[data-toast-ready]) .change-toast-layer {
     visibility: visible;
+  }
+
+  /* When the visual toast is visible it already announces; hide the fallback
+     live region so the change is not read twice. */
+  :global(html[data-toast-ready]) .change-live {
+    display: none;
   }
 
   .change-toast,

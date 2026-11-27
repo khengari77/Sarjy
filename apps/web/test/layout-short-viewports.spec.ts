@@ -184,12 +184,21 @@ test.describe('the toast never covers a fully revealed dock', () => {
         main.dispatchEvent(new Event('scroll'));
       });
 
-      const hidden = await page.evaluate(() => document.documentElement.dataset.toastReady !== 'true');
-      if (hidden) {
-        // No 40px band above the dock: the toast is hidden, not drawn over it.
-        expect(await page.locator('.change-toast').isVisible()).toBe(false);
-      } else {
+      if (viewport.height >= 256) {
+        // The topbar scrolls away, so the band is measured from y=8 and the
+        // toast still fits above the dock.
+        await expect(page.locator('html')).toHaveAttribute('data-toast-ready', 'true');
+        await expect(page.locator('.change-toast')).toBeVisible();
         await expectToastClearsDock(page);
+        // The visual toast announces; the fallback live region is suppressed.
+        expect(await page.locator('.change-live').evaluate((el) => getComputedStyle(el).display)).toBe('none');
+      } else {
+        // At 320x200 there truly is no room: the toast is hidden, and the
+        // always-present live region keeps the change announced.
+        await expect(page.locator('html')).not.toHaveAttribute('data-toast-ready', 'true');
+        expect(await page.locator('.change-toast').isVisible()).toBe(false);
+        await expect(page.locator('.change-live')).toHaveText('Saved to memory');
+        expect(await page.locator('.change-live').evaluate((el) => getComputedStyle(el).display)).not.toBe('none');
       }
     });
   }
