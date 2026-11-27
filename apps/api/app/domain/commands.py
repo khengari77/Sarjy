@@ -7,6 +7,7 @@ conversational path.
 """
 
 import re
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
@@ -451,6 +452,83 @@ def parse_memory_exclusion_target(text: str) -> str | None:
     return target
 
 
+_MEMORY_ALL_TARGETS = frozenset(
+    {
+        "all",
+        "all memories",
+        "all my memories",
+        "all of my memories",
+        "everything",
+        "everything about me",
+        "everything about my life",
+        "everything you know",
+        "everything you know about me",
+        "my memories",
+        "what you know about me",
+    }
+)
+_MEMORY_TOPIC_PREFIXES = (
+    "all about ",
+    "all you know about ",
+    "everything about ",
+    "everything you know about ",
+    "what you know about ",
+    "what you remember about ",
+)
+_MEMORY_SCOPE_SUFFIXES = (
+    " everywhere",
+    " globally",
+    " from every conversation",
+    " in all chats",
+    " in all conversations",
+    " in every conversation",
+)
+
+
+@dataclass(frozen=True)
+class MemoryForgetRequest:
+    """A parsed forget request: a named topic, or every visible memory about the user."""
+
+    query: str
+    all_memories: bool = False
+
+
+def parse_memory_forget(text: str) -> MemoryForgetRequest | None:
+    """Parse "forget/exclude ..." into a topic query or an explicit all-memories request.
+
+    "forget everything about Paris" names Paris; "forget everything", "forget all my
+    memories" and "forget everything about me" ask for every visible memory. Compound
+    and referential requests are still not commands.
+    """
+    normalized = normalize_utterance(text, fold=False)
+    match = re.match(r"^(?:please )?(?:forget|exclude)\b(.*)$", normalized, re.IGNORECASE)
+    if match is None:
+        return None
+    candidate = " ".join(match.group(1).split())
+    folded = candidate.casefold()
+    if not candidate or _MEMORY_COMPOUND.search(normalized) or _CLAUSE_BREAK.search(candidate):
+        return None
+    if folded in _MEMORY_ALL_TARGETS:
+        return MemoryForgetRequest("", True)
+    for prefix in _MEMORY_TOPIC_PREFIXES:
+        if folded.startswith(prefix):
+            candidate = candidate[len(prefix) :].strip()
+            folded = candidate.casefold()
+            break
+    if folded.startswith("about "):
+        candidate = candidate[6:].strip()
+        folded = candidate.casefold()
+    for suffix in _MEMORY_SCOPE_SUFFIXES:
+        if folded.endswith(suffix):
+            candidate = candidate[: -len(suffix)].strip()
+            folded = candidate.casefold()
+    if folded in _MEMORY_ALL_TARGETS:
+        return MemoryForgetRequest("", True)
+    if not candidate or folded in _REFERENTIAL_TARGETS | _FORGET_IDIOM_TARGETS or folded in {"me", "myself"}:
+        return None
+    return MemoryForgetRequest(candidate, False)
+
+
 def memory_request_is_global(text: str) -> bool:
     """Whether a destructive memory request explicitly asks for every chat."""
     normalized = normalize_utterance(text)
@@ -621,11 +699,13 @@ __all__ = [
     "CommandResult",
     "command_result",
     "failed_result",
+    "MemoryForgetRequest",
     "memory_request_is_global",
     "memory_restore_requested",
     "parse_exact_command",
     "parse_exclusion_confirmation",
     "parse_memory_exclusion_target",
+    "parse_memory_forget",
     "normalize_utterance",
     "parse_voice_selection",
     "spoken_outcome",

@@ -18,12 +18,11 @@ from app.domain.commands import (
     CommandResult,
     command_result,
     failed_result,
-    memory_request_is_global,
     memory_restore_requested,
     memory_undo_requested,
     parse_exact_command,
     parse_exclusion_confirmation,
-    parse_memory_exclusion_target,
+    parse_memory_forget,
     parse_voice_gender,
     parse_voice_selection,
     unknown_result,
@@ -51,11 +50,10 @@ from app.domain.ui_routing import (
     ui_text_is_eligible,
 )
 from app.services.actions import dispatch_action, dispatch_setting
-from app.services.context_operations import ContextOperationError, MemorySearcher, has_content_words, keyword_search
+from app.services.context_operations import ContextOperationError, MemorySearcher
 from app.services.jev_ui import UiClassifier
 from app.services.voice_exclusions import (
     discard_pending,
-    global_retraction_refusal,
     hide_target,
     propose_restore,
     resolve_confirmation,
@@ -83,7 +81,7 @@ async def handle_finalized_utterance(
     approved_voice_ids: frozenset[str] | None = None,
     handlers,
     secret: str = "",
-    search: MemorySearcher = keyword_search,
+    search: MemorySearcher | None = None,
     ui_classifier: UiClassifier | None = None,
     wordle_enabled: bool = False,
 ) -> CommandResult | None:
@@ -297,11 +295,15 @@ async def _handle_memory_confirmation(
 
 
 async def _handle_memory_mutation(
-    db, *, owner_id: str, conversation_id: str, request_id: str, text: str, secret: str, search: MemorySearcher
+    db,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    request_id: str,
+    text: str,
+    secret: str,
+    search: MemorySearcher | None,
 ) -> CommandResult | None:
-    if memory_request_is_global(text):
-        await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
-        return global_retraction_refusal(request_id)
     if memory_restore_requested(text):
         return await _run_memory_command(
             propose_restore(
@@ -318,18 +320,18 @@ async def _handle_memory_mutation(
             undo_last_hide(db, owner_id=owner_id, conversation_id=conversation_id, request_id=request_id),
             request_id=request_id,
         )
-    target = parse_memory_exclusion_target(text)
-    # A target made only of stopwords ("all of it", "this chat") names nothing, and an empty
-    # keyword query matches every memory; never let it hide one.
-    if target is None or not has_content_words(target):
+    forget = parse_memory_forget(text)
+    if forget is None:
         return None
     return await _run_memory_command(
         hide_target(
             db,
             owner_id=owner_id,
             conversation_id=conversation_id,
-            target=target,
+            target=forget.query,
             request_id=request_id,
+            secret=secret,
+            all_memories=forget.all_memories,
             search=search,
         ),
         request_id=request_id,

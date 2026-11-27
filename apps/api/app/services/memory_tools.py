@@ -2,9 +2,9 @@
 
 The model supplies an untrusted ``fact`` or ``query``.  Code validates it with
 the same deterministic domain checks as the regex fast path, then returns the
-existing signed proposal (remember) or exclusion proposal (forget).  Nothing is
-saved or excluded here: consent arrives on a later user turn.  Recall is a
-read-only, owner-scoped, bounded lookup.
+existing signed proposal (remember) or a counted forget preview that hides
+globally.  Nothing is saved or hidden here: consent arrives on a later user
+turn.  Recall is a read-only, owner-scoped lookup.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.commands import CommandKind
 from app.domain.memory_capture import clean_tool_query, parse_tool_fact
 from app.infrastructure.database import Memory
-from app.services.context_operations import MemorySearcher, keyword_search, query_tokens, recent_memories
+from app.services.context_operations import MemorySearcher, query_tokens, recent_memories
 from app.services.memory_capture import proposal_for_capture, record_proposal
 from app.services.memory_scope import visible_in
 from app.services.memory_terms import search_all_memories
@@ -24,15 +24,14 @@ from app.services.voice_exclusions import discard_pending, hide_target
 RECALL_LIMIT = 5
 RECALL_SNIPPET_CHARS = 200
 RECALL_CHAR_BUDGET = 6000
-MEMORY_HIDDEN = "MEMORY_HIDDEN"
 
 NOT_SAVED_NOTE = (
     "Nothing has been saved yet. The application will now ask the user to confirm; "
     "do not say or imply it is saved, and do not add your own question."
 )
 FORGET_NOTE = (
-    "The application handles this and will speak the exact line to the user (a hidden memory can be brought "
-    "back with undo). Do not add your own confirmation or question."
+    "The application handles this and will speak the exact line to the user (forgetting hides the memories "
+    "everywhere and a later undo brings them back). Do not add your own confirmation or question."
 )
 
 
@@ -77,6 +76,22 @@ async def memory_propose_tool(
     return {"status": "proposed", "proposal": proposal, "message": NOT_SAVED_NOTE}
 
 
+_ALL_MEMORY_QUERIES = frozenset(
+    {
+        "all",
+        "all memories",
+        "all my memories",
+        "everything",
+        "everything about me",
+        "everything you know about me",
+        "me",
+        "my memories",
+        "myself",
+        "what you know about me",
+    }
+)
+
+
 async def memory_forget_tool(
     db: AsyncSession,
     *,
@@ -84,7 +99,9 @@ async def memory_forget_tool(
     conversation_id: str,
     request_id: str,
     query: str,
-    search: MemorySearcher = keyword_search,
+    secret: str,
+    all_memories: bool = False,
+    search: MemorySearcher | None = None,
 ) -> dict:
     cleaned = clean_tool_query(query)
     if cleaned is None:
@@ -93,17 +110,23 @@ async def memory_forget_tool(
             "error": "MEMORY_QUERY_INVALID",
             "message": "Nothing was changed. Ask the user what they want forgotten.",
         }
+    # The model often says "me" or "everything" for a whole-account forget; terms_of() of that
+    # names nothing, so treat it as the explicit all-memories case instead of searching.
+    if cleaned.casefold() in _ALL_MEMORY_QUERIES:
+        all_memories = True
     result = await hide_target(
         db,
         owner_id=owner_id,
         conversation_id=conversation_id,
-        target=cleaned,
+        target="" if all_memories else cleaned,
         request_id=request_id,
+        secret=secret,
+        all_memories=all_memories,
         search=search,
     )
-    hidden = result.kind is CommandKind.EXECUTED and result.detail == MEMORY_HIDDEN
+    proposed = result.kind is CommandKind.NEEDS_CONFIRMATION and result.detail == "MEMORY_HIDE_PROPOSED"
     return {
-        "status": "hidden" if hidden else "not_hidden",
+        "status": "proposed" if proposed else "not_hidden",
         "detail": result.detail,
         "spoken": result.spoken,
         "message": FORGET_NOTE,

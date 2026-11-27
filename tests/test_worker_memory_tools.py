@@ -23,7 +23,7 @@ PROPOSAL = {
     "confirmation_revision": 1,
     "question": "Should I remember this: I live in Benghazi?",
 }
-FORGET_SPOKEN = "Hidden 'I prefer green tea'. Say undo to bring it back."
+FORGET_SPOKEN = "I found 1 memory about tea. Hide it?"
 
 
 class CountingProvider:
@@ -128,7 +128,7 @@ REMEMBER_BODY = {
 }
 FORGET_BODY = {
     "memory-forget": {
-        "status": "hidden",
+        "status": "proposed",
         "spoken": FORGET_SPOKEN,
         "message": "The application handles this.",
     }

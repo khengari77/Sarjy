@@ -1,0 +1,77 @@
+[
+  {
+    "name": "Paris matches three named memories",
+    "memories": [
+      {"id": "paris-1", "content": "I travelled to Paris", "scope": "global", "conversation_id": "a1"},
+      {"id": "paris-2", "content": "I proposed in Paris", "scope": "global", "conversation_id": "a1"},
+      {"id": "paris-3", "content": "I like a cafe in Paris", "scope": "conversation", "conversation_id": "a1"},
+      {"id": "tea", "content": "I prefer green tea", "scope": "global", "conversation_id": "a1"}
+    ],
+    "query": "Paris",
+    "all_memories": false,
+    "expected_memory_ids": ["paris-1", "paris-2", "paris-3"],
+    "expected_hidden_ids": ["paris-1", "paris-2", "paris-3"]
+  },
+  {
+    "name": "about me means every visible active memory",
+    "memories": [
+      {"id": "global-1", "content": "I live in Tripoli", "scope": "global", "conversation_id": "a1"},
+      {"id": "temp-here", "content": "A temporary note here", "scope": "conversation", "conversation_id": "a1"},
+      {"id": "hidden", "content": "Paris hidden", "scope": "global", "conversation_id": "a1", "status": "hidden"},
+      {"id": "deleted", "content": "Paris deleted", "scope": "global", "conversation_id": "a1", "status": "deleted"},
+      {"id": "temp-other", "content": "Another chat secret", "scope": "conversation", "conversation_id": "a2"},
+      {"id": "foreign", "content": "Foreign Paris", "scope": "global", "conversation_id": "b1", "owner_id": "bob"}
+    ],
+    "query": "everything about me",
+    "all_memories": true,
+    "expected_memory_ids": ["global-1", "temp-here"],
+    "expected_hidden_ids": ["global-1", "temp-here"]
+  },
+  {
+    "name": "non-match finds nothing",
+    "memories": [
+      {"id": "paris-1", "content": "I travelled to Paris", "scope": "global", "conversation_id": "a1"}
+    ],
+    "query": "Berlin",
+    "all_memories": false,
+    "expected_memory_ids": [],
+    "expected_hidden_ids": []
+  },
+  {
+    "name": "cafe matches the accented cafe",
+    "memories": [
+      {"id": "cafe", "content": "I like cafe au lait", "scope": "global", "conversation_id": "a1"},
+      {"id": "tea", "content": "I prefer green tea", "scope": "global", "conversation_id": "a1"}
+    ],
+    "query": "café",
+    "all_memories": false,
+    "expected_memory_ids": ["cafe"],
+    "expected_hidden_ids": ["cafe"]
+  },
+  {
+    "name": "Arabic baris matches the diacritised spelling",
+    "memories": [
+      {"id": "arabic", "content": "زرت بَارِيس", "scope": "global", "conversation_id": "a1"},
+      {"id": "other", "content": "أحب الشاي", "scope": "global", "conversation_id": "a1"}
+    ],
+    "query": "باريس",
+    "all_memories": false,
+    "expected_memory_ids": ["arabic"],
+    "expected_hidden_ids": ["arabic"]
+  },
+  {
+    "name": "hidden deleted another chat temporary and another owner never match or hide",
+    "memories": [
+      {"id": "global-paris", "content": "Paris global", "scope": "global", "conversation_id": "a1"},
+      {"id": "temp-here", "content": "Paris temp here", "scope": "conversation", "conversation_id": "a1"},
+      {"id": "temp-other", "content": "Paris temp other", "scope": "conversation", "conversation_id": "a2"},
+      {"id": "hidden-paris", "content": "Paris hidden", "scope": "global", "conversation_id": "a1", "status": "hidden"},
+      {"id": "deleted-paris", "content": "Paris deleted", "scope": "global", "conversation_id": "a1", "status": "deleted"},
+      {"id": "foreign-paris", "content": "Paris foreign", "scope": "global", "conversation_id": "b1", "owner_id": "bob"}
+    ],
+    "query": "Paris",
+    "all_memories": false,
+    "expected_memory_ids": ["global-paris", "temp-here"],
+    "expected_hidden_ids": ["global-paris", "temp-here"]
+  }
+]

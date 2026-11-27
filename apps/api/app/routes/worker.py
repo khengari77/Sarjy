@@ -167,6 +167,10 @@ class MemoryQueryInput(MemoryToolBase):
     query: str = Field(min_length=1, max_length=500)
 
 
+class MemoryForgetInput(MemoryQueryInput):
+    all_memories: bool = False
+
+
 class CommandInput(BaseModel):
     turn_id: str = Field(min_length=1, max_length=100)
 
@@ -1198,7 +1202,7 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
         return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)
 
     @app.post("/internal/agent/tool/memory-forget")
-    async def agent_memory_forget(body: MemoryQueryInput, request: Request, db: AsyncSession = Depends(database)):
+    async def agent_memory_forget(body: MemoryForgetInput, request: Request, db: AsyncSession = Depends(database)):
         async def effect(owner_id, conversation_id):
             return await memory_forget_tool(
                 db,
@@ -1206,9 +1210,19 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
                 conversation_id=conversation_id,
                 request_id=body.request_id,
                 query=body.query,
+                secret=secret,
+                all_memories=body.all_memories,
             )
 
-        return await _run_memory_tool(guard, db, request, body, "memory_forget", {"query": body.query}, effect)
+        return await _run_memory_tool(
+            guard,
+            db,
+            request,
+            body,
+            "memory_forget",
+            {"query": body.query, "all_memories": body.all_memories},
+            effect,
+        )
 
     @app.post("/internal/agent/tool/memory-recall")
     async def agent_memory_recall(body: MemoryQueryInput, request: Request, db: AsyncSession = Depends(database)):

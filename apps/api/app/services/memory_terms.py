@@ -127,6 +127,46 @@ async def delete_terms(db: AsyncSession, memory_ids: Iterable[str]) -> None:
         await db.execute(delete(MemoryTerm).where(MemoryTerm.memory_id.in_(ids)))
 
 
+async def all_visible_memories(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    conversation_id: str,
+) -> Sequence[MemoryCandidate]:
+    """Every active, visible memory of the owner, without a row window.
+
+    The all-memories forgetting preview uses this; the SQL filter is the same as
+    ``search_all_memories`` so another chat's temporary memory and a hidden or
+    lineage-blocked row is never counted.
+    """
+    rows = (
+        (
+            await db.execute(
+                select(Memory)
+                .where(
+                    Memory.owner_id == owner_id,
+                    Memory.status == "active",
+                    visible_in(conversation_id),
+                    Memory.id.not_in(blocked_memory_ids_select(owner_id, conversation_id)),
+                )
+                .order_by(Memory.updated_at.desc(), Memory.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return tuple(
+        MemoryCandidate(
+            id=memory.id,
+            content=memory.content,
+            source_turn_id=memory.source_turn_id,
+            score=0.0,
+            kind=classify(memory.content),
+        )
+        for memory in rows
+    )
+
+
 async def search_all_memories(
     db: AsyncSession,
     *,

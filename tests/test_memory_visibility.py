@@ -227,13 +227,18 @@ def test_voice_forget_hides_everywhere_and_delete_by_voice_is_refused(tmp_path):
         assert refusal["kind"] == "unsupported" and "trash icon" in refusal["spoken"]
         assert row(file, memory)[0] == "active"
 
-        hidden = say("Forget the green tea.", "f1")["result"]
+        preview = say("Forget the green tea.", "f1")["result"]
+        assert preview["detail"] == "MEMORY_HIDE_PROPOSED" and preview["changed"] is False
+        assert preview["spoken"] == "I found 1 memory about the green tea. Hide it?"
+        assert say("Forget the green tea.", "f1")["result"] == preview
+        assert row(file, memory)[0] == "active"
+
+        hidden = say("Yes.", "y1")["result"]
         assert hidden["detail"] == "MEMORY_HIDDEN" and hidden["changed"] is True
-        assert hidden["spoken"] == "Hidden 'I prefer green tea'. Say undo to bring it back."
-        assert say("Forget the green tea.", "f1")["result"] == hidden
+        assert hidden["spoken"] == "Hidden 1 memory about the green tea. Say undo to bring it back."
         assert row(file, memory)[0] == "hidden" and search_ids(client, other_chat) == []
 
-        assert say("Yes.", "y1") == {"handled": False}
+        assert say("Yes.", "stray-yes") == {"handled": False}
         undone = say("Bring it back.", "u1")["result"]
         assert undone["detail"] == "MEMORY_UNHIDDEN" and row(file, memory)[0] == "active"
         assert say("Undo", "u2")["result"]["detail"] == "NO_HIDDEN_MEMORY"

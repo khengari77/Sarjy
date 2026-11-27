@@ -129,7 +129,7 @@ def memory_status(file, memory_id):
         return db.execute("SELECT status FROM memories WHERE id=?", (memory_id,)).fetchone()[0]
 
 
-def test_forget_zero_one_many_matches_hide_only_a_single_match(tmp_path):
+def test_forget_previews_zero_one_or_many_then_hides_all_on_one_yes(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         _, _, headers, turn = setup(
@@ -138,12 +138,22 @@ def test_forget_zero_one_many_matches_hide_only_a_single_match(tmp_path):
         none = call(client, headers, FORGET, turn, "f0", query="skydiving").json()
         assert none["status"] == "not_hidden" and none["detail"] == "MEMORY_TARGET_NOT_FOUND"
         many = call(client, headers, FORGET, turn, "f2", query="work").json()
-        assert many["status"] == "not_hidden" and many["detail"] == "MEMORY_TARGET_AMBIGUOUS"
+        assert many["status"] == "proposed" and many["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert many["spoken"] == "I found 2 memories about work. Hide all of them?"
         assert memory_status(file, "job1") == memory_status(file, "job2") == "active"
+        applied_many = command(client, headers, next_turn(client, headers, "yes-many", "yes"))
+        assert applied_many["detail"] == "MEMORY_HIDDEN"
+        assert applied_many["spoken"] == "Hidden 2 memories about work. Say undo to bring them back."
+        assert memory_status(file, "job1") == memory_status(file, "job2") == "hidden"
+
         one = call(client, headers, FORGET, turn, "f1", query="tea").json()
-        assert one["status"] == "hidden"
-        assert one["spoken"] == "Hidden 'I prefer green tea'. Say undo to bring it back."
+        assert one["status"] == "proposed" and one["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert one["spoken"] == "I found 1 memory about tea. Hide it?"
         assert "do not add" in one["message"].lower()
+        assert memory_status(file, "tea") == "active"
+        applied_one = command(client, headers, next_turn(client, headers, "yes-one", "yes"))
+        assert applied_one["detail"] == "MEMORY_HIDDEN"
+        assert applied_one["spoken"] == "Hidden 1 memory about tea. Say undo to bring it back."
         assert memory_status(file, "tea") == "hidden"
         assert table_count(file, "context_exclusions") == 0
 
@@ -152,7 +162,10 @@ def test_undo_unhides_the_latest_hide_and_a_stray_yes_changes_nothing(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea"), ("cat", "I own a cat")])
-        assert call(client, headers, FORGET, turn, "f1", query="tea").json()["status"] == "hidden"
+        preview = call(client, headers, FORGET, turn, "f1", query="tea").json()
+        assert preview["status"] == "proposed" and preview["detail"] == "MEMORY_HIDE_PROPOSED"
+        applied = command(client, headers, next_turn(client, headers, "confirm-1", "yes"))
+        assert applied["detail"] == "MEMORY_HIDDEN"
         stray = next_turn(client, headers, "request-2", "yes")
         assert command(client, headers, stray) is None
         assert memory_status(file, "tea") == "hidden" and memory_status(file, "cat") == "active"
@@ -163,13 +176,18 @@ def test_undo_unhides_the_latest_hide_and_a_stray_yes_changes_nothing(tmp_path):
         assert again["detail"] == "NO_HIDDEN_MEMORY"
 
 
-def test_hiding_does_not_need_consent_and_leaves_remember_consent_untouched(tmp_path):
+def test_a_forget_preview_supersedes_a_pending_remember_and_needs_one_yes(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         owner, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
         set_mode(file, owner, "ask")  # these cover the ask-first flow; auto saves a proposed fact without a question
         assert call(client, headers, PROPOSE, turn, "p1", fact="I work at Acme").json()["status"] == "proposed"
-        assert call(client, headers, FORGET, turn, "f1", query="tea").json()["status"] == "hidden"
+        preview = call(client, headers, FORGET, turn, "f1", query="tea").json()
+        assert preview["status"] == "proposed" and preview["detail"] == "MEMORY_HIDE_PROPOSED"
+        # The hide has not happened yet, and the earlier remember question is no longer armed.
+        assert table_count(file, "memories", "status='active'") == 1
+        applied = command(client, headers, next_turn(client, headers, "confirm-1", "yes"))
+        assert applied["detail"] == "MEMORY_HIDDEN"
         assert table_count(file, "memories", "status='active'") == 0
         assert table_count(file, "memory_write_requests", "state='proposed'") == 1
 
@@ -251,7 +269,8 @@ def test_already_saved_fact_is_rejected_but_a_hidden_one_is_not_counted(tmp_path
         assert body["status"] == "rejected" and body["error"] == "MEMORY_ALREADY_SAVED"
         assert "proposal" not in body and "already saved" in body["message"]
         assert table_count(file, "memory_write_requests") == 0
-        assert call(client, headers, FORGET, turn, "f1", query="name").json()["status"] == "hidden"
+        assert call(client, headers, FORGET, turn, "f1", query="name").json()["status"] == "proposed"
+        assert command(client, headers, next_turn(client, headers, "confirm-1", "yes"))["detail"] == "MEMORY_HIDDEN"
         again = call(client, headers, PROPOSE, turn, "p2", fact="My name is Abdulrahma").json()
         assert again["status"] == "proposed"
 
@@ -307,7 +326,8 @@ def test_forgetting_and_recalling_keep_working_when_memory_is_off(tmp_path):
         assert [item["content"] for item in recalled["memories"]] == ["I prefer green tea"]
 
         forgotten = call(client, headers, FORGET, turn, "f1", query="tea").json()
-        assert forgotten["status"] == "hidden"
+        assert forgotten["status"] == "proposed"
+        assert command(client, headers, next_turn(client, headers, "confirm-1", "yes"))["detail"] == "MEMORY_HIDDEN"
         assert table_count(file, "memories", "status='hidden'") == 1
         assert table_count(file, "memories", "status='active'") == 1
         assert table_count(file, "memory_write_requests") == 0

@@ -32,12 +32,22 @@ from app.services.context_operations import (
     keyword_search,
     undo_operation,
 )
+from app.services.memory_erasure_lock import lock_owner_memories
 from app.services.memory_scope import visible_in
-from app.services.memory_visibility import HIDE_OPERATION, UNHIDE_OPERATION, hide_memory, unhide_memory
+from app.services.memory_terms import all_visible_memories, search_all_memories
+from app.services.memory_visibility import (
+    ACTIVE,
+    DELETED,
+    HIDDEN,
+    HIDE_OPERATION,
+    UNHIDE_OPERATION,
+    unhide_memory,
+)
 
 EXCLUDE_PROPOSAL = "exclude_proposal"
 RESTORE_PROPOSAL = "restore_proposal"
-PROPOSAL_TYPES = (EXCLUDE_PROPOSAL, RESTORE_PROPOSAL)
+HIDE_PROPOSAL = HIDE_OPERATION
+PROPOSAL_TYPES = (EXCLUDE_PROPOSAL, RESTORE_PROPOSAL, HIDE_PROPOSAL)
 PENDING = "proposed"
 APPLIED = "applied"
 DECLINED = "declined"
@@ -46,6 +56,9 @@ EXPIRED = "expired"
 RESOLVED = (APPLIED, DECLINED, EXPIRED)
 TTL_SECONDS = 300
 MATCH_LIMIT = 10
+# One bind-safe bulk update.  Postgres and SQLite both accept far more, but a
+# fixed chunk keeps a large "forget everything" bounded and predictable.
+HIDE_CHUNK_SIZE = 500
 # A definite refusal from the context service means the signed request can
 # never become valid again: discard it instead of inviting a retry.
 STALE_CODES = frozenset(
@@ -184,11 +197,12 @@ async def _record_pending(
     payload: dict,
     request_id: str,
     revision: int,
+    operation_id: str | None = None,
 ) -> None:
     await _supersede_pending(db, owner_id, conversation_id)
     db.add(
         ContextOperation(
-            id=str(uuid4()),
+            id=operation_id or str(uuid4()),
             owner_id=owner_id,
             conversation_id=conversation_id,
             command_type=command_type,
@@ -371,6 +385,56 @@ async def _record_operation(
     )
 
 
+def _topic_phrase(target: str, all_memories: bool) -> str:
+    return "you" if all_memories else _snippet(target, 80)
+
+
+def _preview_spoken(target: str, all_memories: bool, count: int) -> str:
+    noun = "memory" if count == 1 else "memories"
+    action = "Hide it?" if count == 1 else "Hide all of them?"
+    return f"I found {count} {noun} about {_topic_phrase(target, all_memories)}. {action}"
+
+
+def _hidden_spoken(target: str, all_memories: bool, hidden: int, total: int) -> str:
+    topic = _topic_phrase(target, all_memories)
+    if hidden == total:
+        noun = "memory" if hidden == 1 else "memories"
+        pronoun = "it" if hidden == 1 else "them"
+        return f"Hidden {hidden} {noun} about {topic}. Say undo to bring {pronoun} back."
+    if hidden == 0:
+        return "None of those memories could be hidden; they had already changed."
+    skipped = total - hidden
+    return f"Hidden {hidden} of {total}; {_number_word(skipped)} had already changed."
+
+
+def _payload_memory_ids(payload: dict) -> list[str]:
+    raw = payload.get("memory_ids")
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, str)]
+    single = payload.get("memory_id")
+    return [single] if isinstance(single, str) else []
+
+
+async def _hide_memories_in_chunks(
+    db: AsyncSession, *, owner_id: str, conversation_id: str, memory_ids: Sequence[str]
+) -> int:
+    hidden = 0
+    for start in range(0, len(memory_ids), HIDE_CHUNK_SIZE):
+        chunk = list(memory_ids[start : start + HIDE_CHUNK_SIZE])
+        result = await db.execute(
+            update(Memory)
+            .where(
+                Memory.id.in_(chunk),
+                Memory.owner_id == owner_id,
+                Memory.status == ACTIVE,
+                visible_in(conversation_id),
+            )
+            .values(status=HIDDEN, updated_at=now())
+        )
+        hidden += result.rowcount
+    return hidden
+
+
 async def hide_target(
     db: AsyncSession,
     *,
@@ -378,60 +442,90 @@ async def hide_target(
     conversation_id: str,
     target: str,
     request_id: str,
-    search: MemorySearcher = keyword_search,
+    secret: str = "",
+    all_memories: bool = False,
+    search: MemorySearcher | None = None,
 ) -> CommandResult:
-    """One-step, reversible, memory-level hide when exactly one memory matches.
+    """Preview hiding every matching memory, then apply the exact ids on one yes.
 
-    Zero matches and several matches change nothing (never hide "all"). A hide
-    needs no confirmation; the spoken line tells the user how to undo it.
+    A named topic uses the uncapped lexical index.  ``all_memories`` previews every
+    visible active memory (global plus this chat's temporary rows); another chat's
+    temporary memory is never included.  The pending operation row owns the exact
+    ids; the signed token carries no ids and only proves the count and expiry.
     """
-    if not has_content_words(target):
+    if not all_memories and not has_content_words(target):
         # Reached from the voice grammar and from the model's forget tool alike. An empty keyword
         # query matches every memory, so a target that names nothing must never search.
         return _unchanged(
             request_id, "MEMORY_TARGET_UNSPECIFIED", "Tell me which memory to forget. Nothing was changed."
         )
     replay = await _replay_proposal(
-        db, owner_id=owner_id, conversation_id=conversation_id, command_type=HIDE_OPERATION, request_id=request_id
+        db, owner_id=owner_id, conversation_id=conversation_id, command_type=HIDE_PROPOSAL, request_id=request_id
     )
     if replay is not None:
         return replay
-    # A legacy pending proposal never survives a new memory request.
+    # A new memory request always retires the previous question.
     await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
-    candidates = tuple(
-        await search(db, owner_id=owner_id, conversation_id=conversation_id, query=target, limit=MATCH_LIMIT)
-    )
+    if all_memories:
+        candidates = tuple(await all_visible_memories(db, owner_id=owner_id, conversation_id=conversation_id))
+    elif search is not None:
+        candidates = tuple(
+            await search(db, owner_id=owner_id, conversation_id=conversation_id, query=target, limit=MATCH_LIMIT)
+        )
+    else:
+        candidates = tuple(
+            await search_all_memories(db, owner_id=owner_id, conversation_id=conversation_id, query=target)
+        )
     if not candidates:
         return _unchanged(
             request_id,
             "MEMORY_TARGET_NOT_FOUND",
-            f"I couldn't find anything matching {_snippet(target, 100)}; nothing was changed.",
+            f"I couldn't find anything about {_topic_phrase(target, all_memories)}; nothing was changed.",
         )
-    if len(candidates) > 1:
-        return _needs_confirmation(request_id, "MEMORY_TARGET_AMBIGUOUS", _ambiguity_spoken(candidates))
-    candidate = candidates[0]
-    try:
-        await hide_memory(db, owner_id, candidate.id)
-    except HTTPException as exc:
-        await db.rollback()
-        code = exc.detail.get("code") if isinstance(exc.detail, dict) else "MEMORY_NOT_AVAILABLE"
-        return _unchanged(request_id, str(code), "I couldn't hide that. Nothing was changed.")
-    response = _applied(
-        request_id,
-        "MEMORY_HIDDEN",
-        f"Hidden '{_snippet(candidate.content, 80)}'. Say undo to bring it back.",
-        candidate.id,
+    if not secret:
+        return _unsupported(
+            request_id,
+            "CONTEXT_PROPOSALS_NOT_CONFIGURED",
+            "Memory changes by voice aren't available right now. Nothing was changed.",
+        )
+    conversation = await owned_conversation(db, owner_id, conversation_id)
+    memory_ids = [candidate.id for candidate in candidates]
+    count = len(memory_ids)
+    expires_at = _expires_at()
+    operation_id = str(uuid4())
+    token = sign_proposal(
+        {
+            "v": 1,
+            "kind": "hide_topic",
+            "owner_id": owner_id,
+            "conversation_id": conversation_id,
+            "operation_id": operation_id,
+            "revision": conversation.revision,
+            "count": count,
+            "exp": expires_at,
+        },
+        secret,
     )
-    await _record_operation(
+    response = _needs_confirmation(request_id, "MEMORY_HIDE_PROPOSED", _preview_spoken(target, all_memories, count))
+    await _record_pending(
         db,
         owner_id=owner_id,
         conversation_id=conversation_id,
-        command_type=HIDE_OPERATION,
+        command_type=HIDE_PROPOSAL,
+        payload={
+            "kind": "hide_topic",
+            "token": token,
+            "query": target,
+            "all_memories": all_memories,
+            "memory_ids": memory_ids,
+            "count": count,
+            "expires_at": expires_at,
+            "response": response.model_dump(mode="json"),
+        },
         request_id=request_id,
-        payload={"memory_id": candidate.id, "response": response.model_dump(mode="json")},
-        outcome="applied",
+        revision=conversation.revision,
+        operation_id=operation_id,
     )
-    await db.commit()
     return response
 
 
@@ -455,6 +549,115 @@ async def _hide_operations_page(db: AsyncSession, owner_id: str, offset: int) ->
     ).all()
 
 
+def _restored_list_spoken(
+    restored_ids: Sequence[str],
+    *,
+    total: int,
+    deleted: int,
+    already: int,
+    unavailable: int,
+    contents: dict[str, str],
+) -> str:
+    restored = len(restored_ids)
+    if restored == total:
+        if total == 1:
+            content = contents.get(restored_ids[0], "")
+            return f"Brought back '{_snippet(content, 80)}'." if content else "Brought back 1 memory."
+        return f"Brought back {restored} memories."
+    skipped = total - restored
+    if deleted == skipped:
+        reason = "was deleted" if skipped == 1 else "were deleted"
+    elif already == skipped:
+        reason = "was already visible" if skipped == 1 else "were already visible"
+    elif unavailable == skipped:
+        reason = "was unavailable" if skipped == 1 else "were unavailable"
+    else:
+        reason = "had already changed"
+    return f"Brought back {restored} of {total}; {_number_word(skipped)} {reason}."
+
+
+async def _undo_memory_list(
+    db: AsyncSession,
+    *,
+    operation: ContextOperation,
+    memory_ids: Sequence[str],
+    total: int,
+    erased: int,
+    owner_id: str,
+    conversation_id: str,
+    request_id: str,
+) -> CommandResult:
+    rows: dict[str, tuple[str, str]] = {}
+    for start in range(0, len(memory_ids), HIDE_CHUNK_SIZE):
+        chunk = list(memory_ids[start : start + HIDE_CHUNK_SIZE])
+        result = await db.execute(
+            select(Memory.id, Memory.status, Memory.content).where(
+                Memory.id.in_(chunk),
+                Memory.owner_id == owner_id,
+                visible_in(conversation_id),
+            )
+        )
+        for row in result:
+            rows[row.id] = (row.status, row.content)
+    restored_ids: list[str] = []
+    deleted = erased
+    already = unavailable = 0
+    for memory_id in memory_ids:
+        stored = rows.get(memory_id)
+        if stored is None:
+            unavailable += 1
+            continue
+        status, _content = stored
+        if status == DELETED:
+            deleted += 1
+            continue
+        if status == ACTIVE:
+            already += 1
+            continue
+        if status != HIDDEN:
+            unavailable += 1
+            continue
+        changed = await db.execute(
+            update(Memory)
+            .where(
+                Memory.id == memory_id,
+                Memory.owner_id == owner_id,
+                Memory.status == HIDDEN,
+                visible_in(conversation_id),
+            )
+            .values(status=ACTIVE, updated_at=now())
+        )
+        if changed.rowcount == 1:
+            restored_ids.append(memory_id)
+        else:
+            unavailable += 1
+    spoken = _restored_list_spoken(
+        restored_ids,
+        total=total,
+        deleted=deleted,
+        already=already,
+        unavailable=unavailable,
+        contents={memory_id: content for memory_id, (_status, content) in rows.items()},
+    )
+    operation.outcome = "undone"
+    response = (
+        _applied(request_id, "MEMORY_UNHIDDEN", spoken, operation.id)
+        if restored_ids
+        else _unchanged(request_id, "MEMORY_ALREADY_VISIBLE", spoken)
+    )
+    await _record_operation(
+        db,
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        command_type=UNHIDE_OPERATION,
+        request_id=request_id,
+        payload={"memory_ids": restored_ids, "response": response.model_dump(mode="json")},
+        outcome="applied",
+    )
+    await db.commit()
+    return response
+
+
 async def undo_last_hide(db: AsyncSession, *, owner_id: str, conversation_id: str, request_id: str) -> CommandResult:
     """Unhide the most recent hide visible in this conversation; one step, no consent."""
     replay = await _replay_proposal(
@@ -471,7 +674,28 @@ async def undo_last_hide(db: AsyncSession, *, owner_id: str, conversation_id: st
         for operation in await _hide_operations_page(db, owner_id, offset)
     ]
     for operation in operations:
-        memory_id = (operation.payload or {}).get("memory_id")
+        payload = operation.payload or {}
+        if isinstance(payload.get("memory_ids"), list):
+            memory_ids = _payload_memory_ids(payload)
+            if not memory_ids:
+                continue
+            stored_count = payload.get("count")
+            total = (
+                stored_count if isinstance(stored_count, int) and stored_count >= len(memory_ids) else len(memory_ids)
+            )
+            stored_erased = payload.get("erased_count")
+            erased = stored_erased if isinstance(stored_erased, int) and 0 < stored_erased <= total else 0
+            return await _undo_memory_list(
+                db,
+                operation=operation,
+                memory_ids=memory_ids,
+                total=total,
+                erased=erased,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                request_id=request_id,
+            )
+        memory_id = payload.get("memory_id")
         if not isinstance(memory_id, str):
             continue
         content = await db.scalar(
@@ -712,6 +936,52 @@ async def _apply_restore(
     return response
 
 
+async def _apply_hide_topic(
+    db: AsyncSession,
+    *,
+    pending: ContextOperation,
+    owner_id: str,
+    conversation_id: str,
+    request_id: str,
+    verified: dict,
+) -> CommandResult:
+    payload = pending.payload or {}
+    if verified.get("operation_id") != pending.id:
+        return await _stale(
+            db, pending, request_id, "PROPOSAL_INVALID", "That request is no longer valid. Nothing was changed."
+        )
+    memory_ids = _payload_memory_ids(payload)
+    if not memory_ids:
+        return await _stale(
+            db, pending, request_id, "PROPOSAL_INVALID", "That request is no longer valid. Nothing was changed."
+        )
+    stored_count = payload.get("count")
+    total = stored_count if isinstance(stored_count, int) and stored_count >= len(memory_ids) else len(memory_ids)
+    try:
+        # The conversation lock comes first, then the per-owner memory lock: the same order every
+        # erase/write path uses, so a concurrent delete and this hide cannot interleave.
+        await owned_conversation(db, owner_id, conversation_id, lock=True)
+        await lock_owner_memories(db, owner_id)
+        hidden = await _hide_memories_in_chunks(
+            db, owner_id=owner_id, conversation_id=conversation_id, memory_ids=memory_ids
+        )
+    except HTTPException as exc:
+        await db.rollback()
+        code = exc.detail.get("code") if isinstance(exc.detail, dict) else "MEMORY_HIDE_FAILED"
+        return _failed(request_id, str(code))
+    except Exception:
+        await db.rollback()
+        return _failed(request_id, "MEMORY_HIDE_FAILED")
+    spoken = _hidden_spoken(str(payload.get("query") or ""), bool(payload.get("all_memories")), hidden, total)
+    response = (
+        _applied(request_id, "MEMORY_HIDDEN", spoken, pending.id)
+        if hidden
+        else _unchanged(request_id, "MEMORY_ALREADY_CHANGED", spoken)
+    )
+    await _finish_pending(db, pending, APPLIED, response, request_id)
+    return response
+
+
 async def _apply_pending(
     db: AsyncSession, *, pending: ContextOperation, owner_id: str, conversation_id: str, request_id: str, secret: str
 ) -> CommandResult:
@@ -754,6 +1024,15 @@ async def _apply_pending(
             token=token,
             verified=verified,
             request_id=request_id,
+        )
+    if kind == "hide_topic":
+        return await _apply_hide_topic(
+            db,
+            pending=pending,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            request_id=request_id,
+            verified=verified,
         )
     return await _stale(
         db, pending, request_id, "PROPOSAL_INVALID", "That request is no longer valid. Nothing was changed."

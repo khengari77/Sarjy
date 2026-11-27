@@ -17,6 +17,8 @@ from app.domain.commands import (
 )
 from app.domain.context_operations import verify_proposal
 from app.main import create_app
+from app.services.context_operations import keyword_search
+from app.services.memory_terms import terms_of
 from app.services.memory_visibility import HIDE_OPERATION
 from app.services.voice_exclusions import UNDO_SCAN_LIMIT, propose_exclusion
 from fastapi.testclient import TestClient
@@ -29,15 +31,15 @@ def legacy_forget(monkeypatch):
     """Forget now hides in one step; these tests cover the retained propose/confirm
     machinery (restore, consent one-shot, expiry, cross-owner) by routing forget to it."""
 
-    def propose(db, *, owner_id, conversation_id, target, request_id, search):
+    def propose(db, *, owner_id, conversation_id, target, request_id, secret, all_memories, search):
         return propose_exclusion(
             db,
             owner_id=owner_id,
             conversation_id=conversation_id,
             target=target,
             request_id=request_id,
-            secret=SECRET,
-            search=search,
+            secret=secret or SECRET,
+            search=search or keyword_search,
         )
 
     monkeypatch.setattr(commands_module, "hide_target", propose)
@@ -84,6 +86,11 @@ def seed(file, conversation_id, rows, owner_id=None, scope="global", status="act
                 "'2026-11-12T00:00:00+00:00')",
                 (record_id, owner, content, scope, "text-embedding-3-small", conversation_id, status),
             )
+            for term in terms_of(content):
+                db.execute(
+                    "INSERT INTO memory_terms (memory_id, owner_id, term) VALUES (?, ?, ?)",
+                    (record_id, owner, term),
+                )
         db.commit()
 
 
@@ -254,7 +261,7 @@ def test_forget_my_name_proposes_signed_expiring_proposal_then_applies_once_and_
         assert counts(file) == (2, 1, 0, 4)
 
 
-def test_zero_matches_is_honest_and_many_matches_ask_one_clarification(tmp_path):
+def test_zero_matches_is_honest_and_many_matches_preview_one_count_then_hide(tmp_path):
     file, settings = configured(tmp_path, "zero")
     with TestClient(create_app(settings)) as client:
         chat = new_chat(client)
@@ -262,25 +269,27 @@ def test_zero_matches_is_honest_and_many_matches_ask_one_clarification(tmp_path)
         result = voice(client, chat, "Forget my name.", request="missing").json()["result"]
         assert result["kind"] == "unchanged"
         assert result["detail"] == "MEMORY_TARGET_NOT_FOUND"
-        assert result["spoken"] == "I couldn't find anything matching my name; nothing was changed."
+        assert result["spoken"] == "I couldn't find anything about my name; nothing was changed."
         assert counts(file) == (0, 0, 0, 0)
 
     file, settings = configured(tmp_path, "many")
     with TestClient(create_app(settings)) as client:
         chat = new_chat(client)
         seed(file, chat, [("name-a", "My name is A"), ("name-b", "My name is B")])
-        result = voice(client, chat, "Forget my name.", request="ambiguous").json()["result"]
+        result = voice(client, chat, "Forget my name.", request="many").json()["result"]
         assert result["kind"] == "needs_confirmation"
-        assert result["detail"] == "MEMORY_TARGET_AMBIGUOUS"
-        assert "I have two matches:" in result["spoken"]
-        assert "My name is A" in result["spoken"] and "My name is B" in result["spoken"]
-        assert "Which one?" in result["spoken"]
-        assert counts(file) == (0, 0, 0, 0), "an ambiguous request must not propose an exclusion"
+        assert result["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert result["spoken"] == "I found 2 memories about my name. Hide all of them?"
+        assert counts(file) == (0, 0, 0, 1), "the preview only records one pending operation"
+        assert memory_status(file, "name-a") == "active"
+        assert memory_status(file, "name-b") == "active"
 
-        # "Yes" without a pending proposal is ordinary conversation, never a
-        # blanket exclusion of every candidate.
-        assert voice(client, chat, "Yes.", request="stray-yes").json() == {"handled": False}
-        assert counts(file) == (0, 0, 0, 0)
+        applied = voice(client, chat, "Yes.", request="many-yes").json()["result"]
+        assert applied["kind"] == "executed"
+        assert applied["detail"] == "MEMORY_HIDDEN"
+        assert applied["spoken"] == "Hidden 2 memories about my name. Say undo to bring them back."
+        assert memory_status(file, "name-a") == memory_status(file, "name-b") == "hidden"
+        assert counts(file) == (0, 0, 0, 1), "confirming the same operation row does not add another"
 
 
 @pytest.mark.usefixtures("legacy_forget")
@@ -324,35 +333,33 @@ def test_expired_proposal_is_refused_without_applying(tmp_path, monkeypatch):
         assert counts(file) == (0, 0, 0, 1)
 
 
-def test_global_and_other_destructive_phrasings_still_refuse_honestly(tmp_path):
+def test_global_phrasings_preview_and_other_destructive_phrasings_still_refuse_honestly(tmp_path):
     file, settings = configured(tmp_path, "refusals")
     with TestClient(create_app(settings)) as client:
         chat = new_chat(client)
         seed(file, chat, [("name", "My name is Khengari")])
 
+        # "everywhere" no longer refuses: a hide is already global, so this previews the named topic.
         global_result = voice(client, chat, "Forget my name everywhere.", request="global").json()["result"]
-        assert global_result["kind"] == "unsupported"
-        assert global_result["detail"] == "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE"
-        assert "every conversation" in global_result["spoken"]
-        assert "Nothing was changed" in global_result["spoken"]
-        assert counts(file) == (0, 0, 0, 0)
+        assert global_result["kind"] == "needs_confirmation"
+        assert global_result["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert global_result["spoken"] == "I found 1 memory about my name. Hide it?"
+        assert counts(file) == (0, 0, 0, 1)
 
         compound = voice(client, chat, "Forget the Paris trip but keep the budget.", request="compound").json()[
             "result"
         ]
         assert compound["kind"] == "unsupported"
         assert compound["detail"] == "MEMORY_MUTATION_UNSUPPORTED"
-        assert counts(file) == (0, 0, 0, 0)
 
         deleted = voice(client, chat, "Delete the memory of the Paris trip.", request="delete").json()["result"]
         assert deleted["kind"] == "unsupported"
         assert deleted["detail"] == "MEMORY_MUTATION_UNSUPPORTED"
-        assert counts(file) == (0, 0, 0, 0)
 
         nothing = voice(client, chat, "Restore excluded memories.", request="restore").json()["result"]
         assert nothing["kind"] == "unchanged"
         assert nothing["detail"] == "NO_EXCLUDED_MEMORIES"
-        assert counts(file) == (0, 0, 0, 0)
+        assert counts(file) == (0, 0, 0, 1)
 
 
 @pytest.mark.usefixtures("legacy_forget")
@@ -377,8 +384,8 @@ def test_a_new_memory_request_disarms_the_previous_proposal(tmp_path):
         assert counts(file) == (0, 0, 0, 1)
 
         voice(client, chat, "Forget my city.", request="p-city-2")
-        global_result = voice(client, chat, "Forget my city everywhere.", request="global").json()["result"]
-        assert global_result["detail"] == "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE"
+        refused = voice(client, chat, "Forget the Paris trip but keep the budget.", request="compound").json()["result"]
+        assert refused["detail"] == "MEMORY_MUTATION_UNSUPPORTED"
         assert voice(client, chat, "Yes.", request="late-yes-2").json() == {"handled": False}
         assert counts(file) == (0, 0, 0, 2)
 
