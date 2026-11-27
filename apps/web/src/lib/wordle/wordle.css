@@ -368,7 +368,7 @@
   line-height: 1;
 }
 
-.wordle-key:hover:enabled {
+.wordle-key[data-mark='none']:hover:enabled {
   background: var(--surface-hover);
 }
 

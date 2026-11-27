@@ -39,8 +39,14 @@
   --status-success-text: #57dfb8;
   --status-error-text: #ffb3bb;
 
-  /* Wordle tiles keep explicit pairs independent of the semantic orb colours. */
-  --wordle-correct-bg: #307770;
+  /* Wordle tiles keep explicit pairs independent of the semantic orb colours.
+     Dark fills reproduce origin/main's expressions against dark --bg-app
+     #080f29:
+       color-mix(in srgb, var(--status-success) 50%, var(--bg-app))
+         with --status-success #57dfb8 -> #307771
+       color-mix(in srgb, var(--orb-memory) 55%, var(--bg-app))
+         with --orb-memory #e9b454 -> #846a41 */
+  --wordle-correct-bg: #307771;
   --wordle-correct-text: #f3f6ff;
   --wordle-present-bg: #846a41;
   --wordle-present-text: #f3f6ff;

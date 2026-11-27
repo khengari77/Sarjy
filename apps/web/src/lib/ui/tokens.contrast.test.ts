@@ -72,6 +72,16 @@ function contrast(foreground: string, background: string): number {
 
 const SURFACES = ['--bg-app', '--bg-sidebar', '--surface-elevated', '--surface-hover', '--surface-raised'] as const;
 
+const FUNCTIONAL_SURFACES = ['--bg-app', '--bg-sidebar', '--surface-elevated'] as const;
+
+const FUNCTIONAL_TOKENS = [
+  '--accent',
+  '--status-error',
+  '--status-success',
+  '--border-subtle',
+  '--focus-ring',
+] as const;
+
 const ORB_TEXT_TOKENS = [
   '--orb-idle',
   '--orb-listening',
@@ -102,6 +112,15 @@ describe.each(THEME_BLOCKS)('%s theme contrast', (block) => {
       contrast(token(block, textToken), token(block, backgroundToken)),
       `${block} ${textToken}`,
     ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(FUNCTIONAL_TOKENS)('keeps %s at 3:1 for non-text UI', (functionalToken) => {
+    for (const surface of FUNCTIONAL_SURFACES) {
+      expect(
+        contrast(token(block, functionalToken), token(block, surface)),
+        `${block} ${functionalToken} ${surface}`,
+      ).toBeGreaterThanOrEqual(3);
+    }
   });
 
   it.each(SURFACES)('keeps --accent-text at AA on %s', (surface) => {
