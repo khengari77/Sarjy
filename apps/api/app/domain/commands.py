@@ -452,6 +452,18 @@ def parse_memory_exclusion_target(text: str) -> str | None:
     return target
 
 
+# "Forget everything I just said", "forget what we talked about" and "clear this chat's memory" are
+# chat-scoped: they clear only this chat's temporary memories, never a global one or another chat's.
+_MEMORY_CHAT_SCOPE = re.compile(
+    r"^(?:please )?(?:forget|clear) (?:"
+    r"(?:everything|what) (?:i|we) (?:just )?(?:said|talked about|discussed)"
+    r"|everything (?:from|in) (?:this|the|our) (?:chat|conversation)"
+    r"|(?:this|the|our) (?:chat|conversation)'?s? (?:temporary )?memor(?:y|ies)"
+    r"|the temporary memories(?: (?:from|in) (?:this|the|our) (?:chat|conversation))?"
+    r"|temporary memories(?: (?:from|in) (?:this|the|our) (?:chat|conversation))?"
+    r")$",
+    re.IGNORECASE,
+)
 _MEMORY_ALL_TARGETS = frozenset(
     {
         "all",
@@ -487,20 +499,28 @@ _MEMORY_SCOPE_SUFFIXES = (
 
 @dataclass(frozen=True)
 class MemoryForgetRequest:
-    """A parsed forget request: a named topic, or every visible memory about the user."""
+    """A parsed forget request: a named topic, this chat's temporary memories, or every memory.
+
+    ``all_memories`` is only a refusal signal for the deterministic caller: voice may not
+    clear every memory, so it points the user to Settings and writes nothing.
+    """
 
     query: str
+    this_chat: bool = False
     all_memories: bool = False
 
 
 def parse_memory_forget(text: str) -> MemoryForgetRequest | None:
-    """Parse "forget/exclude ..." into a topic query or an explicit all-memories request.
+    """Parse "forget/exclude/clear ..." into a topic, this chat, or an all-memories request.
 
-    "forget everything about Paris" names Paris; "forget everything", "forget all my
-    memories" and "forget everything about me" ask for every visible memory. Compound
-    and referential requests are still not commands.
+    "forget everything about Paris" names Paris; "forget everything I just said" and
+    "clear this chat's memory" clear only this chat's temporary memories; "forget
+    everything", "forget all my memories" and "forget everything about me" ask for every
+    memory and are refused by the caller. Compound and referential requests are not commands.
     """
     normalized = normalize_utterance(text, fold=False)
+    if _MEMORY_CHAT_SCOPE.match(normalized):
+        return MemoryForgetRequest("", this_chat=True)
     match = re.match(r"^(?:please )?(?:forget|exclude)\b(.*)$", normalized, re.IGNORECASE)
     if match is None:
         return None
@@ -508,8 +528,14 @@ def parse_memory_forget(text: str) -> MemoryForgetRequest | None:
     folded = candidate.casefold()
     if not candidate or _MEMORY_COMPOUND.search(normalized) or _CLAUSE_BREAK.search(candidate):
         return None
+    # Scope suffixes first: "everything about me everywhere" is the all-memories request,
+    # not the topic "me everywhere". "everything about Paris everywhere" still becomes Paris.
+    for suffix in _MEMORY_SCOPE_SUFFIXES:
+        if folded.endswith(suffix):
+            candidate = candidate[: -len(suffix)].strip()
+            folded = candidate.casefold()
     if folded in _MEMORY_ALL_TARGETS:
-        return MemoryForgetRequest("", True)
+        return MemoryForgetRequest("", all_memories=True)
     for prefix in _MEMORY_TOPIC_PREFIXES:
         if folded.startswith(prefix):
             candidate = candidate[len(prefix) :].strip()
@@ -518,15 +544,11 @@ def parse_memory_forget(text: str) -> MemoryForgetRequest | None:
     if folded.startswith("about "):
         candidate = candidate[6:].strip()
         folded = candidate.casefold()
-    for suffix in _MEMORY_SCOPE_SUFFIXES:
-        if folded.endswith(suffix):
-            candidate = candidate[: -len(suffix)].strip()
-            folded = candidate.casefold()
     if folded in _MEMORY_ALL_TARGETS:
-        return MemoryForgetRequest("", True)
+        return MemoryForgetRequest("", all_memories=True)
     if not candidate or folded in _REFERENTIAL_TARGETS | _FORGET_IDIOM_TARGETS or folded in {"me", "myself"}:
         return None
-    return MemoryForgetRequest(candidate, False)
+    return MemoryForgetRequest(candidate, this_chat=False)
 
 
 def memory_request_is_global(text: str) -> bool:

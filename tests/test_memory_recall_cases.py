@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from app.domain.commands import CommandKind
 from app.infrastructure.database import Memory
-from app.services.memory_terms import all_visible_memories, search_all_memories
+from app.services.memory_terms import search_all_memories
 from app.services.voice_exclusions import hide_target, resolve_confirmation, undo_last_hide
 from sqlalchemy import select
 from test_memory_terms import database, row, seed
@@ -46,11 +46,7 @@ def test_recall_case_preview_confirm_and_undo(case, tmp_path):
             all_ids = [memory["id"] for memory in case["memories"]]
             original = {memory["id"]: memory.get("status", "active") for memory in case["memories"]}
             async with sessions() as db:
-                found = (
-                    await all_visible_memories(db, owner_id="alice", conversation_id="a1")
-                    if case["all_memories"]
-                    else await search_all_memories(db, owner_id="alice", conversation_id="a1", query=case["query"])
-                )
+                found = await search_all_memories(db, owner_id="alice", conversation_id="a1", query=case["query"])
                 assert {hit.id for hit in found} == expected_ids
 
                 preview = await hide_target(
@@ -60,7 +56,6 @@ def test_recall_case_preview_confirm_and_undo(case, tmp_path):
                     target=case["query"],
                     request_id="preview",
                     secret=SECRET,
-                    all_memories=case["all_memories"],
                 )
                 if not expected_ids:
                     assert preview.kind is CommandKind.UNCHANGED

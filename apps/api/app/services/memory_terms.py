@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.context_operations import MemoryCandidate, classify
+from app.domain.contracts import SCOPE_CONVERSATION
 from app.infrastructure.database import Memory, MemoryTerm
 from app.services.memory_eligibility import blocked_memory_ids_select
 from app.services.memory_scope import visible_in
@@ -127,17 +128,17 @@ async def delete_terms(db: AsyncSession, memory_ids: Iterable[str]) -> None:
         await db.execute(delete(MemoryTerm).where(MemoryTerm.memory_id.in_(ids)))
 
 
-async def all_visible_memories(
+async def temporary_memories(
     db: AsyncSession,
     *,
     owner_id: str,
     conversation_id: str,
 ) -> Sequence[MemoryCandidate]:
-    """Every active, visible memory of the owner, without a row window.
+    """Every active temporary memory that belongs to this chat, owner-scoped.
 
-    The all-memories forgetting preview uses this; the SQL filter is the same as
-    ``search_all_memories`` so another chat's temporary memory and a hidden or
-    lineage-blocked row is never counted.
+    The chat-scope forgetting preview uses this. Global memories and another chat's
+    temporary rows are never included; the same lineage/exclusion filter as the lexical
+    search keeps a blocked row from being counted.
     """
     rows = (
         (
@@ -145,8 +146,9 @@ async def all_visible_memories(
                 select(Memory)
                 .where(
                     Memory.owner_id == owner_id,
+                    Memory.scope == SCOPE_CONVERSATION,
+                    Memory.source_conversation_id == conversation_id,
                     Memory.status == "active",
-                    visible_in(conversation_id),
                     Memory.id.not_in(blocked_memory_ids_select(owner_id, conversation_id)),
                 )
                 .order_by(Memory.updated_at.desc(), Memory.id)

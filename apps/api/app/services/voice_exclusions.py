@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -34,7 +35,7 @@ from app.services.context_operations import (
 )
 from app.services.memory_erasure_lock import lock_owner_memories
 from app.services.memory_scope import visible_in
-from app.services.memory_terms import all_visible_memories, search_all_memories
+from app.services.memory_terms import search_all_memories, temporary_memories
 from app.services.memory_visibility import (
     ACTIVE,
     DELETED,
@@ -385,18 +386,26 @@ async def _record_operation(
     )
 
 
-def _topic_phrase(target: str, all_memories: bool) -> str:
-    return "you" if all_memories else _snippet(target, 80)
-
-
-def _preview_spoken(target: str, all_memories: bool, count: int) -> str:
+def _preview_spoken(target: str, scope: Literal["topic", "chat"], count: int) -> str:
+    if scope == "chat":
+        noun = "temporary memory" if count == 1 else "temporary memories"
+        action = "Clear it?" if count == 1 else "Clear them?"
+        return f"I found {count} {noun} from this chat. {action}"
     noun = "memory" if count == 1 else "memories"
     action = "Hide it?" if count == 1 else "Hide all of them?"
-    return f"I found {count} {noun} about {_topic_phrase(target, all_memories)}. {action}"
+    return f"I found {count} {noun} about {_snippet(target, 80)}. {action}"
 
 
-def _hidden_spoken(target: str, all_memories: bool, hidden: int, total: int) -> str:
-    topic = _topic_phrase(target, all_memories)
+def _hidden_spoken(target: str, scope: Literal["topic", "chat"], hidden: int, total: int) -> str:
+    if scope == "chat":
+        if hidden == total:
+            noun = "temporary memory" if hidden == 1 else "temporary memories"
+            pronoun = "it" if hidden == 1 else "them"
+            return f"Cleared {hidden} {noun} from this chat. Say undo to bring {pronoun} back."
+        if hidden == 0:
+            return "None of those temporary memories could be cleared; they had already changed."
+        return f"Cleared {hidden} of {total}; {_number_word(total - hidden)} had already changed."
+    topic = _snippet(target, 80)
     if hidden == total:
         noun = "memory" if hidden == 1 else "memories"
         pronoun = "it" if hidden == 1 else "them"
@@ -443,17 +452,17 @@ async def hide_target(
     target: str,
     request_id: str,
     secret: str = "",
-    all_memories: bool = False,
+    scope: Literal["topic", "chat"] = "topic",
     search: MemorySearcher | None = None,
 ) -> CommandResult:
     """Preview hiding every matching memory, then apply the exact ids on one yes.
 
-    A named topic uses the uncapped lexical index.  ``all_memories`` previews every
-    visible active memory (global plus this chat's temporary rows); another chat's
-    temporary memory is never included.  The pending operation row owns the exact
-    ids; the signed token carries no ids and only proves the count and expiry.
+    A named topic uses the uncapped lexical index.  ``scope="chat"`` clears only this
+    chat's active temporary memories; a global memory and another chat's temporary
+    memory are never included.  The pending operation row owns the exact ids; the
+    signed token carries no ids and only proves the count and expiry.
     """
-    if not all_memories and not has_content_words(target):
+    if scope == "topic" and not has_content_words(target):
         # Reached from the voice grammar and from the model's forget tool alike. An empty keyword
         # query matches every memory, so a target that names nothing must never search.
         return _unchanged(
@@ -466,8 +475,8 @@ async def hide_target(
         return replay
     # A new memory request always retires the previous question.
     await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
-    if all_memories:
-        candidates = tuple(await all_visible_memories(db, owner_id=owner_id, conversation_id=conversation_id))
+    if scope == "chat":
+        candidates = tuple(await temporary_memories(db, owner_id=owner_id, conversation_id=conversation_id))
     elif search is not None:
         candidates = tuple(
             await search(db, owner_id=owner_id, conversation_id=conversation_id, query=target, limit=MATCH_LIMIT)
@@ -477,10 +486,16 @@ async def hide_target(
             await search_all_memories(db, owner_id=owner_id, conversation_id=conversation_id, query=target)
         )
     if not candidates:
+        if scope == "chat":
+            return _unchanged(
+                request_id,
+                "MEMORY_TARGET_NOT_FOUND",
+                "There are no temporary memories in this chat; nothing was changed.",
+            )
         return _unchanged(
             request_id,
             "MEMORY_TARGET_NOT_FOUND",
-            f"I couldn't find anything about {_topic_phrase(target, all_memories)}; nothing was changed.",
+            f"I couldn't find anything about {_snippet(target, 80)}; nothing was changed.",
         )
     if not secret:
         return _unsupported(
@@ -506,7 +521,7 @@ async def hide_target(
         },
         secret,
     )
-    response = _needs_confirmation(request_id, "MEMORY_HIDE_PROPOSED", _preview_spoken(target, all_memories, count))
+    response = _needs_confirmation(request_id, "MEMORY_HIDE_PROPOSED", _preview_spoken(target, scope, count))
     await _record_pending(
         db,
         owner_id=owner_id,
@@ -516,7 +531,7 @@ async def hide_target(
             "kind": "hide_topic",
             "token": token,
             "query": target,
-            "all_memories": all_memories,
+            "scope": scope,
             "memory_ids": memory_ids,
             "count": count,
             "expires_at": expires_at,
@@ -972,7 +987,8 @@ async def _apply_hide_topic(
     except Exception:
         await db.rollback()
         return _failed(request_id, "MEMORY_HIDE_FAILED")
-    spoken = _hidden_spoken(str(payload.get("query") or ""), bool(payload.get("all_memories")), hidden, total)
+    scope: Literal["topic", "chat"] = "chat" if payload.get("scope") == "chat" else "topic"
+    spoken = _hidden_spoken(str(payload.get("query") or ""), scope, hidden, total)
     response = (
         _applied(request_id, "MEMORY_HIDDEN", spoken, pending.id)
         if hidden
@@ -1069,15 +1085,18 @@ async def resolve_confirmation(
     )
 
 
+GLOBAL_RETRACTION_SPOKEN = (
+    "I can't clear all your memories by voice. You can review and delete them in Settings, under Memory. "
+    "Nothing was changed."
+)
+
+
 def global_retraction_refusal(request_id: str) -> CommandResult:
-    return _unsupported(
-        request_id,
-        "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE",
-        "I can't delete a memory from every conversation by voice yet. Nothing was changed.",
-    )
+    return _unchanged(request_id, "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE", GLOBAL_RETRACTION_SPOKEN)
 
 
 __all__ = [
+    "GLOBAL_RETRACTION_SPOKEN",
     "global_retraction_refusal",
     "hide_target",
     "propose_exclusion",

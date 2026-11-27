@@ -9,17 +9,23 @@ turn.  Recall is a read-only, owner-scoped lookup.
 
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.commands import CommandKind
+from app.domain.commands import CommandKind, MemoryForgetRequest, parse_memory_forget
 from app.domain.memory_capture import clean_tool_query, parse_tool_fact
 from app.infrastructure.database import Memory
 from app.services.context_operations import MemorySearcher, query_tokens, recent_memories
 from app.services.memory_capture import proposal_for_capture, record_proposal
 from app.services.memory_scope import visible_in
 from app.services.memory_terms import search_all_memories
-from app.services.voice_exclusions import discard_pending, hide_target
+from app.services.voice_exclusions import (
+    GLOBAL_RETRACTION_SPOKEN,
+    discard_pending,
+    hide_target,
+)
 
 RECALL_LIMIT = 5
 RECALL_SNIPPET_CHARS = 200
@@ -30,8 +36,8 @@ NOT_SAVED_NOTE = (
     "do not say or imply it is saved, and do not add your own question."
 )
 FORGET_NOTE = (
-    "The application handles this and will speak the exact line to the user (forgetting hides the memories "
-    "everywhere and a later undo brings them back). Do not add your own confirmation or question."
+    "The application handles this and will speak the exact line to the user (the preview asks once before anything "
+    "changes, and a later undo brings it back). Do not add your own confirmation or question."
 )
 
 
@@ -76,20 +82,24 @@ async def memory_propose_tool(
     return {"status": "proposed", "proposal": proposal, "message": NOT_SAVED_NOTE}
 
 
-_ALL_MEMORY_QUERIES = frozenset(
-    {
-        "all",
-        "all memories",
-        "all my memories",
-        "everything",
-        "everything about me",
-        "everything you know about me",
-        "me",
-        "my memories",
-        "myself",
-        "what you know about me",
-    }
-)
+_FORGET_VERB = re.compile(r"^(?:please )?(?:forget|exclude|clear)\b", re.IGNORECASE)
+
+
+def _parse_tool_forget(query: str) -> MemoryForgetRequest | None:
+    """Map a model query onto the same parser the voice grammar uses.
+
+    The model supplies a bare topic ("tea") or one of the chat/all-memory phrases. A bare
+    phrase is read as if the user had said "forget <phrase>"; a phrase that already has a
+    verb is parsed as-is. Nothing is inferred beyond what the parser accepts.
+    """
+    parsed = parse_memory_forget(query)
+    if parsed is None and _FORGET_VERB.match(query) is None:
+        if query.casefold() in {"me", "myself"}:
+            # The model often supplies "me" for a whole-account request; refuse it like every
+            # other all-memories phrasing instead of searching for a memory named "me".
+            return MemoryForgetRequest("", all_memories=True)
+        parsed = parse_memory_forget(f"forget {query}")
+    return parsed
 
 
 async def memory_forget_tool(
@@ -100,7 +110,6 @@ async def memory_forget_tool(
     request_id: str,
     query: str,
     secret: str,
-    all_memories: bool = False,
     search: MemorySearcher | None = None,
 ) -> dict:
     cleaned = clean_tool_query(query)
@@ -110,18 +119,31 @@ async def memory_forget_tool(
             "error": "MEMORY_QUERY_INVALID",
             "message": "Nothing was changed. Ask the user what they want forgotten.",
         }
-    # The model often says "me" or "everything" for a whole-account forget; terms_of() of that
-    # names nothing, so treat it as the explicit all-memories case instead of searching.
-    if cleaned.casefold() in _ALL_MEMORY_QUERIES:
-        all_memories = True
+    parsed = _parse_tool_forget(cleaned)
+    if parsed is None:
+        return {
+            "status": "not_hidden",
+            "detail": "MEMORY_TARGET_UNSPECIFIED",
+            "spoken": "Tell me which memory to forget. Nothing was changed.",
+            "message": FORGET_NOTE,
+        }
+    if parsed.all_memories:
+        # Never hide every memory by voice: the same refusal the voice grammar speaks.
+        return {
+            "status": "not_hidden",
+            "detail": "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE",
+            "spoken": GLOBAL_RETRACTION_SPOKEN,
+            "message": FORGET_NOTE,
+        }
+    scope = "chat" if parsed.this_chat else "topic"
     result = await hide_target(
         db,
         owner_id=owner_id,
         conversation_id=conversation_id,
-        target="" if all_memories else cleaned,
+        target="" if scope == "chat" else parsed.query,
         request_id=request_id,
         secret=secret,
-        all_memories=all_memories,
+        scope=scope,
         search=search,
     )
     proposed = result.kind is CommandKind.NEEDS_CONFIRMATION and result.detail == "MEMORY_HIDE_PROPOSED"

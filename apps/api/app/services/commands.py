@@ -54,6 +54,7 @@ from app.services.context_operations import ContextOperationError, MemorySearche
 from app.services.jev_ui import UiClassifier
 from app.services.voice_exclusions import (
     discard_pending,
+    global_retraction_refusal,
     hide_target,
     propose_restore,
     resolve_confirmation,
@@ -323,6 +324,9 @@ async def _handle_memory_mutation(
     forget = parse_memory_forget(text)
     if forget is None:
         return None
+    if forget.all_memories:
+        # Voice may not clear every memory. Point to the Settings screen and write nothing.
+        return global_retraction_refusal(request_id)
     return await _run_memory_command(
         hide_target(
             db,
@@ -331,7 +335,7 @@ async def _handle_memory_mutation(
             target=forget.query,
             request_id=request_id,
             secret=secret,
-            all_memories=forget.all_memories,
+            scope="chat" if forget.this_chat else "topic",
             search=search,
         ),
         request_id=request_id,

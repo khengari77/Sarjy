@@ -31,7 +31,7 @@ def legacy_forget(monkeypatch):
     """Forget now hides in one step; these tests cover the retained propose/confirm
     machinery (restore, consent one-shot, expiry, cross-owner) by routing forget to it."""
 
-    def propose(db, *, owner_id, conversation_id, target, request_id, secret, all_memories, search):
+    def propose(db, *, owner_id, conversation_id, target, request_id, secret, scope, search):
         return propose_exclusion(
             db,
             owner_id=owner_id,

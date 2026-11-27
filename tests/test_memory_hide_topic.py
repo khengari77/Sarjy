@@ -8,7 +8,7 @@ from contextlib import closing
 import app.services.voice_exclusions as voice_exclusions
 import pytest
 from app.config import Settings
-from app.domain.commands import CommandKind
+from app.domain.commands import CommandKind, MemoryForgetRequest, parse_memory_forget
 from app.infrastructure.database import ContextOperation, Memory
 from app.main import create_app
 from app.services.memory_terms import search_all_memories, terms_of
@@ -309,15 +309,15 @@ def configured(tmp_path, name):
     return file, settings
 
 
-def seed_sql(file, chat, rows):
+def seed_sql(file, chat, rows, *, scope="global"):
     with closing(sqlite3.connect(file)) as db, db:
         owner = db.execute("SELECT owner_id FROM conversations WHERE id=?", (chat,)).fetchone()[0]
         for record_id, content in rows:
             db.execute(
                 "INSERT INTO memories (id,owner_id,content,scope,embedding_model,source_conversation_id,version,"
-                "status,created_at,updated_at) VALUES (?,?,?,'global','text-embedding-3-small',?,1,'active',"
+                "status,created_at,updated_at) VALUES (?,?,?,?,'text-embedding-3-small',?,1,'active',"
                 "'2026-11-12T00:00:00+00:00','2026-11-12T00:00:00+00:00')",
-                (record_id, owner, content, chat),
+                (record_id, owner, content, scope, chat),
             )
             for term in terms_of(content):
                 db.execute(
@@ -400,41 +400,155 @@ def test_a_memory_deleted_between_preview_and_yes_is_skipped_and_reported(tmp_pa
         assert memory_status(file, "p2") == "deleted"
 
 
-def test_all_memories_previews_every_visible_row_and_never_another_chats_temporary(tmp_path):
-    file, settings = configured(tmp_path, "all")
+def _seed_other_chat_temporary(file, owner, other_chat, memory_id, content):
+    with closing(sqlite3.connect(file)) as db, db:
+        db.execute(
+            "INSERT INTO memories (id,owner_id,content,scope,embedding_model,source_conversation_id,version,"
+            "status,created_at,updated_at) VALUES (?,?,?,'conversation','m',?,1,'active',"
+            "'2026-11-12T00:00:00+00:00','2026-11-12T00:00:00+00:00')",
+            (memory_id, owner, content, other_chat),
+        )
+        for term in terms_of(content):
+            db.execute(
+                "INSERT INTO memory_terms (memory_id, owner_id, term) VALUES (?, ?, ?)",
+                (memory_id, owner, term),
+            )
+        db.commit()
+
+
+def test_chat_scope_clears_only_this_chats_temporary_memories_and_undo_restores_them(tmp_path):
+    file, settings = configured(tmp_path, "chat-scope")
     with TestClient(create_app(settings)) as client:
         owner = client.post("/v1/demo-session").json()["id"]
         chat = client.post("/v1/conversations").json()["id"]
         other = client.post("/v1/conversations").json()["id"]
-        seed_sql(file, chat, [("g1", "I live in Tripoli"), ("g2", "I like green tea")])
-        with closing(sqlite3.connect(file)) as db, db:
-            db.execute(
-                "INSERT INTO memories (id,owner_id,content,scope,embedding_model,source_conversation_id,version,"
-                "status,created_at,updated_at) VALUES ('temp-here',?,?,'conversation','m',?,1,'active',"
-                "'2026-11-12T00:00:00+00:00','2026-11-12T00:00:00+00:00')",
-                (owner, "A temporary note here", chat),
-            )
-            db.execute(
-                "INSERT INTO memories (id,owner_id,content,scope,embedding_model,source_conversation_id,version,"
-                "status,created_at,updated_at) VALUES ('temp-other',?,?,'conversation','m',?,1,'active',"
-                "'2026-11-12T00:00:00+00:00','2026-11-12T00:00:00+00:00')",
-                (owner, "Another chat's secret", other),
-            )
-            for memory_id, content in (
-                ("temp-here", "A temporary note here"),
-                ("temp-other", "Another chat's secret"),
-            ):
-                for term in terms_of(content):
-                    db.execute(
-                        "INSERT INTO memory_terms (memory_id, owner_id, term) VALUES (?, ?, ?)",
-                        (memory_id, owner, term),
-                    )
-            db.commit()
+        seed_sql(file, chat, [("g1", "I live in Tripoli")])
+        seed_sql(
+            file,
+            chat,
+            [("temp-1", "A temporary note here"), ("temp-2", "Another temporary note")],
+            scope="conversation",
+        )
+        _seed_other_chat_temporary(file, owner, other, "temp-other", "Another chat's secret")
 
-        preview = voice(client, chat, "Forget everything about me.", "preview")
-        assert preview["spoken"] == "I found 3 memories about you. Hide all of them?"
+        preview = voice(client, chat, "Forget everything I just said.", "preview")
+        assert preview["kind"] == "needs_confirmation"
+        assert preview["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert preview["spoken"] == "I found 2 temporary memories from this chat. Clear them?"
+        assert memory_status(file, "temp-1") == memory_status(file, "temp-2") == "active"
+
         applied = voice(client, chat, "Yes.", "confirm")
-        assert applied["spoken"] == "Hidden 3 memories about you. Say undo to bring them back."
-        assert memory_status(file, "g1") == memory_status(file, "g2") == "hidden"
-        assert memory_status(file, "temp-here") == "hidden"
-        assert memory_status(file, "temp-other") == "active"
+        assert applied["detail"] == "MEMORY_HIDDEN"
+        assert applied["spoken"] == "Cleared 2 temporary memories from this chat. Say undo to bring them back."
+        assert memory_status(file, "temp-1") == memory_status(file, "temp-2") == "hidden"
+        assert memory_status(file, "g1") == memory_status(file, "temp-other") == "active"
+
+        undo = voice(client, chat, "Undo", "undo")
+        assert undo["detail"] == "MEMORY_UNHIDDEN"
+        assert memory_status(file, "temp-1") == memory_status(file, "temp-2") == "active"
+        assert memory_status(file, "g1") == memory_status(file, "temp-other") == "active"
+
+
+@pytest.mark.parametrize("mode", ["auto", "ask", "off"])
+def test_chat_scope_takes_one_yes_in_every_memory_mode(tmp_path, mode):
+    file, settings = configured(tmp_path, f"chat-mode-{mode}")
+    with TestClient(create_app(settings)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        seed_sql(
+            file, chat, [("temp-1", "First temporary note"), ("temp-2", "Second temporary note")], scope="conversation"
+        )
+        set_mode(file, owner, mode)
+
+        preview = voice(client, chat, "Clear this chat's memory.", "preview")
+        assert preview["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert preview["spoken"] == "I found 2 temporary memories from this chat. Clear them?"
+        assert memory_status(file, "temp-1") == memory_status(file, "temp-2") == "active"
+
+        applied = voice(client, chat, "Yes.", "confirm")
+        assert applied["detail"] == "MEMORY_HIDDEN"
+        assert memory_status(file, "temp-1") == memory_status(file, "temp-2") == "hidden"
+
+
+def test_chat_scope_zero_is_honest_and_writes_nothing(tmp_path):
+    file, settings = configured(tmp_path, "chat-zero")
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        seed_sql(file, chat, [("g1", "I live in Tripoli")])
+
+        result = voice(client, chat, "Forget the temporary memories.", "zero")
+        assert result["kind"] == "unchanged"
+        assert result["detail"] == "MEMORY_TARGET_NOT_FOUND"
+        assert result["spoken"] == "There are no temporary memories in this chat; nothing was changed."
+        assert memory_status(file, "g1") == "active"
+        with closing(sqlite3.connect(file)) as db:
+            assert db.execute("SELECT count(*) FROM context_operations").fetchone()[0] == 0
+
+
+ALL_MEMORY_PHRASES = [
+    "Forget everything.",
+    "Forget all my memories.",
+    "Forget everything about me.",
+    "Forget everything about me everywhere.",
+    "Forget everything about me globally.",
+    "Forget everything about me in all chats.",
+    "Forget everything you know about me.",
+]
+
+
+@pytest.mark.parametrize("phrase", ALL_MEMORY_PHRASES)
+def test_every_all_memory_phrase_refuses_and_writes_nothing(tmp_path, phrase):
+    file, settings = configured(tmp_path, "all-refusal")
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        seed_sql(file, chat, [("g1", "I live in Tripoli")])
+
+        result = voice(client, chat, phrase, "refuse")
+        assert result["kind"] == "unchanged"
+        assert result["detail"] == "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE"
+        assert result["spoken"] == (
+            "I can't clear all your memories by voice. You can review and delete them in Settings, under Memory. "
+            "Nothing was changed."
+        )
+        assert result["changed"] is False
+        assert memory_status(file, "g1") == "active"
+        with closing(sqlite3.connect(file)) as db:
+            assert db.execute("SELECT count(*) FROM context_operations").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Forget my name.", MemoryForgetRequest("my name")),
+        ("Exclude Paris.", MemoryForgetRequest("Paris")),
+        ("Please forget the Paris trip.", MemoryForgetRequest("the Paris trip")),
+        ("forget everything about Paris", MemoryForgetRequest("Paris")),
+        ("forget the Paris trip everywhere", MemoryForgetRequest("the Paris trip")),
+        ("forget everything I just said", MemoryForgetRequest("", this_chat=True)),
+        ("forget what I said", MemoryForgetRequest("", this_chat=True)),
+        ("forget what we just talked about", MemoryForgetRequest("", this_chat=True)),
+        ("forget everything from this chat", MemoryForgetRequest("", this_chat=True)),
+        ("forget everything from this conversation", MemoryForgetRequest("", this_chat=True)),
+        ("clear this chat's memory", MemoryForgetRequest("", this_chat=True)),
+        ("forget the temporary memories", MemoryForgetRequest("", this_chat=True)),
+        ("forget temporary memories in this chat", MemoryForgetRequest("", this_chat=True)),
+        ("forget everything", MemoryForgetRequest("", all_memories=True)),
+        ("forget all my memories", MemoryForgetRequest("", all_memories=True)),
+        ("forget all of my memories globally", MemoryForgetRequest("", all_memories=True)),
+        ("forget everything about me", MemoryForgetRequest("", all_memories=True)),
+        ("forget everything about me everywhere", MemoryForgetRequest("", all_memories=True)),
+        ("forget everything about me in all chats", MemoryForgetRequest("", all_memories=True)),
+        ("forget everything you know about me", MemoryForgetRequest("", all_memories=True)),
+        ("forget what you know about me everywhere", MemoryForgetRequest("", all_memories=True)),
+        ("forget it", None),
+        ("forget about it", None),
+        ("forget that", None),
+        ("forget them", None),
+        ("forget the trip but keep the budget", None),
+        ("forget everything I said and tell me a joke", None),
+    ],
+)
+def test_parse_memory_forget_table(text, expected):
+    assert parse_memory_forget(text) == expected

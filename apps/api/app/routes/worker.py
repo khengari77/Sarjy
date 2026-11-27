@@ -168,7 +168,7 @@ class MemoryQueryInput(MemoryToolBase):
 
 
 class MemoryForgetInput(MemoryQueryInput):
-    all_memories: bool = False
+    pass
 
 
 class CommandInput(BaseModel):
@@ -1211,7 +1211,6 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
                 request_id=body.request_id,
                 query=body.query,
                 secret=secret,
-                all_memories=body.all_memories,
             )
 
         return await _run_memory_tool(
@@ -1220,7 +1219,7 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
             request,
             body,
             "memory_forget",
-            {"query": body.query, "all_memories": body.all_memories},
+            {"query": body.query},
             effect,
         )
 

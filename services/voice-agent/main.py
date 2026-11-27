@@ -1664,11 +1664,11 @@ class SarjyAgent(WordleTools, Agent):
         return str(body.get("message") or FAILED_NOTE)
 
     @function_tool()
-    async def propose_forget(self, ctx: RunContext, query: str, all_memories: bool = False):
-        """Forget stored memories matching a short topic query (for example "tea"), or every visible memory when the user asks to forget everything about them. Forgetting hides the memories in every conversation. This only previews: the app says how many it found and asks once before hiding anything."""
+    async def propose_forget(self, ctx: RunContext, query: str):
+        """Forget stored memories matching a short topic query (for example "tea"), or clear this chat's temporary memories when the user asks to forget what they just said. Clearing every memory is refused and points the user to Settings. This only previews: the app says how many it found and asks once before hiding anything."""
         if self.current_turn is not None and self.current_turn == self.decision_turn:
             return DECISION_TURN_NOTE
-        body = await self._memory_tool("memory-forget", ctx, query=query, all_memories=all_memories)
+        body = await self._memory_tool("memory-forget", ctx, query=query)
         spoken = body.get("spoken")
         if (
             isinstance(spoken, str)

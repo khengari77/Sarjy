@@ -3,6 +3,7 @@
 import sqlite3
 from contextlib import closing
 
+import pytest
 from fastapi.testclient import TestClient
 from test_context_assembly import seed_memories, start_turn
 from test_context_workflow import configured, create_app, seed
@@ -156,6 +157,66 @@ def test_forget_previews_zero_one_or_many_then_hides_all_on_one_yes(tmp_path):
         assert applied_one["spoken"] == "Hidden 1 memory about tea. Say undo to bring it back."
         assert memory_status(file, "tea") == "hidden"
         assert table_count(file, "context_exclusions") == 0
+
+
+ALL_MEMORY_QUERIES = [
+    "everything",
+    "me",
+    "all my memories",
+    "everything about me",
+    "everything about me everywhere",
+    "everything about me in all chats",
+    "everything you know about me",
+    "forget everything about me",
+]
+
+
+@pytest.mark.parametrize("query", ALL_MEMORY_QUERIES)
+def test_forget_tool_refuses_every_all_memory_query_and_changes_nothing(tmp_path, query):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+
+        body = call(client, headers, FORGET, turn, "all-memory", query=query).json()
+        assert body["status"] == "not_hidden"
+        assert body["detail"] == "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE"
+        assert body["spoken"] == (
+            "I can't clear all your memories by voice. You can review and delete them in Settings, under Memory. "
+            "Nothing was changed."
+        )
+        assert memory_status(file, "tea") == "active"
+        assert table_count(file, "context_operations") == 0
+
+
+def test_forget_tool_chat_phrase_clears_only_this_chats_temporary_memories(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        owner, chat, headers, turn = setup(client, file, [("global", "I live in Tripoli")])
+        other = client.post("/v1/conversations").json()["id"]
+        with closing(sqlite3.connect(file)) as db, db:
+            for memory_id, content, source in (
+                ("temp-here", "A temporary note here", chat),
+                ("temp-other", "Another chat's secret", other),
+            ):
+                db.execute(
+                    "INSERT INTO memories (id,owner_id,content,scope,embedding_model,source_conversation_id,"
+                    "version,status,created_at,updated_at) VALUES (?,?,?,'conversation','m',?,1,'active',"
+                    "'2026-11-12T00:00:00+00:00','2026-11-12T00:00:00+00:00')",
+                    (memory_id, owner, content, source),
+                )
+            db.commit()
+
+        preview = call(client, headers, FORGET, turn, "chat-scope", query="everything I just said").json()
+        assert preview["status"] == "proposed"
+        assert preview["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert preview["spoken"] == "I found 1 temporary memory from this chat. Clear it?"
+        assert memory_status(file, "temp-here") == "active"
+
+        applied = command(client, headers, next_turn(client, headers, "chat-yes", "yes"))
+        assert applied["detail"] == "MEMORY_HIDDEN"
+        assert applied["spoken"] == "Cleared 1 temporary memory from this chat. Say undo to bring it back."
+        assert memory_status(file, "temp-here") == "hidden"
+        assert memory_status(file, "global") == memory_status(file, "temp-other") == "active"
 
 
 def test_undo_unhides_the_latest_hide_and_a_stray_yes_changes_nothing(tmp_path):

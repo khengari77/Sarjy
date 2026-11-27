@@ -214,6 +214,28 @@ def test_forget_with_no_match_speaks_the_refusal_and_arms_nothing(monkeypatch):
     run(monkeypatch, steps, tool_bodies=body)
 
 
+def test_forget_all_memories_speaks_the_settings_refusal_without_model_prose(monkeypatch):
+    spoken = (
+        "I can't clear all your memories by voice. You can review and delete them in Settings, under Memory. "
+        "Nothing was changed."
+    )
+    body = {
+        "memory-forget": {
+            "status": "not_hidden",
+            "detail": "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE",
+            "spoken": spoken,
+            "message": "Nothing changed.",
+        }
+    }
+
+    async def steps(h, agent):
+        _, chunks = await h.say(agent, "Forget everything about me", "propose_forget", query="everything about me")
+        assert chunks == [spoken]
+        assert agent.memory_proposal is None
+
+    run(monkeypatch, steps, tool_bodies=body)
+
+
 def test_forget_after_a_pending_remember_disarms_it_so_both_are_never_armed(monkeypatch):
     async def steps(h, agent):
         await h.say(agent, "I've moved to Benghazi", "propose_memory", fact="I live in Benghazi")
