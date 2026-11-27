@@ -33,6 +33,64 @@ describe('deriveStage', () => {
   });
 });
 
+describe('deriveStage error priority', () => {
+  const live = {
+    id: 'sess-1',
+    url: 'ws://fake.invalid',
+    token: 'token',
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    voice: { id: 'voice-1', name: 'Voice', languages: [] },
+    voice_language: 'en' as const,
+    voice_source: 'default' as const,
+  };
+
+  it('keeps the live phase and its actions for a recoverable error', () => {
+    const stage = deriveStage(
+      {
+        ...initialVoiceState(),
+        live,
+        muted: false,
+        agentState: 'listening',
+        voiceErrorCode: 'MICROPHONE_PERMISSION_DENIED',
+      },
+      false,
+      'none',
+      'dark',
+    );
+    expect(stage.presentation.effectivePhase).toBe('listening');
+    expect(stage.presentation.enabledActions).toEqual(['mute', 'end']);
+    expect(stage.presentation.enabledActions).not.toContain('retry');
+    expect(stage.errorText).toContain('Microphone access is blocked');
+  });
+
+  it('keeps the error overlay and retry for a fatal error on a live call', () => {
+    const stage = deriveStage(
+      {
+        ...initialVoiceState(),
+        live,
+        agentState: 'listening',
+        voiceErrorCode: 'CONNECTION_LOST',
+      },
+      false,
+      'none',
+      'dark',
+    );
+    expect(stage.presentation.effectivePhase).toBe('error');
+    expect(stage.presentation.enabledActions).toEqual(['retry']);
+  });
+
+  it('shows the error overlay for a recoverable startup error when no call is live', () => {
+    const stage = deriveStage(
+      { ...initialVoiceState(), voiceErrorCode: 'MICROPHONE_PERMISSION_DENIED' },
+      false,
+      'none',
+      'dark',
+    );
+    expect(stage.presentation.effectivePhase).toBe('error');
+    expect(stage.presentation.enabledActions).toEqual(['retry']);
+  });
+});
+
 describe('deriveStage connection state colour', () => {
   it('turns the orb red for an error even on a lost connection', () => {
     const lost = deriveStage(

@@ -8,6 +8,7 @@ import {
 } from '../orb/orbState';
 import type { ThemeName } from '../orb/palette';
 import type { VoiceState } from './connection';
+import { isFatalVoiceError } from './errors';
 
 export interface StageView {
   phase: VoicePhase;
@@ -29,10 +30,12 @@ export function deriveStage(voice: VoiceState, arabic: boolean, overlay: OrbOver
     : ((voice.agentState ? phaseFromAgentState(voice.agentState) : null) ??
       phaseFromTransportStatus(voice.transportStatus) ??
       'idle');
-  // Any reported voice error takes the error state (red). A clean connection
-  // drop without an error stays `disconnected` (grey). The orb is the primary
-  // error surface; the stage must not duplicate it with a toast.
+  // A fatal error takes the error state (red) and offers retry. A recoverable
+  // error is only a notice: the live phase keeps its own overlay and actions,
+  // so the orb cannot stay red (and offer reconnect) for the rest of the call.
   const hasError = voice.voiceErrorCode !== '';
+  const hasFatalError = hasError && isFatalVoiceError(voice.voiceErrorCode);
+  const errorOverlay = hasError && (!voice.live || hasFatalError);
   return {
     phase,
     canInterrupt: phase === 'thinking' || phase === 'speaking',
@@ -41,7 +44,7 @@ export function deriveStage(voice: VoiceState, arabic: boolean, overlay: OrbOver
       {
         ...INITIAL_STATE,
         phase,
-        overlay: overlay !== 'none' ? overlay : hasError ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
+        overlay: overlay !== 'none' ? overlay : errorOverlay ? 'error' : voice.live && voice.muted ? 'muted' : 'none',
         micActive: voice.live !== null && !voice.muted,
         sessionId: voice.live?.id ?? null,
         connectionReady: voice.live !== null && !voice.connectionLost,

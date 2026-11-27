@@ -111,6 +111,7 @@
 
   const reconnect = () => void run(() => connection!.reconnect(), onVoiceError);
   const startConnect = () => void connection!.connect(true).catch(onVoiceError);
+  const retryMicrophone = () => run(() => connection!.retryMicrophone(), onVoiceError);
   const toggleMute = () => run(() => connection!.toggleMute(), onVoiceError);
 
   const interrupt = () =>
@@ -212,7 +213,7 @@
       captionsVisible={commands.state.settings.captions_visible}
       {busy}
       {words}
-      onretrymic={startConnect}
+      onretrymic={retryMicrophone}
       onreconnect={() => run(() => connection!.reconnect(), onVoiceError)}
       onend={() => run(() => connection!.end(), onVoiceError)}
       onenableaudio={enableAudio}

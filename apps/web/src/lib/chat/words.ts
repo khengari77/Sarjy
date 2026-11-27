@@ -5,6 +5,10 @@ export type Words = {
   intro: string;
   conversationTitle: string;
   connected: string;
+  reconnecting: string;
+  offline: string;
+  audioBlocked: string;
+  cancelConnecting: string;
   placeholder: string;
   send: string;
   call: string;
@@ -43,13 +47,17 @@ const EN: Words = {
   intro: 'Click the orb to start talking.',
   conversationTitle: 'Your conversation',
   connected: 'Connected',
+  reconnecting: 'Reconnecting…',
+  offline: 'Offline',
+  audioBlocked: 'The browser blocked audio playback. Select “Enable audio” to continue.',
+  cancelConnecting: 'Cancel connecting',
   placeholder: 'Write a message…',
   send: 'Send',
   call: 'Start call',
   end: 'End call',
   endShort: 'End',
   mute: 'Mute',
-  unmute: 'Enable microphone',
+  unmute: 'Unmute microphone',
   interrupt: 'Interrupt',
   retryCleanup: 'Retry ending previous call',
   talk: 'Talk to Sarjy',
@@ -81,13 +89,17 @@ const AR: Words = {
   intro: 'اضغط على الأوربة لبدء التحدث.',
   conversationTitle: 'محادثتك',
   connected: 'متصل',
+  reconnecting: 'جارٍ إعادة الاتصال…',
+  offline: 'غير متصل',
+  audioBlocked: 'منع المتصفح تشغيل الصوت. اختر «تشغيل الصوت» للمتابعة.',
+  cancelConnecting: 'إلغاء الاتصال',
   placeholder: 'اكتب رسالتك…',
   send: 'إرسال',
   call: 'بدء مكالمة',
   end: 'إنهاء',
   endShort: 'إنهاء',
   mute: 'كتم الصوت',
-  unmute: 'تشغيل الميكروفون',
+  unmute: 'ألغِ كتم الميكروفون',
   interrupt: 'قاطع',
   retryCleanup: 'إعادة إنهاء المكالمة السابقة',
   talk: 'تحدث إلى سَرْجي',

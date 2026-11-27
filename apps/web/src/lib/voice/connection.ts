@@ -2,12 +2,12 @@ import type { SessionConfig } from '../api';
 import { ensureMicrophoneAccess } from '../audio/microphone';
 import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
 import type { CommandResult } from '../commands/commandStore';
-import { errorCode } from './errors';
+import { errorCode, isFatalVoiceError } from './errors';
 import { startSessionAttempt } from './sessionAttempt';
 import { createSessionReleaser } from './sessionRelease';
 import { cancelConnection } from './cancelConnection';
 import { applyFailedRelease, retryFailedCleanup } from './releaseOutcome';
-import { interruptVoice, sendVoiceText, toggleVoiceMute } from './voiceControls';
+import { interruptVoice, retryVoiceMicrophone, sendVoiceText, toggleVoiceMute } from './voiceControls';
 import type { MeterController } from './meters';
 
 export interface ProvisionalTranscript {
@@ -76,6 +76,10 @@ function handleVoiceEvent(
   if (event.type === 'status') {
     if (event.source === 'agent') {
       state.agentState = event.text;
+      // A healthy agent event proves the call recovered from a recoverable
+      // error (denied unmute, failed interrupt, transcript unavailable).
+      const healthy = event.text === 'listening' || event.text === 'thinking' || event.text === 'speaking';
+      if (healthy && !isFatalVoiceError(state.voiceErrorCode)) state.voiceErrorCode = '';
     } else {
       state.agentState = null;
       state.transportStatus = event.text;
@@ -241,6 +245,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     cancelConnect,
     end,
     retryCleanup: () => retryFailedCleanup(state, releaseSession),
+    retryMicrophone: () => (state.live ? retryVoiceMicrophone(state, deps) : connect(true)),
     toggleMute: () => toggleVoiceMute(state, deps),
     interrupt: () => interruptVoice(state, deps),
     sendText: (text: string) => sendVoiceText(state, deps, text),
