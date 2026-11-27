@@ -58,8 +58,8 @@
   .change-toast,
   .change-status {
     position: fixed;
-    left: 50%;
-    bottom: 96px;
+    left: var(--main-column-center, 50%);
+    bottom: calc(var(--dock-h, 96px) + 12px);
     z-index: 40;
     display: flex;
     align-items: center;
@@ -100,7 +100,12 @@
     background: transparent;
   }
 
-  .change-undo {
+  /* Higher specificity than `.change-toast button`, so Undo keeps the accent
+     colour and a full tap target. */
+  .change-toast .change-undo {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
     padding: 4px 8px;
     color: var(--accent);
     font-weight: 600;

@@ -47,6 +47,34 @@
   let rightPanel = $state<HTMLElement | null>(null);
   let controlsRegion = $state<HTMLElement | null>(null);
   let dialogRegion = $state<HTMLElement | null>(null);
+  let mainColumn = $state<HTMLElement | null>(null);
+
+  // Floating overlays (the change toast) use the dock's measured height and
+  // the main column's centre, so they clear the controls/composer at every
+  // viewport and stay over the stage when the rail is docked.
+  $effect(() => {
+    const dock = controlsRegion;
+    const column = mainColumn;
+    if (!dock || !column) return;
+    const root = document.documentElement;
+    const update = () => {
+      const dockRect = dock.getBoundingClientRect();
+      const columnRect = column.getBoundingClientRect();
+      root.style.setProperty('--dock-h', `${window.innerHeight - dockRect.top}px`);
+      root.style.setProperty('--main-column-center', `${columnRect.left + columnRect.width / 2}px`);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(dock);
+    observer.observe(column);
+    window.addEventListener('resize', update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', update);
+      root.style.removeProperty('--dock-h');
+      root.style.removeProperty('--main-column-center');
+    };
+  });
 
   // The stage dialog (end-call confirmation) is rendered by VoiceStage but
   // belongs to the shell's modal layer: it is portalled into this sibling
@@ -179,7 +207,7 @@
       </aside>
     {/if}
 
-    <div class="main-column">
+    <div class="main-column" bind:this={mainColumn}>
       <!-- While a modal drawer is open the header and stage are inert: no
            pointer targets, no tab stops and nothing exposed to assistive
            technology. -->

@@ -15,14 +15,15 @@
 
   let button: HTMLButtonElement | undefined = $state();
 
-  // One quoted line: the assistant's latest words (a provisional segment of
-  // the assistant takes the place of the final line while it is spoken).
+  // One quoted excerpt: the assistant's latest words (a provisional segment of
+  // the assistant takes the place of the final line while it is spoken). The
+  // bubble caps the visible lines and scrolls; the text is never truncated.
   const lastAssistant = $derived([...turns].reverse().find((turn) => turn.role === 'assistant'));
   const quote = $derived(
     provisional?.speaker === 'assistant'
       ? { text: provisional.text, provisional: true }
       : lastAssistant
-        ? { text: lastAssistant.text.replace(/\s+/g, ' ').slice(0, 220), provisional: false }
+        ? { text: lastAssistant.text.replace(/\s+/g, ' '), provisional: false }
         : null,
   );
   const label = $derived(arabic ? 'سجل المحادثة' : 'Transcript');

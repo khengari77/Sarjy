@@ -69,5 +69,12 @@ test('a long reply never moves the orb or the composer', async ({ page }) => {
   );
   await page.reload();
   await expect(page.locator('.caption-bubble')).toContainText('A very long reply.');
-  expect(await geometry()).toEqual(before);
+  const after = await geometry();
+  // The caption may grow to its three-line cap, but neither it nor the reply
+  // length moves the orb or the composer.
+  expect(after.orb).toBe(before.orb);
+  expect(after.composer).toBe(before.composer);
+  expect(after.bubble).toBe(before.bubble);
+  expect(after.bubbleHeight).toBeGreaterThan(before.bubbleHeight);
+  expect(after.bubbleHeight).toBeLessThanOrEqual(92);
 });
