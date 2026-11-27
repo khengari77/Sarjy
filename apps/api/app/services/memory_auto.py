@@ -11,7 +11,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.contracts import MemoryMode
+from app.domain.contracts import SCOPE_GLOBAL, MemoryMode
 from app.domain.memory_changes import AUTO_SAVE, MemoryChange, Revert, RowState, revert_decision
 from app.domain.memory_policy import Decision, plan_for_proposal
 from app.infrastructure.database import ContextOperation, Memory, now
@@ -212,7 +212,10 @@ async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dic
         raise ChangeConflict
     if old is not None and old.subject:
         # Restoring the replaced fact must not leave two active facts for one subject (a newer fact with the same
-        # parsed value can have been saved beside the one being undone).
+        # parsed value can have been saved beside the one being undone). The restored fact is seen wherever it is
+        # visible: a global one everywhere (any active same-subject fact of the owner clashes), a temporary one only
+        # in its own conversation.
+        reach = Memory.owner_id == owner_id if old.scope == SCOPE_GLOBAL else visible_in(old.source_conversation_id)
         clash = await db.scalar(
             select(Memory.id)
             .where(
@@ -220,7 +223,7 @@ async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dic
                 Memory.subject == old.subject,
                 Memory.status == "active",
                 Memory.id != change.memory_id,
-                visible_in(operation.conversation_id),
+                reach,
             )
             .limit(1)
         )

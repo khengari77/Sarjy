@@ -18,7 +18,7 @@ from app.domain.commands import (
 from app.domain.context_operations import verify_proposal
 from app.main import create_app
 from app.services.memory_visibility import HIDE_OPERATION
-from app.services.voice_exclusions import propose_exclusion
+from app.services.voice_exclusions import UNDO_SCAN_LIMIT, propose_exclusion
 from fastapi.testclient import TestClient
 
 SECRET = "test-proposal-secret"
@@ -562,3 +562,38 @@ def test_restore_from_one_conversation_never_speaks_or_restores_another_chats_te
         assert exclusion_active(file, "op-exclude-a") is True
         assert exclusion_active(file, "op-exclude-b") is False
         assert memory_status(file, "temp-a") == "active"
+
+
+def test_undo_last_hide_steps_over_more_foreign_temporary_hides_than_one_scan_page(tmp_path):
+    file, settings = configured(tmp_path, "deep-undo")
+    with TestClient(create_app(settings)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat_a = client.post("/v1/conversations").json()["id"]
+        chat_b = client.post("/v1/conversations").json()["id"]
+        seed(file, chat_b, [("old-global", "My favourite colour is blue")], scope="global", status="hidden")
+        seed_operation(
+            file,
+            operation_id="hide-old-global",
+            owner_id=owner,
+            conversation_id=chat_b,
+            command_type=HIDE_OPERATION,
+            payload={"memory_id": "old-global"},
+            created_at="2026-11-12T00:00:00+00:00",
+        )
+        for index in range(UNDO_SCAN_LIMIT + 2):
+            seed(file, chat_a, [(f"temp-a-{index}", f"A-only {index}")], scope="conversation", status="hidden")
+            seed_operation(
+                file,
+                operation_id=f"hide-temp-a-{index}",
+                owner_id=owner,
+                conversation_id=chat_a,
+                command_type=HIDE_OPERATION,
+                payload={"memory_id": f"temp-a-{index}"},
+                created_at=f"2026-11-12T00:01:{index:02d}+00:00",
+            )
+
+        undone = voice(client, chat_b, "Undo", request="undo-deep").json()["result"]
+        assert undone["detail"] == "MEMORY_UNHIDDEN"
+        assert "My favourite colour is blue" in undone["spoken"]
+        assert memory_status(file, "old-global") == "active"
+        assert memory_status(file, "temp-a-0") == "hidden"

@@ -10,6 +10,7 @@ replayed or cross-conversation token never changes context state.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -435,6 +436,23 @@ async def hide_target(
 
 
 UNDO_SCAN_LIMIT = 10
+UNDO_SCAN_PAGES = 5
+
+
+async def _hide_operations_page(db: AsyncSession, owner_id: str, offset: int) -> Sequence[ContextOperation]:
+    return (
+        await db.scalars(
+            select(ContextOperation)
+            .where(
+                ContextOperation.owner_id == owner_id,
+                ContextOperation.command_type == HIDE_OPERATION,
+                ContextOperation.outcome == "applied",
+            )
+            .order_by(ContextOperation.created_at.desc(), ContextOperation.id.desc())
+            .limit(UNDO_SCAN_LIMIT)
+            .offset(offset)
+        )
+    ).all()
 
 
 async def undo_last_hide(db: AsyncSession, *, owner_id: str, conversation_id: str, request_id: str) -> CommandResult:
@@ -445,18 +463,13 @@ async def undo_last_hide(db: AsyncSession, *, owner_id: str, conversation_id: st
     if replay is not None:
         return replay
     await discard_pending(db, owner_id=owner_id, conversation_id=conversation_id)
-    operations = (
-        await db.scalars(
-            select(ContextOperation)
-            .where(
-                ContextOperation.owner_id == owner_id,
-                ContextOperation.command_type == HIDE_OPERATION,
-                ContextOperation.outcome == "applied",
-            )
-            .order_by(ContextOperation.created_at.desc(), ContextOperation.id.desc())
-            .limit(UNDO_SCAN_LIMIT)
-        )
-    ).all()
+    # The scan is owner-wide and cannot filter by visibility in SQL (the memory id lives in the payload), so it pages:
+    # a run of newer hides of other conversations' temporary memories must not hide an older visible one.
+    operations = [
+        operation
+        for offset in range(0, UNDO_SCAN_LIMIT * UNDO_SCAN_PAGES, UNDO_SCAN_LIMIT)
+        for operation in await _hide_operations_page(db, owner_id, offset)
+    ]
     for operation in operations:
         memory_id = (operation.payload or {}).get("memory_id")
         if not isinstance(memory_id, str):
@@ -528,13 +541,7 @@ async def _latest_active_exclusion(
         if not memory_ids:
             continue
         contents = (
-            await db.scalars(
-                select(Memory.content).where(
-                    Memory.id.in_(memory_ids),
-                    Memory.owner_id == owner_id,
-                    visible_in(conversation_id),
-                )
-            )
+            await db.scalars(select(Memory.content).where(Memory.id.in_(memory_ids), Memory.owner_id == owner_id))
         ).all()
         return operation, tuple(contents)
     return None
