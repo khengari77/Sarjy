@@ -4,6 +4,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database import ContextExclusion, Memory
+from app.services.memory_scope import visible_in
 
 
 def _blocked_query(owner_id: str, conversation_id: str):
@@ -47,7 +48,9 @@ async def blocked_memory_rows(db: AsyncSession, owner_id: str, conversation_id: 
     return list(
         await db.scalars(
             select(Memory).where(
-                Memory.owner_id == owner_id, Memory.id.in_(blocked_memory_ids_select(owner_id, conversation_id))
+                Memory.owner_id == owner_id,
+                Memory.id.in_(blocked_memory_ids_select(owner_id, conversation_id)),
+                visible_in(conversation_id),
             )
         )
     )

@@ -20,6 +20,7 @@ from app.domain.restatement import restating_turn_ids
 from app.domain.weather_permissions import LocationEvidence
 from app.infrastructure.database import Memory, ToolCall, Turn
 from app.services.memory_eligibility import blocked_memory_ids_select, blocked_memory_rows
+from app.services.memory_scope import visible_in
 
 HISTORY_LIMIT = 20
 # The model still receives at most ``HISTORY_LIMIT`` turns, but retrieval reads
@@ -167,7 +168,7 @@ async def orm_memory_candidates(
     rows = (
         await db.scalars(
             select(Memory)
-            .where(Memory.owner_id == owner_id, Memory.status == "active")
+            .where(Memory.owner_id == owner_id, Memory.status == "active", visible_in(conversation_id))
             .order_by(Memory.updated_at.desc(), Memory.id.desc())
             .limit(MEMORY_CANDIDATE_LIMIT)
         )
@@ -222,7 +223,7 @@ def _memory_candidates_from_rows(
     )
 
 
-async def _memory_rows_for_ids(db: AsyncSession, owner_id: str, ids) -> list[Memory]:
+async def _memory_rows_for_ids(db: AsyncSession, owner_id: str, conversation_id: str, ids) -> list[Memory]:
     """Fetch policy rows by exact owner-scoped id without a lifetime scan."""
     wanted = sorted(str(identifier) for identifier in ids)
     rows: list[Memory] = []
@@ -232,7 +233,7 @@ async def _memory_rows_for_ids(db: AsyncSession, owner_id: str, ids) -> list[Mem
             (
                 await db.scalars(
                     select(Memory)
-                    .where(Memory.owner_id == owner_id, Memory.id.in_(chunk))
+                    .where(Memory.owner_id == owner_id, Memory.id.in_(chunk), visible_in(conversation_id))
                     .order_by(Memory.updated_at.desc(), Memory.id.desc())
                 )
             ).all()
@@ -270,9 +271,11 @@ def _retraction_candidates_from_rows(rows: Sequence[Memory], *, conversation_id:
 
     Applies the same predicate (hidden, from this conversation), order (newest
     ``updated_at`` then id) and limit as ``retraction_candidates``' SQL. The turn
-    start passes the owner's blocked rows, which is correct only because
-    ``blocked_memory_rows`` seeds every hidden memory of the owner: if that read is
-    ever bounded or scoped, retraction blocks would silently change.
+    start passes the blocked rows visible in this conversation (``blocked_memory_rows``
+    is scoped by ``visible_in``). That is enough because a retraction also requires
+    ``source_conversation_id == conversation_id``, and a hidden memory from this
+    conversation is always visible in it. If that read is ever bounded further,
+    retraction blocks would silently change.
     ``test_retractions_from_blocked_rows_match_the_query`` pins that dependency.
     """
     hidden = [row for row in rows if row.status == "hidden" and row.source_conversation_id == conversation_id]
@@ -451,7 +454,13 @@ async def _closure_page(
     unresolved = set(chunk) - resolved
     if unresolved:
         memory_ids = set(
-            (await db.scalars(select(Memory.id).where(Memory.owner_id == owner_id, Memory.id.in_(unresolved)))).all()
+            (
+                await db.scalars(
+                    select(Memory.id).where(
+                        Memory.owner_id == owner_id, Memory.id.in_(unresolved), visible_in(conversation_id)
+                    )
+                )
+            ).all()
         )
         if unresolved - memory_ids:
             exceeded = True
@@ -624,6 +633,7 @@ def _combined_read_statement(owner_id: str, conversation_id: str, *, history_lim
     ).where(
         Memory.owner_id == owner_id,
         Memory.id.in_(blocked_memory_ids_select(owner_id, conversation_id)),
+        visible_in(conversation_id),
     )
     active = (
         select(
@@ -632,7 +642,7 @@ def _combined_read_statement(owner_id: str, conversation_id: str, *, history_lim
             *_labeled_columns(_MEMORY_READ_COLUMNS, _MEMORY_LABELS),
             *_null_columns(_TOOL_READ_COLUMNS, _TOOL_LABELS),
         )
-        .where(Memory.owner_id == owner_id, Memory.status == "active")
+        .where(Memory.owner_id == owner_id, Memory.status == "active", visible_in(conversation_id))
         .order_by(Memory.updated_at.desc(), Memory.id.desc())
         .limit(MEMORY_CANDIDATE_LIMIT)
     )

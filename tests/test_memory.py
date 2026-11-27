@@ -89,6 +89,63 @@ def test_memory_persists_across_connections_and_corrections_are_atomic(tmp_path)
     asyncio.run(run())
 
 
+def test_semantic_search_sees_global_and_only_the_calling_conversation(tmp_path):
+    async def run():
+        engine, sessions = await setup(tmp_path / "search-scope.db")
+        embedder = FakeEmbedder()
+        vector = await embedder.embed(None, "city")
+        try:
+            async with sessions() as db:
+                db.add_all(
+                    [
+                        Memory(
+                            id="global",
+                            owner_id="alice",
+                            content="city global",
+                            embedding=list(vector),
+                            source_conversation_id="a1",
+                            version=1,
+                            status="active",
+                            scope="global",
+                        ),
+                        Memory(
+                            id="temp-a",
+                            owner_id="alice",
+                            content="city in a",
+                            embedding=list(vector),
+                            source_conversation_id="a1",
+                            version=1,
+                            status="active",
+                            scope="conversation",
+                        ),
+                        Memory(
+                            id="temp-b",
+                            owner_id="alice",
+                            content="city in b",
+                            embedding=list(vector),
+                            source_conversation_id="a2",
+                            version=1,
+                            status="active",
+                            scope="conversation",
+                        ),
+                    ]
+                )
+                await db.commit()
+            service = MemoryService(engine, embedder)
+            assert {item.id for item in await service.search_memories("alice", "a1", "city")} == {
+                "global",
+                "temp-a",
+            }
+            assert {item.id for item in await service.search_memories("alice", "a2", "city")} == {
+                "global",
+                "temp-b",
+            }
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
 def test_unauthorized_access_and_key_conflicts_do_not_embed(tmp_path):
     async def run():
         engine, sessions = await setup(tmp_path / "memory.db")

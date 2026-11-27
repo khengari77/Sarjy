@@ -59,6 +59,85 @@ def seed(file, chat, rows=ROWS):
         db.commit()
 
 
+def add_scoped_memory(file, conversation_id, memory_id, content, scope):
+    with closing(sqlite3.connect(file)) as db, db:
+        db.execute(
+            "INSERT INTO memories (id,owner_id,content,embedding,embedding_model,source_conversation_id,version,"
+            "status,scope,created_at,updated_at) VALUES (?, (SELECT owner_id FROM conversations WHERE id=?), ?, ?, "
+            "'text-embedding-3-small', ?, 1, 'active', ?, '2026-11-12T00:00:00+00:00', "
+            "'2026-11-12T00:00:00+00:00')",
+            (memory_id, conversation_id, content, json.dumps([1.0] + [0.0] * 1535), conversation_id, scope),
+        )
+        db.commit()
+
+
+def test_previews_and_confirmation_ignore_another_conversations_temporary_memory(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        other = client.post("/v1/conversations").json()["id"]
+        seed(file, chat, [("global-trip", "Trip to Tripoli")])
+        add_scoped_memory(file, other, "temp-other", "Trip to Rome", "conversation")
+        add_scoped_memory(file, chat, "temp-chat", "Trip to Cairo", "conversation")
+
+        body = preview(client, chat, query="forget the trip")
+        assert {"global-trip", "temp-chat"} <= {item["id"] for item in body["matches"]}
+        assert "temp-other" not in json.dumps(body)
+        assert "Trip to Rome" not in json.dumps(body)
+
+        mirror = preview(client, other, query="forget the trip")
+        assert {"global-trip", "temp-other"} <= {item["id"] for item in mirror["matches"]}
+        assert "temp-chat" not in json.dumps(mirror)
+        assert "Trip to Cairo" not in json.dumps(mirror)
+
+        exact = client.post(f"/v1/conversations/{chat}/context/exclusions", json={"memory_ids": ["temp-other"]})
+        assert exact.status_code == 404
+        assert exact.json()["detail"]["code"] == "MEMORY_NOT_FOUND"
+
+        forged = sign_proposal(
+            {
+                "v": 1,
+                "owner_id": owner,
+                "conversation_id": chat,
+                "revision": 0,
+                "query": "forget the trip",
+                "keep": [],
+                "exclude": [],
+                "excluded_ids": ["temp-other"],
+                "kept_ids": [],
+            },
+            "proposal-secret",
+        )
+        rejected = client.post(
+            f"/v1/conversations/{chat}/context/confirm",
+            json={"proposal": forged, "expected_revision": 0, "idempotency_key": "scope-forged"},
+        )
+        assert rejected.status_code == 409
+        assert rejected.json()["detail"]["code"] == "PROPOSAL_INVALID"
+
+        kept_forged = sign_proposal(
+            {
+                "v": 1,
+                "owner_id": owner,
+                "conversation_id": chat,
+                "revision": 0,
+                "query": "forget the trip",
+                "keep": ["temp-other"],
+                "exclude": [],
+                "excluded_ids": ["global-trip"],
+                "kept_ids": ["temp-other"],
+            },
+            "proposal-secret",
+        )
+        kept_rejected = client.post(
+            f"/v1/conversations/{chat}/context/confirm",
+            json={"proposal": kept_forged, "expected_revision": 0, "idempotency_key": "scope-forged-keep"},
+        )
+        assert kept_rejected.status_code == 400
+        assert kept_rejected.json()["detail"]["code"] == "PROPOSAL_INVALID"
+
+
 def counts(file):
     with closing(sqlite3.connect(file)) as db, db:
         revision = db.execute("SELECT revision FROM conversations").fetchone()[0]
