@@ -124,6 +124,7 @@ class Conversation(Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("identities.id"), index=True)
     title: Mapped[str] = mapped_column(String(120), default="New conversation")
     revision: Mapped[int] = mapped_column(Integer, default=0)
+    memory_mode: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), default=now)
     deleted_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
 

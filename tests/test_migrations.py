@@ -388,6 +388,35 @@ def test_conversation_delete_scope_migration_is_additive_and_reversible(tmp_path
         assert connection.execute("SELECT id, content FROM memories").fetchall() == [("m1", "I prefer tea")]
 
 
+def test_conversation_memory_mode_migration_is_additive_and_reversible(tmp_path):
+    path = tmp_path / "conversation-memory-mode.db"
+    url = f"sqlite+aiosqlite:///{path}"
+    run_alembic(url, "upgrade", "0018_conversation_delete_scope")
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "INSERT INTO identities (id, token_hash, expires_at)"
+            " VALUES ('owner-1', 'hash', '2030-01-01T00:00:00+00:00')"
+        )
+        connection.execute(
+            "INSERT INTO conversations (id, owner_id, title, revision, created_at)"
+            " VALUES ('chat-1', 'owner-1', 'Trip', 4, '2026-11-11T00:00:00+00:00')"
+        )
+        before = connection.execute("SELECT id, title, revision FROM conversations").fetchall()
+
+    run_alembic(url, "upgrade", "head")
+    with closing(sqlite3.connect(path)) as connection:
+        columns = {row[1]: row for row in connection.execute("PRAGMA table_info(conversations)")}
+        assert columns["memory_mode"][3] == 0
+        assert connection.execute("SELECT memory_mode FROM conversations").fetchall() == [(None,)]
+        assert connection.execute("SELECT id, title, revision FROM conversations").fetchall() == before
+    run_alembic(url, "check")
+
+    run_alembic(url, "downgrade", "0018_conversation_delete_scope")
+    with closing(sqlite3.connect(path)) as connection:
+        assert "memory_mode" not in {row[1] for row in connection.execute("PRAGMA table_info(conversations)")}
+        assert connection.execute("SELECT id, title, revision FROM conversations").fetchall() == before
+
+
 def test_memory_mode_migration_is_additive_and_reversible(tmp_path):
     path = tmp_path / "memory-mode.db"
     url = f"sqlite+aiosqlite:///{path}"
