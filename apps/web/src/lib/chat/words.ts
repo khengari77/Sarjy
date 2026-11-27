@@ -1,3 +1,5 @@
+import { friendlyVoiceError } from '../audio/livekitAdapter';
+
 export type Words = {
   new: string;
   title: string;
@@ -5,6 +7,10 @@ export type Words = {
   intro: string;
   conversationTitle: string;
   connected: string;
+  reconnecting: string;
+  offline: string;
+  audioBlocked: string;
+  cancelConnecting: string;
   placeholder: string;
   send: string;
   call: string;
@@ -34,20 +40,25 @@ export type Words = {
   deleting: string;
 };
 
-const EN: Words = {
+type BaseWords = Omit<Words, 'audioBlocked'>;
+
+const EN: BaseWords = {
   new: 'New conversation',
   title: 'Meet Sarjy',
   welcomeBack: 'Welcome back',
   intro: 'Click the orb to start talking.',
   conversationTitle: 'Your conversation',
   connected: 'Connected',
+  reconnecting: 'Reconnecting…',
+  offline: 'Offline',
+  cancelConnecting: 'Cancel connecting',
   placeholder: 'Write a message…',
   send: 'Send',
   call: 'Start call',
   end: 'End call',
   endShort: 'End',
   mute: 'Mute',
-  unmute: 'Enable microphone',
+  unmute: 'Unmute microphone',
   interrupt: 'Interrupt',
   retryCleanup: 'Retry ending previous call',
   talk: 'Talk to Sarjy',
@@ -70,20 +81,23 @@ const EN: Words = {
   deleting: 'Deleting…',
 };
 
-const AR: Words = {
+const AR: BaseWords = {
   new: 'محادثة جديدة',
   title: 'تعرّف على سَرْجي',
   welcomeBack: 'أهلًا بعودتك',
   intro: 'اضغط على الأوربة لبدء التحدث.',
   conversationTitle: 'محادثتك',
   connected: 'متصل',
+  reconnecting: 'جارٍ إعادة الاتصال…',
+  offline: 'غير متصل',
+  cancelConnecting: 'إلغاء الاتصال',
   placeholder: 'اكتب رسالتك…',
   send: 'إرسال',
   call: 'بدء مكالمة',
   end: 'إنهاء',
   endShort: 'إنهاء',
   mute: 'كتم الصوت',
-  unmute: 'تشغيل الميكروفون',
+  unmute: 'ألغِ كتم الميكروفون',
   interrupt: 'قاطع',
   retryCleanup: 'إعادة إنهاء المكالمة السابقة',
   talk: 'تحدث إلى سَرْجي',
@@ -107,5 +121,8 @@ const AR: Words = {
 };
 
 export function wordsFor(arabic: boolean): Words {
-  return arabic ? AR : EN;
+  return {
+    ...(arabic ? AR : EN),
+    audioBlocked: friendlyVoiceError('AUDIO_PLAYBACK_BLOCKED', arabic),
+  };
 }

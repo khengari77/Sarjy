@@ -68,6 +68,20 @@
   const showBubble = $derived(live || connecting || turns.length > 0 || provisional !== null);
   const hasNotice = $derived(Boolean(voiceErrorText) || (connectionLost && live) || audioBlocked);
   const statusText = $derived(arabic ? presentation.statusLabel.ar : presentation.statusLabel.en);
+  const healthyPhase = $derived(
+    !connectionLost &&
+      voiceErrorCode === '' &&
+      (presentation.effectivePhase === 'listening' ||
+        presentation.effectivePhase === 'thinking' ||
+        presentation.effectivePhase === 'speaking'),
+  );
+  const stageStatusText = $derived(
+    connectionLost
+      ? words.offline
+      : live && presentation.effectivePhase === 'connecting'
+        ? words.reconnecting
+        : statusText,
+  );
 
   // The shell owns the modal layer; this dialog is moved into its region so it
   // is never inside the inert stage (see AppShell's `stageDialogOpen`).
@@ -169,24 +183,26 @@
         {:else}
           <p class="intro">{words.intro}</p>
         {/if}
-        <p class="status-pill idle-pill status-line" data-phase={presentation.effectivePhase} role="status">
+        <p class="status-pill idle-pill status-line" data-phase={presentation.effectivePhase}>
           <span class="status-dot" aria-hidden="true"></span>
           {statusText}
         </p>
       {:else}
         {#if live}
-          <p class="status-line live-phase" data-phase={presentation.effectivePhase} role="status">{statusText}</p>
-          <span class="status-pill connected-pill">
-            <span class="status-dot" aria-hidden="true"></span>
-            {words.connected}
-          </span>
+          <p class="status-line live-phase" data-phase={presentation.effectivePhase}>{stageStatusText}</p>
+          {#if healthyPhase}
+            <span class="status-pill connected-pill">
+              <span class="status-dot" aria-hidden="true"></span>
+              {words.connected}
+            </span>
+          {/if}
         {:else if connecting}
-          <p class="status-line" data-phase={presentation.effectivePhase} role="status">
+          <p class="status-line" data-phase={presentation.effectivePhase}>
             <span class="status-dot" aria-hidden="true"></span>
             {statusText}
           </p>
         {:else}
-          <p class="status-pill idle-pill status-line" data-phase={presentation.effectivePhase} role="status">
+          <p class="status-pill idle-pill status-line" data-phase={presentation.effectivePhase}>
             <span class="status-dot" aria-hidden="true"></span>
             {statusText}
           </p>
@@ -206,12 +222,15 @@
 {#snippet notices()}
   <div class="stage-notices">
     {#if audioBlocked}
-      <button class="primary-button" onclick={onenableaudio}>
-        {arabic ? 'تشغيل الصوت' : 'Enable audio'}
-      </button>
+      <div class="stage-notice" role="status">
+        <span>{words.audioBlocked}</span>
+        <button class="primary-button" onclick={onenableaudio}>
+          {arabic ? 'تشغيل الصوت' : 'Enable audio'}
+        </button>
+      </div>
     {/if}
     {#if voiceErrorText}
-      <div class="stage-notice" role="status" data-code={voiceErrorCode}>
+      <div class="stage-notice" data-code={voiceErrorCode}>
         <span>{voiceErrorText}</span>
         {#if voiceErrorCode.startsWith('MICROPHONE_')}
           <button class="ghost-button" disabled={busy} onclick={onretrymic}>
@@ -221,7 +240,7 @@
       </div>
     {/if}
     {#if connectionLost && live}
-      <div class="stage-notice" role="status" data-code="CONNECTION_LOST">
+      <div class="stage-notice" data-code="CONNECTION_LOST">
         <span>{arabic ? 'انقطع الاتصال.' : 'Connection lost.'}</span>
         <button class="ghost-button" disabled={busy} onclick={onreconnect}>
           {arabic ? 'إعادة الاتصال' : 'Reconnect'}
@@ -233,3 +252,15 @@
     {/if}
   </div>
 {/snippet}
+
+<style>
+  /* Idle and connecting are not healthy live states: a green dot would claim a
+     connection that is not there. The live phases keep chat.css's green. */
+  .status-line[data-phase='idle'] .status-dot,
+  .status-line[data-phase='connecting'] .status-dot,
+  .status-pill[data-phase='idle'] .status-dot,
+  .status-pill[data-phase='connecting'] .status-dot {
+    background: var(--text-muted);
+    box-shadow: none;
+  }
+</style>

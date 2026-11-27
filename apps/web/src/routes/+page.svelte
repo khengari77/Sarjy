@@ -16,7 +16,7 @@
   import { createAnnouncement } from '../lib/chat/announcement.svelte';
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
-  import { errorCode } from '../lib/voice/errors';
+  import { errorCode, setVoiceError } from '../lib/voice/errors';
   import { storeLanguage } from '../lib/preferences';
   import { createCatalogStore, initialCatalogState } from '../lib/voice/catalog';
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
@@ -90,7 +90,7 @@
     }
   }
 
-  const onVoiceError = (error: unknown) => (voice.voiceErrorCode = errorCode(error));
+  const onVoiceError = (error: unknown) => setVoiceError(voice, errorCode(error));
 
   function handleOrb() {
     activateOrb(presentation, {
@@ -112,6 +112,7 @@
 
   const reconnect = () => void run(() => connection!.reconnect(), onVoiceError);
   const startConnect = () => void connection!.connect(true).catch(onVoiceError);
+  const retryMicrophone = () => run(() => connection!.retryMicrophone(), onVoiceError);
   const toggleMute = () => run(() => connection!.toggleMute(), onVoiceError);
 
   const interrupt = () =>
@@ -205,7 +206,7 @@
       captionsVisible={commands.state.settings.captions_visible}
       {busy}
       {words}
-      onretrymic={startConnect}
+      onretrymic={retryMicrophone}
       onreconnect={() => run(() => connection!.reconnect(), onVoiceError)}
       onend={() => run(() => connection!.end(), onVoiceError)}
       onenableaudio={enableAudio}

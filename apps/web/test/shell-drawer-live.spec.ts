@@ -199,7 +199,7 @@ test.describe('mobile overlay drawer during a live call', () => {
     await mute.focus();
     await expect(mute).toBeFocused();
     await mute.click();
-    await expect(page.getByRole('button', { name: 'Enable microphone', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Unmute microphone', exact: true })).toBeVisible();
 
     // Same flow through the confirm path; focus still returns to the trigger.
     await openLeftDrawer(page);
@@ -246,7 +246,7 @@ test.describe('mobile overlay drawer during a live call', () => {
     await mute.focus();
     await expect(mute).toBeFocused();
     await mute.click();
-    await expect(page.getByRole('button', { name: 'Enable microphone', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Unmute microphone', exact: true })).toBeVisible();
 
     const end = page.getByRole('button', { name: 'End call', exact: true });
     await end.focus();
