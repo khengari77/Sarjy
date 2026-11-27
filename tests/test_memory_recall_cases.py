@@ -73,6 +73,9 @@ def test_recall_case_preview_confirm_and_undo(case, tmp_path):
                 )
                 assert applied is not None and applied.kind is CommandKind.EXECUTED
                 after = await statuses(db, all_ids)
+                hidden_ids = {memory_id for memory_id, status in after.items() if status == "hidden"}
+                previously_hidden = {memory_id for memory_id, status in original.items() if status == "hidden"}
+                assert hidden_ids == set(case["expected_hidden_ids"]) | previously_hidden
                 for memory_id in expected_ids:
                     assert after[memory_id] == "hidden"
                 for memory_id in set(all_ids) - expected_ids:

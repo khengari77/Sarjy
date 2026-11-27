@@ -39,6 +39,15 @@ HIDDEN = "hidden"
 DELETED = "deleted"
 HIDE_OPERATION = "memory_hide"
 UNHIDE_OPERATION = "memory_unhide"
+RESTORE_PROPOSAL = "restore_proposal"
+EXCLUDE_PROPOSAL = "exclude_proposal"
+SCRUBBED_OPERATION_TYPES = (
+    HIDE_OPERATION,
+    UNHIDE_OPERATION,
+    AUTO_SAVE,
+    RESTORE_PROPOSAL,
+    EXCLUDE_PROPOSAL,
+)
 
 
 @dataclass(frozen=True)
@@ -321,7 +330,7 @@ async def scrub_copies(db: AsyncSession, owner_id: str, erased: list[Erased]) ->
         await db.scalars(
             select(ContextOperation).where(
                 ContextOperation.owner_id == owner_id,
-                ContextOperation.command_type.in_((HIDE_OPERATION, UNHIDE_OPERATION, AUTO_SAVE)),
+                ContextOperation.command_type.in_(SCRUBBED_OPERATION_TYPES),
             )
         )
     ).all()
@@ -344,7 +353,10 @@ async def scrub_copies(db: AsyncSession, owner_id: str, erased: list[Erased]) ->
                 payload["response"] = _scrubbed_operation_response(payload=payload)
             else:
                 payload.pop("response", None)
-                if operation.outcome == "applied" and operation.command_type in (HIDE_OPERATION, AUTO_SAVE):
+                if operation.outcome in {"applied", "proposed"} and operation.command_type in (
+                    HIDE_OPERATION,
+                    AUTO_SAVE,
+                ):
                     operation.outcome = "deleted"
             operation.payload = payload
             continue
@@ -353,6 +365,13 @@ async def scrub_copies(db: AsyncSession, owner_id: str, erased: list[Erased]) ->
             operation.payload = {"memory_id": payload.get("memory_id"), "scrubbed": True}
             if operation.outcome == "applied" and operation.command_type in (HIDE_OPERATION, AUTO_SAVE):
                 operation.outcome = "deleted"
+            continue
+        if operation.command_type == RESTORE_PROPOSAL:
+            stored = payload.get("response")
+            spoken = stored.get("spoken") if isinstance(stored, dict) else ""
+            if isinstance(spoken, str) and any(text and (text in spoken or text[:80] in spoken) for text in texts):
+                payload["response"] = _scrubbed_operation_response(payload=payload)
+                operation.payload = payload
 
 
 async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> VisibilityResult:

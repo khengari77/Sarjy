@@ -146,8 +146,10 @@ UI_QUESTIONS: Final[dict[str, dict[str, Any]]] = {
             "remember": "Asks to remember, save, store, keep in mind or note a fact about the user for later, including a "
             "polite 'could you ...' request. Needs a concrete fact. Not 'remember to <task>', 'remember when ...', 'remember me' with no fact, or reminders.",
             "forget": (
-                "Asks to forget, delete, remove, scrap, drop, erase, disregard or stop using something remembered "
-                "or said earlier about the user ('scrap what I said about tea')."
+                "Asks the assistant to forget, delete, remove, scrap, drop, erase, disregard or stop using something "
+                "it remembers or was told earlier about the user ('scrap what I said about tea', 'wipe everything you "
+                "know about me'). Not the figures of speech 'forget it' and 'forget about it', not statements such as "
+                "'I forgot my keys', and not reminders ('don't forget to buy milk')."
             ),
             "recall": (
                 "Asks what the assistant remembers or knows about the user, or whether it remembers a fact about "

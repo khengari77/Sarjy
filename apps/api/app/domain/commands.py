@@ -7,7 +7,6 @@ conversational path.
 """
 
 import re
-from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
@@ -452,105 +451,6 @@ def parse_memory_exclusion_target(text: str) -> str | None:
     return target
 
 
-# "Forget everything I just said", "forget what we talked about" and "clear this chat's memory" are
-# chat-scoped: they clear only this chat's temporary memories, never a global one or another chat's.
-_MEMORY_CHAT_SCOPE = re.compile(
-    r"^(?:please )?(?:forget|clear) (?:"
-    r"(?:everything|what) (?:i|we) (?:just )?(?:said|talked about|discussed)"
-    r"|everything (?:from|in) (?:this|the|our) (?:chat|conversation)"
-    r"|(?:this|the|our) (?:chat|conversation)'?s? (?:temporary )?memor(?:y|ies)"
-    r"|the temporary memories(?: (?:from|in) (?:this|the|our) (?:chat|conversation))?"
-    r"|temporary memories(?: (?:from|in) (?:this|the|our) (?:chat|conversation))?"
-    r")$",
-    re.IGNORECASE,
-)
-_MEMORY_ALL_TARGETS = frozenset(
-    {
-        "all",
-        "all memories",
-        "all my memories",
-        "all of my memories",
-        "everything",
-        "everything about me",
-        "everything about my life",
-        "everything you know",
-        "everything you know about me",
-        "my memories",
-        "what you know about me",
-    }
-)
-_MEMORY_TOPIC_PREFIXES = (
-    "all about ",
-    "all you know about ",
-    "everything about ",
-    "everything you know about ",
-    "what you know about ",
-    "what you remember about ",
-)
-_MEMORY_SCOPE_SUFFIXES = (
-    " everywhere",
-    " globally",
-    " from every conversation",
-    " in all chats",
-    " in all conversations",
-    " in every conversation",
-)
-
-
-@dataclass(frozen=True)
-class MemoryForgetRequest:
-    """A parsed forget request: a named topic, this chat's temporary memories, or every memory.
-
-    ``all_memories`` is only a refusal signal for the deterministic caller: voice may not
-    clear every memory, so it points the user to Settings and writes nothing.
-    """
-
-    query: str
-    this_chat: bool = False
-    all_memories: bool = False
-
-
-def parse_memory_forget(text: str) -> MemoryForgetRequest | None:
-    """Parse "forget/exclude/clear ..." into a topic, this chat, or an all-memories request.
-
-    "forget everything about Paris" names Paris; "forget everything I just said" and
-    "clear this chat's memory" clear only this chat's temporary memories; "forget
-    everything", "forget all my memories" and "forget everything about me" ask for every
-    memory and are refused by the caller. Compound and referential requests are not commands.
-    """
-    normalized = normalize_utterance(text, fold=False)
-    if _MEMORY_CHAT_SCOPE.match(normalized):
-        return MemoryForgetRequest("", this_chat=True)
-    match = re.match(r"^(?:please )?(?:forget|exclude)\b(.*)$", normalized, re.IGNORECASE)
-    if match is None:
-        return None
-    candidate = " ".join(match.group(1).split())
-    folded = candidate.casefold()
-    if not candidate or _MEMORY_COMPOUND.search(normalized) or _CLAUSE_BREAK.search(candidate):
-        return None
-    # Scope suffixes first: "everything about me everywhere" is the all-memories request,
-    # not the topic "me everywhere". "everything about Paris everywhere" still becomes Paris.
-    for suffix in _MEMORY_SCOPE_SUFFIXES:
-        if folded.endswith(suffix):
-            candidate = candidate[: -len(suffix)].strip()
-            folded = candidate.casefold()
-    if folded in _MEMORY_ALL_TARGETS:
-        return MemoryForgetRequest("", all_memories=True)
-    for prefix in _MEMORY_TOPIC_PREFIXES:
-        if folded.startswith(prefix):
-            candidate = candidate[len(prefix) :].strip()
-            folded = candidate.casefold()
-            break
-    if folded.startswith("about "):
-        candidate = candidate[6:].strip()
-        folded = candidate.casefold()
-    if folded in _MEMORY_ALL_TARGETS:
-        return MemoryForgetRequest("", all_memories=True)
-    if not candidate or folded in _REFERENTIAL_TARGETS | _FORGET_IDIOM_TARGETS or folded in {"me", "myself"}:
-        return None
-    return MemoryForgetRequest(candidate, this_chat=False)
-
-
 def memory_request_is_global(text: str) -> bool:
     """Whether a destructive memory request explicitly asks for every chat."""
     normalized = normalize_utterance(text)
@@ -721,13 +621,11 @@ __all__ = [
     "CommandResult",
     "command_result",
     "failed_result",
-    "MemoryForgetRequest",
     "memory_request_is_global",
     "memory_restore_requested",
     "parse_exact_command",
     "parse_exclusion_confirmation",
     "parse_memory_exclusion_target",
-    "parse_memory_forget",
     "normalize_utterance",
     "parse_voice_selection",
     "spoken_outcome",

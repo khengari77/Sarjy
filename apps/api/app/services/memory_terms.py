@@ -102,6 +102,8 @@ REFERENTIAL = frozenset(
 _ARABIC_MARKS = re.compile(r"[\u0610-\u061a\u064b-\u065f\u0670\u0640]")
 # Letters and digits, never the underscore: "user_name" is two terms.
 _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
+# Apostrophe suffixes ("you've" -> "ve", "it's" -> "s") are not words: they must never be indexed or searched.
+CONTRACTION_FRAGMENTS = frozenset({"ve", "re", "ll", "d", "m", "s", "t"})
 
 
 def terms_of(text: str) -> frozenset[str]:
@@ -111,7 +113,11 @@ def terms_of(text: str) -> frozenset[str]:
     # Dropping every combining mark removes Latin accents ("café" -> "cafe") and Arabic harakat alike.
     normalised = "".join(character for character in normalised if not unicodedata.combining(character))
     normalised = _ARABIC_MARKS.sub("", normalised)
-    return frozenset(token[:TERM_MAX_CHARS] for token in _TOKEN.findall(normalised) if token not in STOPWORDS)
+    return frozenset(
+        token[:TERM_MAX_CHARS]
+        for token in _TOKEN.findall(normalised)
+        if token not in STOPWORDS and not (len(token) <= 2 and token in CONTRACTION_FRAGMENTS)
+    )
 
 
 async def write_terms(db: AsyncSession, *, memory_id: str, owner_id: str, content: str) -> None:

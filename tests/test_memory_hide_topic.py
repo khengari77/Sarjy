@@ -8,20 +8,24 @@ from contextlib import closing
 import app.services.voice_exclusions as voice_exclusions
 import pytest
 from app.config import Settings
-from app.domain.commands import CommandKind, MemoryForgetRequest, parse_memory_forget
-from app.infrastructure.database import ContextOperation, Memory
+from app.domain.commands import CommandKind, CommandResult
+from app.infrastructure.database import ContextOperation, Conversation, Memory
 from app.main import create_app
 from app.services.memory_terms import search_all_memories, terms_of
 from app.services.memory_visibility import delete_memory
 from app.services.voice_exclusions import (
     HIDE_CHUNK_SIZE,
+    _apply_pending,
+    _finish_pending,
     _hide_memories_in_chunks,
+    _pending,
     hide_target,
     resolve_confirmation,
     undo_last_hide,
 )
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_memory_capture import set_mode
 from test_memory_terms import database, row, seed
 
@@ -193,7 +197,7 @@ def test_confirm_takes_the_conversation_lock_before_the_owner_memory_lock(tmp_pa
             real_owned = voice_exclusions.owned_conversation
 
             async def owned_spy(db, owner_id, conversation_id, *, lock=False, include_deleted=False, key_share=False):
-                calls.append(("conversation", lock))
+                calls.append(("conversation", lock, key_share))
                 return await real_owned(
                     db, owner_id, conversation_id, lock=lock, include_deleted=include_deleted, key_share=key_share
                 )
@@ -208,7 +212,7 @@ def test_confirm_takes_the_conversation_lock_before_the_owner_memory_lock(tmp_pa
                     db, owner_id="alice", conversation_id="a1", confirmed=True, request_id="confirm", secret=SECRET
                 )
                 assert applied is not None and applied.kind is CommandKind.EXECUTED
-            assert calls == [("conversation", True), ("owner", "alice")]
+            assert calls == [("conversation", True, True), ("owner", "alice")]
         finally:
             await engine.dispose()
 
@@ -298,6 +302,123 @@ def test_deleting_one_hidden_memory_scrubs_it_and_undo_still_restores_the_rest(t
     asyncio.run(run())
 
 
+def test_cross_chat_undo_leaves_the_hiding_chats_list_operation_undoable(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "cross-chat-undo.db")
+        try:
+            async with sessions() as db:
+                await seed(
+                    db,
+                    [
+                        row("temp-1", "First temporary note", conversation_id="a1", scope="conversation", offset=1),
+                        row("temp-2", "Second temporary note", conversation_id="a1", scope="conversation", offset=2),
+                    ],
+                )
+                await db.commit()
+            async with sessions() as db:
+                preview = await hide_target(
+                    db,
+                    owner_id="alice",
+                    conversation_id="a1",
+                    target="",
+                    request_id="preview",
+                    secret=SECRET,
+                    scope="chat",
+                )
+                assert preview.detail == "MEMORY_HIDE_PROPOSED"
+                await resolve_confirmation(
+                    db, owner_id="alice", conversation_id="a1", confirmed=True, request_id="confirm", secret=SECRET
+                )
+            async with sessions() as db:
+                other_chat = await undo_last_hide(db, owner_id="alice", conversation_id="a2", request_id="undo-b")
+                assert other_chat.detail == "NO_HIDDEN_MEMORY"
+                assert await _statuses(db, ["temp-1", "temp-2"]) == {"temp-1": "hidden", "temp-2": "hidden"}
+                operation = await db.scalar(
+                    select(ContextOperation).where(ContextOperation.command_type == "memory_hide")
+                )
+                assert operation.outcome == "applied"
+            async with sessions() as db:
+                restored = await undo_last_hide(db, owner_id="alice", conversation_id="a1", request_id="undo-a")
+                assert restored.detail == "MEMORY_UNHIDDEN"
+                assert await _statuses(db, ["temp-1", "temp-2"]) == {"temp-1": "active", "temp-2": "active"}
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_finish_pending_never_overwrites_an_already_resolved_row(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "conditional-finish.db")
+        try:
+            async with sessions() as db:
+                await seed(db, [row("p1", "I travelled to Paris", offset=1)])
+                await db.commit()
+            async with sessions() as db:
+                await hide_target(
+                    db, owner_id="alice", conversation_id="a1", target="Paris", request_id="preview", secret=SECRET
+                )
+            async with sessions() as db:
+                stale = await _pending(db, owner_id="alice", conversation_id="a1")
+            assert stale is not None
+            first = CommandResult(
+                request_id="yes-one", kind=CommandKind.EXECUTED, spoken="first", detail="MEMORY_HIDDEN"
+            )
+            second = CommandResult(
+                request_id="yes-two", kind=CommandKind.EXECUTED, spoken="second", detail="MEMORY_HIDDEN"
+            )
+            async with sessions() as db:
+                current = await _pending(db, owner_id="alice", conversation_id="a1")
+                assert current is not None
+                assert await _finish_pending(db, current, "applied", first, "yes-one") is True
+            async with sessions() as db:
+                assert await _finish_pending(db, stale, "applied", second, "yes-two") is False
+                stored = await db.scalar(select(ContextOperation).where(ContextOperation.command_type == "memory_hide"))
+                assert stored.payload["response"]["request_id"] == "yes-one"
+                assert stored.payload["response"]["spoken"] == "first"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_fully_erased_pending_hide_is_deleted_and_its_request_id_can_be_reused(tmp_path):
+    async def run():
+        engine, sessions = await database(tmp_path / "erased-retry.db")
+        try:
+            async with sessions() as db:
+                await seed(db, [row("p1", "I travelled to Paris", offset=1), row("p2", "I live in London", offset=2)])
+                await db.commit()
+            async with sessions() as db:
+                preview = await hide_target(
+                    db, owner_id="alice", conversation_id="a1", target="Paris", request_id="preview", secret=SECRET
+                )
+                assert preview.detail == "MEMORY_HIDE_PROPOSED"
+            async with sessions() as db:
+                await delete_memory(db, "alice", "p1")
+                await db.commit()
+            async with sessions() as db:
+                operation = await db.scalar(
+                    select(ContextOperation).where(ContextOperation.command_type == "memory_hide")
+                )
+                assert operation.outcome == "deleted"
+                assert operation.payload.get("response") is None
+                replay = await hide_target(
+                    db, owner_id="alice", conversation_id="a1", target="London", request_id="preview", secret=SECRET
+                )
+                assert replay.detail == "MEMORY_HIDE_PROPOSED"
+                assert replay.spoken == "I found 1 memory about London. Hide it?"
+                applied = await resolve_confirmation(
+                    db, owner_id="alice", conversation_id="a1", confirmed=True, request_id="confirm", secret=SECRET
+                )
+                assert applied.detail == "MEMORY_HIDDEN"
+                assert await _statuses(db, ["p2"]) == {"p2": "hidden"}
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
 def configured(tmp_path, name):
     file = tmp_path / f"{name}.db"
     settings = Settings(
@@ -340,6 +461,29 @@ def voice(client, conversation, text, request):
     ).json()["result"]
 
 
+def preview_forget(file, chat, topic, request_id, *, scope="topic"):
+    """Create the hide preview through the service the model tool calls (no voice grammar)."""
+
+    async def run():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{file}")
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                owner = await db.scalar(select(Conversation.owner_id).where(Conversation.id == chat))
+                return await hide_target(
+                    db,
+                    owner_id=owner,
+                    conversation_id=chat,
+                    target=topic,
+                    request_id=request_id,
+                    secret=SECRET,
+                    scope=scope,
+                )
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(run())
+
+
 def memory_status(file, memory_id):
     with closing(sqlite3.connect(file)) as db:
         return db.execute("SELECT status FROM memories WHERE id=?", (memory_id,)).fetchone()[0]
@@ -354,10 +498,10 @@ def test_one_yes_hides_in_every_memory_mode(tmp_path, mode):
         seed_sql(file, chat, [("p1", "I travelled to Paris")])
         set_mode(file, owner, mode)
 
-        preview = voice(client, chat, "Forget everything about Paris.", "preview")
-        assert preview["kind"] == "needs_confirmation"
-        assert preview["detail"] == "MEMORY_HIDE_PROPOSED"
-        assert preview["spoken"] == "I found 1 memory about Paris. Hide it?"
+        preview = preview_forget(file, chat, "Paris", "preview")
+        assert preview.kind is CommandKind.NEEDS_CONFIRMATION
+        assert preview.detail == "MEMORY_HIDE_PROPOSED"
+        assert preview.spoken == "I found 1 memory about Paris. Hide it?"
         assert memory_status(file, "p1") == "active"
 
         applied = voice(client, chat, "Yes.", "confirm")
@@ -373,7 +517,7 @@ def test_replaying_the_same_yes_does_not_hide_twice(tmp_path):
         chat = client.post("/v1/conversations").json()["id"]
         seed_sql(file, chat, [("p1", "I travelled to Paris"), ("p2", "I proposed in Paris")])
 
-        assert voice(client, chat, "Forget Paris.", "preview")["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert preview_forget(file, chat, "Paris", "preview").detail == "MEMORY_HIDE_PROPOSED"
         first = voice(client, chat, "Yes.", "same-confirm")
         second = voice(client, chat, "Yes.", "same-confirm")
         assert first == second
@@ -381,21 +525,48 @@ def test_replaying_the_same_yes_does_not_hide_twice(tmp_path):
         assert memory_status(file, "p1") == memory_status(file, "p2") == "hidden"
 
 
-def test_a_memory_deleted_between_preview_and_yes_is_skipped_and_reported(tmp_path):
+def test_a_memory_deleted_between_preview_and_yes_is_skipped_and_scrubbed(tmp_path):
+    erased_text = "Paris secret alpha"
     file, settings = configured(tmp_path, "deleted")
     with TestClient(create_app(settings)) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
-        seed_sql(file, chat, [("p1", "I travelled to Paris"), ("p2", "I proposed in Paris")])
+        seed_sql(file, chat, [("p1", "I travelled to Paris"), ("p2", erased_text)])
+        preview = preview_forget(file, chat, "Paris", "preview")
+        assert preview.spoken == "I found 2 memories about Paris. Hide all of them?"
 
-        preview = voice(client, chat, "Forget Paris.", "preview")
-        assert preview["spoken"] == "I found 2 memories about Paris. Hide all of them?"
-        with closing(sqlite3.connect(file)) as db, db:
-            db.execute("UPDATE memories SET status='deleted', content='' WHERE id='p2'")
-            db.commit()
+        async def stale_pending_delete_and_apply():
+            engine = create_async_engine(f"sqlite+aiosqlite:///{file}")
+            try:
+                async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                    owner = await db.scalar(select(Conversation.owner_id).where(Conversation.id == chat))
+                    stale = await _pending(db, owner_id=owner, conversation_id=chat)
+                assert stale is not None
+                async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                    await delete_memory(db, owner, "p2")
+                    await db.commit()
+                async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                    applied = await _apply_pending(
+                        db,
+                        pending=stale,
+                        owner_id=owner,
+                        conversation_id=chat,
+                        request_id="confirm",
+                        secret=SECRET,
+                    )
+                    assert applied.spoken == "Hidden 1 of 2; one had already changed."
+                async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                    operation = await db.scalar(
+                        select(ContextOperation).where(ContextOperation.command_type == "memory_hide")
+                    )
+                    assert operation is not None
+                    serialized = json.dumps(operation.payload, ensure_ascii=False)
+                    assert erased_text not in serialized
+                    assert "p2" not in serialized
+            finally:
+                await engine.dispose()
 
-        applied = voice(client, chat, "Yes.", "confirm")
-        assert applied["spoken"] == "Hidden 1 of 2; one had already changed."
+        asyncio.run(stale_pending_delete_and_apply())
         assert memory_status(file, "p1") == "hidden"
         assert memory_status(file, "p2") == "deleted"
 
@@ -431,10 +602,10 @@ def test_chat_scope_clears_only_this_chats_temporary_memories_and_undo_restores_
         )
         _seed_other_chat_temporary(file, owner, other, "temp-other", "Another chat's secret")
 
-        preview = voice(client, chat, "Forget everything I just said.", "preview")
-        assert preview["kind"] == "needs_confirmation"
-        assert preview["detail"] == "MEMORY_HIDE_PROPOSED"
-        assert preview["spoken"] == "I found 2 temporary memories from this chat. Clear them?"
+        preview = preview_forget(file, chat, "", "preview", scope="chat")
+        assert preview.kind is CommandKind.NEEDS_CONFIRMATION
+        assert preview.detail == "MEMORY_HIDE_PROPOSED"
+        assert preview.spoken == "I found 2 temporary memories from this chat. Clear them?"
         assert memory_status(file, "temp-1") == memory_status(file, "temp-2") == "active"
 
         applied = voice(client, chat, "Yes.", "confirm")
@@ -460,9 +631,9 @@ def test_chat_scope_takes_one_yes_in_every_memory_mode(tmp_path, mode):
         )
         set_mode(file, owner, mode)
 
-        preview = voice(client, chat, "Clear this chat's memory.", "preview")
-        assert preview["detail"] == "MEMORY_HIDE_PROPOSED"
-        assert preview["spoken"] == "I found 2 temporary memories from this chat. Clear them?"
+        preview = preview_forget(file, chat, "", "preview", scope="chat")
+        assert preview.detail == "MEMORY_HIDE_PROPOSED"
+        assert preview.spoken == "I found 2 temporary memories from this chat. Clear them?"
         assert memory_status(file, "temp-1") == memory_status(file, "temp-2") == "active"
 
         applied = voice(client, chat, "Yes.", "confirm")
@@ -477,78 +648,51 @@ def test_chat_scope_zero_is_honest_and_writes_nothing(tmp_path):
         chat = client.post("/v1/conversations").json()["id"]
         seed_sql(file, chat, [("g1", "I live in Tripoli")])
 
-        result = voice(client, chat, "Forget the temporary memories.", "zero")
-        assert result["kind"] == "unchanged"
-        assert result["detail"] == "MEMORY_TARGET_NOT_FOUND"
-        assert result["spoken"] == "There are no temporary memories in this chat; nothing was changed."
+        result = preview_forget(file, chat, "", "zero", scope="chat")
+        assert result.kind is CommandKind.UNCHANGED
+        assert result.detail == "MEMORY_TARGET_NOT_FOUND"
+        assert result.spoken == "There are no temporary memories in this chat; nothing was changed."
         assert memory_status(file, "g1") == "active"
         with closing(sqlite3.connect(file)) as db:
             assert db.execute("SELECT count(*) FROM context_operations").fetchone()[0] == 0
 
 
-ALL_MEMORY_PHRASES = [
-    "Forget everything.",
-    "Forget all my memories.",
-    "Forget everything about me.",
-    "Forget everything about me everywhere.",
-    "Forget everything about me globally.",
-    "Forget everything about me in all chats.",
-    "Forget everything you know about me.",
-]
-
-
-@pytest.mark.parametrize("phrase", ALL_MEMORY_PHRASES)
-def test_every_all_memory_phrase_refuses_and_writes_nothing(tmp_path, phrase):
-    file, settings = configured(tmp_path, "all-refusal")
+def test_double_yes_keeps_the_first_response(tmp_path):
+    file, settings = configured(tmp_path, "double-yes")
     with TestClient(create_app(settings)) as client:
         client.post("/v1/demo-session")
         chat = client.post("/v1/conversations").json()["id"]
-        seed_sql(file, chat, [("g1", "I live in Tripoli")])
+        seed_sql(file, chat, [("p1", "I travelled to Paris"), ("p2", "I proposed in Paris")])
+        preview_forget(file, chat, "Paris", "preview")
 
-        result = voice(client, chat, phrase, "refuse")
-        assert result["kind"] == "unchanged"
-        assert result["detail"] == "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE"
-        assert result["spoken"] == (
-            "I can't clear all your memories by voice. You can review and delete them in Settings, under Memory. "
-            "Nothing was changed."
-        )
-        assert result["changed"] is False
-        assert memory_status(file, "g1") == "active"
-        with closing(sqlite3.connect(file)) as db:
-            assert db.execute("SELECT count(*) FROM context_operations").fetchone()[0] == 0
+        async def overlapping_yes():
+            engine = create_async_engine(f"sqlite+aiosqlite:///{file}")
+            try:
+                async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                    owner = await db.scalar(select(Conversation.owner_id).where(Conversation.id == chat))
+                    stale = await _pending(db, owner_id=owner, conversation_id=chat)
+                assert stale is not None
+                async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                    first = await _apply_pending(
+                        db,
+                        pending=stale,
+                        owner_id=owner,
+                        conversation_id=chat,
+                        request_id="yes-one",
+                        secret=SECRET,
+                    )
+                async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                    second = await _apply_pending(
+                        db,
+                        pending=stale,
+                        owner_id=owner,
+                        conversation_id=chat,
+                        request_id="yes-two",
+                        secret=SECRET,
+                    )
+                assert second == first
+            finally:
+                await engine.dispose()
 
-
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("Forget my name.", MemoryForgetRequest("my name")),
-        ("Exclude Paris.", MemoryForgetRequest("Paris")),
-        ("Please forget the Paris trip.", MemoryForgetRequest("the Paris trip")),
-        ("forget everything about Paris", MemoryForgetRequest("Paris")),
-        ("forget the Paris trip everywhere", MemoryForgetRequest("the Paris trip")),
-        ("forget everything I just said", MemoryForgetRequest("", this_chat=True)),
-        ("forget what I said", MemoryForgetRequest("", this_chat=True)),
-        ("forget what we just talked about", MemoryForgetRequest("", this_chat=True)),
-        ("forget everything from this chat", MemoryForgetRequest("", this_chat=True)),
-        ("forget everything from this conversation", MemoryForgetRequest("", this_chat=True)),
-        ("clear this chat's memory", MemoryForgetRequest("", this_chat=True)),
-        ("forget the temporary memories", MemoryForgetRequest("", this_chat=True)),
-        ("forget temporary memories in this chat", MemoryForgetRequest("", this_chat=True)),
-        ("forget everything", MemoryForgetRequest("", all_memories=True)),
-        ("forget all my memories", MemoryForgetRequest("", all_memories=True)),
-        ("forget all of my memories globally", MemoryForgetRequest("", all_memories=True)),
-        ("forget everything about me", MemoryForgetRequest("", all_memories=True)),
-        ("forget everything about me everywhere", MemoryForgetRequest("", all_memories=True)),
-        ("forget everything about me in all chats", MemoryForgetRequest("", all_memories=True)),
-        ("forget everything you know about me", MemoryForgetRequest("", all_memories=True)),
-        ("forget what you know about me everywhere", MemoryForgetRequest("", all_memories=True)),
-        ("forget it", None),
-        ("forget about it", None),
-        ("forget that", None),
-        ("forget them", None),
-        ("forget the trip but keep the budget", None),
-        ("forget everything I said and tell me a joke", None),
-    ],
-)
-def test_parse_memory_forget_table(text, expected):
-    assert parse_memory_forget(text) == expected
+        asyncio.run(overlapping_yes())
+        assert memory_status(file, "p1") == memory_status(file, "p2") == "hidden"

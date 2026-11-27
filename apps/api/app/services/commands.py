@@ -22,7 +22,6 @@ from app.domain.commands import (
     memory_undo_requested,
     parse_exact_command,
     parse_exclusion_confirmation,
-    parse_memory_forget,
     parse_voice_gender,
     parse_voice_selection,
     unknown_result,
@@ -54,8 +53,6 @@ from app.services.context_operations import ContextOperationError, MemorySearche
 from app.services.jev_ui import UiClassifier
 from app.services.voice_exclusions import (
     discard_pending,
-    global_retraction_refusal,
-    hide_target,
     propose_restore,
     resolve_confirmation,
     undo_last_hide,
@@ -109,7 +106,6 @@ async def handle_finalized_utterance(
             request_id=request_id,
             text=text,
             secret=secret,
-            search=search,
         )
     if memory_result is not None:
         return memory_result
@@ -303,7 +299,6 @@ async def _handle_memory_mutation(
     request_id: str,
     text: str,
     secret: str,
-    search: MemorySearcher | None,
 ) -> CommandResult | None:
     if memory_restore_requested(text):
         return await _run_memory_command(
@@ -321,25 +316,7 @@ async def _handle_memory_mutation(
             undo_last_hide(db, owner_id=owner_id, conversation_id=conversation_id, request_id=request_id),
             request_id=request_id,
         )
-    forget = parse_memory_forget(text)
-    if forget is None:
-        return None
-    if forget.all_memories:
-        # Voice may not clear every memory. Point to the Settings screen and write nothing.
-        return global_retraction_refusal(request_id)
-    return await _run_memory_command(
-        hide_target(
-            db,
-            owner_id=owner_id,
-            conversation_id=conversation_id,
-            target=forget.query,
-            request_id=request_id,
-            secret=secret,
-            scope="chat" if forget.this_chat else "topic",
-            search=search,
-        ),
-        request_id=request_id,
-    )
+    return None
 
 
 async def _run_memory_command(operation, *, request_id: str) -> CommandResult:

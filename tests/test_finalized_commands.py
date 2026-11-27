@@ -317,32 +317,14 @@ def test_unwired_rows_refuse_with_the_exact_sentence_and_mutate_nothing(tmp_path
         assert counts(path) == (0, 0, 0)
 
 
-ALL_MEMORY_REFUSALS = [
-    "Forget everything.",
-    "Forget all my memories.",
-    "Forget everything about me.",
-    "Forget everything about me everywhere.",
-    "Forget everything about me globally.",
-    "Forget everything about me in all chats.",
-    "Forget everything you know about me.",
-]
-
-
-@pytest.mark.parametrize("text", ALL_MEMORY_REFUSALS)
-def test_every_all_memory_phrase_refuses_without_writing(tmp_path, text):
-    app, path = app_for(tmp_path, "all-memories")
+@pytest.mark.parametrize("text", ["Forget Paris.", "Forget everything about me.", "Forget what I said."])
+def test_forget_wording_is_not_a_regex_command(tmp_path, text):
+    app, path = app_for(tmp_path, "no-forget-grammar")
     with TestClient(app) as client:
         conversation = chat(client)
         response = voice(client, conversation, text)
         assert response.status_code == 200
-        result = response.json()["result"]
-        assert result["kind"] == "unchanged"
-        assert result["detail"] == "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE"
-        assert result["spoken"] == (
-            "I can't clear all your memories by voice. You can review and delete them in Settings, under Memory. "
-            "Nothing was changed."
-        )
-        assert result["changed"] is False
+        assert response.json() == {"handled": False}
         assert counts(path) == (0, 0, 0)
 
 

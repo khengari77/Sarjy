@@ -167,8 +167,9 @@ class MemoryQueryInput(MemoryToolBase):
     query: str = Field(min_length=1, max_length=500)
 
 
-class MemoryForgetInput(MemoryQueryInput):
-    pass
+class MemoryForgetInput(MemoryToolBase):
+    topic: str = Field(default="", max_length=500)
+    scope: Literal["topic", "this_chat", "everything"] = "topic"
 
 
 class CommandInput(BaseModel):
@@ -1209,7 +1210,8 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
                 owner_id=owner_id,
                 conversation_id=conversation_id,
                 request_id=body.request_id,
-                query=body.query,
+                topic=body.topic,
+                scope=body.scope,
                 secret=secret,
             )
 
@@ -1219,7 +1221,7 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
             request,
             body,
             "memory_forget",
-            {"query": body.query},
+            {"topic": body.topic, "scope": body.scope},
             effect,
         )
 

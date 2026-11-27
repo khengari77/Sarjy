@@ -1,5 +1,6 @@
 """Consent-first voice memory exclusion: lookup, proposal, confirm and Undo."""
 
+import asyncio
 import json
 import sqlite3
 import time
@@ -16,33 +17,49 @@ from app.domain.commands import (
     parse_memory_exclusion_target,
 )
 from app.domain.context_operations import verify_proposal
+from app.infrastructure.database import Conversation
 from app.main import create_app
 from app.services.context_operations import keyword_search
 from app.services.memory_terms import terms_of
 from app.services.memory_visibility import HIDE_OPERATION
-from app.services.voice_exclusions import UNDO_SCAN_LIMIT, propose_exclusion
+from app.services.voice_exclusions import UNDO_SCAN_LIMIT, hide_target, propose_exclusion
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 SECRET = "test-proposal-secret"
 
 
 @pytest.fixture
 def legacy_forget(monkeypatch):
-    """Forget now hides in one step; these tests cover the retained propose/confirm
-    machinery (restore, consent one-shot, expiry, cross-owner) by routing forget to it."""
+    """The production forget grammar is gone; these tests cover the retained propose/confirm
+    machinery (restore, consent one-shot, expiry, cross-owner) by routing a test-only forget
+    sentence straight to propose_exclusion."""
 
-    def propose(db, *, owner_id, conversation_id, target, request_id, secret, scope, search):
-        return propose_exclusion(
+    real = commands_module._handle_memory_mutation
+
+    async def handle(db, *, owner_id, conversation_id, request_id, text, secret):
+        target = parse_memory_exclusion_target(text)
+        if target is not None and text.lstrip().casefold().startswith(("forget", "exclude")):
+            return await propose_exclusion(
+                db,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                target=target,
+                request_id=request_id,
+                secret=secret or SECRET,
+                search=keyword_search,
+            )
+        return await real(
             db,
             owner_id=owner_id,
             conversation_id=conversation_id,
-            target=target,
             request_id=request_id,
-            secret=secret or SECRET,
-            search=search or keyword_search,
+            text=text,
+            secret=secret,
         )
 
-    monkeypatch.setattr(commands_module, "hide_target", propose)
+    monkeypatch.setattr(commands_module, "_handle_memory_mutation", handle)
 
 
 def configured(tmp_path, name="voice-memory"):
@@ -54,6 +71,29 @@ def configured(tmp_path, name="voice-memory"):
         _env_file=None,
     )
     return file, settings
+
+
+def preview_hide(file, chat, target, request_id, *, scope="topic"):
+    """The model tool's preview path, without the removed voice forget grammar."""
+
+    async def run():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{file}")
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                owner = await db.scalar(select(Conversation.owner_id).where(Conversation.id == chat))
+                return await hide_target(
+                    db,
+                    owner_id=owner,
+                    conversation_id=chat,
+                    target=target,
+                    request_id=request_id,
+                    secret=SECRET,
+                    scope=scope,
+                )
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(run())
 
 
 def new_chat(client):
@@ -266,20 +306,20 @@ def test_zero_matches_is_honest_and_many_matches_preview_one_count_then_hide(tmp
     with TestClient(create_app(settings)) as client:
         chat = new_chat(client)
         seed(file, chat, [("city", "I live in Tripoli")])
-        result = voice(client, chat, "Forget my name.", request="missing").json()["result"]
-        assert result["kind"] == "unchanged"
-        assert result["detail"] == "MEMORY_TARGET_NOT_FOUND"
-        assert result["spoken"] == "I couldn't find anything about my name; nothing was changed."
+        result = preview_hide(file, chat, "my name", "missing")
+        assert result.kind.value == "unchanged"
+        assert result.detail == "MEMORY_TARGET_NOT_FOUND"
+        assert result.spoken == "I couldn't find anything about my name; nothing was changed."
         assert counts(file) == (0, 0, 0, 0)
 
     file, settings = configured(tmp_path, "many")
     with TestClient(create_app(settings)) as client:
         chat = new_chat(client)
         seed(file, chat, [("name-a", "My name is A"), ("name-b", "My name is B")])
-        result = voice(client, chat, "Forget my name.", request="many").json()["result"]
-        assert result["kind"] == "needs_confirmation"
-        assert result["detail"] == "MEMORY_HIDE_PROPOSED"
-        assert result["spoken"] == "I found 2 memories about my name. Hide all of them?"
+        result = preview_hide(file, chat, "my name", "many")
+        assert result.kind.value == "needs_confirmation"
+        assert result.detail == "MEMORY_HIDE_PROPOSED"
+        assert result.spoken == "I found 2 memories about my name. Hide all of them?"
         assert counts(file) == (0, 0, 0, 1), "the preview only records one pending operation"
         assert memory_status(file, "name-a") == "active"
         assert memory_status(file, "name-b") == "active"
@@ -339,11 +379,11 @@ def test_global_phrasings_preview_and_other_destructive_phrasings_still_refuse_h
         chat = new_chat(client)
         seed(file, chat, [("name", "My name is Khengari")])
 
-        # "everywhere" no longer refuses: a hide is already global, so this previews the named topic.
-        global_result = voice(client, chat, "Forget my name everywhere.", request="global").json()["result"]
-        assert global_result["kind"] == "needs_confirmation"
-        assert global_result["detail"] == "MEMORY_HIDE_PROPOSED"
-        assert global_result["spoken"] == "I found 1 memory about my name. Hide it?"
+        # Topic forget comes from the model tool; the old wording grammar no longer parses it.
+        global_result = preview_hide(file, chat, "my name", "global")
+        assert global_result.kind.value == "needs_confirmation"
+        assert global_result.detail == "MEMORY_HIDE_PROPOSED"
+        assert global_result.spoken == "I found 1 memory about my name. Hide it?"
         assert counts(file) == (0, 0, 0, 1)
 
         compound = voice(client, chat, "Forget the Paris trip but keep the budget.", request="compound").json()[

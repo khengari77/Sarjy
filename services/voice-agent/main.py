@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from contextlib import aclosing
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import httpx
@@ -1664,11 +1664,13 @@ class SarjyAgent(WordleTools, Agent):
         return str(body.get("message") or FAILED_NOTE)
 
     @function_tool()
-    async def propose_forget(self, ctx: RunContext, query: str):
-        """Forget stored memories matching a short topic query (for example "tea"), or clear this chat's temporary memories when the user asks to forget what they just said. Clearing every memory is refused and points the user to Settings. This only previews: the app says how many it found and asks once before hiding anything."""
+    async def propose_forget(
+        self, ctx: RunContext, topic: str = "", scope: Literal["topic", "this_chat", "everything"] = "topic"
+    ):
+        """Forget memories. topic = the short noun phrase naming WHAT to forget ("tea", "my trip to Paris"), never the whole sentence and never words like said, told or everything. scope="this_chat" = the user wants to drop what they just said or told you in THIS conversation (clears this chat's temporary memories). scope="everything" = the user asks to erase all memories or everything you know about them. This only previews: the app says how many it found and asks once before hiding anything."""
         if self.current_turn is not None and self.current_turn == self.decision_turn:
             return DECISION_TURN_NOTE
-        body = await self._memory_tool("memory-forget", ctx, query=query)
+        body = await self._memory_tool("memory-forget", ctx, topic=topic, scope=scope)
         spoken = body.get("spoken")
         if (
             isinstance(spoken, str)
