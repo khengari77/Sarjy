@@ -31,6 +31,7 @@ from app.services.context_operations import (
     keyword_search,
     undo_operation,
 )
+from app.services.memory_scope import visible_in
 from app.services.memory_visibility import HIDE_OPERATION, UNHIDE_OPERATION, hide_memory, unhide_memory
 
 EXCLUDE_PROPOSAL = "exclude_proposal"
@@ -437,7 +438,7 @@ UNDO_SCAN_LIMIT = 10
 
 
 async def undo_last_hide(db: AsyncSession, *, owner_id: str, conversation_id: str, request_id: str) -> CommandResult:
-    """Unhide the owner's most recent hide (any conversation); one step, no consent."""
+    """Unhide the most recent hide visible in this conversation; one step, no consent."""
     replay = await _replay_proposal(
         db, owner_id=owner_id, conversation_id=conversation_id, command_type=UNHIDE_OPERATION, request_id=request_id
     )
@@ -460,12 +461,21 @@ async def undo_last_hide(db: AsyncSession, *, owner_id: str, conversation_id: st
         memory_id = (operation.payload or {}).get("memory_id")
         if not isinstance(memory_id, str):
             continue
+        content = await db.scalar(
+            select(Memory.content).where(
+                Memory.id == memory_id,
+                Memory.owner_id == owner_id,
+                visible_in(conversation_id),
+            )
+        )
+        if content is None:
+            # Another conversation's temporary memory: never unhide or quote it here.
+            continue
         try:
             result = await unhide_memory(db, owner_id, memory_id)
         except HTTPException:
             await db.rollback()
             continue
-        content = await db.scalar(select(Memory.content).where(Memory.id == memory_id, Memory.owner_id == owner_id))
         operation.outcome = "undone"
         response = (
             _applied(request_id, "MEMORY_UNHIDDEN", f"Brought back '{_snippet(content or '', 80)}'.", memory_id)
@@ -509,13 +519,22 @@ async def _latest_active_exclusion(
                     ContextExclusion.owner_id == owner_id,
                     ContextExclusion.conversation_id == conversation_id,
                     ContextExclusion.active.is_(True),
+                    ContextExclusion.memory_id.in_(
+                        select(Memory.id).where(Memory.owner_id == owner_id, visible_in(conversation_id))
+                    ),
                 )
             )
         ).all()
         if not memory_ids:
             continue
         contents = (
-            await db.scalars(select(Memory.content).where(Memory.id.in_(memory_ids), Memory.owner_id == owner_id))
+            await db.scalars(
+                select(Memory.content).where(
+                    Memory.id.in_(memory_ids),
+                    Memory.owner_id == owner_id,
+                    visible_in(conversation_id),
+                )
+            )
         ).all()
         return operation, tuple(contents)
     return None

@@ -34,6 +34,17 @@ def memory_by_id(file, memory_id):
         ).fetchone()
 
 
+def seed_memory(file, *, memory_id, owner_id, conversation_id, content, subject, scope):
+    with closing(sqlite3.connect(file)) as db, db:
+        db.execute(
+            "INSERT INTO memories (id,owner_id,content,subject,scope,embedding_model,source_conversation_id,"
+            "version,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,1,'active',"
+            "'2026-11-26T00:00:00+00:00','2026-11-26T00:00:00+00:00')",
+            (memory_id, owner_id, content, subject, scope, "text-embedding-3-small", conversation_id),
+        )
+        db.commit()
+
+
 def proposal_of(client, headers, text, request_id):
     body = turn(client, headers, text, request_id).json()
     proposal = body["memory_proposal"]
@@ -669,6 +680,33 @@ def test_auto_propose_asks_when_a_fact_contradicts_a_saved_one_and_changes_nothi
         cm.__exit__(None, None, None)
 
 
+def test_undo_in_one_conversation_ignores_a_same_subject_temporary_fact_in_another(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        first = save_via_auto(client, headers, "My name is Sam", "fact-1")
+        second = save_via_auto(client, headers, "My name is Alex", "fact-2")
+        owner, _ = session_identity(file)
+        chat_b = client.post("/v1/conversations").json()["id"]
+        seed_memory(
+            file,
+            memory_id="temp-b",
+            owner_id=owner,
+            conversation_id=chat_b,
+            content="My name is Bee",
+            subject="attribute:name",
+            scope="conversation",
+        )
+
+        undone = client.post(f"/v1/changes/{second['id']}/undo")
+        assert undone.status_code == 200, undone.text
+        assert undone.json()["changed"] is True
+        assert memory_by_id(file, first["memory_id"])[0] == "active"
+        assert memory_by_id(file, second["memory_id"])[0] == "deleted"
+        assert memory_by_id(file, "temp-b")[0] == "active"
+    finally:
+        cm.__exit__(None, None, None)
+
+
 def test_a_failed_auto_save_never_claims_a_save_and_never_falls_back_to_a_question(tmp_path, monkeypatch):
     from app.routes import worker as worker_module
     from app.services.memory_capture import MemoryCaptureError
@@ -762,5 +800,32 @@ def test_a_memory_turned_off_just_before_the_write_wins(tmp_path, monkeypatch):
         body = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
         assert body["status"] == "rejected" and body["error"] == "MEMORY_OFF", body
         assert active_contents(file) == []
+    finally:
+        cm.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize("scope", ["conversation", "global"])
+def test_undo_still_refuses_when_a_visible_same_subject_fact_is_active(tmp_path, scope):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        first = save_via_auto(client, headers, "My name is Sam", "fact-1")
+        second = save_via_auto(client, headers, "My name is Alex", "fact-2")
+        owner, chat_a = session_identity(file)
+        chat_b = client.post("/v1/conversations").json()["id"]
+        seed_memory(
+            file,
+            memory_id=f"visible-{scope}",
+            owner_id=owner,
+            conversation_id=chat_a if scope == "conversation" else chat_b,
+            content="My name is Still Here",
+            subject="attribute:name",
+            scope=scope,
+        )
+
+        undone = client.post(f"/v1/changes/{second['id']}/undo")
+        assert undone.status_code == 409, undone.text
+        assert undone.json()["detail"]["code"] == "CHANGE_SUPERSEDED"
+        assert memory_by_id(file, first["memory_id"])[0] == "superseded"
+        assert memory_by_id(file, second["memory_id"])[0] == "active"
     finally:
         cm.__exit__(None, None, None)

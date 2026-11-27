@@ -22,6 +22,7 @@ from app.services.memory_capture import (
     proposal_summary,
 )
 from app.services.memory_erasure_lock import lock_owner_memories
+from app.services.memory_scope import visible_in
 from app.services.memory_visibility import Erased, scrub_copies
 
 APPLIED = "applied"
@@ -219,6 +220,7 @@ async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dic
                 Memory.subject == old.subject,
                 Memory.status == "active",
                 Memory.id != change.memory_id,
+                visible_in(operation.conversation_id),
             )
             .limit(1)
         )
