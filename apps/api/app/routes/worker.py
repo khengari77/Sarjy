@@ -170,6 +170,8 @@ class MemoryQueryInput(MemoryToolBase):
 class MemoryForgetInput(MemoryToolBase):
     topic: str = Field(default="", max_length=500)
     scope: Literal["topic", "this_chat", "everything"] = "topic"
+    # Deploy-window compatibility: an older worker sends query instead of topic.
+    query: str = Field(default="", max_length=500)
 
 
 class CommandInput(BaseModel):
@@ -1204,14 +1206,17 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
 
     @app.post("/internal/agent/tool/memory-forget")
     async def agent_memory_forget(body: MemoryForgetInput, request: Request, db: AsyncSession = Depends(database)):
+        topic = body.topic or body.query
+        scope = "topic" if body.query and not body.topic else body.scope
+
         async def effect(owner_id, conversation_id):
             return await memory_forget_tool(
                 db,
                 owner_id=owner_id,
                 conversation_id=conversation_id,
                 request_id=body.request_id,
-                topic=body.topic,
-                scope=body.scope,
+                topic=topic,
+                scope=scope,
                 secret=secret,
             )
 
@@ -1221,7 +1226,7 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
             request,
             body,
             "memory_forget",
-            {"topic": body.topic, "scope": body.scope},
+            {"topic": topic, "scope": scope},
             effect,
         )
 

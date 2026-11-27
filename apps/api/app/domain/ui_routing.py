@@ -35,6 +35,14 @@ FORCED_MEMORY_TOOLS: Final[dict[str, str]] = {
     "forget": "propose_forget",
     "recall": "recall",
 }
+# Forget only previews and asks once before anything changes, and recall is read-only, so a
+# slightly less certain answer can safely reach their tools. Remember may save without asking
+# in auto mode, so it keeps the single UI-command confidence threshold.
+FORCED_MEMORY_THRESHOLDS: Final[dict[str, float]] = {
+    "remember": CONFIDENCE_THRESHOLD,
+    "forget": 0.75,
+    "recall": 0.75,
+}
 MULTIPLE_COMMANDS_SPOKEN: Final = "I can only make one change at a time. Which one should I do first?"
 # A confident "open Wordle" answer becomes this command detail; the worker runs the real play.
 WORDLE_OPEN_DETAIL: Final = "WORDLE_OPEN"

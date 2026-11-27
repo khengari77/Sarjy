@@ -17,7 +17,7 @@ from app.domain.budget import DEEPSEEK_MAX_REQUEST_BYTES
 from app.domain.contracts import AssistantContinuation, ModelRequest, ModelToolItem, ToolSpec
 from app.domain.memory_capture import is_referential
 from app.domain.tool_operations import operation_key
-from app.domain.ui_routing import CONFIDENCE_THRESHOLD, FORCED_MEMORY_TOOLS
+from app.domain.ui_routing import FORCED_MEMORY_THRESHOLDS, FORCED_MEMORY_TOOLS
 from config import (
     first_event_seconds,
     preemptive_generation,
@@ -1342,14 +1342,17 @@ class SarjyAgent(WordleTools, Agent):
         answer = self.memory_ops.get(message_id)
         if not isinstance(answer, dict):
             return None
-        tool = FORCED_MEMORY_TOOLS.get(str(answer.get("choice")))
+        choice = str(answer.get("choice"))
+        tool = FORCED_MEMORY_TOOLS.get(choice)
+        threshold = FORCED_MEMORY_THRESHOLDS.get(choice)
         probability = answer.get("probability")
         if (
             tool is None
+            or threshold is None
             or tool not in available
             or isinstance(probability, bool)
             or not isinstance(probability, (int, float))
-            or probability < CONFIDENCE_THRESHOLD
+            or probability < threshold
         ):
             return None
         self.memory_forced.add(message_id)

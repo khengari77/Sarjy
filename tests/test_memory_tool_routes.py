@@ -288,6 +288,21 @@ def test_forget_tool_refuses_when_only_a_budget_note_matches(tmp_path):
         assert memory_status(file, "budget") == "active"
 
 
+def test_forget_tool_accepts_the_legacy_query_field_as_a_topic(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, _, headers, turn = setup(client, file, [("tea", "I prefer green tea")])
+
+        body = call(client, headers, FORGET, turn, "legacy-query", query="tea").json()
+        assert body["status"] == "proposed"
+        assert body["detail"] == "MEMORY_HIDE_PROPOSED"
+        assert body["spoken"] == "I found 1 memory about tea. Hide it?"
+        assert memory_status(file, "tea") == "active"
+        applied = command(client, headers, next_turn(client, headers, "legacy-yes", "yes"))
+        assert applied["detail"] == "MEMORY_HIDDEN"
+        assert memory_status(file, "tea") == "hidden"
+
+
 def test_undo_unhides_the_latest_hide_and_a_stray_yes_changes_nothing(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:

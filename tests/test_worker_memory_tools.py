@@ -159,13 +159,28 @@ def test_remember_paraphrase_speaks_the_deterministic_question_and_arms_after_pl
     run(monkeypatch, steps, tool_bodies=REMEMBER_BODY)
 
 
-def test_jev_forget_forces_propose_forget_exactly_once(monkeypatch):
+@pytest.mark.parametrize(
+    ("choice", "probability", "tool"),
+    [
+        ("forget", 0.75, "propose_forget"),
+        ("forget", 0.74, None),
+        ("recall", 0.75, "recall"),
+        ("recall", 0.74, None),
+        ("remember", 0.84, None),
+        ("remember", 0.85, "propose_memory"),
+    ],
+)
+def test_per_operation_memory_thresholds_force_the_tool_exactly_once(monkeypatch, choice, probability, tool):
     async def steps(h, agent):
         agent.current_turn = "turn-1"
-        agent.memory_ops["m1"] = {"choice": "forget", "probability": 0.99}
-        forced = agent._forced_memory_choice("m1", {"propose_memory", "propose_forget"})
-        assert forced == {"type": "function", "function": {"name": "propose_forget"}}
-        assert agent._forced_memory_choice("m1", {"propose_forget"}) is None
+        agent.memory_ops["m1"] = {"choice": choice, "probability": probability}
+        available = {"propose_memory", "propose_forget", "recall"}
+        forced = agent._forced_memory_choice("m1", available)
+        if tool is None:
+            assert forced is None
+            return
+        assert forced == {"type": "function", "function": {"name": tool}}
+        assert agent._forced_memory_choice("m1", available) is None
 
     run(monkeypatch, steps)
 

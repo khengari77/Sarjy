@@ -78,7 +78,7 @@ def test_wordle_mode_turns_start_no_early_call(tmp_path):
         assert fake.calls == []
 
 
-@pytest.mark.parametrize("text", ["Hide captions.", "yes", "Forget my coffee order", "x" * 300])
+@pytest.mark.parametrize("text", ["Hide captions.", "yes", "x" * 300])
 def test_turns_that_never_reach_jev_do_not_start_a_call(tmp_path, text):
     fake = FakeClassifier(classification(route="conversation"))
     client, file = worker(tmp_path, fake)
@@ -123,7 +123,15 @@ def test_without_a_stored_classification_command_classifies_for_itself(tmp_path)
 
 def test_the_prefilter_matches_what_command_answers_without_jev():
     assert should_classify_early(PARAPHRASE)
-    for text in ["Hide captions.", "yes", "x" * 300, "Forget my coffee order", "undo", "bring back my memories"]:
+    for text in ["Hide captions.", "yes", "x" * 300, "undo", "bring back my memories"]:
+        assert not should_classify_early(text), text
+
+
+def test_forget_reaches_jev_while_remaining_grammar_does_not():
+    # The regex forget grammar is gone, so a forget sentence must reach Jev's memory_op.
+    assert should_classify_early("Forget my coffee order")
+    assert should_classify_early("Forget everything about me")
+    for text in ["yes", "no", "undo that", "Hide captions.", "Restore excluded memories."]:
         assert not should_classify_early(text), text
 
 
