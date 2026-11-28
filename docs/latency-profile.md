@@ -84,8 +84,10 @@ The API logs `voice_session_created` at info level with the values in the messag
 external voice-catalog call, settings read, gate updates and the admission check. `commit_ms` is the session
 row commit and `dispatch_ms` is the LiveKit `create_dispatch` call. It appears in CranL API logs.
 
-The worker logs `call_start_stages` at info level with milliseconds since the job was accepted:
-`bootstrap_done`, `session_started`, `participant_joined`, `greeting_say_called` and `greeting_done` (after
-`wait_for_playout`). `greeting_say_called` is recorded when `session.say` is scheduled, not when audio starts.
-The line is logged when the greeting path runs and is not logged if the job fails before the greeting starts.
-It appears in the LiveKit Cloud worker logs.
+The worker logs `call_start_stages` at info level with milliseconds since the job was accepted, with the stage
+values in the message as JSON, for example
+`call_start_stages {"bootstrap_done":12,"greeting_done":940,"participant_joined":820,"session_started":34}`.
+The keys are `bootstrap_done`, `session_started`, `participant_joined`, `greeting_say_called` and
+`greeting_done` (after `wait_for_playout`). `greeting_say_called` is recorded when `session.say` is scheduled,
+not when audio starts. The line is logged when the greeting path runs and is not logged if the job fails before
+the greeting starts. It appears in the LiveKit Cloud worker logs.

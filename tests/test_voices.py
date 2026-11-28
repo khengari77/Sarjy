@@ -504,6 +504,23 @@ def test_call_start_logs_handler_and_substep_timing_once(tmp_path, livekit_contr
     assert all(isinstance(value, int) and value >= 0 for value in payload.values())
 
 
+def test_logging_failure_does_not_fail_session_creation(tmp_path, monkeypatch, livekit_control_plane):
+    from app.routes import voice
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("log unavailable")
+
+    monkeypatch.setattr(voice.logger, "info", fail)
+    with TestClient(create_app(configured(tmp_path))) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201
+    with closing(sqlite3.connect(tmp_path / "voice.db")) as db:
+        status = db.execute("SELECT status FROM voice_sessions WHERE id=?", (response.json()["id"],)).fetchone()[0]
+    assert status == "starting"
+
+
 @pytest.fixture
 def livekit_control_plane(monkeypatch):
     # Replace only the external LiveKit control-plane boundary. State and auth are real.
