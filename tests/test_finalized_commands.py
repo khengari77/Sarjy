@@ -477,3 +477,140 @@ def test_worker_command_requires_the_owning_session(tmp_path):
             ).status_code
             == 403
         )
+
+
+CALL_COMMANDS = [
+    ("end the call", "EndCall", "Ending the call."),
+    ("End call.", "EndCall", "Ending the call."),
+    ("end this call", "EndCall", "Ending the call."),
+    ("hang up", "EndCall", "Ending the call."),
+    ("stop the call", "EndCall", "Ending the call."),
+    ("Can you end the call, please?", "EndCall", "Ending the call."),
+    ("mute", "MuteMicrophone", "Muted. Tap the microphone to unmute."),
+    ("mute the mic", "MuteMicrophone", "Muted. Tap the microphone to unmute."),
+    ("mute the microphone", "MuteMicrophone", "Muted. Tap the microphone to unmute."),
+    ("mute my mic", "MuteMicrophone", "Muted. Tap the microphone to unmute."),
+    ("mute my microphone", "MuteMicrophone", "Muted. Tap the microphone to unmute."),
+    ("mute myself", "MuteMicrophone", "Muted. Tap the microphone to unmute."),
+    ("mute me", "MuteMicrophone", "Muted. Tap the microphone to unmute."),
+    ("turn off the mic", "MuteMicrophone", "Muted. Tap the microphone to unmute."),
+    ("turn off the microphone", "MuteMicrophone", "Muted. Tap the microphone to unmute."),
+    ("turn the mic off", "MuteMicrophone", "Muted. Tap the microphone to unmute."),
+    ("turn the microphone off", "MuteMicrophone", "Muted. Tap the microphone to unmute."),
+    ("new conversation", "NewConversation", "Starting a new conversation."),
+    ("new chat", "NewConversation", "Starting a new conversation."),
+    ("start a new conversation", "NewConversation", "Starting a new conversation."),
+    ("start a new chat", "NewConversation", "Starting a new conversation."),
+    ("open a new conversation", "NewConversation", "Starting a new conversation."),
+    ("open a new chat", "NewConversation", "Starting a new conversation."),
+    ("start a fresh conversation", "NewConversation", "Starting a new conversation."),
+    ("start a fresh chat", "NewConversation", "Starting a new conversation."),
+]
+
+CALL_COMMAND_NEAR_MISSES = [
+    "I need to end the call with the client",
+    "can you explain how to mute a microphone",
+    "mute button not working",
+    "end",
+    "hang up the phone on him",
+    "new conversations are great",
+    "start a new conversation about Paris",
+    "goodbye",
+    "bye",
+    "thanks",
+    "end the conversation",
+    "stop",
+    "start over",
+]
+
+
+@pytest.mark.parametrize(("text", "kind", "spoken"), CALL_COMMANDS)
+def test_call_control_phrases_are_whole_utterance_commands(text, kind, spoken):
+    from app.domain.commands import CommandKind, parse_exact_command, spoken_outcome
+
+    action = parse_exact_command(text)
+    assert action is not None
+    assert action.kind == kind
+    assert spoken_outcome(action, kind=CommandKind.EXECUTED) == spoken
+
+
+@pytest.mark.parametrize("text", CALL_COMMAND_NEAR_MISSES)
+def test_call_control_near_misses_are_not_commands(text):
+    from app.domain.commands import parse_exact_command
+
+    assert parse_exact_command(text) is None
+
+
+@pytest.mark.parametrize(("text", "kind", "spoken"), CALL_COMMANDS)
+def test_call_commands_persist_and_speak_through_the_transcript_adapter(tmp_path, text, kind, spoken):
+    app, path = app_for(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        response = voice(client, conversation, text)
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["kind"] == "executed"
+        assert result["action"] == kind
+        assert result["spoken"] == spoken
+        assert result["changed"] is True
+        assert result["navigation"] is None
+        assert handler_trace(path) == [kind]
+        assert counts(path) == (0, 1, 0)
+
+
+def test_call_control_near_misses_are_not_persisted_or_applied(tmp_path):
+    app, path = app_for(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        for index, text in enumerate(CALL_COMMAND_NEAR_MISSES):
+            response = voice(client, conversation, text, request=f"near-{index}")
+            assert response.json() == {"handled": False}
+        assert counts(path) == (0, 0, 0)
+
+
+@pytest.mark.parametrize(("text", "kind", "spoken"), CALL_COMMANDS)
+def test_worker_returns_call_commands_even_with_wordle_enabled(tmp_path, text, kind, spoken):
+    file = tmp_path / "worker-call-commands.db"
+    settings = Settings(
+        database_url=f"sqlite+aiosqlite:///{file}",
+        agent_service_secret="test-service-secret",
+        wordle_enabled=True,
+        _env_file=None,
+    )
+    with TestClient(create_app(settings, voice_catalog=Catalog())) as client:
+        client.post("/v1/demo-session")
+        conversation = client.post("/v1/conversations").json()["id"]
+        headers = _voice_session(client, file, conversation)
+        turn_id = client.post(
+            "/internal/agent/turn/start", headers=headers, json={"request_id": "source-1", "text": text}
+        ).json()["turn_id"]
+
+        command = client.post("/internal/agent/command", headers=headers, json={"turn_id": turn_id}).json()["command"]
+        assert command["kind"] == "executed"
+        assert command["action"] == kind
+        assert command["spoken"] == spoken
+        assert command["changed"] is True
+        assert command["navigation"] is None
+        assert handler_trace(file) == [kind]
+
+
+@pytest.mark.parametrize(
+    ("kind", "spoken"),
+    [
+        ("EndCall", "Ending the call."),
+        ("MuteMicrophone", "Muted. Tap the microphone to unmute."),
+        ("NewConversation", "Starting a new conversation."),
+    ],
+)
+def test_ui_call_commands_return_the_action_and_message(tmp_path, kind, spoken):
+    app, path = app_for(tmp_path)
+    with TestClient(app) as client:
+        conversation = chat(client)
+        response = gui(client, conversation, {"kind": kind}, request=f"ui-{kind}")
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["kind"] == "executed"
+        assert result["action"] == kind
+        assert result["spoken"] == spoken
+        assert result["changed"] is True
+        assert handler_trace(path) == [kind]

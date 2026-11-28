@@ -24,6 +24,7 @@ function item(overrides: Partial<MemoryListItem> = {}): MemoryListItem {
     kind: 'memory',
     version: 1,
     status: 'active',
+    scope: 'global',
     source_conversation_id: 'conversation-1',
     source_turn_id: 'turn-1',
     supersedes_id: null,

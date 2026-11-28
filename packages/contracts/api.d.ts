@@ -174,6 +174,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations/{conversation_id}/memory-proposal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Memory Proposal */
+        get: operations["get_memory_proposal_v1_conversations__conversation_id__memory_proposal_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/memory-proposal/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decide Memory Proposal */
+        post: operations["decide_memory_proposal_v1_conversations__conversation_id__memory_proposal_decision_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/changes/{change_id}/undo": {
         parameters: {
             query?: never;
@@ -241,6 +275,40 @@ export interface paths {
         /** New Conversation */
         post: operations["new_conversation_v1_conversations_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/memory-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Memory Mode */
+        put: operations["set_memory_mode_v1_conversations__conversation_id__memory_mode_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete */
+        delete: operations["delete_v1_conversations__conversation_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1003,7 +1071,7 @@ export interface components {
              */
             source: "ui" | "transcript";
             /** Action */
-            action?: (components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetMemoryMode"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"]) | null;
+            action?: (components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["EndCall"] | components["schemas"]["MuteMicrophone"] | components["schemas"]["NewConversation"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetMemoryMode"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"]) | null;
             /** Transcript */
             transcript?: string | null;
             /**
@@ -1347,6 +1415,14 @@ export interface components {
             revision_after: number;
             diff: components["schemas"]["ContextDiff"];
         };
+        /** EndCall */
+        EndCall: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "EndCall";
+        };
         /** GuessCheckInput */
         GuessCheckInput: {
             /** Word */
@@ -1403,6 +1479,29 @@ export interface components {
             /** Idempotency Key */
             idempotency_key: string;
         };
+        /** MemoryForgetInput */
+        MemoryForgetInput: {
+            /** Turn Id */
+            turn_id: string;
+            /** Request Id */
+            request_id: string;
+            /**
+             * Topic
+             * @default
+             */
+            topic: string;
+            /**
+             * Scope
+             * @default topic
+             * @enum {string}
+             */
+            scope: "topic" | "this_chat" | "everything";
+            /**
+             * Query
+             * @default
+             */
+            query: string;
+        };
         /** MemoryList */
         MemoryList: {
             /** Items */
@@ -1424,6 +1523,11 @@ export interface components {
             version: number;
             /** Status */
             status: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "global" | "conversation";
             /** Source Conversation Id */
             source_conversation_id: string;
             /** Source Turn Id */
@@ -1441,12 +1545,52 @@ export interface components {
             /** Included In Conversation */
             included_in_conversation?: boolean | null;
         };
+        /** MemoryModeUpdate */
+        MemoryModeUpdate: {
+            /** Mode */
+            mode: ("off" | "ask" | "auto") | null;
+        };
         /** MemoryOpAnswer */
         MemoryOpAnswer: {
             /** Choice */
             choice: string;
             /** Probability */
             probability: number;
+        };
+        /** MemoryProposalDecision */
+        MemoryProposalDecision: {
+            /** Proposal Id */
+            proposal_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "save" | "decline" | "replace";
+            /** Target Id */
+            target_id?: string | null;
+            /** Target Version */
+            target_version?: number | null;
+        };
+        /** MemoryProposalDecisionResult */
+        MemoryProposalDecisionResult: {
+            /** Status */
+            status: string;
+            memory?: components["schemas"]["MemoryResult"] | null;
+            /** Idempotent */
+            idempotent?: boolean | null;
+        };
+        /** MemoryProposalPending */
+        MemoryProposalPending: {
+            pending: components["schemas"]["PendingMemoryProposal"] | null;
+        };
+        /** MemoryProposalReplacement */
+        MemoryProposalReplacement: {
+            /** Id */
+            id: string;
+            /** Version */
+            version: number;
+            /** Content */
+            content: string;
         };
         /** MemoryProposeInput */
         MemoryProposeInput: {
@@ -1534,6 +1678,14 @@ export interface components {
             /** Voice Id */
             voice_id?: string | null;
         };
+        /** MuteMicrophone */
+        MuteMicrophone: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "MuteMicrophone";
+        };
         /** NavigationActionResult */
         NavigationActionResult: {
             /**
@@ -1547,6 +1699,14 @@ export interface components {
              */
             navigation: "history" | "memory_explorer";
         };
+        /** NewConversation */
+        NewConversation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "NewConversation";
+        };
         /** OpenMemoryExplorer */
         OpenMemoryExplorer: {
             /**
@@ -1554,6 +1714,16 @@ export interface components {
              * @enum {string}
              */
             kind: "OpenMemoryExplorer";
+        };
+        /** PendingMemoryProposal */
+        PendingMemoryProposal: {
+            /** Id */
+            id: string;
+            /** Fact */
+            fact: string;
+            /** Expires At */
+            expires_at: string;
+            replaces?: components["schemas"]["MemoryProposalReplacement"] | null;
         };
         /**
          * PipelineConfig
@@ -1666,9 +1836,15 @@ export interface components {
             kind: "SetMemoryMode";
             /**
              * Mode
+             * @default null
+             */
+            mode: ("off" | "ask" | "auto") | null;
+            /**
+             * Scope
+             * @default account
              * @enum {string}
              */
-            mode: "off" | "ask" | "auto";
+            scope: "chat" | "account";
         };
         /** SetSpeakingSpeed */
         SetSpeakingSpeed: {
@@ -1721,7 +1897,7 @@ export interface components {
             /** Expected Revision */
             expected_revision: number;
             /** Action */
-            action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetMemoryMode"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
+            action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["EndCall"] | components["schemas"]["MuteMicrophone"] | components["schemas"]["NewConversation"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetMemoryMode"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
         };
         /** ShowConversationHistory */
         ShowConversationHistory: {
@@ -2235,7 +2411,7 @@ export interface components {
              */
             language: "ar" | "en";
         };
-        Action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetMemoryMode"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
+        Action: components["schemas"]["AdjustSpeakingSpeed"] | components["schemas"]["SetSpeakingSpeed"] | components["schemas"]["SelectApprovedVoice"] | components["schemas"]["ShowConversationHistory"] | components["schemas"]["OpenMemoryExplorer"] | components["schemas"]["EndCall"] | components["schemas"]["MuteMicrophone"] | components["schemas"]["NewConversation"] | components["schemas"]["SetCaptionsVisible"] | components["schemas"]["SetMemoryMode"] | components["schemas"]["SetTheme"] | components["schemas"]["SearchMemory"] | components["schemas"]["ProposeContextExclusion"] | components["schemas"]["RestoreContextOperation"];
     };
     responses: never;
     parameters: never;
@@ -2338,6 +2514,7 @@ export interface operations {
                 limit?: number;
                 offset?: number;
                 status?: ("active" | "hidden" | "superseded") | null;
+                scope?: ("global" | "conversation") | null;
             };
             header?: never;
             path?: never;
@@ -2561,6 +2738,72 @@ export interface operations {
             };
         };
     };
+    get_memory_proposal_v1_conversations__conversation_id__memory_proposal_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryProposalPending"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_memory_proposal_v1_conversations__conversation_id__memory_proposal_decision_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryProposalDecision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryProposalDecisionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     undo_v1_changes__change_id__undo_post: {
         parameters: {
             query?: never;
@@ -2668,6 +2911,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    set_memory_mode_v1_conversations__conversation_id__memory_mode_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryModeUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_v1_conversations__conversation_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -3244,7 +3551,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MemoryQueryInput"];
+                "application/json": components["schemas"]["MemoryForgetInput"];
             };
         };
         responses: {

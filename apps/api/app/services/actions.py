@@ -12,6 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker
 
 from app.domain.contracts import (
     AdjustSpeakingSpeed,
+    EndCall,
+    MuteMicrophone,
+    NewConversation,
     OpenMemoryExplorer,
     SelectApprovedVoice,
     SetCaptionsVisible,
@@ -447,7 +450,7 @@ async def _dispatch_transaction(
         result = await _apply_setting(db, owner_id, expected_revision, action)
     elif isinstance(action, SetMemoryMode) and action.scope == "chat":
         result = await _apply_conversation_memory_mode(db, conversation, expected_revision, action)
-    elif isinstance(action, (ShowConversationHistory, OpenMemoryExplorer)):
+    elif isinstance(action, (ShowConversationHistory, OpenMemoryExplorer, EndCall, MuteMicrophone, NewConversation)):
         result = _navigation_result(action)
     else:
         result = await _run_handler(
@@ -535,10 +538,13 @@ async def _apply_setting(db, owner_id, expected_revision, action):
 
 
 def _navigation_result(action) -> dict:
-    return {
-        "kind": action.kind,
-        "navigation": "history" if isinstance(action, ShowConversationHistory) else "memory_explorer",
-    }
+    if isinstance(action, ShowConversationHistory):
+        return {"kind": action.kind, "navigation": "history"}
+    if isinstance(action, OpenMemoryExplorer):
+        return {"kind": action.kind, "navigation": "memory_explorer"}
+    # Call controls are applied by the browser; the server persists the command
+    # and returns the deterministic reply without touching conversation state.
+    return {"kind": action.kind, "client_effect": True}
 
 
 async def _apply_conversation_memory_mode(db, conversation, expected_revision, action):

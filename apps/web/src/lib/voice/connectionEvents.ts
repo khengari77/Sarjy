@@ -32,7 +32,6 @@ export function handleVoiceEvent(
   }
   if (event.type === 'error') setVoiceError(state, event.code);
   if (event.type === 'audio-blocked') state.audioBlocked = true;
-  if (event.type === 'command') deps.applyCommand(event.command);
   if (event.type === 'resync') deps.resyncSettings();
   if (event.type === 'transcript') {
     if (event.final) {

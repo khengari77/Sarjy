@@ -6,7 +6,16 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from app.domain.commands import CommandResult, command_result
-from app.domain.contracts import Action, SelectApprovedVoice, SetTheme, UserSettings, parse_action
+from app.domain.contracts import (
+    Action,
+    EndCall,
+    MuteMicrophone,
+    NewConversation,
+    SelectApprovedVoice,
+    SetTheme,
+    UserSettings,
+    parse_action,
+)
 from app.infrastructure.database import UserSetting
 from app.services.actions import dispatch_action, dispatch_setting, settings_value
 from app.services.commands import handle_finalized_utterance
@@ -160,6 +169,8 @@ def register_action_routes(app, database, identity, owned, catalog, approved_voi
                 action=action,
                 handlers=app.state.action_handlers,
             )
+            if isinstance(action, (EndCall, MuteMicrophone, NewConversation)):
+                result = command_result(request_id=body.request_id, action=action)
         except (VoiceCatalogError, ContextOperationError) as exc:
             raise HTTPException(exc.status, detail={"code": exc.code}) from exc
         return {"handled": True, "result": result}

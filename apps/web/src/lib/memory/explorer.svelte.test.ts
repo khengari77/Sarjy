@@ -9,6 +9,7 @@ const fact = (id: string, status: string) => ({
   kind: 'memory',
   version: 1,
   status,
+  scope: 'global',
   source_conversation_id: 'c1',
   source_turn_id: null,
   supersedes_id: null,

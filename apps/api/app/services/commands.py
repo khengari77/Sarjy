@@ -31,6 +31,9 @@ from app.domain.commands import (
 from app.domain.contracts import (
     Action,
     AdjustSpeakingSpeed,
+    EndCall,
+    MuteMicrophone,
+    NewConversation,
     SelectApprovedVoice,
     SetCaptionsVisible,
     SetMemoryMode,
@@ -508,6 +511,8 @@ def _describe(*, request_id: str, action: Action, raw: Any, spoken: str | None) 
     navigation = raw.get("navigation")
     if navigation in {"history", "memory_explorer"}:
         return command_result(request_id=request_id, action=action, navigation=navigation)
+    if isinstance(action, (EndCall, MuteMicrophone, NewConversation)):
+        return command_result(request_id=request_id, action=action, spoken=spoken)
     confirmed = raw.get("confirmed")
     return command_result(
         request_id=request_id,
