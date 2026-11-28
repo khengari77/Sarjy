@@ -62,7 +62,9 @@ export class FakeRuntime {
   micStarts = 0;
   interrupts = 0;
   disconnects = 0;
+  texts: string[] = [];
   connectGate: Promise<void> = Promise.resolve();
+  micError: Error | null = null;
 
   async connect() {
     this.connects += 1;
@@ -70,12 +72,15 @@ export class FakeRuntime {
   }
   async startMicrophone() {
     this.micStarts += 1;
+    if (this.micError) throw this.micError;
   }
   async stopMicrophone() {}
   async interrupt() {
     this.interrupts += 1;
   }
-  async sendText() {}
+  async sendText(text: string) {
+    this.texts.push(text);
+  }
   async disconnect() {
     this.disconnects += 1;
   }
@@ -96,7 +101,10 @@ function meters() {
   };
 }
 
-export function harness(player = fakePlayer(), greetingMaxWaitMs?: number) {
+export function harness<P extends GreetingPlayer = ReturnType<typeof fakePlayer>>(
+  player: P = fakePlayer() as unknown as P,
+  greetingMaxWaitMs?: number,
+) {
   allowMicrophone();
   const state = initialVoiceState();
   const runtime = new FakeRuntime();

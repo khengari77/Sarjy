@@ -40,9 +40,12 @@ export function createConnectionActions(context: {
       if (state.greeting) context.stopGreeting();
       return interruptVoice(state, deps);
     },
-    sendText: (text: string) => sendVoiceText(state, deps, text),
+    sendText: (text: string) => {
+      if (state.greeting) context.stopGreeting();
+      return sendVoiceText(state, deps, text);
+    },
     stopGreeting: context.stopGreeting,
     handleEvent: (event: VoiceEvent) =>
-      handleVoiceEvent(state, deps, event, (sessionId) => context.isEnding(sessionId)),
+      handleVoiceEvent(state, deps, event, (sessionId) => context.isEnding(sessionId), context.stopGreeting),
   };
 }

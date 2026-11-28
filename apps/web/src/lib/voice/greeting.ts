@@ -53,6 +53,7 @@ export function createBrowserGreetingPlayer(options: GreetingPlayerOptions = {})
   const maxPlayMs = options.maxPlayMs ?? GREETING_MAX_PLAY_MS;
   let element: HTMLAudioElement | null = null;
   let active: ActivePlayback | null = null;
+  let playToken = 0;
 
   function ensureElement(): HTMLAudioElement | null {
     if (element) return element;
@@ -95,10 +96,28 @@ export function createBrowserGreetingPlayer(options: GreetingPlayerOptions = {})
       const audio = ensureElement();
       if (!audio) return Promise.resolve('failed');
       finish('failed');
+      playToken += 1;
+      // Stop the previous clip before swapping sources so its queued events
+      // cannot resolve the new playback.
+      try {
+        audio.pause();
+      } catch {
+        /* pause is best effort */
+      }
       return new Promise<'ended' | 'failed'>((resolve) => {
-        const onEnded = () => finish('ended');
-        const onError = () => finish('failed');
-        const timeout = maxPlayMs > 0 ? setTimeout(() => finish('failed'), maxPlayMs) : null;
+        const token = playToken;
+        const onEnded = () => {
+          if (token === playToken) finish('ended');
+        };
+        const onError = () => {
+          if (token === playToken) finish('failed');
+        };
+        const timeout =
+          maxPlayMs > 0
+            ? setTimeout(() => {
+                if (token === playToken) finish('failed');
+              }, maxPlayMs)
+            : null;
         active = { audio, resolve, onEnded, onError, timeout };
         audio.addEventListener('ended', onEnded);
         audio.addEventListener('error', onError);
@@ -106,9 +125,13 @@ export function createBrowserGreetingPlayer(options: GreetingPlayerOptions = {})
           audio.muted = false;
           audio.src = url;
           const started = audio.play();
-          if (started && typeof started.catch === 'function') started.catch(() => finish('failed'));
+          if (started && typeof started.catch === 'function') {
+            started.catch(() => {
+              if (token === playToken) finish('failed');
+            });
+          }
         } catch {
-          finish('failed');
+          if (token === playToken) finish('failed');
         }
       });
     },

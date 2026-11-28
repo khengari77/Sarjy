@@ -7,6 +7,7 @@ export function handleVoiceEvent(
   deps: ConnectionDeps,
   event: VoiceEvent,
   isEnding: (sessionId: string) => boolean,
+  stopGreeting: () => void,
 ) {
   if (event.type === 'status') {
     if (event.source === 'agent') {
@@ -21,6 +22,7 @@ export function handleVoiceEvent(
       state.agentState = null;
       state.transportStatus = event.text;
       if (event.text === 'disconnected' && state.live && !isEnding(state.live.id)) {
+        stopGreeting();
         deps.meters.teardownMeters();
         state.muted = true;
         state.connectionLost = true;

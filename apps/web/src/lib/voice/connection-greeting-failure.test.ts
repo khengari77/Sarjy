@@ -60,7 +60,7 @@ describe('stop paths and interruption', () => {
     mocks.start.mockResolvedValueOnce(full);
     const { state, runtime, player, connection } = harness();
 
-    const connecting = connection.connect(false);
+    const connecting = connection.connect(true);
     await vi.waitFor(() => expect(state.live).toEqual(full));
     await connection.cancelConnect();
     await connecting;
@@ -97,7 +97,7 @@ describe('startup failure after the greeting', () => {
     const gate = deferred();
     runtime.connectGate = gate.promise;
 
-    const connecting = connection.connect(false);
+    const connecting = connection.connect(true);
     await vi.waitFor(() => expect(player.play).toHaveBeenCalled());
     gate.reject(new Error('AGENT_START_TIMEOUT'));
     await connecting;
@@ -116,7 +116,7 @@ describe('startup failure after the greeting', () => {
     const gate = deferred();
     runtime.connectGate = gate.promise;
 
-    const connecting = connection.connect(false);
+    const connecting = connection.connect(true);
     await vi.waitFor(() => expect(player.play).toHaveBeenCalled());
     player.finish('ended');
     await vi.waitFor(() => expect(state.greeting).toBeNull());
@@ -134,7 +134,7 @@ describe('startup failure after the greeting', () => {
     const gate = deferred();
     runtime.connectGate = gate.promise;
 
-    const connecting = connection.connect(false);
+    const connecting = connection.connect(true);
     await vi.waitFor(() => expect(player.play).toHaveBeenCalled());
     player.finish('failed');
     gate.reject(new Error('AGENT_START_TIMEOUT'));

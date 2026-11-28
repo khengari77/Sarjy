@@ -100,6 +100,7 @@ function clearOwnedLive(state: VoiceState, deps: ConnectionDeps, sessionId: stri
 }
 
 function resetCallState(state: VoiceState) {
+  state.connecting = false;
   state.live = null;
   state.muted = true;
   state.connectionLost = false;

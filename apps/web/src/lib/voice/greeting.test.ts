@@ -20,6 +20,9 @@ class FakeAudio {
   removeEventListener(name: string, handler: () => void) {
     this.listeners.get(name)?.delete(handler);
   }
+  handler(name: string) {
+    return [...(this.listeners.get(name) ?? [])][0];
+  }
   emit(name: string) {
     for (const handler of this.listeners.get(name) ?? []) handler();
   }
@@ -57,6 +60,27 @@ describe('browser greeting playback cap', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(outcome).toBe('failed');
     expect(player.playing).toBe(false);
+  });
+
+  it('a stale ended from the previous clip cannot resolve the new playback', async () => {
+    const audio = installAudio();
+    const player = createBrowserGreetingPlayer();
+    void player.play('/greetings/voice/old.mp3');
+    const staleEnded = audio().handler('ended');
+    const pause = vi.spyOn(audio(), 'pause');
+
+    const second = player.play('/greetings/voice/new.mp3');
+    expect(pause).toHaveBeenCalled();
+    let outcome: 'ended' | 'failed' | undefined;
+    void second.then((value) => (outcome = value));
+
+    staleEnded?.();
+    await Promise.resolve();
+    expect(outcome).toBeUndefined();
+    expect(player.playing).toBe(true);
+
+    audio().handler('ended')?.();
+    await expect(second).resolves.toBe('ended');
   });
 
   it('honours an injected cap and clears it when the clip ends first', async () => {

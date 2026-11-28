@@ -59,11 +59,13 @@ function startBrowserGreeting(
   const promise = player.play('/greetings/' + intro.asset);
   void promise.then((outcome) => {
     onOutcome(outcome);
-    if (state.greeting?.attempt === greeting.attempt) state.greeting = null;
+    // A deliberate stop clears the caption first; only a real failure warns.
+    const owned = state.greeting?.attempt === greeting.attempt;
+    if (owned) state.greeting = null;
     timer?.mark('greeting_ended');
     if (outcome === 'failed') {
       timer?.mark('greeting_failed');
-      warn();
+      if (owned) warn();
     }
   });
   return { greeting, promise };
@@ -81,8 +83,10 @@ async function waitForGreetingOutcome(
 ): Promise<'ended' | 'failed'> {
   const outcome = await waitForGreeting(promise, maxWaitMs);
   if (outcome !== 'timeout') return outcome;
+  // A superseded attempt must not stop the newer attempt's shared player.
+  if (state.greeting?.attempt !== greeting.attempt) return 'failed';
   player.stop();
-  if (state.greeting?.attempt === greeting.attempt) state.greeting = null;
+  state.greeting = null;
   timer?.mark('greeting_ended');
   timer?.mark('greeting_failed');
   warn();
@@ -112,7 +116,9 @@ export async function startSessionAttempt(
 ) {
   const voice = deps.getVoice();
   context.timer?.mark('session_request_start');
-  const config = await startVoiceSession(context.conversationId, deps.getLanguage(), true);
+  // The text-only path keeps the worker greeting; only a microphone call has
+  // the browser player standing by to mask the cold start.
+  const config = await startVoiceSession(context.conversationId, deps.getLanguage(), context.microphone);
   context.timer?.mark('session_response');
   if (config.saved_voice_unavailable) deps.onVoiceFallback?.(config.saved_voice_unavailable);
   // Register the server session before awaiting the transport so cancel/end
@@ -135,13 +141,12 @@ export async function startSessionAttempt(
   }
 
   let greeting: ActiveGreeting | null = null;
-  let greetingStarted = false;
   let greetingOutcome: 'ended' | 'failed' | null = null;
   let greetingPromise: Promise<'ended' | 'failed'> | null = null;
   const warnGreetingFailure = greetingWarner();
   const stopMine = () => stopOwnedGreeting(state, greeting, context.greetingPlayer);
 
-  if (config.intro) {
+  if (context.microphone && config.intro) {
     const started = startBrowserGreeting(
       state,
       config.intro,
@@ -153,7 +158,6 @@ export async function startSessionAttempt(
     );
     greeting = started.greeting;
     greetingPromise = started.promise;
-    greetingStarted = true;
   }
 
   try {
@@ -190,7 +194,10 @@ export async function startSessionAttempt(
       await release('superseded-after-greeting');
       return;
     }
-    if (context.microphone) {
+    // A drop during the clip leaves state.live set but the room gone: never
+    // open the microphone or mark the intro against a dead call.
+    const callLive = context.isCurrent() && !state.connectionLost && state.live?.id === config.id;
+    if (context.microphone && callLive) {
       await runtime.startMicrophone();
       state.muted = false;
       context.timer?.mark('mic_started');
@@ -203,15 +210,17 @@ export async function startSessionAttempt(
     }
     // The intro is seen only once it ended and the call is live. If the clip
     // ended before the room did, this waits for the room above first.
-    if (greeting?.kind === 'full' && greetingEnded(greetingOutcome)) {
+    if (callLive && greeting?.kind === 'full' && greetingEnded(greetingOutcome)) {
       void markIntroComplete(config.id).catch(() => {
         console.warn('[Sarjy] Intro completion could not be recorded; it will replay next call.');
       });
     }
     deps.meters.setupMeters();
   } catch (error) {
-    // Once play() started, still-playing and ended both mean the caller heard it.
-    const greetingPlayed = greeting !== null && greetingStarted && greetingOutcome !== 'failed';
+    // Only a startup-boundary failure can be "did not connect"; a live-call
+    // failure (such as the microphone) keeps its own code.
+    const greetingPlayed =
+      state.live?.id !== config.id && greeting !== null && greetingPromise !== null && greetingOutcome !== 'failed';
     stopMine();
     if (context.isCurrent()) {
       context.clearOwnedLive(config.id);

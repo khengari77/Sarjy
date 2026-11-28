@@ -5,7 +5,7 @@ describe('greeting clip cache headers', () => {
   it('allows a day of shared caching for greeting clips only', () => {
     const response = applyGreetingCacheHeaders('/greetings/voice/full.mp3', new Response('clip'));
     expect(response.headers.get('cache-control')).toBe(GREETING_CACHE_CONTROL);
-    expect(GREETING_CACHE_CONTROL).toBe('public, max-age=86400');
+    expect(GREETING_CACHE_CONTROL).toBe('private, max-age=86400');
   });
 
   it('leaves every other response untouched', () => {

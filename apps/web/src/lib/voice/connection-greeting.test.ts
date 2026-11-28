@@ -27,7 +27,7 @@ describe('browser greeting start', () => {
     mocks.start.mockReturnValueOnce(session.promise);
     const { connection, player } = harness();
 
-    const connecting = connection.connect(false);
+    const connecting = connection.connect(true);
     await vi.waitFor(() => expect(mocks.start).toHaveBeenCalled());
     expect(player.play).not.toHaveBeenCalled();
 
@@ -40,7 +40,7 @@ describe('browser greeting start', () => {
   it('prepares the player inside connect before the first await', async () => {
     mocks.start.mockResolvedValueOnce(config);
     const { connection, player } = harness();
-    await connection.connect(false);
+    await connection.connect(true);
     expect(player.prepare).toHaveBeenCalledOnce();
   });
 });
@@ -125,7 +125,7 @@ describe('intro completion', () => {
     mocks.start.mockResolvedValueOnce(short);
     const { player, connection } = harness();
 
-    const connecting = connection.connect(false);
+    const connecting = connection.connect(true);
     await vi.waitFor(() => expect(player.play).toHaveBeenCalledWith('/greetings/voice-1/short.mp3'));
     player.finish('ended');
     await connecting;
@@ -139,7 +139,7 @@ describe('intro completion', () => {
     const gate = deferred();
     runtime.connectGate = gate.promise;
 
-    const connecting = connection.connect(false);
+    const connecting = connection.connect(true);
     await vi.waitFor(() => expect(player.play).toHaveBeenCalled());
     player.finish('ended');
     await vi.waitFor(() => expect(state.greeting).toBeNull());
@@ -157,7 +157,7 @@ describe('intro completion', () => {
     mocks.start.mockResolvedValueOnce(full);
     const { state, player, connection } = harness();
 
-    const connecting = connection.connect(false);
+    const connecting = connection.connect(true);
     await vi.waitFor(() => expect(state.live).toEqual(full));
     expect(mocks.mark).not.toHaveBeenCalled();
     player.finish('ended');

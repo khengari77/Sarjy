@@ -138,7 +138,7 @@ describe('server-owned voice resolution', () => {
     const { connection } = harness();
     void connection.connect(false);
     await vi.advanceTimersByTimeAsync(1);
-    expect(mocks.start).toHaveBeenCalledWith('c1', 'en', true);
+    expect(mocks.start).toHaveBeenCalledWith('c1', 'en', false);
     await connection.cancelConnect();
   });
 });
