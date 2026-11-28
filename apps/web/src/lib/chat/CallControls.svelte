@@ -35,13 +35,13 @@
 
 <div class="controls">
   {#if connecting}
-    <button class="ghost-button" onclick={oncancel}>Cancel connecting</button>
+    <button class="ghost-button" onclick={oncancel}>{words.cancelConnecting}</button>
   {:else if live}
     <button class="primary-button" disabled={busy} onclick={onend}>{words.end}</button>
     <button class="ghost-button" disabled={busy || connectionLost} onclick={ontoggle}>
       {muted ? words.unmute : words.mute}
     </button>
-    <button class="ghost-button" disabled={busy || !canInterrupt} onclick={oninterrupt}> Stop </button>
+    <button class="ghost-button" disabled={busy || !canInterrupt} onclick={oninterrupt}>{words.interrupt}</button>
   {:else}
     {#if cleanupRequired}
       <button class="ghost-button" disabled={busy} onclick={onretrycleanup}>{words.retryCleanup}</button>

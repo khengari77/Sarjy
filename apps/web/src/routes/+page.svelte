@@ -6,7 +6,7 @@
   import type { ThemeControl } from '../lib/ui/themeSession.svelte';
   import AppShell from '../lib/ui/AppShell.svelte';
   import { revealTranscript } from '../lib/ui/revealTranscript';
-  import ConversationList from '../lib/chat/ConversationList.svelte';
+  import HistoryPanel from '../lib/history/HistoryPanel.svelte';
   import VoiceStage from '../lib/chat/VoiceStage.svelte';
   import type { PendingIntent } from '../lib/chat/intent';
   import CallControls from '../lib/chat/CallControls.svelte';
@@ -16,7 +16,7 @@
   import { createAnnouncement } from '../lib/chat/announcement.svelte';
   import { wordsFor } from '../lib/chat/words';
   import { initialVoiceState, type VoiceConnection } from '../lib/voice/connection';
-  import { errorCode } from '../lib/voice/errors';
+  import { errorCode, setVoiceError } from '../lib/voice/errors';
   import { storeLanguage } from '../lib/preferences';
   import { createCatalogStore, initialCatalogState } from '../lib/voice/catalog';
   import { initialConversationState, type ConversationStore } from '../lib/voice/conversations';
@@ -67,6 +67,7 @@
   let drawerOpener = $state<HTMLElement | null>(null);
   const openTranscript = (opener: HTMLElement) =>
     revealTranscript(opener, panels, commands.state, (control) => (drawerOpener = control));
+
   // The shell owns the theme session and hands back its setter; a voice theme
   // command applies through it once and persists in this browser only.
   let shellTheme: ThemeControl | null = null;
@@ -89,7 +90,7 @@
     }
   }
 
-  const onVoiceError = (error: unknown) => (voice.voiceErrorCode = errorCode(error));
+  const onVoiceError = (error: unknown) => setVoiceError(voice, errorCode(error));
 
   function handleOrb() {
     activateOrb(presentation, {
@@ -111,6 +112,7 @@
 
   const reconnect = () => void run(() => connection!.reconnect(), onVoiceError);
   const startConnect = () => void connection!.connect(true).catch(onVoiceError);
+  const retryMicrophone = () => run(() => connection!.retryMicrophone(), onVoiceError);
   const toggleMute = () => run(() => connection!.toggleMute(), onVoiceError);
 
   const interrupt = () =>
@@ -159,10 +161,7 @@
   });
 </script>
 
-<svelte:head>
-  <title>Sarjy — Voice Context Studio</title>
-  <meta name="description" content="An English-first voice assistant with transparent context." />
-</svelte:head>
+<svelte:head><title>Sarjy — Voice Context Studio</title></svelte:head>
 
 <AppShell
   bind:leftOpen={panels.history}
@@ -178,18 +177,13 @@
   onthemeready={(control) => (shellTheme = control)}
 >
   {#snippet left()}
-    <ConversationList
-      conversations={conversation.conversations}
-      current={conversation.current}
+    <HistoryPanel
+      {conversation}
+      {voice}
       {arabic}
       {busy}
-      loading={conversation.loading}
-      error={conversation.listError}
-      callConversation={voice.live || voice.connecting ? conversation.current : null}
-      onselect={selection.requestSelect}
-      oncreate={selection.create}
-      onretry={() => run(() => conversations!.reload())}
-      ondelete={selection.remove}
+      {selection}
+      onreload={() => run(() => conversations!.reload())}
     />
   {/snippet}
 
@@ -212,7 +206,7 @@
       captionsVisible={commands.state.settings.captions_visible}
       {busy}
       {words}
-      onretrymic={startConnect}
+      onretrymic={retryMicrophone}
       onreconnect={() => run(() => connection!.reconnect(), onVoiceError)}
       onend={() => run(() => connection!.end(), onVoiceError)}
       onenableaudio={enableAudio}

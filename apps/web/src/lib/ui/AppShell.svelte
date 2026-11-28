@@ -7,6 +7,8 @@
   import { createDrawerSession } from './drawerSession.svelte';
   import { createThemeSession } from './themeSession.svelte';
   import { wrapTab } from './drawerFocus';
+  import { publishDockGeometry } from './dockGeometry';
+  import { DRAWER_CLOSE_CONTEXT, type ClosePanel } from './drawerCloseContext';
   import './shell.css';
 
   let {
@@ -47,11 +49,49 @@
   let rightPanel = $state<HTMLElement | null>(null);
   let controlsRegion = $state<HTMLElement | null>(null);
   let dialogRegion = $state<HTMLElement | null>(null);
+  let mainColumn = $state<HTMLElement | null>(null);
+  let topbar = $state<HTMLElement | null>(null);
+
+  // Floating overlays (the change toast) use the dock's measured top and the
+  // main column's centre, so they clear the controls/composer and stay over the
+  // stage when the rail is docked. The toast stays hidden until the first valid
+  // measurement, so it never appears at the stale 96px fallback.
+  $effect(() => {
+    const dock = controlsRegion;
+    const column = mainColumn;
+    if (!dock || !column) return;
+    // Read `dir` so a language flip re-measures the column even though its
+    // width (and therefore the ResizeObserver) does not change.
+    void dir;
+    const root = document.documentElement;
+    const update = () =>
+      publishDockGeometry(root, dock.getBoundingClientRect(), column.getBoundingClientRect(), topbar, innerHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(dock);
+    observer.observe(column);
+    // At <=480px the main column itself scrolls; the dock's viewport top (and
+    // therefore the toast band) changes without a resize.
+    column.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    return () => {
+      observer.disconnect();
+      column.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+      root.style.removeProperty('--main-column-center');
+      root.style.removeProperty('--toast-top');
+      root.style.removeProperty('--toast-bottom');
+      delete root.dataset.toastReady;
+    };
+  });
 
   // The stage dialog (end-call confirmation) is rendered by VoiceStage but
   // belongs to the shell's modal layer: it is portalled into this sibling
   // region so it is never inside the inert stage. Modal focus belongs to it.
   setContext<() => HTMLElement | null>('shell-dialog-region', () => dialogRegion);
+  // Both drawer close controls call this one implementation, so focus restore
+  // and the pending-close token behave identically for Escape and the button.
+  setContext<ClosePanel>(DRAWER_CLOSE_CONTEXT, closePanel);
 
   // A panel below the dock breakpoint is a modal drawer: the rest of the shell
   // leaves the accessibility tree and the tab order (see `inert` below), and
@@ -73,6 +113,7 @@
     overlay: () => overlayPanel,
     panel: (panel) => (panel === 'left' ? leftPanel : rightPanel),
     trigger: (panel) => (panel === 'left' ? leftButton : (rightOpener ?? rightButton)),
+    toggle: (panel) => (panel === 'left' ? leftButton : rightButton),
     controls: () => controlsRegion,
     openState: (panel) => (panel === 'left' ? leftOpen : rightOpen),
     setOpen: (panel, open) => {
@@ -114,11 +155,16 @@
    */
   async function closePanel(panel: 'left' | 'right') {
     const token = ++focusRestoreToken;
+    const opener = panel === 'left' ? leftButton : rightOpener;
+    const fallback = panel === 'left' ? leftButton : rightButton;
     if (panel === 'left') leftOpen = false;
     else rightOpen = false;
     await tick();
     if (token !== focusRestoreToken) return;
-    (panel === 'left' ? leftButton : (rightOpener ?? rightButton))?.focus({ preventScroll: true });
+    // The opener can unmount while the panel is open (e.g. the caption bubble
+    // after the call ends); focus must land on a live element, never <body>.
+    const target = opener?.isConnected ? opener : fallback;
+    target?.focus({ preventScroll: true });
   }
 
   function onViewportChange(event: MediaQueryListEvent) {
@@ -179,11 +225,11 @@
       </aside>
     {/if}
 
-    <div class="main-column">
+    <div class="main-column" bind:this={mainColumn}>
       <!-- While a modal drawer is open the header and stage are inert: no
            pointer targets, no tab stops and nothing exposed to assistive
            technology. -->
-      <header class="topbar" inert={backgroundInert ? true : undefined}>
+      <header class="topbar" bind:this={topbar} inert={backgroundInert ? true : undefined}>
         <div class="header-left">
           {#if left}
             <button
@@ -226,7 +272,7 @@
         </div>
       </header>
 
-      <main class="stage" id="voice-stage">
+      <main class="stage" id="voice-stage" tabindex="-1">
         <div class="stage-content" inert={backgroundInert ? true : undefined}>
           {#if stage}{@render stage()}{/if}
         </div>
@@ -261,7 +307,6 @@
     <button
       class="scrim"
       aria-label="Close panels"
-      aria-hidden="true"
       tabindex="-1"
       onclick={() => void closePanel(overlayPanel === 'left' ? 'left' : 'right')}
     ></button>

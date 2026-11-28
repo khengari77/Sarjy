@@ -264,6 +264,7 @@ test('tablet drawers overlay without squeezing the orb', async ({ page }) => {
 
   await page.locator('.scrim').click({ position: { x: 880, y: 300 } });
   await expect(page.getByRole('button', { name: 'Show conversations' })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: 'Show conversations' })).toBeFocused();
 });
 
 test('the right dock toggles while the history rail stays docked', async ({ page }) => {
@@ -281,7 +282,7 @@ test('the right dock toggles while the history rail stays docked', async ({ page
   await expect(left).toHaveAttribute('data-open', 'true');
 });
 
-test('the right drawer exposes the three tabs, closes on Escape and returns focus', async ({ page }) => {
+test('the right dock exposes tabs, ignores Escape and closes from its toggle', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/');
   await waitForOrb(page);
@@ -294,12 +295,16 @@ test('the right drawer exposes the three tabs, closes on Escape and returns focu
   await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
 
   const tabs = page.locator('#shell-right').getByRole('tab');
-  await expect(tabs).toHaveText(['Memories', 'Controls', 'Transcript']);
-  await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).click();
+  await expect(tabs).toHaveText(['Memory', 'Settings', 'Transcript']);
+  await page.locator('#shell-right').getByRole('tab', { name: 'Memory' }).click();
   await expect(page.locator('#shell-right').getByTestId('memory-panel')).toBeVisible();
   await expect(page.locator('#shell-right')).toContainText('Memory & context');
 
+  // Docked panels ignore Escape: closing one would hide it behind a toggle
+  // that is itself display:none at this breakpoint.
   await page.keyboard.press('Escape');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await trigger.click();
   await expect(trigger).toHaveAttribute('aria-expanded', 'false');
   await expect(trigger).toBeFocused();
 });

@@ -382,6 +382,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/voice/sessions/{session_id}/intro-complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Intro Complete
+         * @description Browser confirmation that the full introduction played. Idempotent.
+         */
+        post: operations["intro_complete_v1_voice_sessions__session_id__intro_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/development/reserve": {
         parameters: {
             query?: never;
@@ -1727,6 +1747,12 @@ export interface components {
             response_tier?: number | null;
             /** @default automatic */
             response_preference: components["schemas"]["ResponsePreference"];
+            /**
+             * Intro Delivery
+             * @default worker
+             * @enum {string}
+             */
+            intro_delivery: "worker" | "browser";
         };
         /** TurnContextBudget */
         TurnContextBudget: {
@@ -2877,6 +2903,35 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    intro_complete_v1_voice_sessions__session_id__intro_complete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

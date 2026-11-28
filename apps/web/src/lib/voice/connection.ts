@@ -2,12 +2,12 @@ import type { SessionConfig } from '../api';
 import { ensureMicrophoneAccess } from '../audio/microphone';
 import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
 import type { CommandResult } from '../commands/commandStore';
-import { errorCode } from './errors';
+import { errorCode, isAgentClearableError, setVoiceError } from './errors';
 import { startSessionAttempt } from './sessionAttempt';
 import { createSessionReleaser } from './sessionRelease';
 import { cancelConnection } from './cancelConnection';
 import { applyFailedRelease, retryFailedCleanup } from './releaseOutcome';
-import { interruptVoice, sendVoiceText, toggleVoiceMute } from './voiceControls';
+import { interruptVoice, retryVoiceMicrophone, sendVoiceText, toggleVoiceMute } from './voiceControls';
 import type { MeterController } from './meters';
 
 export interface ProvisionalTranscript {
@@ -76,6 +76,12 @@ function handleVoiceEvent(
   if (event.type === 'status') {
     if (event.source === 'agent') {
       state.agentState = event.text;
+      // A healthy agent event only clears errors caused by the agent/transport.
+      // Microphone errors clear on a successful unmute/retry, not a turn
+      // boundary: the microphone is still off.
+      const healthy =
+        event.text === 'idle' || event.text === 'listening' || event.text === 'thinking' || event.text === 'speaking';
+      if (healthy && isAgentClearableError(state.voiceErrorCode)) state.voiceErrorCode = '';
     } else {
       state.agentState = null;
       state.transportStatus = event.text;
@@ -87,7 +93,7 @@ function handleVoiceEvent(
       }
     }
   }
-  if (event.type === 'error') state.voiceErrorCode = event.code;
+  if (event.type === 'error') setVoiceError(state, event.code);
   if (event.type === 'audio-blocked') state.audioBlocked = true;
   if (event.type === 'command') deps.applyCommand(event.command);
   if (event.type === 'resync') deps.resyncSettings();
@@ -241,6 +247,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     cancelConnect,
     end,
     retryCleanup: () => retryFailedCleanup(state, releaseSession),
+    retryMicrophone: () => (state.live ? retryVoiceMicrophone(state, deps) : connect(true)),
     toggleMute: () => toggleVoiceMute(state, deps),
     interrupt: () => interruptVoice(state, deps),
     sendText: (text: string) => sendVoiceText(state, deps, text),

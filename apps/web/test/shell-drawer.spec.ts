@@ -91,9 +91,9 @@ test('opening a drawer moves focus inside, makes the shell inert and Escape rest
     // stray focus stop.
     await expect(page.locator('.stage-dialog [role="dialog"]')).toHaveCount(0);
 
-    // Focus landed on the first meaningful control inside the drawer, not on
-    // the drawer container itself and not on <body>.
-    await expect(drawer.getByRole('tab', { name: 'Controls' })).toBeFocused();
+    // Focus landed on the first meaningful control inside the drawer — its
+    // close button — not on the container itself and not on <body>.
+    await expect(drawer.getByRole('button', { name: 'Close' })).toBeFocused();
     expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
     expect(await drawer.evaluate((el) => el === document.activeElement)).toBe(false);
 
@@ -137,7 +137,7 @@ test('opening a drawer moves focus inside, makes the shell inert and Escape rest
     const leftDrawer = page.locator('#shell-left');
     await expect(leftDrawer).toBeVisible();
     await expect(leftDrawer).toHaveAttribute('role', 'dialog');
-    await expect(leftDrawer.getByRole('button', { name: /New conversation/ })).toBeFocused();
+    await expect(leftDrawer.getByRole('button', { name: 'Close' })).toBeFocused();
     expect(await isInert(page, '.topbar')).toBe(true);
     expect(await isInert(page, '.stage-content')).toBe(true);
 
@@ -287,6 +287,23 @@ test('resizing across the dock breakpoint keeps focus inside the drawer or resto
   expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
 });
 
+test('docking with only the right drawer open keeps the left rail and keeps focus in a panel', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 720 });
+  await page.goto('/');
+  await waitForShell(page);
+
+  // Only the right drawer is open, and its Close button holds focus.
+  await rightTrigger(page).click();
+  await expect(page.locator('#shell-right').getByRole('button', { name: 'Close' })).toBeFocused();
+
+  // Widen without touching anything: the left rail must dock open (its header
+  // toggle is hidden) and the display:none close button must not drop focus.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(page.locator('#shell-left')).toBeVisible();
+  await expect.poll(() => insideDrawer(page, 'shell-right')).toBe(true);
+  expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).not.toBe('Close');
+});
+
 test('Escape in the stage does not close a docked panel behind a stage dialog', async ({ page }) => {
   // Docked panels only consume Escape when focus is in the panel or on its
   // trigger; nested stage dialogs (transcript, intent confirm) keep their own
@@ -320,9 +337,10 @@ test('Escape in the stage does not close a docked panel behind a stage dialog', 
   await expect(page.locator('#shell-right')).toBeVisible();
   await expect(composer).toBeFocused();
 
-  // ... but Escape from the visible trigger itself still closes that dock.
+  // Escape never closes a docked panel: its header toggle is hidden at this
+  // breakpoint, so closing would strand the panel behind an unreachable control.
   await right.focus();
   await page.keyboard.press('Escape');
-  await expect(right).toHaveAttribute('aria-expanded', 'false');
+  await expect(right).toHaveAttribute('aria-expanded', 'true');
   await expect(right).toBeFocused();
 });

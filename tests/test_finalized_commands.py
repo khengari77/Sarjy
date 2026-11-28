@@ -317,6 +317,17 @@ def test_unwired_rows_refuse_with_the_exact_sentence_and_mutate_nothing(tmp_path
         assert counts(path) == (0, 0, 0)
 
 
+@pytest.mark.parametrize("text", ["Forget Paris.", "Forget everything about me.", "Forget what I said."])
+def test_forget_wording_is_not_a_regex_command(tmp_path, text):
+    app, path = app_for(tmp_path, "no-forget-grammar")
+    with TestClient(app) as client:
+        conversation = chat(client)
+        response = voice(client, conversation, text)
+        assert response.status_code == 200
+        assert response.json() == {"handled": False}
+        assert counts(path) == (0, 0, 0)
+
+
 def test_unknown_spoken_voice_is_refused_with_the_exact_sentence(tmp_path):
     app, path = app_for(tmp_path)
     with TestClient(app) as client:

@@ -7,10 +7,60 @@ from uuid import uuid4
 import pytest
 from app.infrastructure.database import Conversation, Identity, Memory
 from app.services.memory import MemoryService
+from app.services.voice_exclusions import hide_target, resolve_confirmation
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_memory import FakeEmbedder
+
+
+def test_postgres_confirm_and_memory_insert_in_one_chat_do_not_deadlock():
+    url = os.environ.get("TEST_MEMORY_POSTGRES_URL")
+    if not url:
+        pytest.skip("TEST_MEMORY_POSTGRES_URL requires disposable migrated PostgreSQL")
+
+    async def run():
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        owner, chat = (str(uuid4()) for _ in range(2))
+        secret = "postgres-confirm-secret"
+        try:
+            async with sessions() as db:
+                db.add(Identity(id=owner, token_hash=owner, expires_at="2030"))
+                await db.commit()
+                db.add(Conversation(id=chat, owner_id=owner))
+                await db.commit()
+            await MemoryService(sessions, FakeEmbedder()).create_memory(
+                owner, chat, None, "I travelled to Paris", "seed-paris"
+            )
+            async with sessions() as db:
+                preview = await hide_target(
+                    db, owner_id=owner, conversation_id=chat, target="Paris", request_id="preview", secret=secret
+                )
+                assert preview.detail == "MEMORY_HIDE_PROPOSED"
+
+            async def confirm():
+                async with sessions() as db:
+                    return await resolve_confirmation(
+                        db,
+                        owner_id=owner,
+                        conversation_id=chat,
+                        confirmed=True,
+                        request_id="confirm",
+                        secret=secret,
+                    )
+
+            async def insert():
+                return await MemoryService(sessions, FakeEmbedder()).create_memory(
+                    owner, chat, None, "I live in London", "insert-during-confirm"
+                )
+
+            applied, _created = await asyncio.wait_for(asyncio.gather(confirm(), insert()), timeout=10)
+            assert applied is not None and applied.detail == "MEMORY_HIDDEN"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
 
 
 def test_postgres_cosine_retrieval_and_concurrent_correction_have_one_active_version():

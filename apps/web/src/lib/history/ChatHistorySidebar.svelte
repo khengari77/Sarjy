@@ -4,8 +4,12 @@
   import type { Conversation } from '../api';
   import { wordsFor } from '../chat/words';
   import DeleteConfirm from './DeleteConfirm.svelte';
+  import DrawerCloseButton from '../ui/DrawerCloseButton.svelte';
   import { deleteFocusIndex, focusAfterDelete, focusConfirmAction } from './deleteFlow';
+  import HistoryFooter from './HistoryFooter.svelte';
+  import HistorySearch from './HistorySearch.svelte';
   import { filterConversations } from './chatSearch';
+  import { focusMenuItem, moveMenuFocus } from './menuNav';
 
   interface Props {
     conversations: Conversation[];
@@ -77,6 +81,36 @@
     menuOpenFor = id;
     confirmingDelete = null;
     deleteError = '';
+    // WAI-ARIA menu button: opening the menu moves focus to its first enabled
+    // item, so Arrow keys and Enter act on the menu rather than the trigger.
+    void tick().then(() => focusMenuItem(menuElement));
+  }
+
+  function onTriggerKeydown(id: string, event: KeyboardEvent) {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    if (menuOpenFor === id) return;
+    menuTrigger = event.currentTarget as HTMLButtonElement;
+    menuOpenFor = id;
+    confirmingDelete = null;
+    deleteError = '';
+    void tick().then(() => focusMenuItem(menuElement, event.key === 'ArrowUp'));
+  }
+
+  function onMenuKeydown(event: KeyboardEvent) {
+    if (event.key === 'Tab') {
+      // An in-flight delete owns the menu: neither Tab nor Escape may drop it.
+      if (deletingId) {
+        event.preventDefault();
+        return;
+      }
+      // Close first and let Tab continue from the trigger, so focus never
+      // falls to <body> when the menu unmounts.
+      menuTrigger?.focus();
+      closeMenu();
+      return;
+    }
+    if (moveMenuFocus(menuElement, event.key)) event.preventDefault();
   }
 
   function askDelete(id: string) {
@@ -137,11 +171,11 @@
       document.removeEventListener('keydown', onKeyDown);
     };
   });
-
-  const searchLabel = $derived(arabic ? 'البحث في المحادثات' : 'Search conversations');
 </script>
 
 <div class="sidebar-inner chat-history" dir={arabic ? 'rtl' : 'ltr'} bind:this={listElement}>
+  <DrawerCloseButton {arabic} panel="left" />
+
   <button class="new-chat" disabled={busy} onclick={oncreate}>
     <svg class="new-chat-icon" aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none">
       <path d="M12 5.5v13M5.5 12h13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -149,24 +183,7 @@
     <span>{arabic ? 'محادثة جديدة' : 'New conversation'}</span>
   </button>
 
-  <label class="search">
-    <span class="sr-only">{searchLabel}</span>
-    <svg class="search-icon" aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none">
-      <circle cx="10.8" cy="10.8" r="6.3" stroke="currentColor" stroke-width="1.7" />
-      <path d="m15.6 15.6 4.1 4.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-    </svg>
-    <input type="search" bind:value={query} placeholder={searchLabel} aria-label={searchLabel} />
-    {#if query}
-      <button
-        type="button"
-        class="clear"
-        onclick={() => (query = '')}
-        aria-label={arabic ? 'مسح البحث' : 'Clear search'}
-      >
-        ✕
-      </button>
-    {/if}
-  </label>
+  <HistorySearch {arabic} bind:query />
 
   <div class="history-head">
     <p class="sidebar-label">{arabic ? 'الأخيرة' : 'RECENT'}</p>
@@ -223,15 +240,12 @@
             aria-expanded={menuOpenFor === chat.id}
             aria-label={(arabic ? 'خيارات المحادثة ' : 'Conversation actions for ') + chat.title}
             onclick={(event) => toggleMenu(chat.id, event)}
+            onkeydown={(event) => onTriggerKeydown(chat.id, event)}
           >
             ⋯
           </button>
-          {#if callConversation === chat.id}
-            <p class="sr-only" id={`delete-active-${chat.id}`}>{words.deleteActive}</p>
-          {/if}
           {#if menuOpenFor === chat.id}
-            <div class="menu" role="menu" bind:this={menuElement}>
-              <button role="menuitem" disabled>{words.rename}</button>
+            <div class="menu" role="menu" tabindex="-1" bind:this={menuElement} onkeydown={onMenuKeydown}>
               {#if confirmingDelete === chat.id}
                 <DeleteConfirm
                   {words}
@@ -244,13 +258,16 @@
               {:else}
                 <button
                   role="menuitem"
-                  disabled={busy || callConversation === chat.id}
+                  disabled={busy}
+                  aria-disabled={callConversation === chat.id ? 'true' : undefined}
                   aria-describedby={callConversation === chat.id ? `delete-active-${chat.id}` : undefined}
                   onclick={() => askDelete(chat.id)}
                 >
                   {words.delete}
                 </button>
-                <p>{words.renameNeedsBackend}</p>
+                {#if callConversation === chat.id}
+                  <p id={`delete-active-${chat.id}`} role="none">{words.deleteActive}</p>
+                {/if}
               {/if}
             </div>
           {/if}
@@ -259,14 +276,5 @@
     </nav>
   {/if}
 
-  <footer class="sidebar-foot">
-    <div class="workspace-row">
-      <span class="workspace-avatar" aria-hidden="true">S</span>
-      <span>{arabic ? 'مساحة عملك' : 'Your workspace'}</span>
-    </div>
-    <div class="sidebar-credit">
-      <a href="https://open-meteo.com/" rel="noreferrer">Weather data: Open-Meteo</a>
-      <span>Voice Context Studio</span>
-    </div>
-  </footer>
+  <HistoryFooter {arabic} />
 </div>

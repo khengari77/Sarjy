@@ -199,7 +199,7 @@ test.describe('mobile overlay drawer during a live call', () => {
     await mute.focus();
     await expect(mute).toBeFocused();
     await mute.click();
-    await expect(page.getByRole('button', { name: 'Enable microphone', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Unmute microphone', exact: true })).toBeVisible();
 
     // Same flow through the confirm path; focus still returns to the trigger.
     await openLeftDrawer(page);
@@ -246,7 +246,7 @@ test.describe('mobile overlay drawer during a live call', () => {
     await mute.focus();
     await expect(mute).toBeFocused();
     await mute.click();
-    await expect(page.getByRole('button', { name: 'Enable microphone', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Unmute microphone', exact: true })).toBeVisible();
 
     const end = page.getByRole('button', { name: 'End call', exact: true });
     await end.focus();
@@ -266,7 +266,7 @@ test.describe('mobile overlay drawer during a live call', () => {
   });
 });
 
-test('Escape in the right dock leaves the permanently docked history rail open', async ({ page }) => {
+test('Escape leaves both docked rails open and focus in place', async ({ page }) => {
   await mockApi(page);
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/');
@@ -277,9 +277,10 @@ test('Escape in the right dock leaves the permanently docked history rail open',
 
   await right.click();
   await expect(right).toHaveAttribute('aria-expanded', 'true');
-  await page.locator('#shell-right').getByRole('tab', { name: 'Memories' }).focus();
+  const memoryTab = page.locator('#shell-right').getByRole('tab', { name: 'Memory' });
+  await memoryTab.focus();
   await page.keyboard.press('Escape');
-  await expect(right).toHaveAttribute('aria-expanded', 'false');
+  await expect(right).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#shell-left')).toHaveAttribute('data-open', 'true');
-  await expect(right).toBeFocused();
+  await expect(memoryTab).toBeFocused();
 });

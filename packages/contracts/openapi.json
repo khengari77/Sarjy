@@ -181,6 +181,26 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "global",
+                    "conversation"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope"
+            }
           }
         ],
         "responses": {
@@ -447,6 +467,94 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MemoryVisibility"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{conversation_id}/memory-proposal": {
+      "get": {
+        "summary": "Get Memory Proposal",
+        "operationId": "get_memory_proposal_v1_conversations__conversation_id__memory_proposal_get",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryProposalPending"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{conversation_id}/memory-proposal/decision": {
+      "post": {
+        "summary": "Decide Memory Proposal",
+        "operationId": "decide_memory_proposal_v1_conversations__conversation_id__memory_proposal_decision_post",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryProposalDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryProposalDecisionResult"
                 }
               }
             }
@@ -941,6 +1049,39 @@
                 "schema": {}
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/voice/sessions/{session_id}/intro-complete": {
+      "post": {
+        "summary": "Intro Complete",
+        "description": "Browser confirmation that the full introduction played. Idempotent.",
+        "operationId": "intro_complete_v1_voice_sessions__session_id__intro_complete_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -3444,6 +3585,14 @@
             "type": "string",
             "title": "Status"
           },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "conversation"
+            ],
+            "title": "Scope"
+          },
           "source_conversation_id": {
             "type": "string",
             "title": "Source Conversation Id"
@@ -3520,6 +3669,7 @@
           "kind",
           "version",
           "status",
+          "scope",
           "source_conversation_id",
           "source_turn_id",
           "supersedes_id",
@@ -3571,6 +3721,137 @@
           "probability"
         ],
         "title": "MemoryOpAnswer"
+      },
+      "MemoryProposalDecision": {
+        "properties": {
+          "proposal_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Proposal Id"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "save",
+              "decline",
+              "replace"
+            ],
+            "title": "Decision"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          },
+          "target_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "proposal_id",
+          "decision"
+        ],
+        "title": "MemoryProposalDecision"
+      },
+      "MemoryProposalDecisionResult": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "memory": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "idempotent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotent"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "MemoryProposalDecisionResult"
+      },
+      "MemoryProposalPending": {
+        "properties": {
+          "pending": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingMemoryProposal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pending"
+        ],
+        "title": "MemoryProposalPending"
+      },
+      "MemoryProposalReplacement": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "content"
+        ],
+        "title": "MemoryProposalReplacement"
       },
       "MemoryProposeInput": {
         "properties": {
@@ -3868,6 +4149,40 @@
         },
         "title": "OpenMemoryExplorer",
         "type": "object"
+      },
+      "PendingMemoryProposal": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "fact": {
+            "type": "string",
+            "title": "Fact"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At"
+          },
+          "replaces": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryProposalReplacement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "fact",
+          "expires_at"
+        ],
+        "title": "PendingMemoryProposal"
       },
       "PipelineConfig": {
         "properties": {
@@ -4310,6 +4625,15 @@
           "response_preference": {
             "$ref": "#/components/schemas/ResponsePreference",
             "default": "automatic"
+          },
+          "intro_delivery": {
+            "type": "string",
+            "enum": [
+              "worker",
+              "browser"
+            ],
+            "title": "Intro Delivery",
+            "default": "worker"
           }
         },
         "type": "object",

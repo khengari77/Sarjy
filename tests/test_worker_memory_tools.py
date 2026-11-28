@@ -23,7 +23,7 @@ PROPOSAL = {
     "confirmation_revision": 1,
     "question": "Should I remember this: I live in Benghazi?",
 }
-FORGET_SPOKEN = "Hidden 'I prefer green tea'. Say undo to bring it back."
+FORGET_SPOKEN = "I found 1 memory about tea. Hide it?"
 
 
 class CountingProvider:
@@ -128,7 +128,7 @@ REMEMBER_BODY = {
 }
 FORGET_BODY = {
     "memory-forget": {
-        "status": "hidden",
+        "status": "proposed",
         "spoken": FORGET_SPOKEN,
         "message": "The application handles this.",
     }
@@ -157,6 +157,32 @@ def test_remember_paraphrase_speaks_the_deterministic_question_and_arms_after_pl
         assert len(h.confirms) == 1
 
     run(monkeypatch, steps, tool_bodies=REMEMBER_BODY)
+
+
+@pytest.mark.parametrize(
+    ("choice", "probability", "tool"),
+    [
+        ("forget", 0.75, "propose_forget"),
+        ("forget", 0.74, None),
+        ("recall", 0.75, "recall"),
+        ("recall", 0.74, None),
+        ("remember", 0.84, None),
+        ("remember", 0.85, "propose_memory"),
+    ],
+)
+def test_per_operation_memory_thresholds_force_the_tool_exactly_once(monkeypatch, choice, probability, tool):
+    async def steps(h, agent):
+        agent.current_turn = "turn-1"
+        agent.memory_ops["m1"] = {"choice": choice, "probability": probability}
+        available = {"propose_memory", "propose_forget", "recall"}
+        forced = agent._forced_memory_choice("m1", available)
+        if tool is None:
+            assert forced is None
+            return
+        assert forced == {"type": "function", "function": {"name": tool}}
+        assert agent._forced_memory_choice("m1", available) is None
+
+    run(monkeypatch, steps)
 
 
 def test_model_never_receives_a_save_before_confirmation(monkeypatch):
@@ -189,7 +215,7 @@ def test_consent_is_not_armed_when_the_question_never_finished_playing(monkeypat
 @pytest.mark.parametrize("utterance", FORGET_PARAPHRASES)
 def test_forget_paraphrase_speaks_the_exact_question_without_model_prose(monkeypatch, utterance):
     async def steps(h, agent):
-        result, chunks = await h.say(agent, utterance, "propose_forget", query="tea")
+        result, chunks = await h.say(agent, utterance, "propose_forget", topic="tea")
         assert "application handles this" in result
         assert chunks == [FORGET_SPOKEN]
         assert agent.memory_proposal is None
@@ -208,8 +234,30 @@ def test_forget_with_no_match_speaks_the_refusal_and_arms_nothing(monkeypatch):
     body = {"memory-forget": {"status": "not_hidden", "spoken": spoken, "message": "Nothing changed."}}
 
     async def steps(h, agent):
-        _, chunks = await h.say(agent, "Forget skydiving", "propose_forget", query="skydiving")
+        _, chunks = await h.say(agent, "Forget skydiving", "propose_forget", topic="skydiving")
         assert chunks == [spoken]
+
+    run(monkeypatch, steps, tool_bodies=body)
+
+
+def test_forget_all_memories_speaks_the_settings_refusal_without_model_prose(monkeypatch):
+    spoken = (
+        "I can't clear all your memories by voice. You can review and delete them in Settings, under Memory. "
+        "Nothing was changed."
+    )
+    body = {
+        "memory-forget": {
+            "status": "not_hidden",
+            "detail": "MEMORY_GLOBAL_RETRACTION_UNAVAILABLE",
+            "spoken": spoken,
+            "message": "Nothing changed.",
+        }
+    }
+
+    async def steps(h, agent):
+        _, chunks = await h.say(agent, "Forget everything about me", "propose_forget", scope="everything")
+        assert chunks == [spoken]
+        assert agent.memory_proposal is None
 
     run(monkeypatch, steps, tool_bodies=body)
 
@@ -218,7 +266,7 @@ def test_forget_after_a_pending_remember_disarms_it_so_both_are_never_armed(monk
     async def steps(h, agent):
         await h.say(agent, "I've moved to Benghazi", "propose_memory", fact="I live in Benghazi")
         assert agent.memory_proposal is not None
-        await h.say(agent, "Actually forget the tea thing", "propose_forget", query="tea")
+        await h.say(agent, "Actually forget the tea thing", "propose_forget", topic="tea")
         assert agent.memory_proposal is None and agent.memory_prompted_key is None
         await h.say(agent, "yes")
         assert h.confirms == []
@@ -228,7 +276,7 @@ def test_forget_after_a_pending_remember_disarms_it_so_both_are_never_armed(monk
 
 def test_remember_after_a_pending_forget_leaves_only_the_remember_armed(monkeypatch):
     async def steps(h, agent):
-        await h.say(agent, "forget tea", "propose_forget", query="tea")
+        await h.say(agent, "forget tea", "propose_forget", topic="tea")
         _, chunks = await h.say(agent, "I've moved to Benghazi", "propose_memory", fact="I live in Benghazi")
         assert chunks == [PROPOSAL["question"]]
         await h.say(agent, "yes")
@@ -252,7 +300,7 @@ def test_stray_yes_after_an_unrelated_turn_changes_nothing(monkeypatch):
 
 def test_tool_http_failure_never_claims_success_or_arms(monkeypatch):
     async def steps(h, agent):
-        for tool, args in (("propose_memory", {"fact": "I live in Benghazi"}), ("propose_forget", {"query": "tea"})):
+        for tool, args in (("propose_memory", {"fact": "I live in Benghazi"}), ("propose_forget", {"topic": "tea"})):
             result, _ = await h.say(agent, "x", tool, **args)
             assert "Nothing was saved, excluded or changed" in result
             assert agent.memory_proposal is None and agent.forced_speech is None
@@ -305,7 +353,7 @@ def test_a_tool_armed_turn_is_not_rearmed_from_the_turn_start_proposal(monkeypat
     stale = {**PROPOSAL, "confirmation_id": "regex", "token": "regex-token"}
 
     async def steps(h, agent):
-        await h.say(agent, "tea stuff", "propose_forget", query="tea")
+        await h.say(agent, "tea stuff", "propose_forget", topic="tea")
         assert agent.memory_proposal is None
 
     run(monkeypatch, steps, tool_bodies=FORGET_BODY, regex_proposals={"tea stuff": stale})
@@ -326,7 +374,7 @@ def test_the_confirmation_turn_cannot_start_a_new_proposal(monkeypatch):
         assert "answering the previous confirmation" in result
         assert len([p for p in h.paths if p.endswith("memory-propose")]) == posts
         assert agent.memory_proposal is None
-        result, _ = await h.say(agent, "yes", "propose_forget", query="tea")
+        result, _ = await h.say(agent, "yes", "propose_forget", topic="tea")
         assert agent.forced_speech is None and agent.memory_proposal is None
 
     run(monkeypatch, steps, tool_bodies=REMEMBER_BODY)
