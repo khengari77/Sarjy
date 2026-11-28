@@ -212,7 +212,13 @@ test('the toast sits below an open drawer', async ({ page }) => {
   await expect(page.locator('#shell-right')).toHaveAttribute('data-open', 'true');
   // data-open flips at once but the drawer slides in: hit-testing before the
   // transition ends sees the toast still on top (a flake on slow CI runners).
-  await page.waitForFunction(() => document.querySelector('#shell-right')!.getAnimations().length === 0);
+  // Reading the computed transform forces the style flush that starts the slide, so an empty
+  // getAnimations() cannot be a stale pre-transition read; the settled drawer sits at the identity.
+  await page.waitForFunction(() => {
+    const drawer = document.querySelector('#shell-right')!;
+    const transform = getComputedStyle(drawer).transform;
+    return drawer.getAnimations().length === 0 && (transform === 'none' || transform === 'matrix(1, 0, 0, 1, 0, 0)');
+  });
 
   const zIndexes = await page.evaluate(() => ({
     toast: Number(getComputedStyle(document.querySelector('.change-toast-layer')!).zIndex),
