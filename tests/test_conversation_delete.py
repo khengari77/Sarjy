@@ -395,6 +395,57 @@ def test_a_temporary_memory_lineage_is_erased_but_a_global_memory_is_not(tmp_pat
     asyncio.run(main())
 
 
+def test_delete_scrubs_a_temporary_fact_written_by_the_temporary_service(tmp_path):
+    from app.infrastructure.database import Identity, MemoryTerm, Turn
+    from app.services.conversation_delete import delete_conversation
+    from app.services.temporary_memory import TemporaryFactOutcome, write_temporary_fact
+
+    async def main():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/written-lineage.db")
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as db:
+                db.add(Identity(id="owner", token_hash="hash", expires_at="2030"))
+                await db.commit()
+                db.add(Conversation(id="chat", owner_id="owner", title="Trip", revision=0))
+                await db.commit()
+                db.add(
+                    Turn(
+                        id="turn",
+                        conversation_id="chat",
+                        request_id="turn",
+                        role="user",
+                        text="hello",
+                        status="completed",
+                    )
+                )
+                await db.commit()
+
+            written = await write_temporary_fact(
+                sessions,
+                owner_id="owner",
+                conversation_id="chat",
+                turn_id="turn",
+                text="I live in Benghazi",
+                subject="location",
+            )
+            assert written.outcome is TemporaryFactOutcome.WRITTEN
+
+            async with sessions() as db:
+                await delete_conversation(db, owner_id="owner", conversation_id="chat")
+                row = await db.get(Memory, written.memory.id)
+                assert row.status == "deleted"
+                assert row.content == ""
+                terms = await db.scalar(select(MemoryTerm).where(MemoryTerm.memory_id == written.memory.id))
+                assert terms is None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(main())
+
+
 def test_a_global_memory_can_still_be_corrected_after_its_source_chat_is_deleted(tmp_path):
     _, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:

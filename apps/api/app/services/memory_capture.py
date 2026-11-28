@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from app.domain.context_operations import sign_proposal, verify_proposal
-from app.domain.contracts import MemoryMode
+from app.domain.contracts import SCOPE_CONVERSATION, SCOPE_GLOBAL, MemoryMode
 from app.domain.memory_capture import (
     MemoryCapture,
     is_referential,
@@ -1474,6 +1474,12 @@ async def _apply_consent(
     )
 
 
+def _temporary_in_chat(row: Memory | None, conversation_id: str) -> Memory | None:
+    if row is not None and row.scope == SCOPE_CONVERSATION and row.source_conversation_id == conversation_id:
+        return row
+    return None
+
+
 def _conflict_rows(rows: list[Memory], capture: MemoryCapture) -> list[Memory]:
     return [
         row
@@ -1561,7 +1567,8 @@ async def _write_consented(
     active_same = await _exact_content(
         db, owner_id=owner_id, conversation_id=conversation_id, capture=capture, status="active"
     )
-    if active_same is not None:
+    temporary = _temporary_in_chat(active_same, conversation_id)
+    if active_same is not None and temporary is None:
         response = {"status": "already_saved", "memory": asdict(memory_result(active_same))}
         await _record_decision(
             db,
@@ -1577,7 +1584,8 @@ async def _write_consented(
     replay = await _exact_content(
         db, owner_id=owner_id, conversation_id=conversation_id, capture=capture, source_turn_id=proposed_turn
     )
-    if replay is not None:
+    temporary = temporary or _temporary_in_chat(replay, conversation_id)
+    if replay is not None and temporary is None:
         response = {"status": "already_saved", "memory": asdict(memory_result(replay))}
         await _record_decision(
             db,
@@ -1609,6 +1617,26 @@ async def _write_consented(
             secret=secret,
             target=conflicting[0],
         )
+    # An explicit permanent save over a temporary fact of this chat promotes it: the user asked for a permanent
+    # memory, so the replacement must not inherit the temporary scope.
+    temporary = temporary or next(
+        (row for row in previous if _temporary_in_chat(row, conversation_id) is not None), None
+    )
+    permanent_same = next((row for row in previous if row.scope == SCOPE_GLOBAL), None)
+    if temporary is not None and not conflicting and permanent_same is not None:
+        # A permanent fact already carries this subject and value: keep it and leave the temporary row alone.
+        response = {"status": "already_saved", "memory": asdict(memory_result(permanent_same))}
+        await _record_decision(
+            db,
+            payload=payload,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            token=token,
+            decision="save",
+            outcome="saved",
+            result=response,
+        )
+        return response
     claim = await _claim_decision(
         db,
         payload=payload,
@@ -1623,14 +1651,28 @@ async def _write_consented(
         return _replay_response(claim.replay, "save", payload)
     await _require_lease(db, payload, claim.lease_id)
     try:
-        result = await memory_service.create_memory(
-            owner_id,
-            conversation_id,
-            source_turn_id or proposed_turn,
-            capture.text,
-            key,
-            guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id, lock=True),
-        )
+        if temporary is not None and not conflicting:
+            result = await memory_service.correct_memory(
+                owner_id,
+                temporary.id,
+                temporary.version,
+                capture.text,
+                key,
+                source_turn_id=source_turn_id or proposed_turn,
+                conversation_id=conversation_id,
+                scope=SCOPE_GLOBAL,
+                subject=capture.subject,
+                guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id, lock=True),
+            )
+        else:
+            result = await memory_service.create_memory(
+                owner_id,
+                conversation_id,
+                source_turn_id or proposed_turn,
+                capture.text,
+                key,
+                guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id, lock=True),
+            )
     except Exception:
         # No memory effect was observed; release the claim so a retry can
         # proceed. A crash (not an observed failure) leaves it ``applying``.
@@ -1808,6 +1850,8 @@ async def _replace_target(
                 key,
                 source_turn_id=source_turn_id or proposed_turn,
                 conversation_id=conversation_id,
+                # An explicit replace is a permanent save: it must promote a temporary target.
+                scope=SCOPE_GLOBAL,
                 guard=partial(_require_lease, payload=payload, lease_id=claim.lease_id, lock=True),
             )
         except HTTPException as exc:

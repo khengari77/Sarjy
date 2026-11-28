@@ -227,6 +227,7 @@ class MemoryWriteRequest(Base):
     conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"))
     request_key: Mapped[str] = mapped_column(String(100))
     fingerprint: Mapped[str] = mapped_column(String(64))
+    scope: Mapped[str] = mapped_column(String(12), default=SCOPE_GLOBAL, server_default=SCOPE_GLOBAL)
     state: Mapped[str] = mapped_column(String(20))
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)

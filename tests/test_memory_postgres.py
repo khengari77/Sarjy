@@ -5,11 +5,14 @@ import os
 from uuid import uuid4
 
 import pytest
-from app.infrastructure.database import Conversation, Identity, Memory
+from app.infrastructure.database import Conversation, Identity, Memory, MemoryTerm, Turn
+from app.services.conversation_delete import delete_conversation
 from app.services.memory import MemoryService
+from app.services.memory_terms import terms_of
+from app.services.temporary_memory import TemporaryFactOutcome, write_temporary_fact
 from app.services.voice_exclusions import hide_target, resolve_confirmation
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_memory import FakeEmbedder
 
@@ -104,6 +107,68 @@ def test_postgres_cosine_retrieval_and_concurrent_correction_have_one_active_ver
                 )
                 assert len(active) == 2 and city.id not in {record.id for record in active}
                 assert sorted(record.version for record in active) == [1, 2]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_postgres_temporary_fact_is_written_and_erased_with_its_chat():
+    url = os.environ.get("TEST_MEMORY_POSTGRES_URL")
+    if not url:
+        pytest.skip("TEST_MEMORY_POSTGRES_URL requires disposable migrated PostgreSQL")
+
+    async def run():
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        owner, chat = (str(uuid4()) for _ in range(2))
+        try:
+            async with sessions() as db:
+                db.add(Identity(id=owner, token_hash=owner, expires_at="2030"))
+                await db.commit()
+                db.add(Conversation(id=chat, owner_id=owner))
+                await db.commit()
+                db.add(
+                    Turn(
+                        id="turn",
+                        conversation_id=chat,
+                        request_id="turn",
+                        role="user",
+                        text="hello",
+                        status="completed",
+                    )
+                )
+                await db.commit()
+
+            result = await write_temporary_fact(
+                sessions,
+                owner_id=owner,
+                conversation_id=chat,
+                turn_id="turn",
+                text="I live in Benghazi",
+                subject="location",
+            )
+            assert result.outcome is TemporaryFactOutcome.WRITTEN
+            async with sessions() as db:
+                row = await db.get(Memory, result.memory.id)
+                assert row.scope == "conversation" and row.source_conversation_id == chat
+                assert (await db.scalar(select(Memory.embedding).where(Memory.id == result.memory.id))) is None
+                terms = set(
+                    (await db.scalars(select(MemoryTerm.term).where(MemoryTerm.memory_id == result.memory.id))).all()
+                )
+                assert terms == terms_of("I live in Benghazi")
+
+            async with sessions() as db:
+                await delete_conversation(db, owner_id=owner, conversation_id=chat)
+            async with sessions() as db:
+                row = await db.get(Memory, result.memory.id)
+                assert row.status == "deleted" and row.content == ""
+                assert (
+                    await db.scalar(
+                        select(func.count()).select_from(MemoryTerm).where(MemoryTerm.memory_id == result.memory.id)
+                    )
+                    == 0
+                )
         finally:
             await engine.dispose()
 

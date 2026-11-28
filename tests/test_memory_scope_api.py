@@ -499,6 +499,29 @@ def test_pending_replaces_a_visible_temporary_fact_in_the_same_chat(tmp_path):
         assert pending["replaces"] == {"id": "temp-name", "version": 1, "content": "My name is Sam"}
 
 
+@pytest.mark.parametrize("route", ["decision", "spoken"])
+def test_explicit_save_promotes_a_same_value_temporary_fact(tmp_path, route):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-same", "My name is Sam", subject="attribute:name")
+        proposal, headers = arm_for(client, file, chat, owner, "My name is Sam", f"promote-{route}")
+
+        if route == "decision":
+            saved = decide(client, chat, proposal["confirmation_id"], "save")
+        else:
+            saved = spoken_confirm(client, headers, proposal["token"], "save")
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["status"] == "saved"
+        assert saved.json()["memory"]["supersedes_id"] == "temp-same"
+
+        records = memory_records(file)
+        assert ("My name is Sam", chat, "conversation", "superseded", 1) in records
+        assert ("My name is Sam", chat, "global", "active", 2) in records
+
+
 def test_decision_rechecks_credential_sensitivity(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
@@ -647,7 +670,7 @@ def test_replace_with_two_visible_conflicts_fails_closed(tmp_path):
         assert memory_records(file) == before
 
 
-def test_replace_keeps_a_temporary_fact_temporary(tmp_path):
+def test_replace_promotes_a_temporary_fact_to_permanent(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
         owner = client.post("/v1/demo-session").json()["id"]
@@ -668,18 +691,20 @@ def test_replace_keeps_a_temporary_fact_temporary(tmp_path):
         assert replaced.status_code == 200, replaced.text
         records = memory_records(file)
         assert ("My name is Sam", chat_a, "conversation", "superseded", 1) in records
-        assert ("My name is Alex", chat_a, "conversation", "active", 2) in records
+        assert ("My name is Alex", chat_a, "global", "active", 2) in records
 
         visible_a = client.get(
             "/v1/memories",
             params={"scope": "conversation", "conversation_id": chat_a, "status": "active"},
         ).json()["items"]
-        assert {item["content"] for item in visible_a} == {"My name is Alex"}
+        assert visible_a == []
         visible_b = client.get("/v1/memories", params={"scope": "conversation", "conversation_id": chat_b}).json()[
             "items"
         ]
         assert visible_b == []
-        assert client.get("/v1/memories", params={"scope": "global"}).json()["items"] == []
+        assert {item["content"] for item in client.get("/v1/memories", params={"scope": "global"}).json()["items"]} == {
+            "My name is Alex"
+        }
 
 
 def test_legacy_correct_keeps_a_temporary_fact_temporary(tmp_path):

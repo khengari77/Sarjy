@@ -42,7 +42,10 @@ _CREDENTIAL = re.compile(
     r"seed phrase|recovery (?:code|phrase)|one[- ]time (?:code|password)|backup code|otp|social security|ssn|"
     r"national id|passport number|safe combination|security code|(?:2fa|two[- ]factor) code)s?\b"
     # A PIN given as digits: "my pin is 1234". Fixed shape, so "pin badges" or "pin it to the wall" never match.
-    r"|\bpin\s*(?:is|:|=)\s*\d",
+    r"|\bpin\s*(?:is|:|=)\s*\d"
+    # Arabic credential terms: the English-only net must not wave them through.
+    r"|\b(?:كلمة\s+(?:المرور|السر)|رمز\s+(?:التحقق|سري|السر)|الرقم\s+السري|رقم\s+(?:الهوية|البطاقة)|"
+    r"بطاقة\s+الائتمان|مفتاح\s+(?:سري|الapi))\b",
     re.IGNORECASE,
 )
 _FINANCE = re.compile(
@@ -55,6 +58,14 @@ _HEALTH = re.compile(
     r"hiv|allerg\w+|surgery|disorder|illness|disease|doctor|medical|blood pressure|metformin|insulin)\b",
     re.IGNORECASE,
 )
+_LONG_NUMBER = re.compile(r"\d(?:[\s.-]?\d){8,}")
+
+
+def has_long_number(text: str) -> bool:
+    """Nine or more digits in a row (a card, phone or ID number): never saved without asking, whatever the words say."""
+    return _LONG_NUMBER.search(text) is not None
+
+
 _THIRD_PARTY = re.compile(
     r"\b(?:my (?:boss|ex|wife|husband|partner|girlfriend|boyfriend|mother|father|mom|dad|sister|brother|friend|"
     r"coworker|colleague|neighbou?r|landlord)(?:'s)?)\b",

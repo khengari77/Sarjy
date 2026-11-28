@@ -13,10 +13,10 @@
   },
   "credential_recall": {
     "n": 33,
-    "hits": 15,
-    "rate": 0.4545,
-    "low": 0.2984,
-    "high": 0.6201
+    "hits": 19,
+    "rate": 0.5758,
+    "low": 0.4081,
+    "high": 0.7276
   },
   "credential_recall_by_language": {
     "en": {
@@ -28,10 +28,10 @@
     },
     "ar": {
       "n": 12,
-      "hits": 0,
-      "rate": 0.0,
-      "low": 0.0,
-      "high": 0.2425
+      "hits": 4,
+      "rate": 0.3333,
+      "low": 0.1381,
+      "high": 0.6094
     }
   },
   "false_refusal": {
@@ -168,11 +168,11 @@
       "credential": 0
     },
     "credential": {
-      "normal": 17,
+      "normal": 13,
       "third_party": 0,
       "health": 0,
       "finance": 1,
-      "credential": 15
+      "credential": 19
     }
   }
 }
