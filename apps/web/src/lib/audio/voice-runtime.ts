@@ -161,7 +161,7 @@ export class LiveKitVoiceRuntime implements VoiceRuntime {
 
     try {
       this.emit({ type: 'status', source: 'transport', text: 'connecting' });
-      await room.connect(config.url, config.token);
+      await room.connect(config.url, config.token).then(() => timing?.mark('room_joined'));
       if (!this.active(room, epoch)) return;
       if (startup.error) throw startup.error;
       await room.startAudio();

@@ -1857,7 +1857,7 @@ async def play_greeting(
         await asyncio.wait_for(wait_for_user(), timeout=INTRO_WAIT_SECONDS)
         _record_call_stage(stages, "participant_joined", call_started)
         handle = session.say(intro["text"], allow_interruptions=True, add_to_chat_ctx=False)
-        _record_call_stage(stages, "greeting_first_audio", call_started)
+        _record_call_stage(stages, "greeting_say_called", call_started)
         await handle.wait_for_playout()
         _record_call_stage(stages, "greeting_done", call_started)
     except (TimeoutError, RuntimeError, ValueError, httpx.HTTPError):

@@ -475,19 +475,33 @@ def test_voice_unavailable_clears_the_preference(tmp_path, livekit_control_plane
 
 
 def test_call_start_logs_handler_and_substep_timing_once(tmp_path, livekit_control_plane, caplog):
-    with TestClient(create_app(configured(tmp_path))) as client:
-        client.post("/v1/demo-session")
-        chat = client.post("/v1/conversations").json()["id"]
-        with caplog.at_level(logging.INFO, logger="app.routes.voice"):
-            response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
-        assert response.status_code == 201
+    from app.routes import voice
 
-    records = [record for record in caplog.records if record.getMessage() == "voice_session_created"]
+    # The production logger is non-propagating, has its own handler and is configured at INFO, exactly as
+    # app.infrastructure.timing.sarjy.statements is. caplog can only see records once attached to it.
+    assert voice.logger.level == logging.INFO
+    assert voice.logger.handlers
+    assert voice.logger.propagate is False
+    attached = caplog.handler not in voice.logger.handlers
+    if attached:
+        voice.logger.addHandler(caplog.handler)
+    try:
+        with TestClient(create_app(configured(tmp_path))) as client:
+            client.post("/v1/demo-session")
+            chat = client.post("/v1/conversations").json()["id"]
+            response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+            assert response.status_code == 201
+    finally:
+        if attached:
+            voice.logger.removeHandler(caplog.handler)
+
+    records = [record for record in caplog.records if record.name == "sarjy.voice"]
     assert len(records) == 1
-    for key in ("server_ms", "admission_ms", "commit_ms", "dispatch_ms"):
-        value = getattr(records[0], key)
-        assert isinstance(value, int)
-        assert value >= 0
+    message = records[0].getMessage()
+    assert message.startswith("voice_session_created ")
+    payload = json.loads(message.split(" ", 1)[1])
+    assert set(payload) == {"server_ms", "pre_commit_ms", "commit_ms", "dispatch_ms"}
+    assert all(isinstance(value, int) and value >= 0 for value in payload.values())
 
 
 @pytest.fixture

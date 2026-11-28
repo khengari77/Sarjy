@@ -62,22 +62,30 @@ builds (`import.meta.env.DEV`) always record; production records only with that 
 
 Marks are milliseconds since `press`; the `steps` object is the delta between consecutive marks.
 
+`press` is marked when `connect()` starts, so it also covers a reconnect after teardown and the first typed
+message that opens a call without the microphone.
+
 | Mark | Meaning |
 |---|---|
-| `press` | the call button handler started |
+| `press` | `connect()` started |
 | `conversation_ready` | `ensureConversation` returned (or an existing conversation was used) |
 | `mic_ready` | microphone permission resolved (omitted when the call starts muted) |
 | `session_request_start` | `POST /v1/voice/sessions` is about to be sent |
 | `session_response` | the session response arrived |
-| `room_connected` | the LiveKit room connected and the agent reached `listening`, `thinking` or `speaking` |
+| `room_joined` | `room.connect` resolved (the WebRTC join completed) |
+| `agent_state_first` | `waitForAgent` resolved after observing the first agent state in `listening`/`thinking`/`speaking` |
+| `room_connected` | `runtime.connect` returned, so the room is joined and the agent is live |
 | `mic_started` | the local microphone track started publishing (omitted when muted) |
-| `agent_state_first` | the first agent state in `listening`/`thinking`/`speaking` was observed |
 | `first_agent_audio` | the remote agent audio track subscribed (present only if it happened before the report) |
 
-The API logs `voice_session_created` at info level with `server_ms` and the `admission_ms`, `commit_ms` and
-`dispatch_ms` sub-steps for the same request. It appears in CranL API logs.
+The API logs `voice_session_created` at info level with the values in the message as compact JSON, for example
+`INFO sarjy.voice voice_session_created {"commit_ms":12,"dispatch_ms":35,"pre_commit_ms":240,"server_ms":290}`.
+`pre_commit_ms` is everything from handler entry to just before the session commit: ownership, validation, the
+external voice-catalog call, settings read, gate updates and the admission check. `commit_ms` is the session
+row commit and `dispatch_ms` is the LiveKit `create_dispatch` call. It appears in CranL API logs.
 
-The worker logs `call_start_stages` at info level once per call with milliseconds since the job was accepted:
-`bootstrap_done`, `session_started`, `participant_joined`, `greeting_first_audio` (when `session.say` was
-called) and `greeting_done` (after `wait_for_playout`). It appears in the LiveKit Cloud worker logs. A call
-where the greeting never starts still logs the stages it reached.
+The worker logs `call_start_stages` at info level with milliseconds since the job was accepted:
+`bootstrap_done`, `session_started`, `participant_joined`, `greeting_say_called` and `greeting_done` (after
+`wait_for_playout`). `greeting_say_called` is recorded when `session.say` is scheduled, not when audio starts.
+The line is logged when the greeting path runs and is not logged if the job fails before the greeting starts.
+It appears in the LiveKit Cloud worker logs.

@@ -161,7 +161,7 @@ def test_call_start_stages_are_logged_once_since_job_accept(caplog):
 
     records = [record for record in caplog.records if record.getMessage() == "call_start_stages"]
     assert len(records) == 1
-    for key in ("bootstrap_done", "session_started", "participant_joined", "greeting_first_audio", "greeting_done"):
+    for key in ("bootstrap_done", "session_started", "participant_joined", "greeting_say_called", "greeting_done"):
         value = getattr(records[0], key)
         assert isinstance(value, int)
         assert value >= 0

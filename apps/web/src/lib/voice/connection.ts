@@ -202,8 +202,10 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         state.transportStatus = 'disconnected';
       }
     } finally {
-      if (attempt === generation) state.connecting = false;
-      timer.report();
+      if (attempt === generation) {
+        state.connecting = false;
+        timer.report();
+      }
     }
   }
 

@@ -1,7 +1,6 @@
 """Voice-session admission, dispatch and cleanup endpoints."""
 
 import json
-import logging
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -17,6 +16,7 @@ from app.domain.contracts import TIER_CAPS, ResponsePreference, resolve_response
 from app.domain.pipeline import PipelineConfig, validate_pipeline
 from app.domain.sessions import admission_error
 from app.infrastructure.database import SessionGate, UserSetting, VoiceSession
+from app.infrastructure.timing import timing_logger
 from app.services.actions import clear_saved_voice
 from app.services.pipeline_settings import configured_keys, default_llm, default_tts
 from app.services.session_cleanup import cleanup_room
@@ -29,7 +29,7 @@ from app.services.voices import (
     saved_voice_outcome,
 )
 
-logger = logging.getLogger(__name__)
+logger = timing_logger("sarjy.voice")
 
 
 class StartVoice(BaseModel):
@@ -131,7 +131,7 @@ def register_voice_routes(
             await clear_saved_voice(db, user.id)
         now = datetime.now(UTC)
         rejection = await _admission_rejection(db, user, now)
-        admission_ms = round((time.perf_counter() - started) * 1000)
+        pre_commit_ms = round((time.perf_counter() - started) * 1000)
         if rejection:
             raise HTTPException(429, detail={"code": rejection})
         voice = VoiceSession(
@@ -176,13 +176,17 @@ def register_voice_routes(
                 .to_jwt()
             )
             logger.info(
-                "voice_session_created",
-                extra={
-                    "server_ms": round((time.perf_counter() - started) * 1000),
-                    "admission_ms": admission_ms,
-                    "commit_ms": commit_ms,
-                    "dispatch_ms": dispatch_ms,
-                },
+                "voice_session_created %s",
+                json.dumps(
+                    {
+                        "server_ms": round((time.perf_counter() - started) * 1000),
+                        "pre_commit_ms": pre_commit_ms,
+                        "commit_ms": commit_ms,
+                        "dispatch_ms": dispatch_ms,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
             )
             return {
                 "id": voice.id,
