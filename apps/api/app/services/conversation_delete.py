@@ -100,7 +100,7 @@ async def _blank_conversation_text(db: AsyncSession, owner_id: str, conversation
     ).all()
     kept = await _surviving(db, owner_id, {(op.payload or {}).get("memory_id") for op in operations})
     for operation in operations:
-        payload = operation.payload or {}
+        payload = dict(operation.payload or {})
         if operation.command_type == AUTO_SAVE and payload.get("memory_id") in kept:
             # The journal entry of a fact that outlives this chat stays, so it can still be undone; any earlier
             # text it carried came from this chat and leaves with the chat.

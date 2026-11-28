@@ -1486,7 +1486,7 @@ def _temporary_in_chat(row: Memory | None, conversation_id: str) -> Memory | Non
 
 async def _retire_temporary(db: AsyncSession, owner_id: str, row: Memory) -> None:
     """Permanent wins: quietly tombstone a temporary duplicate without touching unbound proposals."""
-    await delete_memory(db, owner_id, row.id, scrub_proposals=False)
+    await delete_memory(db, owner_id, row.id, scrub_proposals=False, conversation_id=row.source_conversation_id)
 
 
 async def _visible_temporary_duplicate(
@@ -1526,21 +1526,39 @@ async def _reconcile_promotion_conflict(
             .where(Memory.id == memory_id, Memory.owner_id == owner_id)
             .execution_options(populate_existing=True)
         )
-        if row is None or row.status != "active":
-            return {"status": "already_saved", "memory": asdict(memory_result(row)) if row is not None else None}, []
-        if row.scope != SCOPE_CONVERSATION or row.source_conversation_id != conversation_id:
+        if row is None:
+            return {"status": "already_saved", "memory": None}, []
+        if row.status not in {"active", "superseded"}:
             return {"status": "already_saved", "memory": asdict(memory_result(row))}, []
-        statement = select(Memory).where(
-            Memory.owner_id == owner_id,
-            Memory.status == "active",
-            Memory.scope == SCOPE_CONVERSATION,
-            Memory.source_conversation_id == conversation_id,
-        )
         content_match = func.lower(Memory.content) == capture.text.casefold()
         condition = or_(Memory.subject == capture.subject, content_match) if capture.subject else content_match
-        rows = list((await db.scalars(statement.where(condition))).all())
-        if rows:
-            return None, [item.id for item in rows]
+        active = list(
+            (
+                await db.scalars(
+                    select(Memory).where(
+                        Memory.owner_id == owner_id,
+                        Memory.status == "active",
+                        visible_in(conversation_id),
+                        condition,
+                    )
+                )
+            ).all()
+        )
+        if row.status == "superseded":
+            # The row moved on. A concurrent replacement may already be the one active permanent fact; otherwise
+            # the ordinary create path writes it and the active temporary copies are quietly retired.
+            permanent = next((item for item in active if item.scope == SCOPE_GLOBAL), None)
+            if permanent is not None:
+                return {"status": "already_saved", "memory": asdict(memory_result(permanent))}, []
+            return None, [item.id for item in active if item.scope == SCOPE_CONVERSATION]
+        if row.scope != SCOPE_CONVERSATION or row.source_conversation_id != conversation_id:
+            return {"status": "already_saved", "memory": asdict(memory_result(row))}, []
+        permanent = next((item for item in active if item.scope == SCOPE_GLOBAL), None)
+        if permanent is not None:
+            return {"status": "already_saved", "memory": asdict(memory_result(permanent))}, []
+        temporary_rows = [item.id for item in active if item.scope == SCOPE_CONVERSATION]
+        if temporary_rows:
+            return None, temporary_rows
         return {"status": "already_saved", "memory": asdict(memory_result(row))}, []
 
 
@@ -1592,7 +1610,7 @@ async def _promote_or_create(
                 guard=guard,
             )
             for identifier in retire_ids:
-                await delete_memory(db, owner_id, identifier, scrub_proposals=False)
+                await delete_memory(db, owner_id, identifier, scrub_proposals=False, conversation_id=conversation_id)
             return result, False, None
     result = await memory_service.create_memory(
         owner_id,
@@ -1926,7 +1944,7 @@ async def _replace_or_promote(
                 guard=guard,
             )
             for identifier in retire_ids:
-                await delete_memory(db, owner_id, identifier, scrub_proposals=False)
+                await delete_memory(db, owner_id, identifier, scrub_proposals=False, conversation_id=conversation_id)
             return result, False, None
     result = await memory_service.correct_memory(
         owner_id,

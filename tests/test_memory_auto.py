@@ -898,3 +898,32 @@ def test_deleting_a_promoted_fact_scrubs_the_journaled_previous_text(tmp_path):
         assert "Benghazi" not in operation_payloads(file)[0]
     finally:
         cm.__exit__(None, None, None)
+
+
+def test_undoing_a_promotion_after_the_source_chat_was_deleted_tombstones_it(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        owner, chat = session_identity(file)
+        seed_memory(
+            file,
+            memory_id="temp-location",
+            owner_id=owner,
+            conversation_id=chat,
+            content="I live in Benghazi",
+            subject="location",
+            scope="conversation",
+        )
+        change = save_via_auto(client, headers, "I live in Tripoli", "fact-1")
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("UPDATE conversations SET deleted_at='2026-11-28T00:00:00+00:00' WHERE id=?", (chat,))
+
+        response = client.post(f"/v1/changes/{change['id']}/undo")
+        assert response.status_code == 200, response.text
+        assert response.json()["changed"] is True
+        row = memory_by_id(file, "temp-location")
+        assert row[0] == "deleted" and row[1] == ""
+        with closing(sqlite3.connect(file)) as db:
+            assert db.execute("SELECT scope FROM memories WHERE id='temp-location'").fetchone() == ("global",)
+        assert operations(file) == [("memory_auto_save", "undone")]
+    finally:
+        cm.__exit__(None, None, None)

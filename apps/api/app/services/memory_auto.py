@@ -7,6 +7,7 @@ change is journalled as a ``ContextOperation`` so it can be shown ("Remembered: 
 
 from uuid import uuid4
 
+from fastapi import HTTPException
 from sqlalchemy import null, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.contracts import SCOPE_CONVERSATION, SCOPE_GLOBAL, MemoryMode
 from app.domain.memory_changes import AUTO_SAVE, MemoryChange, Revert, RowState, revert_decision
 from app.domain.memory_policy import Decision, plan_for_proposal
-from app.infrastructure.database import ContextOperation, Memory, now
+from app.infrastructure.database import ContextOperation, Conversation, Memory, now
 from app.services.memory import MemoryService
 from app.services.memory_capture import (
     MemoryCaptureError,
@@ -24,7 +25,7 @@ from app.services.memory_capture import (
 from app.services.memory_erasure_lock import lock_owner_memories
 from app.services.memory_scope import visible_in
 from app.services.memory_terms import delete_terms, write_terms
-from app.services.memory_visibility import Erased, scrub_copies
+from app.services.memory_visibility import Erased, delete_memory, scrub_copies
 
 APPLIED = "applied"
 UNDONE = "undone"
@@ -196,6 +197,32 @@ async def _undo_promotion(
     """Undo an in-place promotion by demoting the same row; a replace also restores the earlier fact."""
     if payload.get("promoted_from") != "conversation":
         return None
+    conversation = await db.get(Conversation, operation.conversation_id)
+    if conversation is None or conversation.deleted_at is not None:
+        # The source chat is gone: demoting would leave an invisible active row, so tombstone it instead.
+        try:
+            deleted = await delete_memory(
+                db,
+                owner_id,
+                payload.get("memory_id"),
+                scrub_proposals=False,
+                expected_version=payload["version"],
+            )
+        except HTTPException as exc:
+            await db.rollback()
+            raise ChangeConflict from exc
+        if not deleted.changed:
+            await db.rollback()
+            raise ChangeConflict
+        operation.outcome = UNDONE
+        operation.payload = {
+            "kind": payload.get("kind"),
+            "label": "",
+            "memory_id": payload.get("memory_id"),
+            "scrubbed": True,
+        }
+        await db.commit()
+        return {**_change_payload(operation), "undoable": False, "changed": True}
     values = {
         "scope": SCOPE_CONVERSATION,
         "version": Memory.version + 1,

@@ -893,6 +893,7 @@ def test_a_promotion_conflict_retires_a_concurrent_temporary_replacement(tmp_pat
         assert saved.json()["status"] == "saved"
         records = memory_records(file)
         assert [row for row in records if row[3] == "active"] == [("My name is Sam", chat, "global", "active", 1)]
+        # Both the original row and the concurrent replacement are retired quietly.
         assert len([row for row in records if row[3] == "deleted"]) == 2
 
 
@@ -1042,3 +1043,78 @@ def test_a_promotion_conflict_after_the_row_became_a_different_fact_writes_nothi
         records = memory_records(file)
         assert not [row for row in records if row[2] == "global"]
         assert ("Something else", chat, "conversation", "active", 1) in records
+
+
+def test_a_superseded_promotion_target_creates_the_explicit_permanent_fact(tmp_path, monkeypatch):
+    import app.services.memory_capture as capture_module
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-same", "My name is Sam", subject="attribute:name")
+        proposal = arm(client, file, chat, owner, "My name is Sam", "promotion-superseded")
+
+        def supersede():
+            with closing(sqlite3.connect(file)) as db, db:
+                db.execute("UPDATE memories SET status='superseded' WHERE id='temp-same'")
+
+        monkeypatch.setattr(capture_module, "promote_temporary_memory", _raise_after(supersede))
+        saved = decide(client, chat, proposal["confirmation_id"], "save")
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["status"] == "saved"
+        assert saved.json()["memory"]["id"] != "temp-same"
+        records = memory_records(file)
+        assert [row for row in records if row[3] == "active"] == [("My name is Sam", chat, "global", "active", 1)]
+        assert ("My name is Sam", chat, "conversation", "superseded", 1) in records
+
+
+def test_a_superseded_target_with_an_existing_permanent_successor_writes_nothing(tmp_path, monkeypatch):
+    import app.services.memory_capture as capture_module
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-same", "My name is Sam", subject="attribute:name")
+        proposal = arm(client, file, chat, owner, "My name is Sam", "promotion-superseded-successor")
+        create_global(client, chat, "My name is Sam", "global-successor")
+
+        def supersede():
+            with closing(sqlite3.connect(file)) as db, db:
+                db.execute("UPDATE memories SET status='superseded' WHERE id='temp-same'")
+
+        monkeypatch.setattr(capture_module, "promote_temporary_memory", _raise_after(supersede))
+        saved = decide(client, chat, proposal["confirmation_id"], "save")
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["status"] == "already_saved"
+        records = memory_records(file)
+        assert [row for row in records if row[3] == "active"] == [("My name is Sam", chat, "global", "active", 1)]
+
+
+def test_a_replace_conflict_retires_a_concurrent_temporary_replacement(tmp_path, monkeypatch):
+    import app.services.memory_capture as capture_module
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-location", "I live in Benghazi", subject="location")
+        proposal = arm(client, file, chat, owner, "I live in Tripoli", "replace-conflict-new-temp")
+
+        def replace():
+            seed_temporary(file, chat, "temp-new", "I live in Tripoli", subject="location")
+
+        monkeypatch.setattr(capture_module, "promote_temporary_memory", _raise_after(replace))
+        replaced = decide(
+            client, chat, proposal["confirmation_id"], "replace", target_id="temp-location", target_version=1
+        )
+        assert replaced.status_code == 200, replaced.text
+        records = memory_records(file)
+        active = [row for row in records if row[3] == "active"]
+        assert len(active) == 1 and active[0][2] == "global" and active[0][0] == "I live in Tripoli"
+        assert ("I live in Benghazi", chat, "conversation", "superseded", 1) in records
+        assert len([row for row in records if row[3] == "deleted"]) == 1

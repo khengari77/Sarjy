@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.commands import CommandKind, CommandResult
 from app.domain.context import prompt_sha256
+from app.domain.contracts import SCOPE_CONVERSATION
 from app.domain.memory_changes import AUTO_SAVE
 from app.infrastructure.database import (
     ContextOperation,
@@ -287,11 +288,44 @@ def _rehashed(snapshot: object) -> object:
     return result
 
 
+def _without_deleted_envelopes(value: object, deleted: set[str]) -> object:
+    """Blank the ``text`` of every memory envelope whose id is being erased (an id match, never a text match)."""
+    if isinstance(value, list):
+        return [_without_deleted_envelopes(item, deleted) for item in value]
+    if isinstance(value, dict):
+        result = {key: _without_deleted_envelopes(item, deleted) for key, item in value.items()}
+        if result.get("id") in deleted and "text" in result:
+            result["text"] = ""
+        return result
+    return value
+
+
+async def _journaled_previous_texts(db: AsyncSession, owner_id: str, deleted: set[str]) -> set[str]:
+    """The earlier text of a promoted row, from the journal and decision receipts this scrub also clears."""
+    texts: set[str] = set()
+    operations = (await db.scalars(select(ContextOperation).where(ContextOperation.owner_id == owner_id))).all()
+    for operation in operations:
+        payload = operation.payload or {}
+        if payload.get("memory_id") in deleted and isinstance(payload.get("previous_content"), str):
+            texts.add(payload["previous_content"])
+    decisions = (
+        await db.scalars(select(MemoryCaptureDecision).where(MemoryCaptureDecision.owner_id == owner_id))
+    ).all()
+    for decision in decisions:
+        result = decision.result
+        if not isinstance(result, dict):
+            continue
+        memory = result.get("memory")
+        if isinstance(memory, dict) and memory.get("id") in deleted and isinstance(result.get("previous_content"), str):
+            texts.add(result["previous_content"])
+    return texts
+
+
 async def _scrub_snapshots(db: AsyncSession, owner_id: str, deleted: set[str], texts: set[str]) -> None:
     """Remove the fact from the stored compiled prompts (turn snapshots) of this owner that carried it."""
-    needles = _text_variants(texts)
-    if not needles or not deleted:
+    if not deleted:
         return
+    needles = _text_variants(texts | await _journaled_previous_texts(db, owner_id, deleted))
     owned = select(Conversation.id).where(Conversation.owner_id == owner_id)
     turns = (
         await db.scalars(
@@ -302,7 +336,9 @@ async def _scrub_snapshots(db: AsyncSession, owner_id: str, deleted: set[str], t
         )
     ).all()
     for turn in turns:
-        scrubbed = _without(turn.snapshot, needles)
+        scrubbed = _without_deleted_envelopes(turn.snapshot, deleted)
+        if needles:
+            scrubbed = _without(scrubbed, needles)
         if scrubbed != turn.snapshot:
             turn.snapshot = _rehashed(scrubbed)
 
@@ -389,12 +425,19 @@ async def scrub_copies(
 
 
 async def delete_memory(
-    db: AsyncSession, owner_id: str, memory_id: str, *, scrub_proposals: bool = True
+    db: AsyncSession,
+    owner_id: str,
+    memory_id: str,
+    *,
+    scrub_proposals: bool = True,
+    conversation_id: str | None = None,
+    expected_version: int | None = None,
 ) -> VisibilityResult:
     """Idempotent permanent tombstone; wipes content everywhere this service stores it.
 
     ``scrub_proposals=False`` is the quiet path for internal cap eviction and duplicate retirement: it never
-    text-matches an unbound proposal (another chat's pending fact, or the proposal being resolved right now).
+    text-matches an unbound proposal (another chat's pending fact, or the proposal being resolved right now), and
+    its tombstone is conditional on the row still being the active conversation row that was selected.
     """
     # First: a write that is committing for this owner finishes before this delete reads anything, and a write that
     # starts later waits for this delete and then sees the discarded proposal (the commit guard refuses it).
@@ -402,6 +445,22 @@ async def delete_memory(
     row = await _owned(db, owner_id, memory_id, lock=True)
     if row.status == DELETED:
         return VisibilityResult(row.id, DELETED, False)
+    if not scrub_proposals:
+        conditions = [Memory.id == memory_id, Memory.owner_id == owner_id, Memory.status == ACTIVE]
+        if conversation_id is not None:
+            conditions += [Memory.scope == SCOPE_CONVERSATION, Memory.source_conversation_id == conversation_id]
+        if expected_version is not None:
+            conditions.append(Memory.version == expected_version)
+        changed = await db.execute(
+            update(Memory)
+            .where(*conditions)
+            .values(status=DELETED, content="", subject=None, embedding=None, updated_at=now())
+        )
+        if changed.rowcount != 1:
+            # A concurrent promotion made it permanent (or another write moved it): the quiet path must not wipe it.
+            return VisibilityResult(memory_id, row.status, False)
+        await scrub_copies(db, owner_id, [Erased.of(row)], include_text_matches=False)
+        return VisibilityResult(memory_id, DELETED, True)
     chain = await _lineage(db, owner_id, row)
     erased = [Erased.of(item) for item in chain]
     await db.execute(
@@ -409,5 +468,5 @@ async def delete_memory(
         .where(Memory.id.in_([item.id for item in erased]), Memory.owner_id == owner_id)
         .values(status=DELETED, content="", subject=None, embedding=None, updated_at=now())
     )
-    await scrub_copies(db, owner_id, erased, include_text_matches=scrub_proposals)
+    await scrub_copies(db, owner_id, erased, include_text_matches=True)
     return VisibilityResult(memory_id, DELETED, True)

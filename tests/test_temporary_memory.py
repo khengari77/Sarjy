@@ -10,6 +10,7 @@ from app.infrastructure.database import Conversation, Memory, MemoryTerm, Memory
 from app.services import memory as memory_module
 from app.services.memory import MemoryService, _fingerprint
 from app.services.memory_terms import terms_of
+from app.services.memory_visibility import delete_memory
 from app.services.temporary_memory import (
     PromotionConflict,
     TemporaryFactOutcome,
@@ -976,6 +977,49 @@ def test_embedding_after_promotion_never_writes_back_a_deleted_row(tmp_path):
                 assert row.status == "deleted" and row.content == ""
                 embedding = await db.scalar(select(Memory.embedding).where(Memory.id == written.memory.id))
                 assert embedding is None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_quiet_tombstone_does_not_wipe_a_row_promoted_after_selection(tmp_path):
+    async def run():
+        engine, sessions = await memory_setup(tmp_path / "quiet-conditional.db")
+        await add_turn(sessions, "turn-promote", "a1")
+        try:
+            written = await write_temporary_fact(
+                sessions,
+                owner_id="alice",
+                conversation_id="a1",
+                turn_id="turn-promote",
+                text="I live in Benghazi",
+                subject="location",
+            )
+            await promote_temporary_memory(
+                sessions,
+                owner_id="alice",
+                conversation_id="a1",
+                memory_id=written.memory.id,
+                expected_version=1,
+                content="I live in Tripoli",
+                subject="location",
+                embedder=FakeEmbedder(),
+            )
+            async with sessions() as db:
+                result = await delete_memory(
+                    db,
+                    "alice",
+                    written.memory.id,
+                    scrub_proposals=False,
+                    conversation_id="a1",
+                )
+                assert result.changed is False
+                await db.commit()
+            async with sessions() as db:
+                row = await db.get(Memory, written.memory.id)
+                assert row.status == "active" and row.scope == SCOPE_GLOBAL
+                assert row.content == "I live in Tripoli"
         finally:
             await engine.dispose()
 

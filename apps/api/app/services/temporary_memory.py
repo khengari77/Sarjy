@@ -173,7 +173,7 @@ async def _enforce_cap(service: MemoryService, *, owner_id: str, conversation_id
                 )
                 if oldest_id is None:
                     return
-                await delete_memory(db, owner_id, oldest_id, scrub_proposals=False)
+                await delete_memory(db, owner_id, oldest_id, scrub_proposals=False, conversation_id=conversation_id)
                 await db.commit()
         except Exception:
             # The fact is already committed. A cap overrun is preferable to failing the producer's write, and the

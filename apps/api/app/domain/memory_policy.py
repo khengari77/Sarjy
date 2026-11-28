@@ -127,7 +127,11 @@ def looks_like_phone(text: str) -> bool:
 
 
 def has_long_number(text: str) -> bool:
-    """Nine or more digits in a row (a card, phone or ID number): never saved without asking, whatever the words say."""
+    """Nine or more digits in a row (a card, phone or ID number): never saved without asking, whatever the words say.
+
+    Known limitation, kept on the safe side: 9+ digit ordinary facts (IP addresses, ISBNs, coordinates, long
+    decimals) are also never saved, and ``/internal/agent/memory/confirm`` refuses them even after the user says yes.
+    """
     return looks_like_phone(text)
 
 

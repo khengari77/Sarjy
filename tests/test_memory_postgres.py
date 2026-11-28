@@ -479,6 +479,12 @@ def test_postgres_quiet_retirement_keeps_unbound_proposals():
 
 
 def test_postgres_two_concurrent_promotions_of_one_row_only_one_wins():
+    """One winner is guaranteed by the owner advisory lock plus the version-guarded UPDATE.
+
+    The conversation row lock is not what serializes two promotions: both take the owner lock before the UPDATE, and
+    the second conditional UPDATE matches zero rows. That row lock protects a promotion against a concurrent delete,
+    so removing it would not make this test vacuous.
+    """
     url = os.environ.get("TEST_MEMORY_POSTGRES_URL")
     if not url:
         pytest.skip("TEST_MEMORY_POSTGRES_URL requires disposable migrated PostgreSQL")
