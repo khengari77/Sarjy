@@ -11,6 +11,7 @@ import {
   sessionIsValid,
 } from './lib/auth/guard.server';
 import { isReviewerPublicPath } from './lib/auth/reviewer';
+import { applyGreetingCacheHeaders } from './lib/greetingCache';
 
 // Reviewer invitations are an additive door, not a replacement for the shared
 // token. When they are off, the #142 gate below behaves exactly as before.
@@ -94,24 +95,29 @@ const accountGate: Handle = async ({ event, resolve }) => {
 };
 
 export const handle: Handle = async ({ event, resolve }) => {
+  // Same-origin greeting clips are the only static asset served with a long
+  // cache lifetime; every other response keeps its existing headers.
+  const respond: typeof resolve = async (requestEvent) =>
+    applyGreetingCacheHeaders(requestEvent.url.pathname, await resolve(requestEvent));
+
   // Unprotected development is unchanged: no gate, no redirects, no headers.
-  if (!protectedMode) return resolve(event);
-  if (accountMode) return accountGate({ event, resolve });
+  if (!protectedMode) return respond(event);
+  if (accountMode) return accountGate({ event, resolve: respond });
 
   const { pathname, search } = event.url;
-  if (isPublic(pathname)) return secure(await resolve(event));
+  if (isPublic(pathname)) return secure(await respond(event));
 
   // Precedence: the signed token session is checked first, then the reviewer
   // identity. Either one opens the shell; the API still authorises every
   // `/v1/*` call from the reviewer cookie, so this edge decision never grants
   // data access on its own.
-  if (sessionIsValid(event.cookies)) return secure(await resolve(event));
+  if (sessionIsValid(event.cookies)) return secure(await respond(event));
 
   if (reviewerMode) {
     // `/review` carries the invitation and the exchange route sets the cookie,
     // so both stay open before the visitor holds any credential.
     if (isReviewerPublicPath(pathname) || reviewerSessionPresent(event.cookies)) {
-      return secure(await resolve(event));
+      return secure(await respond(event));
     }
   }
 
@@ -120,7 +126,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (pathname === '/') {
     const method = event.request.method;
     if (method === 'GET' || method === 'HEAD' || isFormPost(event.request)) {
-      return secure(await resolve(event));
+      return secure(await respond(event));
     }
   }
 

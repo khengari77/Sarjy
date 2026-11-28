@@ -48,7 +48,11 @@ export async function fetchSettings(): Promise<UserSettings> {
   return request<UserSettings>('settings');
 }
 
-export async function startVoiceSession(conversationId: string, language: 'ar' | 'en'): Promise<SessionConfig> {
+export async function startVoiceSession(
+  conversationId: string,
+  language: 'ar' | 'en',
+  browserGreeting = false,
+): Promise<SessionConfig> {
   // Never send a voice id here: the server owns resolution (saved -> default) and
   // the saved voice's language. An explicit per-call override needs a distinct
   // user intent and must not be inferred from whatever the picker happens to show.
@@ -56,10 +60,17 @@ export async function startVoiceSession(conversationId: string, language: 'ar' |
     conversation_id: conversationId,
     language,
     response_preference: 'automatic',
-    // The worker still speaks the greeting; the browser-played greeting opts in separately.
-    intro_delivery: 'worker',
+    // The browser plays the clip when it has a player; otherwise the worker speaks.
+    intro_delivery: browserGreeting ? 'browser' : 'worker',
   } satisfies StartVoice;
   return request<SessionConfig>('voice/sessions', body);
+}
+
+/** Mark the full introduction seen. Idempotent; a failure only means it replays. */
+export async function markIntroComplete(sessionId: string): Promise<void> {
+  await request<null>(`voice/sessions/${encodeURIComponent(sessionId)}/intro-complete`, {}, undefined, {
+    emptyBody: null,
+  });
 }
 
 /**

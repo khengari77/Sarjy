@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../chat/session', () => ({
   startVoiceSession: mocks.start,
+  markIntroComplete: vi.fn(),
   endVoiceSession: mocks.end,
 }));
 

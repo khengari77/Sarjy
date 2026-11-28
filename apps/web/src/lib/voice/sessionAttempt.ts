@@ -1,9 +1,99 @@
 import type { SessionConfig } from '../api';
-import { startVoiceSession } from '../chat/session';
+import { markIntroComplete, startVoiceSession } from '../chat/session';
 import type { ConnectionDeps, VoiceState } from './connection';
 import type { CallTimer } from './callTiming';
 import { errorCode } from './errors';
+import type { ActiveGreeting, GreetingPlayer } from './greeting';
 
+/** Measured from the room becoming live, not from when the clip started. */
+export const GREETING_MAX_WAIT_MS = 25_000;
+
+async function waitForGreeting(
+  promise: Promise<'ended' | 'failed'>,
+  maxWaitMs: number,
+): Promise<'ended' | 'failed' | 'timeout'> {
+  if (!(maxWaitMs > 0)) return promise;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), maxWaitMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function greetingWarner() {
+  let warned = false;
+  return () => {
+    if (warned) return;
+    warned = true;
+    console.warn('[Sarjy] Browser greeting did not finish; starting the microphone.');
+  };
+}
+
+const greetingEnded = (outcome: 'ended' | 'failed' | null) => outcome === 'ended';
+
+function stopOwnedGreeting(state: VoiceState, greeting: ActiveGreeting | null, player: GreetingPlayer) {
+  if (greeting === null || state.greeting?.attempt !== greeting.attempt) return;
+  player.stop();
+  state.greeting = null;
+}
+
+function startBrowserGreeting(
+  state: VoiceState,
+  intro: NonNullable<SessionConfig['intro']>,
+  attempt: number,
+  player: GreetingPlayer,
+  timer: CallTimer | undefined,
+  warn: () => void,
+  onOutcome: (outcome: 'ended' | 'failed') => void,
+) {
+  const greeting: ActiveGreeting = { text: intro.text, kind: intro.kind, attempt };
+  state.greeting = greeting;
+  timer?.mark('greeting_started');
+  // Runs while room.connect() and agent startup proceed; never awaited here.
+  const promise = player.play('/greetings/' + intro.asset);
+  void promise.then((outcome) => {
+    onOutcome(outcome);
+    if (state.greeting?.attempt === greeting.attempt) state.greeting = null;
+    timer?.mark('greeting_ended');
+    if (outcome === 'failed') {
+      timer?.mark('greeting_failed');
+      warn();
+    }
+  });
+  return { greeting, promise };
+}
+
+/** Wait for play(), but stop a stalled clip and treat it as failed. */
+async function waitForGreetingOutcome(
+  state: VoiceState,
+  greeting: ActiveGreeting,
+  promise: Promise<'ended' | 'failed'>,
+  player: GreetingPlayer,
+  timer: CallTimer | undefined,
+  maxWaitMs: number,
+  warn: () => void,
+): Promise<'ended' | 'failed'> {
+  const outcome = await waitForGreeting(promise, maxWaitMs);
+  if (outcome !== 'timeout') return outcome;
+  player.stop();
+  if (state.greeting?.attempt === greeting.attempt) state.greeting = null;
+  timer?.mark('greeting_ended');
+  timer?.mark('greeting_failed');
+  warn();
+  return 'failed';
+}
+
+/**
+ * One startup attempt. Once the room is live the microphone waits for the
+ * browser greeting; while it plays, Cancel ends the call and the orb action
+ * skips the greeting.
+ */
 export async function startSessionAttempt(
   state: VoiceState,
   deps: ConnectionDeps,
@@ -16,11 +106,13 @@ export async function startSessionAttempt(
     releaseSession(session: SessionConfig | null): Promise<boolean>;
     clearOwnedLive(sessionId: string): void;
     onSessionCreated?(session: SessionConfig, attempt: number): void;
+    greetingPlayer: GreetingPlayer;
+    greetingMaxWaitMs?: number;
   },
 ) {
   const voice = deps.getVoice();
   context.timer?.mark('session_request_start');
-  const config = await startVoiceSession(context.conversationId, deps.getLanguage());
+  const config = await startVoiceSession(context.conversationId, deps.getLanguage(), true);
   context.timer?.mark('session_response');
   if (config.saved_voice_unavailable) deps.onVoiceFallback?.(config.saved_voice_unavailable);
   // Register the server session before awaiting the transport so cancel/end
@@ -42,6 +134,28 @@ export async function startSessionAttempt(
     return;
   }
 
+  let greeting: ActiveGreeting | null = null;
+  let greetingStarted = false;
+  let greetingOutcome: 'ended' | 'failed' | null = null;
+  let greetingPromise: Promise<'ended' | 'failed'> | null = null;
+  const warnGreetingFailure = greetingWarner();
+  const stopMine = () => stopOwnedGreeting(state, greeting, context.greetingPlayer);
+
+  if (config.intro) {
+    const started = startBrowserGreeting(
+      state,
+      config.intro,
+      context.attempt,
+      context.greetingPlayer,
+      context.timer,
+      warnGreetingFailure,
+      (outcome) => (greetingOutcome = outcome),
+    );
+    greeting = started.greeting;
+    greetingPromise = started.promise;
+    greetingStarted = true;
+  }
+
   try {
     state.transportStatus = 'connecting';
     state.agentState = null;
@@ -49,23 +163,56 @@ export async function startSessionAttempt(
     await runtime.connect(config, context.timer);
     context.timer?.mark('room_connected');
     if (!context.isCurrent()) {
+      stopMine();
       await release('superseded-during-connect');
       return;
     }
     state.live = config;
     state.activeVoiceName = voice.name;
-    state.muted = !context.microphone;
+    // Keep the microphone marked muted while the greeting plays, even live.
+    state.muted = !context.microphone || greeting !== null;
+    // A live room does not open the microphone while the greeting still plays.
+    // A stalled clip must not stall the call: cap the wait from this moment.
+    if (greetingPromise && greeting) {
+      greetingOutcome = await waitForGreetingOutcome(
+        state,
+        greeting,
+        greetingPromise,
+        context.greetingPlayer,
+        context.timer,
+        context.greetingMaxWaitMs ?? GREETING_MAX_WAIT_MS,
+        warnGreetingFailure,
+      );
+    }
+    if (!context.isCurrent()) {
+      stopMine();
+      context.clearOwnedLive(config.id);
+      await release('superseded-after-greeting');
+      return;
+    }
     if (context.microphone) {
       await runtime.startMicrophone();
+      state.muted = false;
       context.timer?.mark('mic_started');
     }
     if (!context.isCurrent()) {
+      stopMine();
       context.clearOwnedLive(config.id);
       await release('superseded-during-microphone');
       return;
     }
+    // The intro is seen only once it ended and the call is live. If the clip
+    // ended before the room did, this waits for the room above first.
+    if (greeting?.kind === 'full' && greetingEnded(greetingOutcome)) {
+      void markIntroComplete(config.id).catch(() => {
+        console.warn('[Sarjy] Intro completion could not be recorded; it will replay next call.');
+      });
+    }
     deps.meters.setupMeters();
   } catch (error) {
+    // Once play() started, still-playing and ended both mean the caller heard it.
+    const greetingPlayed = greeting !== null && greetingStarted && greetingOutcome !== 'failed';
+    stopMine();
     if (context.isCurrent()) {
       context.clearOwnedLive(config.id);
       state.muted = true;
@@ -74,7 +221,9 @@ export async function startSessionAttempt(
       state.provisional = null;
       state.transportStatus = 'disconnected';
       state.agentState = null;
-      state.voiceErrorCode = errorCode(error);
+      // A greeting the caller actually heard deserves the distinct copy: the
+      // intro is not marked, so a retry replays it.
+      state.voiceErrorCode = greetingPlayed ? 'GREETING_UNCONNECTED' : errorCode(error);
       await deps
         .getRuntime()
         .disconnect()
