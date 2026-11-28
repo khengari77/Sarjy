@@ -1,4 +1,17 @@
 <script lang="ts">
+  let field = $state<HTMLTextAreaElement | null>(null);
+  const LINE_HEIGHT = 24;
+  const MAX_HEIGHT = LINE_HEIGHT * 4;
+
+  // Grow with the draft up to four lines, then scroll inside the field. The
+  // composer pill grows upward; the controls above keep their order.
+  function fit() {
+    const element = field;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(element.scrollHeight, MAX_HEIGHT)}px`;
+  }
+
   let {
     draft = $bindable(''),
     placeholder,
@@ -20,10 +33,25 @@
     micPressed?: boolean | null;
     onmic?: () => void;
   } = $props();
+
+  $effect(() => {
+    void draft;
+    fit();
+  });
+
+  // A narrower window (or an orientation change) rewraps the same draft, so
+  // the height measured for the previous width is stale. Re-fit on resize and
+  // remove the listener when the field is replaced or the composer is destroyed.
+  $effect(() => {
+    if (!field) return;
+    const refit = () => fit();
+    window.addEventListener('resize', refit);
+    return () => window.removeEventListener('resize', refit);
+  });
 </script>
 
 <footer class="composer">
-  <textarea bind:value={draft} rows="1" aria-label={placeholder} {placeholder} {disabled}></textarea>
+  <textarea bind:this={field} bind:value={draft} rows="1" aria-label={placeholder} {placeholder} {disabled}></textarea>
   {#if onmic}
     <button
       type="button"
@@ -55,7 +83,7 @@
     /* Kit composer: a 700px, 64px-tall pill, 80px above the viewport bottom on
        a 900px-tall window and tighter as the window gets shorter. */
     max-width: 700px;
-    height: 64px;
+    min-height: 64px;
     margin: 8px auto clamp(12px, calc(12px + (100dvh - 640px) * 0.26), 80px);
     padding: 0 9px 0 24px;
     border: 1px solid var(--border-subtle);
@@ -63,13 +91,14 @@
     background: var(--surface-elevated);
   }
 
-  /* One line: the pill never grows; overlong text scrolls inside the field. */
+  /* Up to four lines; the script sets the inline height and text past it
+     scrolls inside the field. */
   .composer textarea {
     flex: 1;
     min-width: 0;
     height: 24px;
     min-height: 24px;
-    max-height: 24px;
+    max-height: 96px;
     padding: 0;
     border: 0;
     background: transparent;
@@ -77,8 +106,9 @@
     font: inherit;
     line-height: 24px;
     resize: none;
-    overflow: hidden;
-    white-space: nowrap;
+    overflow-x: hidden;
+    overflow-y: auto;
+    white-space: normal;
     outline: none;
   }
 

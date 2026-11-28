@@ -15,30 +15,40 @@
 
   let button: HTMLButtonElement | undefined = $state();
 
-  // One quoted line: the assistant's latest words (a provisional segment of
-  // the assistant takes the place of the final line while it is spoken).
+  // One quoted excerpt: the assistant's latest words (a provisional segment of
+  // the assistant takes the place of the final line while it is spoken). The
+  // bubble caps the visible lines and scrolls; the text is never truncated.
   const lastAssistant = $derived([...turns].reverse().find((turn) => turn.role === 'assistant'));
   const quote = $derived(
     provisional?.speaker === 'assistant'
       ? { text: provisional.text, provisional: true }
       : lastAssistant
-        ? { text: lastAssistant.text.replace(/\s+/g, ' ').slice(0, 220), provisional: false }
+        ? { text: lastAssistant.text.replace(/\s+/g, ' '), provisional: false }
         : null,
   );
   const label = $derived(arabic ? 'سجل المحادثة' : 'Transcript');
   const showQuote = $derived(captionsVisible && quote !== null);
+  // The button's accessible name carries only a bounded excerpt of the
+  // caption, so the control's name cannot grow with a long reply.
+  const EXCERPT_LENGTH = 200;
+  const ariaLabel = $derived.by(() => {
+    if (!showQuote || !quote) return label;
+    const excerpt =
+      quote.text.length > EXCERPT_LENGTH ? `${quote.text.slice(0, EXCERPT_LENGTH).trimEnd()}…` : quote.text;
+    return `${label}: ${excerpt}`;
+  });
 </script>
 
 <!-- The bubble is the keyboard-accessible control that opens the right drawer
      on its Transcript tab. Partial text is visible but never announced; the
-     page owns the debounced live region for final state changes. -->
+     label is a bounded excerpt and the full text lives in the transcript. -->
 <button
   class="caption-bubble"
   class:provisional={showQuote && quote?.provisional}
   class:quiet={!showQuote}
   type="button"
   bind:this={button}
-  aria-label={showQuote ? `${label}: ${quote?.text}` : label}
+  aria-label={ariaLabel}
   aria-haspopup="dialog"
   onclick={() => button && onopen(button)}
 >

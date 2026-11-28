@@ -7,6 +7,7 @@
   import { createDrawerSession } from './drawerSession.svelte';
   import { createThemeSession } from './themeSession.svelte';
   import { wrapTab } from './drawerFocus';
+  import { publishDockGeometry } from './dockGeometry';
   import { DRAWER_CLOSE_CONTEXT, type ClosePanel } from './drawerCloseContext';
   import './shell.css';
 
@@ -48,6 +49,41 @@
   let rightPanel = $state<HTMLElement | null>(null);
   let controlsRegion = $state<HTMLElement | null>(null);
   let dialogRegion = $state<HTMLElement | null>(null);
+  let mainColumn = $state<HTMLElement | null>(null);
+  let topbar = $state<HTMLElement | null>(null);
+
+  // Floating overlays (the change toast) use the dock's measured top and the
+  // main column's centre, so they clear the controls/composer and stay over the
+  // stage when the rail is docked. The toast stays hidden until the first valid
+  // measurement, so it never appears at the stale 96px fallback.
+  $effect(() => {
+    const dock = controlsRegion;
+    const column = mainColumn;
+    if (!dock || !column) return;
+    // Read `dir` so a language flip re-measures the column even though its
+    // width (and therefore the ResizeObserver) does not change.
+    void dir;
+    const root = document.documentElement;
+    const update = () =>
+      publishDockGeometry(root, dock.getBoundingClientRect(), column.getBoundingClientRect(), topbar, innerHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(dock);
+    observer.observe(column);
+    // At <=480px the main column itself scrolls; the dock's viewport top (and
+    // therefore the toast band) changes without a resize.
+    column.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    return () => {
+      observer.disconnect();
+      column.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+      root.style.removeProperty('--main-column-center');
+      root.style.removeProperty('--toast-top');
+      root.style.removeProperty('--toast-bottom');
+      delete root.dataset.toastReady;
+    };
+  });
 
   // The stage dialog (end-call confirmation) is rendered by VoiceStage but
   // belongs to the shell's modal layer: it is portalled into this sibling
@@ -189,11 +225,11 @@
       </aside>
     {/if}
 
-    <div class="main-column">
+    <div class="main-column" bind:this={mainColumn}>
       <!-- While a modal drawer is open the header and stage are inert: no
            pointer targets, no tab stops and nothing exposed to assistive
            technology. -->
-      <header class="topbar" inert={backgroundInert ? true : undefined}>
+      <header class="topbar" bind:this={topbar} inert={backgroundInert ? true : undefined}>
         <div class="header-left">
           {#if left}
             <button

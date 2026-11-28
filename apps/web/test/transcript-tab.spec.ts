@@ -59,15 +59,31 @@ test('a long reply never moves the orb or the composer', async ({ page }) => {
     });
   await expect(page.locator('.caption-bubble')).toContainText('Short.');
   const before = await geometry();
+  const longReply = 'A very long reply. '.repeat(60);
   await page.route('**/api/v1/conversations/*/turns', (route) =>
     route.fulfill({
       json: [
         { id: 't1', role: 'user', text: 'Hi', status: 'completed' },
-        { id: 't2', role: 'assistant', text: 'A very long reply. '.repeat(60), status: 'completed' },
+        { id: 't2', role: 'assistant', text: longReply, status: 'completed' },
       ],
     }),
   );
   await page.reload();
   await expect(page.locator('.caption-bubble')).toContainText('A very long reply.');
-  expect(await geometry()).toEqual(before);
+  // The accessible name is a bounded excerpt, not a second copy of the whole
+  // reply (the live region already announces final turns).
+  const label = await page.locator('.caption-bubble').getAttribute('aria-label');
+  expect(label).toContain('Transcript: ');
+  expect(label?.endsWith('…'), 'long excerpt ends with an ellipsis').toBe(true);
+  expect(label!.length).toBeLessThanOrEqual('Transcript: '.length + 201);
+  expect(label!.length).toBeLessThan(longReply.length);
+
+  const after = await geometry();
+  // The caption may grow to its three-line cap, but neither it nor the reply
+  // length moves the orb or the composer.
+  expect(after.orb).toBe(before.orb);
+  expect(after.composer).toBe(before.composer);
+  expect(after.bubble).toBe(before.bubble);
+  expect(after.bubbleHeight).toBeGreaterThan(before.bubbleHeight);
+  expect(after.bubbleHeight).toBeLessThanOrEqual(92);
 });
