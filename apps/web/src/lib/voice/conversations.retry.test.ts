@@ -135,22 +135,26 @@ it('restarts the automatic retry schedule from 1.5 s after reload', async () => 
   expect(mocks.request).toHaveBeenCalledTimes(3);
 });
 
-it.each(['ACCOUNT_SESSION_REQUIRED', 'HTTP_401', 'HTTP_403'])(
-  'does not auto-retry an auth failure (%s)',
-  async (code) => {
-    vi.useFakeTimers();
-    mocks.request.mockRejectedValue(new Error(code));
-    const state = initialConversationState();
-    const store = storeFor(state);
+it.each([
+  'ACCOUNT_SESSION_REQUIRED',
+  'REVIEWER_SESSION_REQUIRED',
+  'REVIEWER_ACCESS_DENIED',
+  'DEMO_SESSION_REQUIRED',
+  'HTTP_401',
+  'HTTP_403',
+])('does not auto-retry an auth failure (%s)', async (code) => {
+  vi.useFakeTimers();
+  mocks.request.mockRejectedValue(new Error(code));
+  const state = initialConversationState();
+  const store = storeFor(state);
 
-    await store.reload();
-    expect(state.listError).toBe(code);
-    expect(state.listRetrying).toBe(false);
+  await store.reload();
+  expect(state.listError).toBe(code);
+  expect(state.listRetrying).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(mocks.request).toHaveBeenCalledTimes(1);
-  },
-);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(mocks.request).toHaveBeenCalledTimes(1);
+});
 
 it('does not write state from an in-flight load after dispose', async () => {
   let resolveList: (value: unknown) => void = () => {};

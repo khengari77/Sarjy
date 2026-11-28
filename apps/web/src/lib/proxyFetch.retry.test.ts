@@ -186,4 +186,37 @@ describe('total retry budget', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(Date.now()).toBeLessThanOrEqual(15_000);
   });
+
+  it('returns a 503 with its body when the retry wait would leave under 1 s', async () => {
+    let now = 0;
+    const upstream = new Response('{"detail":"busy"}', { status: 503 });
+    const fetch = stubFetch(() => {
+      now = 13_800;
+      return Promise.resolve(upstream);
+    });
+    const response = await proxyFetch(request(), { statusRetryDelayMs: () => 300, nowMs: () => now });
+    expect(response.status).toBe(503);
+    await expect(response.text()).resolves.toBe('{"detail":"busy"}');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops after a connection-error wait that exhausts the budget and logs attempts: 2', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const warn = vi.mocked(console.warn);
+    const fetch = stubFetch(
+      () => Promise.reject(connectionError()),
+      () => {
+        vi.setSystemTime(14_000);
+        return Promise.reject(connectionError());
+      },
+    );
+    const pending = proxyFetch(request(), { statusRetryDelayMs: () => 1_500 });
+    const rejection = expect(pending).rejects.toHaveProperty('name', 'TypeError');
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1_500);
+    await rejection;
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[0]![1]).toMatchObject({ reason: 'network', attempts: 2 });
+  });
 });

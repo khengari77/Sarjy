@@ -28,7 +28,14 @@ export function initialConversationState(): ConversationState {
 const UNTITLED_TITLE = 'New conversation';
 const AUTO_RETRY_DELAYS_MS = [1_500, 4_000];
 /** Codes that mean the session cannot recover by retrying the list. */
-const AUTH_ERROR_CODES = new Set(['ACCOUNT_SESSION_REQUIRED', 'HTTP_401', 'HTTP_403']);
+const AUTH_ERROR_CODES = new Set([
+  'ACCOUNT_SESSION_REQUIRED',
+  'REVIEWER_SESSION_REQUIRED',
+  'REVIEWER_ACCESS_DENIED',
+  'DEMO_SESSION_REQUIRED',
+  'HTTP_401',
+  'HTTP_403',
+]);
 
 export function createConversationStore(
   state: ConversationState,

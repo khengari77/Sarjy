@@ -194,9 +194,14 @@ export async function proxyFetch(request: ProxyFetchRequest, options: ProxyFetch
     }
     if (!RETRYABLE_STATUSES.has(response.status)) return response;
     if (canStartAnother(attempts)) {
-      await discard(response);
-      await wait(retryDelay(attempts));
-      if (canStartAnother(attempts)) continue;
+      const delay = retryDelay(attempts);
+      // Keep the upstream response body if the wait would leave too little
+      // budget to start another attempt; otherwise the caller sees an empty 502.
+      if (remainingBudget() - delay >= RETRY_MIN_REMAINING_MS) {
+        await discard(response);
+        await wait(delay);
+        if (canStartAnother(attempts)) continue;
+      }
     }
     warnFailed(request, { reason: 'status', status: response.status }, attempts, now() - startedAt);
     return response;

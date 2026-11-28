@@ -71,7 +71,7 @@ describe('retryable requests', () => {
     expect(retryHeaders.get('x-web-service-secret')).toBe(SECRET);
     expect(firstHeaders.get('cookie')).toBe(retryHeaders.get('cookie'));
     expect(firstHeaders.get('x-web-service-secret')).toBe(retryHeaders.get('x-web-service-secret'));
-    // A fresh deadline per attempt; the first signal must not be reused.
+    // A fresh signal per attempt, both bounded by the shared request deadline.
     expect(retryInit.signal).not.toBe(firstInit.signal);
     expect(retryInit.signal).toBeInstanceOf(AbortSignal);
   });
