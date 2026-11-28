@@ -75,6 +75,10 @@ const FRIENDLY: Record<string, { en: string; ar: string }> = {
     en: 'The voice agent did not start in time. Try connecting again.',
     ar: 'لم يبدأ وكيل الصوت في الوقت المتوقع. حاول الاتصال مجددًا.',
   },
+  GREETING_UNCONNECTED: {
+    en: 'You heard the introduction, but the call did not connect. Try again.',
+    ar: 'سمعت المقدمة، لكن المكالمة لم تتصل. حاول مرة أخرى.',
+  },
   API_UNAVAILABLE: {
     en: 'The service is temporarily unreachable. Try again shortly.',
     ar: 'الخدمة غير متاحة مؤقتًا. أعد المحاولة بعد قليل.',

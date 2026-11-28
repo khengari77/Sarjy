@@ -9,6 +9,8 @@ export interface PageLifecycleOptions {
   getLive(): SessionConfig | null;
   endExpired(): void;
   refresh(): Promise<void>;
+  /** Stop a playing greeting when the page is hidden or the app unmounts. */
+  stopGreeting?(): void;
 }
 
 export function bindVoicePage(options: PageLifecycleOptions): () => void {
@@ -19,6 +21,7 @@ export function bindVoicePage(options: PageLifecycleOptions): () => void {
   void options.bootstrap();
 
   const endOnPageHide = () => {
+    options.stopGreeting?.();
     const live = options.getLive();
     if (!live) return;
     try {
@@ -41,6 +44,7 @@ export function bindVoicePage(options: PageLifecycleOptions): () => void {
   }, 2500);
 
   return () => {
+    options.stopGreeting?.();
     window.removeEventListener('pagehide', endOnPageHide);
     clearInterval(poll);
     unsubscribe();

@@ -10,6 +10,7 @@ import type { ConversationState } from './conversations';
 import { createConversationStore } from './conversations';
 import { bindVoicePage } from './pageLifecycle';
 import { createMeterController } from './meters';
+import { prefetchGreetings } from './greeting';
 import { browserStorage } from '../storage';
 
 export type DevOverlay = 'none' | 'memory_work' | 'confirming' | 'muted' | 'error';
@@ -54,7 +55,11 @@ export function bootStudio(options: StudioBoot) {
     () => voice.muted,
   );
   const catalogStore = createCatalogStore(catalog, {
-    onSettings: (settings) => options.hydrateSettings(settings),
+    onSettings: (settings) => {
+      options.hydrateSettings(settings);
+      // The saved voice (or the server default) is the one this call will hear.
+      prefetchGreetings(settings.approved_voice_id);
+    },
     onVoiceSaved: (result) => options.applyCommand(result),
   });
   const connection = createVoiceConnection(voice, {
@@ -90,6 +95,7 @@ export function bootStudio(options: StudioBoot) {
     getLive: () => voice.live,
     endExpired: () => void options.run(() => connection.end(), options.onVoiceError),
     refresh: () => conversations.refresh(),
+    stopGreeting: () => connection.stopGreeting(),
   });
 
   return {
