@@ -203,6 +203,7 @@
       {pendingIntent}
       turns={conversation.turns}
       provisional={voice.provisional}
+      greeting={voice.greeting}
       captionsVisible={commands.state.settings.captions_visible}
       {busy}
       {words}

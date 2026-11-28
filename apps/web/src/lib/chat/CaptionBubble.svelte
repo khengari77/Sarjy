@@ -1,17 +1,19 @@
 <script lang="ts">
   import type { Turn } from '../api';
   import type { ProvisionalTranscript } from '../voice/connection';
+  import type { VoiceGreeting } from '../voice/greeting';
 
   interface Props {
     turns: Turn[];
     provisional?: ProvisionalTranscript | null;
+    greeting?: VoiceGreeting | null;
     arabic: boolean;
     captionsVisible: boolean;
     /** Opens the transcript tab; receives this control so focus can return to it. */
     onopen: (opener: HTMLElement) => void;
   }
 
-  let { turns, provisional = null, arabic, captionsVisible, onopen }: Props = $props();
+  let { turns, provisional = null, greeting = null, arabic, captionsVisible, onopen }: Props = $props();
 
   let button: HTMLButtonElement | undefined = $state();
 
@@ -20,14 +22,18 @@
   // bubble caps the visible lines and scrolls; the text is never truncated.
   const lastAssistant = $derived([...turns].reverse().find((turn) => turn.role === 'assistant'));
   const quote = $derived(
-    provisional?.speaker === 'assistant'
-      ? { text: provisional.text, provisional: true }
-      : lastAssistant
-        ? { text: lastAssistant.text.replace(/\s+/g, ' '), provisional: false }
-        : null,
+    greeting
+      ? { text: greeting.text, provisional: false }
+      : provisional?.speaker === 'assistant'
+        ? { text: provisional.text, provisional: true }
+        : lastAssistant
+          ? { text: lastAssistant.text.replace(/\s+/g, ' '), provisional: false }
+          : null,
   );
   const label = $derived(arabic ? 'سجل المحادثة' : 'Transcript');
-  const showQuote = $derived(captionsVisible && quote !== null);
+  // The greeting is what the caller is actually hearing, so it is shown even
+  // when ordinary captions are off; it leaves when the clip ends.
+  const showQuote = $derived(greeting !== null || (captionsVisible && quote !== null));
   // The button's accessible name carries only a bounded excerpt of the
   // caption, so the control's name cannot grow with a long reply.
   const EXCERPT_LENGTH = 200;

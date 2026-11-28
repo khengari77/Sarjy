@@ -2,7 +2,11 @@ import { expect, it, vi } from 'vitest';
 import type { SessionConfig } from '../api';
 import { createVoiceConnection, initialVoiceState } from './connection';
 const mocks = vi.hoisted(() => ({ start: vi.fn(), end: vi.fn() }));
-vi.mock('../chat/session', () => ({ startVoiceSession: mocks.start, endVoiceSession: mocks.end }));
+vi.mock('../chat/session', () => ({
+  startVoiceSession: mocks.start,
+  markIntroComplete: vi.fn(),
+  endVoiceSession: mocks.end,
+}));
 const a: SessionConfig = {
   id: 'a',
   url: 'ws://fixture',

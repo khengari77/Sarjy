@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../chat/session', () => ({
   startVoiceSession: mocks.start,
+  markIntroComplete: vi.fn(),
   endVoiceSession: mocks.end,
 }));
 
@@ -126,8 +127,7 @@ function harness() {
 
 afterEach(() => {
   vi.useRealTimers();
-  vi.clearAllMocks();
-  vi.unstubAllGlobals();
+  for (const reset of [() => vi.clearAllMocks(), () => vi.unstubAllGlobals()]) reset();
   rooms().length = 0;
 });
 
@@ -138,7 +138,7 @@ describe('server-owned voice resolution', () => {
     const { connection } = harness();
     void connection.connect(false);
     await vi.advanceTimersByTimeAsync(1);
-    expect(mocks.start).toHaveBeenCalledWith('c1', 'en');
+    expect(mocks.start).toHaveBeenCalledWith('c1', 'en', false);
     await connection.cancelConnect();
   });
 });
