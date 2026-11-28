@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createVoiceConnection, initialVoiceState, type ConnectionDeps } from './connection';
-import { isFatalVoiceError, setVoiceError } from './errors';
+import { setVoiceError } from './errors';
 
 const deps = { meters: { teardownMeters: () => {} } } as unknown as ConnectionDeps;
 
 describe('fatal errors are only replaced by fatal errors', () => {
-  it('treats GREETING_UNCONNECTED as fatal', () => {
-    expect(isFatalVoiceError('GREETING_UNCONNECTED')).toBe(true);
-  });
-
   it('uses setVoiceError for the data-channel error path', () => {
     const state = { ...initialVoiceState(), voiceErrorCode: 'SESSION_RELEASE_FAILED' };
     const connection = createVoiceConnection(state, deps);

@@ -6,7 +6,6 @@
   import CaptionBubble from './CaptionBubble.svelte';
   import type { Words } from './words';
   import type { ProvisionalTranscript } from '../voice/connection';
-  import type { VoiceGreeting } from '../voice/greeting';
   import type { PendingIntent } from './intent';
 
   let {
@@ -23,7 +22,6 @@
     pendingIntent = null,
     turns,
     provisional = null,
-    greeting = null,
     captionsVisible,
     busy,
     words,
@@ -50,7 +48,6 @@
     pendingIntent?: PendingIntent;
     turns: Turn[];
     provisional?: ProvisionalTranscript | null;
-    greeting?: VoiceGreeting | null;
     captionsVisible: boolean;
     busy: boolean;
     words: Words;
@@ -66,9 +63,9 @@
     onconfirmintent: () => void;
   } = $props();
 
-  const idleHero = $derived(!live && !connecting && !turns.length && !provisional && !greeting);
+  const idleHero = $derived(!live && !connecting && !turns.length && !provisional);
   // The transcript stays reachable whenever there is, or could soon be, text.
-  const showBubble = $derived(live || connecting || turns.length > 0 || provisional !== null || greeting !== null);
+  const showBubble = $derived(live || connecting || turns.length > 0 || provisional !== null);
   const hasNotice = $derived(Boolean(voiceErrorText) || (connectionLost && live) || audioBlocked);
   const statusText = $derived(arabic ? presentation.statusLabel.ar : presentation.statusLabel.en);
   const healthyPhase = $derived(
@@ -210,14 +207,11 @@
             {statusText}
           </p>
         {/if}
-        {#if greeting}
-          <p class="sr-only" role="status">{words.greeting}</p>
-        {/if}
         <div class="caption-slot">
           {#if hasNotice}
             {@render notices()}
           {:else if showBubble}
-            <CaptionBubble {turns} {provisional} {greeting} {arabic} {captionsVisible} onopen={ontranscript} />
+            <CaptionBubble {turns} {provisional} {arabic} {captionsVisible} onopen={ontranscript} />
           {/if}
         </div>
       {/if}

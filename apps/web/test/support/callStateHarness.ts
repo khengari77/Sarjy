@@ -6,7 +6,6 @@ type FakeState = {
   interrupts: number;
   ends: number;
   mutes: number;
-  microphoneStarts: number;
   failMicrophone: boolean;
   genericMicrophoneFailure: boolean;
   handlers: Set<(event: unknown) => void>;
@@ -39,7 +38,6 @@ export async function installFakeRuntime(page: Page) {
       interrupts: 0,
       ends: 0,
       mutes: 0,
-      microphoneStarts: 0,
       failMicrophone: false,
       genericMicrophoneFailure: false,
       handlers: new Set(),
@@ -70,7 +68,6 @@ export async function installFakeRuntime(page: Page) {
         this.__epoch += 1;
       },
       async startMicrophone() {
-        state.microphoneStarts += 1;
         if (state.failMicrophone) {
           state.failMicrophone = false;
           throw new Error('MICROPHONE_PERMISSION_DENIED');
@@ -98,20 +95,14 @@ export async function installFakeRuntime(page: Page) {
   });
 }
 
-export async function mockSessions(page: Page, extra: Record<string, unknown> = {}) {
+export async function mockSessions(page: Page) {
   const sessions: string[] = [];
   const ends: string[] = [];
   await page.route('**/api/v1/voice/sessions', async (route) => {
     const id = `sess-${sessions.length + 1}`;
     sessions.push(id);
     await route.fulfill({
-      json: {
-        id,
-        url: 'ws://fake.invalid',
-        token: 'fake',
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        ...extra,
-      },
+      json: { id, url: 'ws://fake.invalid', token: 'fake', expires_at: new Date(Date.now() + 600_000).toISOString() },
     });
   });
   await page.route('**/api/v1/voice/sessions/*/end', async (route) => {

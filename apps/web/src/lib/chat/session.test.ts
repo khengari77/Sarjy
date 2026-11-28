@@ -17,30 +17,23 @@ describe('mergeVoices', () => {
 describe('startVoiceSession', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('omits voice_id and opts into the browser greeting', async () => {
+  it('omits voice_id so the server can apply its default', async () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({ id: 'session' }));
     vi.stubGlobal('fetch', fetch);
-    await startVoiceSession('chat-1', 'en', true);
+    await startVoiceSession('chat-1', 'en');
     const body = JSON.parse(fetch.mock.calls[0][1].body);
     expect(body).toEqual({
       conversation_id: 'chat-1',
       language: 'en',
       response_preference: 'automatic',
-      intro_delivery: 'browser',
+      intro_delivery: 'worker',
     });
-  });
-
-  it('leaves greeting delivery to the worker when no player is passed', async () => {
-    const fetch = vi.fn().mockResolvedValue(Response.json({ id: 'session' }));
-    vi.stubGlobal('fetch', fetch);
-    await startVoiceSession('chat-1', 'en');
-    expect(JSON.parse(fetch.mock.calls[0][1].body).intro_delivery).toBe('worker');
   });
 
   it('never sends a voice id, even when the picker has a saved value', async () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({ id: 'session' }));
     vi.stubGlobal('fetch', fetch);
-    await startVoiceSession('chat-1', 'ar', true);
+    await startVoiceSession('chat-1', 'ar');
     expect(JSON.parse(fetch.mock.calls[0][1].body).voice_id).toBeUndefined();
   });
 });

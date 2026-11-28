@@ -4,8 +4,7 @@
  * live phase so a denied microphone cannot paint the orb red for the rest of
  * the call.
  *
- * Produced today: CONNECTION_LOST (transport/startup), GREETING_UNCONNECTED
- * (startup failed after the browser greeting played), SESSION_RELEASE_FAILED
+ * Produced today: CONNECTION_LOST (transport/startup), SESSION_RELEASE_FAILED
  * (failed release), HTTP_401/HTTP_403 (api.ts response status) and
  * ACCOUNT_SESSION_REQUIRED (api.ts/sessionAttempt/+page). SESSION_ENDED,
  * SESSION_EXPIRED and TOKEN_EXPIRED are reserved: no web producer exists yet,
@@ -18,7 +17,6 @@ const FATAL_VOICE_ERRORS = new Set([
   'SESSION_RELEASE_FAILED',
   'TOKEN_EXPIRED',
   'ACCOUNT_SESSION_REQUIRED',
-  'GREETING_UNCONNECTED',
   'HTTP_401',
   'HTTP_403',
 ]);

@@ -1,17 +1,15 @@
 import type { SessionConfig } from '../api';
 import { ensureMicrophoneAccess } from '../audio/microphone';
-import type { VoiceRuntime } from '../audio/voice-runtime';
+import type { VoiceEvent, VoiceRuntime } from '../audio/voice-runtime';
 import type { CommandResult } from '../commands/commandStore';
-import { errorCode } from './errors';
-import { createConnectionActions } from './connectionActions';
+import { errorCode, isAgentClearableError, setVoiceError } from './errors';
 import { startSessionAttempt } from './sessionAttempt';
 import { createSessionReleaser } from './sessionRelease';
 import { cancelConnection } from './cancelConnection';
-import { applyFailedRelease } from './releaseOutcome';
-import { toggleVoiceMute } from './voiceControls';
+import { applyFailedRelease, retryFailedCleanup } from './releaseOutcome';
+import { interruptVoice, retryVoiceMicrophone, sendVoiceText, toggleVoiceMute } from './voiceControls';
 import type { MeterController } from './meters';
 import { createCallTimer } from './callTiming';
-import { clearGreeting, createBrowserGreetingPlayer, type ActiveGreeting, type GreetingPlayer } from './greeting';
 
 export interface ProvisionalTranscript {
   id: string;
@@ -29,8 +27,6 @@ export interface VoiceState {
   voiceErrorCode: string;
   activeVoiceName: string;
   provisional: ProvisionalTranscript | null;
-  /** Browser-played greeting while it plays; also drives the stage caption. */
-  greeting: ActiveGreeting | null;
   /** Admission held by a session whose startup cleanup failed; retryable. */
   pendingCleanup: SessionConfig | null;
   audioBlocked: boolean;
@@ -49,7 +45,6 @@ export function initialVoiceState(): VoiceState {
     voiceErrorCode: '',
     activeVoiceName: '',
     provisional: null,
-    greeting: null,
     pendingCleanup: null,
     audioBlocked: false,
     micLevel: 0,
@@ -71,10 +66,46 @@ export interface ConnectionDeps {
   /** Fired when the server fell back from the saved voice; refresh server settings. */
   onVoiceFallback?(reason: 'removed' | 'transient'): void;
   meters: MeterController;
-  /** Injectable for tests; production uses the browser audio element. */
-  greetingPlayer?: GreetingPlayer;
-  /** Maximum wait for the clip once the room is live; injectable for tests. */
-  greetingMaxWaitMs?: number;
+}
+
+function handleVoiceEvent(
+  state: VoiceState,
+  deps: ConnectionDeps,
+  event: VoiceEvent,
+  isEnding: (sessionId: string) => boolean,
+) {
+  if (event.type === 'status') {
+    if (event.source === 'agent') {
+      state.agentState = event.text;
+      // A healthy agent event only clears errors caused by the agent/transport.
+      // Microphone errors clear on a successful unmute/retry, not a turn
+      // boundary: the microphone is still off.
+      const healthy =
+        event.text === 'idle' || event.text === 'listening' || event.text === 'thinking' || event.text === 'speaking';
+      if (healthy && isAgentClearableError(state.voiceErrorCode)) state.voiceErrorCode = '';
+    } else {
+      state.agentState = null;
+      state.transportStatus = event.text;
+      if (event.text === 'disconnected' && state.live && !isEnding(state.live.id)) {
+        deps.meters.teardownMeters();
+        state.muted = true;
+        state.connectionLost = true;
+        state.provisional = null;
+      }
+    }
+  }
+  if (event.type === 'error') setVoiceError(state, event.code);
+  if (event.type === 'audio-blocked') state.audioBlocked = true;
+  if (event.type === 'command') deps.applyCommand(event.command);
+  if (event.type === 'resync') deps.resyncSettings();
+  if (event.type === 'transcript') {
+    if (event.final) {
+      state.provisional = null;
+      void deps.refresh().catch(() => {});
+    } else {
+      state.provisional = { id: event.segmentId, text: event.text, speaker: event.speaker };
+    }
+  }
 }
 
 /** Read through a call so a session set while a release was awaited is visible. */
@@ -96,16 +127,13 @@ function clearOwnedLive(state: VoiceState, deps: ConnectionDeps, sessionId: stri
   state.activeVoiceName = '';
   state.connectionLost = false;
   state.provisional = null;
-  state.greeting = null;
 }
 
 function resetCallState(state: VoiceState) {
-  state.connecting = false;
   state.live = null;
   state.muted = true;
   state.connectionLost = false;
   state.provisional = null;
-  state.greeting = null;
   state.transportStatus = 'idle';
   state.agentState = null;
   state.activeVoiceName = '';
@@ -118,9 +146,6 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   const endingSessions = new Set<string>();
   let pendingSession: SessionConfig | null = null;
   const releaseSession = createSessionReleaser();
-  const greetingPlayer = deps.greetingPlayer ?? createBrowserGreetingPlayer();
-  /** Skip (or tear down) the greeting: stop the clip and drop its caption. */
-  const stopGreeting = () => clearGreeting(state, greetingPlayer);
   // A teardown that began at `epoch` is replaced by a newer attempt or a different session.
   const replacingSession = (epoch: number, sessionId: string) => {
     if (generation !== epoch) return true;
@@ -133,13 +158,10 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
   };
   async function connect(microphone: boolean) {
     if (state.live) {
-      if (state.greeting) stopGreeting();
       if (microphone && state.muted) await toggleVoiceMute(state, deps);
       return;
     }
     if (state.connecting) return;
-    // Called synchronously inside the click so iOS/Safari allow later playback.
-    if (microphone) greetingPlayer.prepare();
     const attempt = ++generation;
     const timer = startCallTimer();
     pendingSession = null;
@@ -172,8 +194,6 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
         releaseSession,
         clearOwnedLive: (sessionId) => clearOwnedLive(state, deps, sessionId),
         onSessionCreated: ownPendingSession,
-        greetingPlayer,
-        greetingMaxWaitMs: deps.greetingMaxWaitMs,
       });
       if (state.live) pendingSession = null;
     } catch (error) {
@@ -191,7 +211,6 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
 
   async function cancelConnect() {
     const epoch = ++generation;
-    stopGreeting();
     await cancelConnection({
       state,
       deps,
@@ -214,7 +233,6 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     if (session) endingSessions.add(session.id);
     const endEpoch = ++generation;
     pendingSession = null;
-    stopGreeting();
     deps.meters.teardownMeters();
     resetCallState(state);
     try {
@@ -230,16 +248,27 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     }
   }
 
-  return createConnectionActions({
-    state,
-    deps,
+  async function reconnect() {
+    await end();
+    // A failed release leaves the old session live so End can retry it.
+    // connect() would only unmute that dead session, so refuse instead.
+    if (state.live) return;
+    await connect(true);
+  }
+
+  return {
     connect,
+    reconnect,
     cancelConnect,
     end,
-    releaseSession,
-    stopGreeting,
-    isEnding: (sessionId) => endingSessions.has(sessionId),
-  });
+    retryCleanup: () => retryFailedCleanup(state, releaseSession),
+    retryMicrophone: () => (state.live ? retryVoiceMicrophone(state, deps) : connect(true)),
+    toggleMute: () => toggleVoiceMute(state, deps),
+    interrupt: () => interruptVoice(state, deps),
+    sendText: (text: string) => sendVoiceText(state, deps, text),
+    handleEvent: (event: VoiceEvent) =>
+      handleVoiceEvent(state, deps, event, (sessionId) => endingSessions.has(sessionId)),
+  };
 }
 
 export type VoiceConnection = ReturnType<typeof createVoiceConnection>;

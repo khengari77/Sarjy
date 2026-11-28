@@ -7,7 +7,6 @@ export type Words = {
   intro: string;
   conversationTitle: string;
   connected: string;
-  greeting: string;
   reconnecting: string;
   offline: string;
   audioBlocked: string;
@@ -50,7 +49,6 @@ const EN: BaseWords = {
   intro: 'Click the orb to start talking.',
   conversationTitle: 'Your conversation',
   connected: 'Connected',
-  greeting: 'Playing the greeting.',
   reconnecting: 'Reconnecting…',
   offline: 'Offline',
   cancelConnecting: 'Cancel connecting',
@@ -90,7 +88,6 @@ const AR: BaseWords = {
   intro: 'اضغط على الأوربة لبدء التحدث.',
   conversationTitle: 'محادثتك',
   connected: 'متصل',
-  greeting: 'جارٍ تشغيل الترحيب.',
   reconnecting: 'جارٍ إعادة الاتصال…',
   offline: 'غير متصل',
   cancelConnecting: 'إلغاء الاتصال',
