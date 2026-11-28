@@ -242,6 +242,7 @@ __all__ = [
     "LEGACY_OUTPUT_TOKENS",
     "LEGACY_TIER",
     "LENGTH_GUIDANCE",
+    "SESSION_FLAG_KEYS",
     "VOICE_RULES",
     "WORDLE_CLOSED_RULE",
     "WORDLE_MODE_INSTRUCTIONS",
@@ -255,12 +256,15 @@ __all__ = [
     "wordle_rules",
 ]
 
+# Delivery bookkeeping stored beside the provider config; it must never reach a snapshot or hash.
+SESSION_FLAG_KEYS: Final[tuple[str, ...]] = ("intro_delivery", "intro_kind", "bootstrapped")
+
 
 def normalize_pipeline(pipeline: Mapping[str, Any]) -> dict[str, Any]:
     """Return the effective configuration without modifying stored source data."""
     policy = pipeline_policy(pipeline)
     return dict(
-        pipeline,
+        {key: value for key, value in pipeline.items() if key not in SESSION_FLAG_KEYS},
         response_tier=policy.tier,
         max_output_tokens=policy.max_output_tokens,
         response_preference=policy.preference.value,
