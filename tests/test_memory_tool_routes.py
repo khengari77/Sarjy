@@ -420,7 +420,7 @@ def test_already_saved_fact_is_rejected_but_a_hidden_one_is_not_counted(tmp_path
         assert again["status"] == "proposed"
 
 
-def test_already_saved_ignores_a_temporary_memory_in_another_chat(tmp_path):
+def test_already_saved_only_counts_permanent_memories(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         owner, chat, headers, turn = setup(client, file)
@@ -449,8 +449,10 @@ def test_already_saved_ignores_a_temporary_memory_in_another_chat(tmp_path):
             )
             db.commit()
 
+        # A temporary row is not a permanent duplicate: an explicit remember must arm a promotion proposal.
         again = call(client, headers, PROPOSE, turn, "p2", fact="My name is Abdulrahma").json()
-        assert again["status"] == "rejected" and again["error"] == "MEMORY_ALREADY_SAVED"
+        assert again["status"] == "proposed"
+        assert again["proposal"]["text"] == "My name is Abdulrahma"
 
 
 def test_forgetting_and_recalling_keep_working_when_memory_is_off(tmp_path):

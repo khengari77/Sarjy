@@ -118,6 +118,8 @@ class MemoryProposalDecisionResult(BaseModel):
     status: str
     memory: MemoryResult | None = None
     idempotent: bool | None = None
+    # True when the same temporary row was made permanent in place.
+    promoted: bool | None = None
 
 
 def memory_router(database, identity, embedder):

@@ -7,11 +7,11 @@ change is journalled as a ``ContextOperation`` so it can be shown ("Remembered: 
 
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import null, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.contracts import SCOPE_GLOBAL, MemoryMode
+from app.domain.contracts import SCOPE_CONVERSATION, SCOPE_GLOBAL, MemoryMode
 from app.domain.memory_changes import AUTO_SAVE, MemoryChange, Revert, RowState, revert_decision
 from app.domain.memory_policy import Decision, plan_for_proposal
 from app.infrastructure.database import ContextOperation, Memory, now
@@ -123,9 +123,10 @@ async def auto_commit_memory(
     if result.get("status") == "already_saved" or not memory:
         return {"status": result.get("status", "saved"), "change": None}
 
+    promoted = bool(result.get("promoted"))
     superseded_id = memory.get("supersedes_id")
     superseded_version = None
-    if superseded_id:
+    if superseded_id and not promoted:
         old = await db.get(Memory, superseded_id)
         superseded_version = old.version if old is not None else None
     # The journal quotes the fact. Write it under the owner lock, so a permanent delete either finished first (the
@@ -144,19 +145,29 @@ async def auto_commit_memory(
         if current == "active"
         else ""
     )
+    payload = {
+        "kind": kind,
+        "label": label,
+        "memory_id": memory["id"],
+        "version": memory["version"],
+        "superseded_id": superseded_id,
+        "superseded_version": superseded_version,
+    }
+    if promoted:
+        # In-place promotion: undo demotes the same row back to this chat instead of removing it.
+        payload = {
+            "kind": "memory_saved",
+            "label": label,
+            "promoted_from": "conversation",
+            "memory_id": memory["id"],
+            "version": memory["version"],
+        }
     operation = ContextOperation(
         id=str(uuid4()),
         owner_id=owner_id,
         conversation_id=conversation_id,
         command_type=AUTO_SAVE,
-        payload={
-            "kind": kind,
-            "label": label,
-            "memory_id": memory["id"],
-            "version": memory["version"],
-            "superseded_id": superseded_id,
-            "superseded_version": superseded_version,
-        },
+        payload=payload,
         idempotency_key=key,
         outcome=APPLIED,
     )
@@ -192,6 +203,38 @@ async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dic
     if operation.outcome != APPLIED or "version" not in payload:
         # Permanently deleted (the journal was scrubbed) or otherwise no longer an applied change: nothing to revert.
         raise ChangeConflict
+
+    if payload.get("promoted_from") == "conversation":
+        # The fact was promoted in place: undo demotes it back to this chat instead of deleting it.
+        demoted = await db.execute(
+            update(Memory)
+            .where(
+                Memory.id == payload.get("memory_id"),
+                Memory.owner_id == owner_id,
+                Memory.status == "active",
+                Memory.scope == SCOPE_GLOBAL,
+                Memory.source_conversation_id == operation.conversation_id,
+                Memory.version == payload["version"],
+            )
+            .values(
+                scope=SCOPE_CONVERSATION,
+                version=Memory.version + 1,
+                embedding=null(),
+                updated_at=now(),
+            )
+        )
+        if demoted.rowcount != 1:
+            await db.rollback()
+            raise ChangeConflict
+        operation.outcome = UNDONE
+        operation.payload = {
+            "kind": payload.get("kind"),
+            "label": "",
+            "memory_id": payload.get("memory_id"),
+            "scrubbed": True,
+        }
+        await db.commit()
+        return {**_change_payload(operation), "undoable": False, "changed": True}
 
     change = MemoryChange(
         memory_id=payload["memory_id"],

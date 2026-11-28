@@ -188,11 +188,15 @@ def _fingerprint(
         "content": content,
         "previous_id": previous_id,
         "expected_version": expected_version,
-        "scope": scope,
-        "embed": bool(embed),
         "embedding_model": EMBEDDING_MODEL,
         "embedding_dimensions": EMBEDDING_DIMENSIONS,
     }
+    # Keep the pre-temporary-memory hash for permanent claims: an idempotent retry across the deploy must replay, not
+    # 409. Only a non-default scope or a non-embedded row changes the hash.
+    if scope != SCOPE_GLOBAL:
+        payload["scope"] = scope
+    if not embed:
+        payload["embed"] = False
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -321,7 +325,8 @@ class MemoryService:
     ):
         """Correct one fact; ``scope=None`` keeps the scope the fact already has.
 
-        An explicit permanent caller passes ``scope=SCOPE_GLOBAL`` to promote a temporary fact.
+        An explicit permanent save promotes a temporary row in place; this method is the fallback that creates a new
+        permanent row when promotion cannot run.
         """
         self._require_isolated_caller()
         previous = await self.get_memory(owner_id, memory_id)
@@ -522,8 +527,8 @@ class MemoryService:
                 if changed.rowcount != 1:
                     raise HTTPException(409, detail={"code": "MEMORY_VERSION_CONFLICT"})
                 version = expected_version + 1
-            # ``scope`` is decided by the caller: a plain correction keeps the fact's scope, while an explicit
-            # permanent save promotes a temporary fact to global.
+            # ``scope`` is decided by the caller: a plain correction keeps the fact's scope. Explicit permanent
+            # saves normally promote in place through ``promote_temporary_memory``.
             source_conversation_id = conversation_id
             if previous is not None and previous.scope == SCOPE_CONVERSATION:
                 source_conversation_id = previous.source_conversation_id

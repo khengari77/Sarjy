@@ -37,20 +37,36 @@ _ORDER = (
 # Unmistakable credential terms only. Kept deliberately small and well defined: a wider pattern trips on ordinary
 # facts ("I collect pin badges"). Ambiguous words, paraphrases, other languages and negation are judged by the
 # background observer (Jev), never by growing this list.
+# Arabic proclitics (و، ب، ل، ف، ك) are word characters, so a leading ``\b`` hides "وكلمة المرور". The term may
+# appear anywhere; a value or assignment shape is still required so ordinary prose ("I forgot the password") does not
+# match. A bare Arabic noun ("credit card") belongs in FINANCE, not here.
+_ARABIC_CREDENTIAL = (
+    r"(?:[وفبلك]\s*)?(?:كلمة\s+(?:ال)?(?:مرور|سر)|رمز\s+(?:التحقق|الدخول|الأمان|سري|السر)|"
+    r"الرمز\s+السري|الرقم\s+السري|رقم\s+(?:الهوية|البطاقة)|عبارة\s+الاسترداد|مفتاح\s+(?:سري|الapi|ssh))"
+)
+# The value may follow directly, after up to a few ordinary words, or after an assignment marker. A term with no
+# value or assignment ("I forgot the password") is ordinary prose and stays out.
+_ARABIC_CREDENTIAL_VALUE = (
+    r"(?:[^\n]{0,20}?(?:هو|هي|:|=)\s*\S{1,20}|\s+(?:[^\s]+\s+){0,3}[0-9٠-٩A-Za-z][\w!@#$%^&*._-]{0,19})"
+)
+
 _CREDENTIAL = re.compile(
     r"\b(?:password|passcode|passphrase|pin (?:code|number)|cvv|cvc|api[ -]?(?:key|secret)|private key|ssh[ -]?key|"
     r"seed phrase|recovery (?:code|phrase)|one[- ]time (?:code|password)|backup code|otp|social security|ssn|"
     r"national id|passport number|safe combination|security code|(?:2fa|two[- ]factor) code)s?\b"
     # A PIN given as digits: "my pin is 1234". Fixed shape, so "pin badges" or "pin it to the wall" never match.
     r"|\bpin\s*(?:is|:|=)\s*\d"
-    # Arabic credential terms: the English-only net must not wave them through.
-    r"|\b(?:كلمة\s+(?:المرور|السر)|رمز\s+(?:التحقق|سري|السر)|الرقم\s+السري|رقم\s+(?:الهوية|البطاقة)|"
-    r"بطاقة\s+الائتمان|مفتاح\s+(?:سري|الapi))\b",
+    # Token and key literals that are unmistakable even without a label.
+    r"|(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{8,}|xox[abprs]-|eyJ[A-Za-z0-9_-]{10,}\.)"
+    # "my openai token is ..." / "secret: ..." (a short ordinary value like "the token budget" does not match).
+    r"|\b(?:api[ _-]?key|token|secret)\s*(?:is|:|=)\s*\S{6,}"
+    # Arabic credential terms with an optional proclitic and a value/assignment.
+    rf"|{_ARABIC_CREDENTIAL}{_ARABIC_CREDENTIAL_VALUE}",
     re.IGNORECASE,
 )
 _FINANCE = re.compile(
     r"\b(?:salary|income|net worth|debt|loan|mortgage|credit card|card number|bank account|account number|iban|"
-    r"routing number|tax(?:es)?|bankrupt\w*|invest\w*|savings)\b",
+    r"routing number|tax(?:es)?|bankrupt\w*|invest\w*|savings|بطاقة\s+(?:ال)?ائتمان)\b",
     re.IGNORECASE,
 )
 _HEALTH = re.compile(

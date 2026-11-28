@@ -70,11 +70,26 @@ def test_the_keyword_net_can_only_raise_sensitivity(model_label, net_label):
         ("my password is hunter2", Sensitivity.CREDENTIAL),
         ("my pin code is 1234", Sensitivity.CREDENTIAL),
         ("my api key is abc", Sensitivity.CREDENTIAL),
+        ("my openai token is sk-proj-abcd1234", Sensitivity.CREDENTIAL),
+        ("value sk-proj-abcd1234", Sensitivity.CREDENTIAL),
+        ("my github key is ghp_abcdEFGH12345678", Sensitivity.CREDENTIAL),
+        ("the bucket key is AKIAABCDEFGH12345678", Sensitivity.CREDENTIAL),
+        ("the slack hook is xoxb-not-a-real-token", Sensitivity.CREDENTIAL),
+        ("the jwt is eyJhbGciOiJIUzI1NiJ9.payload", Sensitivity.CREDENTIAL),
+        ("وكلمة المرور هي hunter2", Sensitivity.CREDENTIAL),
+        ("بالرقم السري 8877", Sensitivity.CREDENTIAL),
+        ("ورمز التحقق 4567", Sensitivity.CREDENTIAL),
+        ("رقم الهوية 1234", Sensitivity.CREDENTIAL),
+        ("رقم البطاقة 4567", Sensitivity.CREDENTIAL),
         ("I make a salary of ninety thousand", Sensitivity.FINANCE),
+        ("أريد بطاقة ائتمان جديدة", Sensitivity.FINANCE),
         ("my doctor put me on metformin", Sensitivity.HEALTH),
         ("my boss is called Sam", Sensitivity.THIRD_PARTY),
         ("my favorite color is blue", Sensitivity.NORMAL),
+        ("the token budget is low", Sensitivity.NORMAL),
         ("I live in Benghazi", Sensitivity.NORMAL),
+        ("رقم الهوية", Sensitivity.NORMAL),
+        ("رقم البطاقة", Sensitivity.NORMAL),
     ],
 )
 def test_classifier_examples(text, expected):
@@ -85,6 +100,8 @@ def test_decisions_for_the_demo_script():
     assert decide("auto", classify_sensitivity("my favorite color is blue"), explicit=True) is Decision.SAVE
     assert decide("auto", classify_sensitivity("my doctor put me on metformin"), explicit=False) is Decision.ASK
     assert decide("auto", classify_sensitivity("my password is hunter2"), explicit=True) is Decision.SKIP
+    assert decide("auto", classify_sensitivity("my openai token is sk-proj-abcd1234"), explicit=True) is Decision.SKIP
+    assert decide("auto", classify_sensitivity("أريد بطاقة ائتمان جديدة"), explicit=True) is Decision.ASK
     assert decide("ask", classify_sensitivity("my favorite color is blue"), explicit=True) is Decision.ASK
     assert decide("off", classify_sensitivity("my favorite color is blue"), explicit=True) is Decision.SKIP
 

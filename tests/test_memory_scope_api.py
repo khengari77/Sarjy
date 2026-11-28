@@ -55,6 +55,21 @@ def memory_records(file):
         ).fetchall()
 
 
+def memory_terms_of(file, memory_id):
+    with closing(sqlite3.connect(file)) as db:
+        return {row[0] for row in db.execute("SELECT term FROM memory_terms WHERE memory_id=?", (memory_id,))}
+
+
+def memory_embedding(file, memory_id):
+    with closing(sqlite3.connect(file)) as db:
+        return db.execute("SELECT embedding FROM memories WHERE id=?", (memory_id,)).fetchone()[0]
+
+
+class FailingEmbedder(FakeEmbedder):
+    async def embed(self, db, text):
+        raise RuntimeError("embeddings unavailable")
+
+
 def end_sessions(file, conversation_id):
     with closing(sqlite3.connect(file)) as db, db:
         db.execute("UPDATE voice_sessions SET status='ended' WHERE conversation_id=?", (conversation_id,))
@@ -509,17 +524,51 @@ def test_explicit_save_promotes_a_same_value_temporary_fact(tmp_path, route):
         seed_temporary(file, chat, "temp-same", "My name is Sam", subject="attribute:name")
         proposal, headers = arm_for(client, file, chat, owner, "My name is Sam", f"promote-{route}")
 
+        other_chat = client.post("/v1/conversations").json()["id"]
+        assert client.get("/v1/memories", params={"scope": "global"}).json()["items"] == []
+        before = client.post("/v1/memories/search", json={"conversation_id": other_chat, "query": "Sam"}).json()
+        assert before == []
+
         if route == "decision":
             saved = decide(client, chat, proposal["confirmation_id"], "save")
         else:
             saved = spoken_confirm(client, headers, proposal["token"], "save")
         assert saved.status_code == 200, saved.text
         assert saved.json()["status"] == "saved"
-        assert saved.json()["memory"]["supersedes_id"] == "temp-same"
+        assert saved.json()["memory"]["id"] == "temp-same"
+        assert saved.json()["memory"]["supersedes_id"] is None
 
         records = memory_records(file)
-        assert ("My name is Sam", chat, "conversation", "superseded", 1) in records
-        assert ("My name is Sam", chat, "global", "active", 2) in records
+        assert records == [("My name is Sam", chat, "global", "active", 2)]
+        assert client.get("/v1/memories", params={"scope": "global"}).json()["items"][0]["id"] == "temp-same"
+        found = client.post("/v1/memories/search", json={"conversation_id": other_chat, "query": "Sam"}).json()
+        assert [item["id"] for item in found] == ["temp-same"]
+
+
+def test_already_saved_permanent_fact_retires_a_temporary_copy(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        create_global(client, chat, "My name is Sam", "global-sam")
+        seed_temporary(file, chat, "temp-sam", "My name is Sam", subject="attribute:name")
+
+        proposal = arm(client, file, chat, owner, "My name is Sam", "permanent-duplicate")
+        saved = decide(client, chat, proposal["confirmation_id"], "save")
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["status"] == "already_saved"
+
+        records = memory_records(file)
+        assert ("My name is Sam", chat, "global", "active", 1) in records
+        # The permanent fact wins: the temporary duplicate is tombstoned and scrubbed like a delete.
+        assert ("", chat, "conversation", "deleted", 1) in records
+        assert memory_terms_of(file, "temp-sam") == set()
+        active_temporary = client.get(
+            "/v1/memories",
+            params={"scope": "conversation", "conversation_id": chat, "status": "active"},
+        ).json()["items"]
+        assert active_temporary == []
 
 
 def test_decision_rechecks_credential_sensitivity(tmp_path):
@@ -689,9 +738,16 @@ def test_replace_promotes_a_temporary_fact_to_permanent(tmp_path):
             client, chat_a, proposal["confirmation_id"], "replace", target_id="temp-sam", target_version=1
         )
         assert replaced.status_code == 200, replaced.text
+        assert replaced.json()["memory"]["id"] == "temp-sam"
+        assert replaced.json()["memory"]["supersedes_id"] is None
         records = memory_records(file)
-        assert ("My name is Sam", chat_a, "conversation", "superseded", 1) in records
-        assert ("My name is Alex", chat_a, "global", "active", 2) in records
+        assert records == [("My name is Alex", chat_a, "global", "active", 2)]
+
+        replay = decide(client, chat_a, proposal["confirmation_id"], "replace", target_id="temp-sam", target_version=1)
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["idempotent"] is True
+        assert replay.json()["memory"]["id"] == "temp-sam" and replay.json()["memory"]["version"] == 2
+        assert memory_records(file) == records
 
         visible_a = client.get(
             "/v1/memories",
@@ -705,6 +761,95 @@ def test_replace_promotes_a_temporary_fact_to_permanent(tmp_path):
         assert {item["content"] for item in client.get("/v1/memories", params={"scope": "global"}).json()["items"]} == {
             "My name is Alex"
         }
+        found = client.post("/v1/memories/search", json={"conversation_id": chat_b, "query": "Alex"}).json()
+        assert [item["id"] for item in found] == ["temp-sam"]
+
+
+def test_replace_promotes_in_place_and_reindexes_corrected_terms(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-location", "I live in Benghazi", subject="location")
+        proposal = arm(client, file, chat, owner, "remember that I live in Tripoli", "temp-location-replace")
+        assert client.get(PROPOSAL.format(chat=chat)).json()["pending"]["replaces"] == {
+            "id": "temp-location",
+            "version": 1,
+            "content": "I live in Benghazi",
+        }
+
+        replaced = decide(
+            client, chat, proposal["confirmation_id"], "replace", target_id="temp-location", target_version=1
+        )
+        assert replaced.status_code == 200, replaced.text
+        assert replaced.json()["memory"]["id"] == "temp-location"
+        assert replaced.json()["memory"]["content"] == "I live in Tripoli"
+        assert memory_records(file) == [("I live in Tripoli", chat, "global", "active", 2)]
+        terms = memory_terms_of(file, "temp-location")
+        assert "benghazi" not in terms and "tripoli" in terms
+
+
+def test_promotion_embedding_failure_still_saves_the_permanent_fact(tmp_path):
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FailingEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-same", "My name is Sam", subject="attribute:name")
+        proposal = arm(client, file, chat, owner, "My name is Sam", "promotion-embedding-failure")
+
+        saved = decide(client, chat, proposal["confirmation_id"], "save")
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["status"] == "saved"
+        assert saved.json()["memory"]["id"] == "temp-same"
+        assert memory_records(file) == [("My name is Sam", chat, "global", "active", 2)]
+        assert memory_embedding(file, "temp-same") is None
+
+
+def test_a_promotion_conflict_falls_back_to_a_normal_permanent_row(tmp_path, monkeypatch):
+    import app.services.memory_capture as capture_module
+
+    async def conflict(*args, **kwargs):
+        raise capture_module.PromotionConflict()
+
+    monkeypatch.setattr(capture_module, "promote_temporary_memory", conflict)
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-same", "My name is Sam", subject="attribute:name")
+        proposal = arm(client, file, chat, owner, "My name is Sam", "promotion-conflict-fallback")
+
+        saved = decide(client, chat, proposal["confirmation_id"], "save")
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["status"] == "saved"
+        assert saved.json()["memory"]["id"] != "temp-same"
+        records = memory_records(file)
+        assert ("My name is Sam", chat, "global", "active", 1) in records
+
+
+def test_a_promotion_race_with_a_deleted_chat_writes_nothing(tmp_path, monkeypatch):
+    import app.services.memory_capture as capture_module
+
+    async def conflict(*args, **kwargs):
+        raise capture_module.PromotionConflict()
+
+    monkeypatch.setattr(capture_module, "promote_temporary_memory", conflict)
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-same", "My name is Sam", subject="attribute:name")
+        proposal = arm(client, file, chat, owner, "My name is Sam", "promotion-race-delete")
+        with closing(sqlite3.connect(file)) as db, db:
+            db.execute("UPDATE conversations SET deleted_at='2026-11-28T00:00:00+00:00' WHERE id=?", (chat,))
+
+        saved = decide(client, chat, proposal["confirmation_id"], "save")
+        assert saved.status_code == 404
+        assert not [row for row in memory_records(file) if row[2] == "global"]
 
 
 def test_legacy_correct_keeps_a_temporary_fact_temporary(tmp_path):
