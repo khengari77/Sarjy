@@ -43,10 +43,10 @@
     ondelete,
   }: Props = $props();
 
-  // prettier-ignore
-  let query = $state(''), menuOpenFor = $state<string | null>(null);
-  // prettier-ignore
-  let menuTrigger: HTMLButtonElement | null = null, listElement = $state<HTMLElement | null>(null);
+  let query = $state('');
+  let menuOpenFor = $state<string | null>(null);
+  let menuTrigger: HTMLButtonElement | null = null;
+  let listElement = $state<HTMLElement | null>(null);
   let menuElement = $state<HTMLElement | null>(null);
   let confirmingDelete = $state<string | null>(null);
   let deletingId = $state<string | null>(null);
@@ -55,8 +55,6 @@
   const words = $derived(wordsFor(arabic));
 
   const filtered = $derived(filterConversations(conversations, query));
-  const hasConversations = $derived(conversations.length > 0);
-  const noMatches = $derived(hasConversations && filtered.length === 0);
 
   function select(id: string) {
     closeMenu();
@@ -200,7 +198,7 @@
     <div class="skeleton" aria-busy="true" aria-label={arabic ? 'جارٍ تحميل المحادثات' : 'Loading conversations'}>
       <span></span><span></span><span></span>
     </div>
-  {:else if !hasConversations}
+  {:else if conversations.length === 0}
     <div class="empty">
       <p class="empty-title">{arabic ? 'لا توجد محادثات بعد' : 'No conversations yet'}</p>
       <p class="empty-copy">{arabic ? 'ستظهر محادثاتك هنا.' : 'Your chats will appear here.'}</p>
@@ -209,7 +207,7 @@
         <p class="empty-hint-copy">{arabic ? 'أو استخدم مربّع الرسائل.' : 'Or use the message box.'}</p>
       </div>
     </div>
-  {:else if noMatches}
+  {:else if conversations.length > 0 && filtered.length === 0}
     <div class="empty">
       <p class="empty-title">{arabic ? 'لا توجد نتائج مطابقة.' : 'No matching conversations.'}</p>
       <button class="ghost-button" onclick={() => (query = '')}>{arabic ? 'مسح البحث' : 'Clear search'}</button>

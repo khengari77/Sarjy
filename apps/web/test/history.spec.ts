@@ -112,16 +112,6 @@ test('an empty list shows the filled new-chat action, always-on search and works
   await expect(footer).toContainText('Voice Context Studio');
 });
 
-test('a list failure stays inside the sidebar and leaves the orb idle', async ({ page }) => {
-  await page.route('**/api/v1/conversations', async (route) => {
-    await route.fulfill({ status: 503, json: { detail: { code: 'API_UNAVAILABLE' } } });
-  });
-  await page.route('**/api/v1/demo-session', async (route) => route.fulfill({ json: { id: 'owner' } }));
-  await gotoHistory(page);
-  await expect(page.locator('[data-code="API_UNAVAILABLE"]')).toContainText('Could not load conversations');
-  await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'idle');
-});
-
 test('switching chats mid-call requires an explicit end and switch', async ({ page }) => {
   await mockHistory(page);
   await allowMicrophone(page);

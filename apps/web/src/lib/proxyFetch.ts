@@ -18,7 +18,7 @@ const RETRYABLE_STATUSES = new Set([502, 503, 504]);
 const UNAVAILABLE_LOG_INTERVAL_MS = 10_000;
 const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_ATTEMPTS = 3;
-const RETRY_BUDGET_MS = 12_000;
+const RETRY_MIN_REMAINING_MS = 1_000;
 
 /** Default jitter bounds per retry: attempt 2 waits 150-300 ms, attempt 3 500-900 ms. */
 export const STATUS_RETRY_BOUNDS_MS = {
@@ -153,15 +153,18 @@ function wait(ms: number): Promise<void> {
  * the stale socket; every later retry waits a jittered delay (150-300 ms for
  * the second attempt, 500-900 ms for the third) so a deploying ingress can
  * settle. Timeouts are not retried; the caller already waited the deadline.
- * No retry starts once 12 s of the first attempt's timeout budget is spent.
+ * Every attempt shares the original per-request deadline: a retry starts only
+ * with at least 1 s left, and its abort signal is shortened to that remainder.
  */
 export async function proxyFetch(request: ProxyFetchRequest, options: ProxyFetchOptions = {}): Promise<Response> {
   const now = options.nowMs ?? Date.now;
   const startedAt = now();
+  const deadline = startedAt + request.timeoutMs;
   const repeatable = isRepeatable(request);
   const retryDelay = options.statusRetryDelayMs ?? statusRetryDelay;
+  const remainingBudget = (): number => deadline - now();
   const canStartAnother = (attempts: number): boolean =>
-    repeatable && attempts < MAX_ATTEMPTS && now() - startedAt <= RETRY_BUDGET_MS;
+    repeatable && attempts < MAX_ATTEMPTS && remainingBudget() >= RETRY_MIN_REMAINING_MS;
   let attempts = 0;
   for (;;) {
     attempts += 1;
@@ -172,13 +175,14 @@ export async function proxyFetch(request: ProxyFetchRequest, options: ProxyFetch
         headers: request.headers,
         body: request.body,
         redirect: 'manual',
-        signal: AbortSignal.timeout(request.timeoutMs),
+        signal: AbortSignal.timeout(Math.min(request.timeoutMs, remainingBudget())),
       });
     } catch (error) {
       const reason = isTimeout(error) ? 'timeout' : 'network';
       if (reason === 'network' && canStartAnother(attempts)) {
-        if (attempts > 1) await wait(retryDelay(attempts));
-        continue;
+        if (attempts === 1) continue;
+        await wait(retryDelay(attempts));
+        if (canStartAnother(attempts)) continue;
       }
       const failure: FailureDetails = { reason };
       const name = errorName(error);
@@ -192,7 +196,7 @@ export async function proxyFetch(request: ProxyFetchRequest, options: ProxyFetch
     if (canStartAnother(attempts)) {
       await discard(response);
       await wait(retryDelay(attempts));
-      continue;
+      if (canStartAnother(attempts)) continue;
     }
     warnFailed(request, { reason: 'status', status: response.status }, attempts, now() - startedAt);
     return response;

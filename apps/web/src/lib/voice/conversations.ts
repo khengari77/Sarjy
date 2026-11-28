@@ -27,6 +27,8 @@ export function initialConversationState(): ConversationState {
 
 const UNTITLED_TITLE = 'New conversation';
 const AUTO_RETRY_DELAYS_MS = [1_500, 4_000];
+/** Codes that mean the session cannot recover by retrying the list. */
+const AUTH_ERROR_CODES = new Set(['ACCOUNT_SESSION_REQUIRED', 'HTTP_401', 'HTTP_403']);
 
 export function createConversationStore(
   state: ConversationState,
@@ -71,10 +73,13 @@ export function createConversationStore(
       autoRetryIndex = 0;
     } catch (error) {
       if (epoch !== listEpoch) return;
-      state.listError = errorCode(error);
-      // Retry only an empty list: a stale list on screen is better than a
-      // retry loop while the user is working with it.
-      if (scheduleOnFailure && state.conversations.length === 0) scheduleAutoRetry();
+      const code = errorCode(error);
+      state.listError = code;
+      // Retry only an empty list on a transient failure: a stale list on screen
+      // is better than a retry loop, and auth failures need a new session.
+      if (scheduleOnFailure && !AUTH_ERROR_CODES.has(code) && state.conversations.length === 0) {
+        scheduleAutoRetry();
+      }
     } finally {
       if (epoch === listEpoch) state.loading = false;
     }
@@ -93,6 +98,7 @@ export function createConversationStore(
 
   function dispose() {
     disposed = true;
+    listEpoch += 1;
     cancelAutoRetry();
   }
 

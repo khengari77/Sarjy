@@ -48,6 +48,7 @@ beforeEach(async () => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe('three attempts', () => {
@@ -144,20 +145,45 @@ describe('three attempts', () => {
 });
 
 describe('total retry budget', () => {
-  it('stops a third attempt once more than 12 s of the first attempt budget is used', async () => {
+  it('does not start a retry with less than 1 s remaining', async () => {
     let now = 0;
-    const fetch = stubFetch(
-      () => {
-        now = 0;
-        return Promise.resolve(answer(502));
-      },
-      () => {
-        now = 12_001;
-        return Promise.resolve(answer(502));
-      },
-    );
+    const fetch = stubFetch(() => {
+      now = 14_500;
+      return Promise.resolve(answer(502));
+    });
     const response = await proxyFetch(request(), { statusRetryDelayMs: () => 0, nowMs: () => now });
     expect(response.status).toBe(502);
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('shortens the second attempt signal to the remaining budget', async () => {
+    let now = 0;
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    stubFetch(
+      () => {
+        now = 10_000;
+        return Promise.resolve(answer(502));
+      },
+      () => Promise.resolve(answer(200)),
+    );
+    const response = await proxyFetch(request(), { statusRetryDelayMs: () => 0, nowMs: () => now });
+    expect(response.status).toBe(200);
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([15_000, 5_000]);
+  });
+
+  it('checks the budget again after the jitter wait and keeps total elapsed within timeoutMs', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const fetch = stubFetch(() => {
+      vi.setSystemTime(9_000);
+      return Promise.resolve(answer(502));
+    });
+    const pending = proxyFetch(request(), { statusRetryDelayMs: () => 5_500 });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(5_500);
+    const response = await pending;
+    expect(response.status).toBe(502);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(Date.now()).toBeLessThanOrEqual(15_000);
   });
 });

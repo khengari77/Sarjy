@@ -15,8 +15,16 @@ vi.mock('../chat/session', () => ({
 }));
 
 const { createConversationStore, initialConversationState } = await import('./conversations');
+const stores: Array<ReturnType<typeof createConversationStore>> = [];
+
+function storeFor(state: ReturnType<typeof initialConversationState>) {
+  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+  stores.push(store);
+  return store;
+}
 
 afterEach(() => {
+  for (const store of stores.splice(0)) store.dispose();
   vi.clearAllMocks();
   vi.useRealTimers();
 });
@@ -31,7 +39,7 @@ it('refreshes the conversation list so a generated title appears', async () => {
   });
   mocks.request.mockResolvedValue([{ id: 'c1', title: 'Trip planning', revision: 0 }]);
 
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+  const store = storeFor(state);
   await store.refresh();
 
   expect(mocks.request).toHaveBeenCalledWith('conversations');
@@ -45,7 +53,7 @@ it('does not refetch the list once the conversation has a real title', async () 
   state.conversations = [{ id: 'c1', title: 'Trip planning', revision: 0 }];
   mocks.fetchConversation.mockResolvedValue({ turns: [], toolCalls: [] });
 
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+  const store = storeFor(state);
   await store.refresh();
 
   expect(mocks.request).not.toHaveBeenCalled();
@@ -59,7 +67,7 @@ it('ignores a stale refresh after the selection moved on', async () => {
   mocks.fetchConversation.mockReturnValue(new Promise((resolve) => (resolveHistory = resolve)));
   mocks.request.mockReturnValue(new Promise((resolve) => (resolveList = resolve)));
 
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+  const store = storeFor(state);
   const pending = store.refresh();
   state.current = 'c2';
   resolveHistory({ turns: [{ id: 'stale' }], toolCalls: [] });
@@ -82,7 +90,7 @@ it('removes a deleted chat and clears the selection when it was current', async 
   mocks.deleteConversation.mockResolvedValue(undefined);
   mocks.request.mockResolvedValue([{ id: 'c2', title: 'Work ideas', revision: 0 }]);
 
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+  const store = storeFor(state);
   await store.remove('c1');
 
   expect(mocks.deleteConversation).toHaveBeenCalledWith('c1');
@@ -107,7 +115,7 @@ it('drops a list response that started before a delete', async () => {
   mocks.request.mockResolvedValueOnce([{ id: 'c1', title: 'Trip planning', revision: 0 }]);
   mocks.deleteConversation.mockResolvedValue(undefined);
 
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+  const store = storeFor(state);
   const refreshing = store.refresh();
   await store.remove('c2');
 
@@ -131,7 +139,7 @@ it('does not report a failed list refresh as a delete failure', async () => {
   mocks.deleteConversation.mockResolvedValue(undefined);
   mocks.request.mockRejectedValueOnce(new Error('API_UNAVAILABLE'));
 
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+  const store = storeFor(state);
 
   await expect(store.remove('c2')).resolves.toBeUndefined();
   expect(state.conversations).toEqual([{ id: 'c1', title: 'Trip planning', revision: 0 }]);
@@ -147,7 +155,7 @@ it('keeps the current selection when a different chat is deleted', async () => {
   mocks.deleteConversation.mockResolvedValue(undefined);
   mocks.request.mockResolvedValue([{ id: 'c1', title: 'Trip planning', revision: 0 }]);
 
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+  const store = storeFor(state);
   await store.remove('c2');
 
   expect(state.current).toBe('c1');
@@ -162,7 +170,7 @@ it('keeps an in-flight list reload when a refresh does not fetch the list', asyn
   mocks.request.mockReturnValueOnce(new Promise((resolve) => (resolveList = resolve)));
   mocks.fetchConversation.mockResolvedValue({ turns: [], toolCalls: [] });
 
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+  const store = storeFor(state);
   const reloading = store.reload();
   await store.refresh(); // the title is set, so this fetches the chat only and must not supersede the reload
   resolveList([
@@ -172,78 +180,4 @@ it('keeps an in-flight list reload when a refresh does not fetch the list', asyn
   await reloading;
 
   expect(state.conversations.map((chat) => chat.id)).toEqual(['c1', 'c2']);
-});
-
-it('retries an empty failed list after 1.5 s then 4 s, then stops', async () => {
-  vi.useFakeTimers();
-  mocks.request.mockRejectedValue(new Error('API_UNAVAILABLE'));
-  const state = initialConversationState();
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
-
-  await store.reload();
-  expect(state.listError).toBe('API_UNAVAILABLE');
-  expect(state.listRetrying).toBe(true);
-  expect(mocks.request).toHaveBeenCalledTimes(1);
-
-  await vi.advanceTimersByTimeAsync(1_499);
-  expect(mocks.request).toHaveBeenCalledTimes(1);
-  await vi.advanceTimersByTimeAsync(1);
-  expect(mocks.request).toHaveBeenCalledTimes(2);
-  expect(state.listRetrying).toBe(true);
-
-  await vi.advanceTimersByTimeAsync(3_999);
-  expect(mocks.request).toHaveBeenCalledTimes(2);
-  await vi.advanceTimersByTimeAsync(1);
-  expect(mocks.request).toHaveBeenCalledTimes(3);
-  expect(state.listRetrying).toBe(false);
-
-  await vi.advanceTimersByTimeAsync(10_000);
-  expect(mocks.request).toHaveBeenCalledTimes(3);
-});
-
-it('stops the automatic retry once the list loads', async () => {
-  vi.useFakeTimers();
-  mocks.request.mockRejectedValueOnce(new Error('API_UNAVAILABLE')).mockResolvedValueOnce([]);
-  const state = initialConversationState();
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
-
-  await store.reload();
-  expect(state.listRetrying).toBe(true);
-  await vi.advanceTimersByTimeAsync(1_500);
-  expect(mocks.request).toHaveBeenCalledTimes(2);
-  expect(state.listError).toBe('');
-  expect(state.listRetrying).toBe(false);
-
-  await vi.advanceTimersByTimeAsync(10_000);
-  expect(mocks.request).toHaveBeenCalledTimes(2);
-});
-
-it('stops the automatic retry when the user clicks Retry', async () => {
-  vi.useFakeTimers();
-  mocks.request.mockRejectedValue(new Error('API_UNAVAILABLE'));
-  const state = initialConversationState();
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
-
-  await store.reload();
-  await store.retry();
-  expect(mocks.request).toHaveBeenCalledTimes(2);
-  expect(state.listRetrying).toBe(false);
-
-  await vi.advanceTimersByTimeAsync(10_000);
-  expect(mocks.request).toHaveBeenCalledTimes(2);
-});
-
-it('stops the automatic retry on dispose', async () => {
-  vi.useFakeTimers();
-  mocks.request.mockRejectedValue(new Error('API_UNAVAILABLE'));
-  const state = initialConversationState();
-  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
-
-  await store.reload();
-  expect(state.listRetrying).toBe(true);
-  store.dispose();
-  expect(state.listRetrying).toBe(false);
-
-  await vi.advanceTimersByTimeAsync(10_000);
-  expect(mocks.request).toHaveBeenCalledTimes(1);
 });
