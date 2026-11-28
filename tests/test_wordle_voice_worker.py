@@ -362,3 +362,51 @@ def test_a_stale_guess_flag_after_closing_never_claims_a_yes():
     # A reveal asked with the popup closed is still the client's to answer.
     apply_control(control("wordle.pending", "reveal"), state)
     assert state.pending is True
+
+
+def test_call_commands_reach_the_command_endpoint_while_wordle_is_open():
+    state = RevealState()
+    apply_control(
+        SimpleNamespace(
+            topic="sarjy.control",
+            participant=HUMAN,
+            data=json.dumps({"type": "wordle.active", "value": True}).encode(),
+        ),
+        state,
+    )
+    assert state.active is True
+
+    async def run_case(text: str, action: str, paths: list[str]) -> None:
+        def backend(request, expected_action=action):
+            paths.append(request.url.path)
+            if request.url.path.endswith("/internal/agent/command"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "command": {
+                            "kind": "executed",
+                            "action": expected_action,
+                            "spoken": "handled",
+                        },
+                        "memory_op": None,
+                    },
+                )
+            return httpx.Response(200, json={"turn_id": f"turn-{expected_action}", "context": {}})
+
+        async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(backend)) as client:
+            agent = agent_for(client, is_command=lambda value: is_wordle_command(value, wordle_active=state.active))
+            message = llm.ChatMessage(id=f"m-{action}", role="user", content=[text])
+            await agent.on_user_turn_completed(None, message)
+            assert message.id not in agent.suppressed
+            result = await agent.command_for(message)
+            assert result["action"] == action
+
+    for text, action in (
+        ("end the call", "EndCall"),
+        ("mute the mic", "MuteMicrophone"),
+        ("new conversation", "NewConversation"),
+    ):
+        assert not is_wordle_command(text, wordle_active=state.active)
+        paths: list[str] = []
+        asyncio.run(run_case(text, action, paths))
+        assert paths == ["/internal/agent/turn/start", "/internal/agent/command"]

@@ -23,8 +23,8 @@ export interface StudioBoot {
   setArabic(value: boolean): void;
   hydrateSettings(settings: Partial<SettingsSnapshot>): void;
   applyCommand(result: CommandResult): boolean | void;
-  /** The sidebar's New conversation flow, shared with the NewConversation voice command. */
-  newConversation(): Promise<void>;
+  /** The sidebar's New conversation flow; false means creation failed. */
+  newConversation(): Promise<boolean>;
   setDevOverlay(value: DevOverlay): void;
   run(work: () => Promise<void>, onError?: (error: unknown) => void): Promise<void>;
   getLanguage(): 'ar' | 'en';
@@ -107,6 +107,7 @@ export function bootStudio(options: StudioBoot) {
     conversations,
     catalogStore,
     cleanup: () => {
+      connection.dispose();
       meters.teardownMeters();
       dispose();
     },

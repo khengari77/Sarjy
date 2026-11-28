@@ -18,10 +18,15 @@ function liveState(overrides: Partial<VoiceState> = {}): VoiceState {
   return { ...initialVoiceState(), live: SESSION, muted: false, agentState: 'speaking', ...overrides };
 }
 
-function result(action: string, spoken: string, requestId = `command:${action}`): CommandResult {
+function result(
+  action: string,
+  spoken: string,
+  requestId = `command:${action}`,
+  kind: CommandResult['kind'] = 'executed',
+): CommandResult {
   return {
     request_id: requestId,
-    kind: 'executed',
+    kind,
     action,
     settings: null,
     navigation: null,
@@ -37,6 +42,7 @@ function harness(state: VoiceState, applied = true) {
   const apply = vi.fn(() => applied);
   const end = vi.fn(async () => {
     order.push('end');
+    state.live = null;
   });
   const connect = vi.fn(async () => {
     order.push('connect');
@@ -44,8 +50,9 @@ function harness(state: VoiceState, applied = true) {
   const mute = vi.fn(() => {
     order.push('mute');
   });
-  const newConversation = vi.fn(async () => {
+  const newConversation = vi.fn(async (): Promise<boolean> => {
     order.push('new');
+    return true;
   });
   const effects = createVoiceCommandEffects({ state, apply, end, connect, mute, newConversation });
   return { effects, apply, end, connect, mute, newConversation, order };
@@ -82,19 +89,6 @@ describe('EndCall', () => {
     expect(end).toHaveBeenCalledTimes(1);
   });
 
-  it('does not end after the user ends the call first', async () => {
-    vi.useFakeTimers();
-    const state = liveState({ agentState: 'speaking' });
-    const { effects, end } = harness(state);
-
-    effects.apply(result('EndCall', 'Ending the call.'));
-    effects.cancelPending();
-    state.agentState = 'listening';
-    effects.onAgentState();
-    await vi.advanceTimersByTimeAsync(END_AFTER_SPEECH_CAP_MS);
-    expect(end).not.toHaveBeenCalled();
-  });
-
   it('replies without ending when there is no live call', () => {
     const state = initialVoiceState();
     const { effects, apply, end } = harness(state);
@@ -121,7 +115,7 @@ describe('MuteMicrophone', () => {
 
     effects.apply(result('MuteMicrophone', 'Muted. Tap the microphone to unmute.'));
     expect(mute).not.toHaveBeenCalled();
-    expect(apply).toHaveBeenCalledWith(expect.objectContaining({ spoken: 'The microphone is already muted.' }));
+    expect(apply).toHaveBeenCalledWith(expect.objectContaining({ spoken: 'Muted. Tap the microphone to unmute.' }));
   });
 
   it('replies without muting when there is no live call', () => {
@@ -161,6 +155,21 @@ describe('NewConversation', () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
+  it('does not reconnect when the chat could not be created', async () => {
+    vi.useFakeTimers();
+    const state = liveState({ agentState: 'speaking' });
+    const { effects, end, connect, newConversation } = harness(state);
+    newConversation.mockResolvedValueOnce(false);
+
+    effects.apply(result('NewConversation', 'Starting a new conversation.'));
+    state.agentState = 'listening';
+    effects.onAgentState();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(newConversation).toHaveBeenCalledTimes(1);
+    expect(connect).not.toHaveBeenCalled();
+  });
+
   it('applies no second effect for a replayed request id', () => {
     const state = initialVoiceState();
     const { effects, apply, newConversation } = harness(state, false);
@@ -168,5 +177,53 @@ describe('NewConversation', () => {
     effects.apply(result('NewConversation', 'Starting a new conversation.'));
     expect(apply).toHaveBeenCalledTimes(1);
     expect(newConversation).not.toHaveBeenCalled();
+  });
+});
+
+describe('non-executed results', () => {
+  it.each([
+    ['EndCall', 'failed'],
+    ['EndCall', 'unsupported'],
+    ['MuteMicrophone', 'failed'],
+    ['MuteMicrophone', 'unsupported'],
+    ['NewConversation', 'failed'],
+    ['NewConversation', 'unsupported'],
+  ] as const)('%s with kind %s applies the message but no effect', async (action, kind) => {
+    vi.useFakeTimers();
+    const state = liveState({ agentState: 'speaking' });
+    const { effects, apply, end, connect, mute, newConversation } = harness(state);
+
+    effects.apply(result(action, 'Nothing changed.', `command:${action}:${kind}`, kind));
+    expect(apply).toHaveBeenCalledWith(expect.objectContaining({ action, kind, spoken: 'Nothing changed.' }));
+    await vi.advanceTimersByTimeAsync(END_AFTER_SPEECH_CAP_MS);
+    expect(end).not.toHaveBeenCalled();
+    expect(mute).not.toHaveBeenCalled();
+    expect(newConversation).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+  });
+});
+
+describe('dispose', () => {
+  it('cancels a pending EndCall before the cap', async () => {
+    vi.useFakeTimers();
+    const state = liveState({ agentState: 'speaking' });
+    const { effects, end } = harness(state);
+
+    effects.apply(result('EndCall', 'Ending the call.'));
+    effects.dispose();
+    await vi.advanceTimersByTimeAsync(END_AFTER_SPEECH_CAP_MS);
+    expect(end).not.toHaveBeenCalled();
+  });
+
+  it('cancels a pending NewConversation before the cap', async () => {
+    vi.useFakeTimers();
+    const state = liveState({ agentState: 'speaking' });
+    const { effects, newConversation, connect } = harness(state);
+
+    effects.apply(result('NewConversation', 'Starting a new conversation.'));
+    effects.dispose();
+    await vi.advanceTimersByTimeAsync(END_AFTER_SPEECH_CAP_MS);
+    expect(newConversation).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
   });
 });

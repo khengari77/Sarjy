@@ -66,8 +66,8 @@ export interface ConnectionDeps {
   getVoice(): { id: string; name: string };
   /** Apply one backend-authored result; false means it was already applied. */
   applyCommand(result: CommandResult): boolean | void;
-  /** Create and select a new conversation for an explicit voice command. */
-  newConversation?(): Promise<void> | void;
+  /** Create and select a new conversation; false means creation failed. */
+  newConversation?(): Promise<boolean | void> | boolean | void;
   /** Refetch the committed server settings after a lost command publication. */
   resyncSettings(): void;
   /** Fired when the server fell back from the saved voice; refresh server settings. */

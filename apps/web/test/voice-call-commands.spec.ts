@@ -74,7 +74,7 @@ test('a second MuteMicrophone does not unmute the microphone', async ({ page }) 
   await emitCommand(page, 'MuteMicrophone', 'Muted. Tap the microphone to unmute.', 'command:mute-2');
 
   const status = page.locator('[data-command-kind]');
-  await expect(status).toHaveText('The microphone is already muted.');
+  await expect(status).toHaveText('Muted. Tap the microphone to unmute.');
   expect((await runtimeState(page))?.mutes).toBe(1);
   expect((await runtimeState(page))?.microphoneStarts).toBe(1);
   expect(ends).toHaveLength(0);

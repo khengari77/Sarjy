@@ -23,12 +23,12 @@ export function createConnectionActions(context: {
     end: context.end,
     connect: context.connect,
     mute: () => toggleVoiceMute(state, deps),
-    newConversation: async () => {
-      await deps.newConversation?.();
-    },
+    newConversation: async () => await deps.newConversation?.(),
   });
   return {
     connect: context.connect,
+    /** Invalidate any pending or running command effect before page teardown. */
+    dispose: () => commandEffects.dispose(),
     reconnect: async () => {
       commandEffects.cancelPending();
       await context.end();
