@@ -23,20 +23,28 @@ type UnavailableDetails = {
 };
 
 function errorName(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null || !('name' in error)) return undefined;
-  return typeof error.name === 'string' ? error.name : undefined;
+  try {
+    if (typeof error !== 'object' || error === null || !('name' in error)) return undefined;
+    return typeof error.name === 'string' ? error.name : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function errorCode(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const cause = 'cause' in error ? error.cause : undefined;
-  const candidate =
-    typeof cause === 'object' && cause !== null && 'code' in cause
-      ? cause.code
-      : 'code' in error
-        ? error.code
-        : undefined;
-  return typeof candidate === 'string' ? candidate : undefined;
+  try {
+    if (typeof error !== 'object' || error === null) return undefined;
+    const cause = 'cause' in error ? error.cause : undefined;
+    const candidate =
+      typeof cause === 'object' && cause !== null && 'code' in cause
+        ? cause.code
+        : 'code' in error
+          ? error.code
+          : undefined;
+    return typeof candidate === 'string' ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -72,8 +80,8 @@ function call(path: string, options: CallOptions) {
 const RETRYABLE_STATUSES = new Set([502, 503, 504]);
 
 function isTimeout(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null || !('name' in error)) return false;
-  return error.name === 'TimeoutError' || error.name === 'AbortError';
+  const name = errorName(error);
+  return name === 'TimeoutError' || name === 'AbortError';
 }
 
 /**
@@ -113,7 +121,11 @@ export async function accountSession(cookies: Cookies): Promise<'valid' | 'none'
   const progress = { attempts: 0 };
   try {
     const response = await getWithRetry('/v1/auth/session', { token, ms: VERIFY_TIMEOUT_MS }, progress);
-    await response.body?.cancel();
+    try {
+      await response.body?.cancel();
+    } catch {
+      // A failed body discard must not turn a valid or absent session into an outage.
+    }
     if (response.ok) return 'valid';
     if (response.status === 401) return 'none';
     warnUnavailable({
