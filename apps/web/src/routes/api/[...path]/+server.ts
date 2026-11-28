@@ -1,6 +1,7 @@
 import { API_INTERNAL_URL, WEB_SERVICE_SECRET } from '$app/env/private';
 import type { RequestHandler } from '@sveltejs/kit';
 import { proxyTimeoutMs } from '../../../lib/proxy-deadline';
+import { proxyFetch } from '../../../lib/proxyFetch';
 import { resolveProxyTarget } from '../../../lib/proxy-path';
 
 const proxy: RequestHandler = async ({ request, params, url, getClientAddress }) => {
@@ -25,12 +26,12 @@ const proxy: RequestHandler = async ({ request, params, url, getClientAddress })
     if (value) headers.set(name, value);
   }
   try {
-    const result = await fetch(target, {
+    const result = await proxyFetch({
+      url: target,
       method: request.method,
       headers,
       body: request.method === 'POST' ? await request.arrayBuffer() : undefined,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(proxyTimeoutMs(target.pathname.slice(1), request.method)),
+      timeoutMs: proxyTimeoutMs(target.pathname.slice(1), request.method),
     });
     const outgoing = new Headers({ 'cache-control': 'no-store' });
     outgoing.set('content-type', result.headers.get('content-type') || 'application/json');
