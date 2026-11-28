@@ -39,6 +39,8 @@ export type Words = {
   deleteFailed: string;
   cancel: string;
   deleting: string;
+  listError: string;
+  listRetrying: string;
 };
 
 type BaseWords = Omit<Words, 'audioBlocked'>;
@@ -81,6 +83,8 @@ const EN: BaseWords = {
   deleteFailed: 'Could not delete this chat. Try again.',
   cancel: 'Cancel',
   deleting: 'Deleting…',
+  listError: 'Could not load conversations.',
+  listRetrying: 'Having trouble loading conversations. Retrying...',
 };
 
 const AR: BaseWords = {
@@ -121,6 +125,8 @@ const AR: BaseWords = {
   deleteFailed: 'تعذّر حذف هذه المحادثة. حاول مرة أخرى.',
   cancel: 'إلغاء',
   deleting: 'جارٍ الحذف…',
+  listError: 'تعذّر تحميل المحادثات.',
+  listRetrying: 'نواجه مشكلة في تحميل المحادثات. تجري إعادة المحاولة...',
 };
 
 export function wordsFor(arabic: boolean): Words {

@@ -18,6 +18,7 @@
     busy: boolean;
     loading: boolean;
     error: string;
+    retrying: boolean;
     /** The conversation whose call is live, if any. */
     callConversation: string | null;
     onselect: (id: string) => void;
@@ -34,6 +35,7 @@
     busy,
     loading,
     error,
+    retrying,
     callConversation,
     onselect,
     oncreate,
@@ -53,8 +55,6 @@
   const words = $derived(wordsFor(arabic));
 
   const filtered = $derived(filterConversations(conversations, query));
-  const hasConversations = $derived(conversations.length > 0);
-  const noMatches = $derived(hasConversations && filtered.length === 0);
 
   function select(id: string) {
     closeMenu();
@@ -191,14 +191,14 @@
 
   {#if error}
     <div class="panel-error" role="alert" data-code={error}>
-      <p>{arabic ? 'تعذّر تحميل المحادثات.' : 'Could not load conversations.'}</p>
+      <p>{retrying ? words.listRetrying : words.listError}</p>
       <button class="ghost-button" onclick={onretry}>{arabic ? 'إعادة المحاولة' : 'Retry'}</button>
     </div>
   {:else if loading}
     <div class="skeleton" aria-busy="true" aria-label={arabic ? 'جارٍ تحميل المحادثات' : 'Loading conversations'}>
       <span></span><span></span><span></span>
     </div>
-  {:else if !hasConversations}
+  {:else if conversations.length === 0}
     <div class="empty">
       <p class="empty-title">{arabic ? 'لا توجد محادثات بعد' : 'No conversations yet'}</p>
       <p class="empty-copy">{arabic ? 'ستظهر محادثاتك هنا.' : 'Your chats will appear here.'}</p>
@@ -207,7 +207,7 @@
         <p class="empty-hint-copy">{arabic ? 'أو استخدم مربّع الرسائل.' : 'Or use the message box.'}</p>
       </div>
     </div>
-  {:else if noMatches}
+  {:else if conversations.length > 0 && filtered.length === 0}
     <div class="empty">
       <p class="empty-title">{arabic ? 'لا توجد نتائج مطابقة.' : 'No matching conversations.'}</p>
       <button class="ghost-button" onclick={() => (query = '')}>{arabic ? 'مسح البحث' : 'Clear search'}</button>
