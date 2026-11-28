@@ -13,6 +13,12 @@ const cookies = {
 const connectionError = () => new TypeError('fetch failed');
 const answer = (status: number) => new Response(null, { status });
 
+function answerWithBody(status: number) {
+  const response = new Response('discard', { status });
+  const cancel = vi.spyOn(response.body!, 'cancel');
+  return { response, cancel };
+}
+
 function stubFetch(...attempts: Array<() => Promise<Response>>) {
   const fetch = vi.fn();
   for (const attempt of attempts) fetch.mockImplementationOnce(attempt);
@@ -30,6 +36,14 @@ describe('account session verification', () => {
     );
     await expect(accountSession(cookies)).resolves.toBe('valid');
     expect(fetch).toHaveBeenCalledTimes(2);
+    const [firstUrl, firstInit] = fetch.mock.calls[0]!;
+    const [retryUrl, retryInit] = fetch.mock.calls[1]!;
+    expect(retryUrl).toEqual(firstUrl);
+    expect(retryInit.headers).toEqual(firstInit.headers);
+    expect(retryInit.headers.cookie).toBe(`${ACCOUNT_COOKIE}=${TOKEN}`);
+    expect(retryInit.headers).not.toHaveProperty('connection');
+    expect(retryInit.method).toBe(firstInit.method);
+    expect(retryInit.body).toBe(firstInit.body);
   });
 
   it('retries once when the connection fails, then reports the session absent on 401', async () => {
@@ -42,13 +56,14 @@ describe('account session verification', () => {
   });
 
   it.each([502, 503, 504])('retries once after an ingress %s, then reports the session valid', async (status) => {
+    const first = answerWithBody(status);
     const fetch = stubFetch(
-      () => Promise.resolve(answer(status)),
+      () => Promise.resolve(first.response),
       () => Promise.resolve(answer(200)),
     );
     await expect(accountSession(cookies)).resolves.toBe('valid');
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(fetch.mock.calls[1]?.[1]?.headers).toMatchObject({ connection: 'close' });
+    expect(first.cancel).toHaveBeenCalledTimes(1);
   });
 
   it('reports the service unavailable after two connection failures', async () => {

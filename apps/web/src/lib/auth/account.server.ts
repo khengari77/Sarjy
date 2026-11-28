@@ -31,19 +31,25 @@ function isTimeout(error: unknown): boolean {
 }
 
 /**
- * GET is idempotent, so one immediate retry is safe: a kept-alive connection to
- * the API's ingress can be stale, and an ingress 502/503/504 during a deploy is
- * transient. A timeout is not retried: the visitor already waited the deadline.
+ * GET is idempotent, so one immediate retry is safe: a stale kept-alive
+ * connection to the API's ingress fails before reaching it, and undici drops
+ * that failed socket, so the retry opens or reuses a healthy one. An ingress
+ * 502/503/504 during a deploy is equally transient. A timeout is not retried:
+ * the visitor already waited the deadline.
  */
 async function getWithRetry(path: string, options: CallOptions): Promise<Response> {
   try {
     const response = await call(path, options);
     if (!RETRYABLE_STATUSES.has(response.status)) return response;
-    await response.body?.cancel();
+    try {
+      await response.body?.cancel();
+    } catch {
+      // The retry must proceed even when the discarded body cannot be cancelled.
+    }
   } catch (error) {
     if (isTimeout(error)) throw error;
   }
-  return call(path, { ...options, headers: { ...options.headers, connection: 'close' } });
+  return call(path, options);
 }
 
 /** Cookie values are only forwarded in the exact shape the API issues. */
