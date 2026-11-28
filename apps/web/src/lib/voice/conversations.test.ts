@@ -16,7 +16,10 @@ vi.mock('../chat/session', () => ({
 
 const { createConversationStore, initialConversationState } = await import('./conversations');
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.clearAllMocks();
+  vi.useRealTimers();
+});
 
 it('refreshes the conversation list so a generated title appears', async () => {
   const state = initialConversationState();
@@ -169,4 +172,78 @@ it('keeps an in-flight list reload when a refresh does not fetch the list', asyn
   await reloading;
 
   expect(state.conversations.map((chat) => chat.id)).toEqual(['c1', 'c2']);
+});
+
+it('retries an empty failed list after 1.5 s then 4 s, then stops', async () => {
+  vi.useFakeTimers();
+  mocks.request.mockRejectedValue(new Error('API_UNAVAILABLE'));
+  const state = initialConversationState();
+  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+
+  await store.reload();
+  expect(state.listError).toBe('API_UNAVAILABLE');
+  expect(state.listRetrying).toBe(true);
+  expect(mocks.request).toHaveBeenCalledTimes(1);
+
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(mocks.request).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+  expect(state.listRetrying).toBe(true);
+
+  await vi.advanceTimersByTimeAsync(3_999);
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(mocks.request).toHaveBeenCalledTimes(3);
+  expect(state.listRetrying).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(mocks.request).toHaveBeenCalledTimes(3);
+});
+
+it('stops the automatic retry once the list loads', async () => {
+  vi.useFakeTimers();
+  mocks.request.mockRejectedValueOnce(new Error('API_UNAVAILABLE')).mockResolvedValueOnce([]);
+  const state = initialConversationState();
+  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+
+  await store.reload();
+  expect(state.listRetrying).toBe(true);
+  await vi.advanceTimersByTimeAsync(1_500);
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+  expect(state.listError).toBe('');
+  expect(state.listRetrying).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+});
+
+it('stops the automatic retry when the user clicks Retry', async () => {
+  vi.useFakeTimers();
+  mocks.request.mockRejectedValue(new Error('API_UNAVAILABLE'));
+  const state = initialConversationState();
+  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+
+  await store.reload();
+  await store.retry();
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+  expect(state.listRetrying).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+});
+
+it('stops the automatic retry on dispose', async () => {
+  vi.useFakeTimers();
+  mocks.request.mockRejectedValue(new Error('API_UNAVAILABLE'));
+  const state = initialConversationState();
+  const store = createConversationStore(state, { getLive: () => false, endVoice: async () => {} });
+
+  await store.reload();
+  expect(state.listRetrying).toBe(true);
+  store.dispose();
+  expect(state.listRetrying).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(mocks.request).toHaveBeenCalledTimes(1);
 });

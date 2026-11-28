@@ -1,5 +1,6 @@
 import { request, type Conversation, type Turn } from '../api';
 import { createConversation, deleteConversation, fetchConversation, type ToolCall } from '../chat/session';
+import { errorCode } from './errors';
 
 export interface ConversationState {
   conversations: Conversation[];
@@ -8,13 +9,24 @@ export interface ConversationState {
   toolCalls: ToolCall[];
   loading: boolean;
   listError: string;
+  /** True while an automatic list retry is scheduled after an empty-list error. */
+  listRetrying: boolean;
 }
 
 export function initialConversationState(): ConversationState {
-  return { conversations: [], current: null, turns: [], toolCalls: [], loading: true, listError: '' };
+  return {
+    conversations: [],
+    current: null,
+    turns: [],
+    toolCalls: [],
+    loading: true,
+    listError: '',
+    listRetrying: false,
+  };
 }
 
 const UNTITLED_TITLE = 'New conversation';
+const AUTO_RETRY_DELAYS_MS = [1_500, 4_000];
 
 export function createConversationStore(
   state: ConversationState,
@@ -22,6 +34,67 @@ export function createConversationStore(
 ) {
   let selectionEpoch = 0;
   let listEpoch = 0;
+  let autoRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  let autoRetryIndex = 0;
+  let disposed = false;
+
+  function cancelAutoRetry() {
+    if (autoRetryTimer !== undefined) clearTimeout(autoRetryTimer);
+    autoRetryTimer = undefined;
+    state.listRetrying = false;
+  }
+
+  function scheduleAutoRetry() {
+    if (disposed || autoRetryIndex >= AUTO_RETRY_DELAYS_MS.length) {
+      state.listRetrying = false;
+      return;
+    }
+    const delay = AUTO_RETRY_DELAYS_MS[autoRetryIndex];
+    autoRetryIndex += 1;
+    state.listRetrying = true;
+    autoRetryTimer = setTimeout(() => {
+      autoRetryTimer = undefined;
+      void load(true);
+    }, delay);
+  }
+
+  async function load(scheduleOnFailure: boolean) {
+    if (disposed) return;
+    cancelAutoRetry();
+    const epoch = ++listEpoch;
+    state.listError = '';
+    state.loading = true;
+    try {
+      const list = await request<Conversation[]>('conversations');
+      if (epoch !== listEpoch) return;
+      state.conversations = list;
+      autoRetryIndex = 0;
+    } catch (error) {
+      if (epoch !== listEpoch) return;
+      state.listError = errorCode(error);
+      // Retry only an empty list: a stale list on screen is better than a
+      // retry loop while the user is working with it.
+      if (scheduleOnFailure && state.conversations.length === 0) scheduleAutoRetry();
+    } finally {
+      if (epoch === listEpoch) state.loading = false;
+    }
+  }
+
+  async function reload() {
+    autoRetryIndex = 0;
+    await load(true);
+  }
+
+  /** Manual Retry: cancel the automatic schedule and do not start a new one. */
+  async function retry() {
+    autoRetryIndex = 0;
+    await load(false);
+  }
+
+  function dispose() {
+    disposed = true;
+    cancelAutoRetry();
+  }
 
   async function refresh() {
     const id = state.current;
@@ -41,18 +114,6 @@ export function createConversationStore(
       state.turns = history.turns;
       state.toolCalls = history.toolCalls;
       if (list && listEpochAtStart === listEpoch) state.conversations = list;
-    }
-  }
-
-  async function reload() {
-    const epoch = ++listEpoch;
-    state.listError = '';
-    state.loading = true;
-    try {
-      const list = await request<Conversation[]>('conversations');
-      if (epoch === listEpoch) state.conversations = list;
-    } finally {
-      state.loading = false;
     }
   }
 
@@ -93,7 +154,7 @@ export function createConversationStore(
     }
   }
 
-  return { state, refresh, reload, createChat, ensureConversation, select, remove };
+  return { state, refresh, reload, retry, dispose, createChat, ensureConversation, select, remove };
 }
 
 export type ConversationStore = ReturnType<typeof createConversationStore>;

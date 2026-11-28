@@ -166,6 +166,7 @@ describe('proxy failure diagnostics', () => {
     stubFetch(
       () => Promise.reject(connectionError()),
       () => Promise.reject(connectionError()),
+      () => Promise.reject(connectionError()),
     );
     await expect(proxyFetch(request())).rejects.toThrow();
     expect(warn).toHaveBeenCalledTimes(1);
@@ -177,7 +178,7 @@ describe('proxy failure diagnostics', () => {
         reason: 'network',
         name: 'TypeError',
         code: 'ECONNRESET',
-        attempts: 2,
+        attempts: 3,
         ms: expect.any(Number),
       }),
     );
@@ -186,9 +187,10 @@ describe('proxy failure diagnostics', () => {
     expect(logged.path).toBe('/v1/conversations/:id/memories');
   });
 
-  it('logs a status failure after the retry with its status', async () => {
+  it('logs a status failure after the retries with its status', async () => {
     const warn = vi.mocked(console.warn);
     stubFetch(
+      () => Promise.resolve(answer(503)),
       () => Promise.resolve(answer(503)),
       () => Promise.resolve(answer(503)),
     );
@@ -196,7 +198,7 @@ describe('proxy failure diagnostics', () => {
     expect(response.status).toBe(503);
     expect(warn).toHaveBeenCalledTimes(1);
     const logged = warn.mock.calls[0]![1] as Record<string, unknown>;
-    expect(logged).toMatchObject({ method: 'GET', reason: 'status', status: 503, attempts: 2 });
+    expect(logged).toMatchObject({ method: 'GET', reason: 'status', status: 503, attempts: 3 });
     expect(Object.keys(logged).sort()).toEqual(['attempts', 'method', 'ms', 'path', 'reason', 'status']);
   });
 
@@ -235,6 +237,8 @@ describe('proxy failure diagnostics', () => {
       () => Promise.resolve(answer(503)),
       () => Promise.resolve(answer(503)),
       () => Promise.resolve(answer(503)),
+      () => Promise.resolve(answer(503)),
+      () => Promise.resolve(answer(503)),
     );
     await proxyFetch(request(), { statusRetryDelayMs: () => 0 });
     await proxyFetch(request(), { statusRetryDelayMs: () => 0 });
@@ -242,6 +246,7 @@ describe('proxy failure diagnostics', () => {
 
     vi.advanceTimersByTime(10_000);
     stubFetch(
+      () => Promise.resolve(answer(503)),
       () => Promise.resolve(answer(503)),
       () => Promise.resolve(answer(503)),
     );

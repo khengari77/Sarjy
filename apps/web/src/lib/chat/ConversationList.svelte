@@ -9,6 +9,7 @@
     busy,
     loading,
     error,
+    retrying,
     callConversation,
     onselect,
     oncreate,
@@ -21,6 +22,7 @@
     busy: boolean;
     loading: boolean;
     error: string;
+    retrying: boolean;
     callConversation: string | null;
     onselect: (id: string) => void;
     oncreate: () => void;
@@ -36,6 +38,7 @@
   {busy}
   {loading}
   {error}
+  {retrying}
   {callConversation}
   {onselect}
   {oncreate}

@@ -18,6 +18,7 @@
     busy: boolean;
     loading: boolean;
     error: string;
+    retrying: boolean;
     /** The conversation whose call is live, if any. */
     callConversation: string | null;
     onselect: (id: string) => void;
@@ -34,6 +35,7 @@
     busy,
     loading,
     error,
+    retrying,
     callConversation,
     onselect,
     oncreate,
@@ -41,10 +43,10 @@
     ondelete,
   }: Props = $props();
 
-  let query = $state('');
-  let menuOpenFor = $state<string | null>(null);
-  let menuTrigger: HTMLButtonElement | null = null;
-  let listElement = $state<HTMLElement | null>(null);
+  // prettier-ignore
+  let query = $state(''), menuOpenFor = $state<string | null>(null);
+  // prettier-ignore
+  let menuTrigger: HTMLButtonElement | null = null, listElement = $state<HTMLElement | null>(null);
   let menuElement = $state<HTMLElement | null>(null);
   let confirmingDelete = $state<string | null>(null);
   let deletingId = $state<string | null>(null);
@@ -191,7 +193,7 @@
 
   {#if error}
     <div class="panel-error" role="alert" data-code={error}>
-      <p>{arabic ? 'تعذّر تحميل المحادثات.' : 'Could not load conversations.'}</p>
+      <p>{retrying ? words.listRetrying : words.listError}</p>
       <button class="ghost-button" onclick={onretry}>{arabic ? 'إعادة المحاولة' : 'Retry'}</button>
     </div>
   {:else if loading}

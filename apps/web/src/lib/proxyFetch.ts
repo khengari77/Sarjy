@@ -8,15 +8,23 @@ export type ProxyFetchRequest = {
 };
 
 export type ProxyFetchOptions = {
-  /** Jittered delay before the lone status retry. Tests inject `() => 0`. */
-  statusRetryDelayMs?: () => number;
+  /** Jittered delay before retry `retry` (1 or 2). Tests inject `() => 0`. */
+  statusRetryDelayMs?: (retry: number) => number;
+  /** Injectable clock for the total retry-budget guard. Tests pin elapsed time. */
+  nowMs?: () => number;
 };
 
 const RETRYABLE_STATUSES = new Set([502, 503, 504]);
 const UNAVAILABLE_LOG_INTERVAL_MS = 10_000;
 const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const STATUS_RETRY_JITTER_MIN_MS = 150;
-const STATUS_RETRY_JITTER_MAX_MS = 300;
+const MAX_ATTEMPTS = 3;
+const RETRY_BUDGET_MS = 12_000;
+
+/** Default jitter bounds per retry: attempt 2 waits 150-300 ms, attempt 3 500-900 ms. */
+export const STATUS_RETRY_BOUNDS_MS = {
+  1: { min: 150, max: 300 },
+  2: { min: 500, max: 900 },
+} as const;
 
 /**
  * Mutating POSTs that may be repeated after a lost response. This is an exact
@@ -127,9 +135,10 @@ async function discard(response: Response): Promise<void> {
   }
 }
 
-function statusRetryDelay(): number {
-  const span = STATUS_RETRY_JITTER_MAX_MS - STATUS_RETRY_JITTER_MIN_MS + 1;
-  return STATUS_RETRY_JITTER_MIN_MS + Math.floor(Math.random() * span);
+function statusRetryDelay(retry: number): number {
+  const bounds = retry <= 1 ? STATUS_RETRY_BOUNDS_MS[1] : STATUS_RETRY_BOUNDS_MS[2];
+  const span = bounds.max - bounds.min + 1;
+  return bounds.min + Math.floor(Math.random() * span);
 }
 
 function wait(ms: number): Promise<void> {
@@ -138,17 +147,21 @@ function wait(ms: number): Promise<void> {
 }
 
 /**
- * Make the upstream request, retrying once when the first attempt fails on the
- * flaky web-to-API leg: a thrown connection error, or an ingress 502/503/504
- * after a short jittered delay. The connection retry is immediate because
- * undici has already dropped the stale socket; the status retry waits so a
- * deploying ingress can settle. Timeouts are not retried; the caller already
- * waited the deadline.
+ * Make the upstream request, retrying up to twice when an attempt fails on the
+ * flaky web-to-API leg: a thrown connection error, or an ingress 502/503/504.
+ * The first connection retry is immediate because undici has already dropped
+ * the stale socket; every later retry waits a jittered delay (150-300 ms for
+ * the second attempt, 500-900 ms for the third) so a deploying ingress can
+ * settle. Timeouts are not retried; the caller already waited the deadline.
+ * No retry starts once 12 s of the first attempt's timeout budget is spent.
  */
 export async function proxyFetch(request: ProxyFetchRequest, options: ProxyFetchOptions = {}): Promise<Response> {
-  const startedAt = Date.now();
+  const now = options.nowMs ?? Date.now;
+  const startedAt = now();
   const repeatable = isRepeatable(request);
   const retryDelay = options.statusRetryDelayMs ?? statusRetryDelay;
+  const canStartAnother = (attempts: number): boolean =>
+    repeatable && attempts < MAX_ATTEMPTS && now() - startedAt <= RETRY_BUDGET_MS;
   let attempts = 0;
   for (;;) {
     attempts += 1;
@@ -163,22 +176,25 @@ export async function proxyFetch(request: ProxyFetchRequest, options: ProxyFetch
       });
     } catch (error) {
       const reason = isTimeout(error) ? 'timeout' : 'network';
-      if (reason === 'network' && repeatable && attempts === 1) continue;
+      if (reason === 'network' && canStartAnother(attempts)) {
+        if (attempts > 1) await wait(retryDelay(attempts));
+        continue;
+      }
       const failure: FailureDetails = { reason };
       const name = errorName(error);
       const code = errorCode(error);
       if (name) failure.name = name;
       if (code) failure.code = code;
-      warnFailed(request, failure, attempts, Date.now() - startedAt);
+      warnFailed(request, failure, attempts, now() - startedAt);
       throw error;
     }
     if (!RETRYABLE_STATUSES.has(response.status)) return response;
-    if (repeatable && attempts === 1) {
+    if (canStartAnother(attempts)) {
       await discard(response);
-      await wait(retryDelay());
+      await wait(retryDelay(attempts));
       continue;
     }
-    warnFailed(request, { reason: 'status', status: response.status }, attempts, Date.now() - startedAt);
+    warnFailed(request, { reason: 'status', status: response.status }, attempts, now() - startedAt);
     return response;
   }
 }

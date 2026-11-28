@@ -23,6 +23,7 @@
   {busy}
   loading={conversation.loading}
   error={conversation.listError}
+  retrying={conversation.listRetrying}
   callConversation={voice.live || voice.connecting ? conversation.current : null}
   onselect={selection.requestSelect}
   oncreate={selection.create}

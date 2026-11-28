@@ -107,6 +107,7 @@ export function bootStudio(options: StudioBoot) {
     conversations,
     catalogStore,
     cleanup: () => {
+      conversations.dispose();
       connection.dispose();
       meters.teardownMeters();
       dispose();

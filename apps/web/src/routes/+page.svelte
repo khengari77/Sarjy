@@ -184,7 +184,7 @@
       {arabic}
       {busy}
       {selection}
-      onreload={() => run(() => conversations!.reload())}
+      onreload={() => run(() => conversations!.retry())}
     />
   {/snippet}
 
