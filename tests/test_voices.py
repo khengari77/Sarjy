@@ -1,4 +1,5 @@
 import json
+import logging
 import sqlite3
 from contextlib import closing
 from types import SimpleNamespace
@@ -471,6 +472,53 @@ def test_voice_unavailable_clears_the_preference(tmp_path, livekit_control_plane
         assert response.json()["voice"]["id"] == "aura-2-thalia-en"
         assert response.json()["saved_voice_unavailable"] == "removed"
         assert client.get("/v1/settings").json()["approved_voice_id"] is None
+
+
+def test_call_start_logs_handler_and_substep_timing_once(tmp_path, livekit_control_plane, caplog):
+    from app.routes import voice
+
+    # The production logger is non-propagating, has its own handler and is configured at INFO, exactly as
+    # app.infrastructure.timing.sarjy.statements is. caplog can only see records once attached to it.
+    assert voice.logger.level == logging.INFO
+    assert voice.logger.handlers
+    assert voice.logger.propagate is False
+    attached = caplog.handler not in voice.logger.handlers
+    if attached:
+        voice.logger.addHandler(caplog.handler)
+    try:
+        with TestClient(create_app(configured(tmp_path))) as client:
+            client.post("/v1/demo-session")
+            chat = client.post("/v1/conversations").json()["id"]
+            response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+            assert response.status_code == 201
+    finally:
+        if attached:
+            voice.logger.removeHandler(caplog.handler)
+
+    records = [record for record in caplog.records if record.name == "sarjy.voice"]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert message.startswith("voice_session_created ")
+    payload = json.loads(message.split(" ", 1)[1])
+    assert set(payload) == {"server_ms", "pre_commit_ms", "commit_ms", "dispatch_ms"}
+    assert all(isinstance(value, int) and value >= 0 for value in payload.values())
+
+
+def test_logging_failure_does_not_fail_session_creation(tmp_path, monkeypatch, livekit_control_plane):
+    from app.routes import voice
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("log unavailable")
+
+    monkeypatch.setattr(voice.logger, "info", fail)
+    with TestClient(create_app(configured(tmp_path))) as client:
+        client.post("/v1/demo-session")
+        chat = client.post("/v1/conversations").json()["id"]
+        response = client.post("/v1/voice/sessions", json={"conversation_id": chat, "language": "en"})
+        assert response.status_code == 201
+    with closing(sqlite3.connect(tmp_path / "voice.db")) as db:
+        status = db.execute("SELECT status FROM voice_sessions WHERE id=?", (response.json()["id"],)).fetchone()[0]
+    assert status == "starting"
 
 
 @pytest.fixture

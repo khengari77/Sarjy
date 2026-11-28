@@ -165,6 +165,7 @@ describe('terminal startup failure cleanup', () => {
 
   it('allows a replacement attempt to become live after the failed cleanup', async () => {
     vi.useFakeTimers();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     const second: SessionConfig = { ...config, id: 'sess-2' };
     mocks.start.mockResolvedValueOnce(config).mockResolvedValueOnce(second);
     const { state, connection } = harness();
@@ -187,6 +188,12 @@ describe('terminal startup failure cleanup', () => {
     expect(state.voiceErrorCode).toBe('');
     expect(mocks.end).toHaveBeenCalledTimes(1);
     expect(mocks.end).toHaveBeenCalledWith(config);
+    // The timer is on in dev builds; the call still becomes live exactly as before.
+    expect(info).toHaveBeenCalledWith(
+      '[Sarjy call-start]',
+      expect.objectContaining({ press: 0, room_connected: expect.any(Number) }),
+    );
+    info.mockRestore();
   });
 });
 
