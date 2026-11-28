@@ -197,30 +197,32 @@ export async function startSessionAttempt(
     // A drop during the clip leaves state.live set but the room gone: never
     // open the microphone or mark the intro against a dead call.
     const callLive = context.isCurrent() && !state.connectionLost && state.live?.id === config.id;
-    if (context.microphone && callLive) {
-      await runtime.startMicrophone();
-      state.muted = false;
-      context.timer?.mark('mic_started');
-    }
+    if (context.microphone && callLive) await runtime.startMicrophone();
     if (!context.isCurrent()) {
       stopMine();
       context.clearOwnedLive(config.id);
       await release('superseded-during-microphone');
       return;
     }
+    // Re-read liveness: a transport drop may have landed during the mic await.
+    const stillLive = context.isCurrent() && !state.connectionLost && state.live?.id === config.id;
+    if (context.microphone && stillLive) {
+      state.muted = false;
+      context.timer?.mark('mic_started');
+    }
     // The intro is seen only once it ended and the call is live. If the clip
     // ended before the room did, this waits for the room above first.
-    if (callLive && greeting?.kind === 'full' && greetingEnded(greetingOutcome)) {
+    if (stillLive && greeting?.kind === 'full' && greetingEnded(greetingOutcome)) {
       void markIntroComplete(config.id).catch(() => {
         console.warn('[Sarjy] Intro completion could not be recorded; it will replay next call.');
       });
     }
     deps.meters.setupMeters();
   } catch (error) {
-    // Only a startup-boundary failure can be "did not connect"; a live-call
-    // failure (such as the microphone) keeps its own code.
-    const greetingPlayed =
-      state.live?.id !== config.id && greeting !== null && greetingPromise !== null && greetingOutcome !== 'failed';
+    // Only a startup-boundary failure after the whole clip ended can be
+    // "did not connect"; a live-call failure (such as the microphone) keeps
+    // its own code, and a clip cut off mid-way is an ordinary startup error.
+    const greetingPlayed = state.live?.id !== config.id && greetingOutcome === 'ended';
     stopMine();
     if (context.isCurrent()) {
       context.clearOwnedLive(config.id);

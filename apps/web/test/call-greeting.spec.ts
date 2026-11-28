@@ -38,12 +38,14 @@ test('the greeting captions first and the microphone waits for it to end', async
 
   const caption = page.locator('.caption-bubble');
   await expect(caption).toContainText('Hi again, what can I help with?');
+  await expect(page.locator('.voice-stage [role="status"]')).toHaveText('Playing the greeting.');
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'listening');
   await expect.poll(() => page.evaluate(() => window.__callState?.state.microphoneStarts)).toBe(0);
 
   await page.evaluate(() => window.__endGreeting?.());
 
   await expect(caption).not.toContainText('Hi again, what can I help with?');
+  await expect(page.locator('.voice-stage [role="status"]')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.__callState?.state.microphoneStarts)).toBe(1);
   await expect(page.getByRole('button', { name: 'Mute', exact: true })).toBeVisible();
 });

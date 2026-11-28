@@ -139,7 +139,7 @@ export function createVoiceConnection(state: VoiceState, deps: ConnectionDeps) {
     }
     if (state.connecting) return;
     // Called synchronously inside the click so iOS/Safari allow later playback.
-    greetingPlayer.prepare();
+    if (microphone) greetingPlayer.prepare();
     const attempt = ++generation;
     const timer = startCallTimer();
     pendingSession = null;

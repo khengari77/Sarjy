@@ -59,11 +59,13 @@ export function fakePlayer() {
 export class FakeRuntime {
   epoch = 0;
   connects = 0;
+  micCalls = 0;
   micStarts = 0;
   interrupts = 0;
   disconnects = 0;
   texts: string[] = [];
   connectGate: Promise<void> = Promise.resolve();
+  micGate: Promise<void> = Promise.resolve();
   micError: Error | null = null;
 
   async connect() {
@@ -71,6 +73,8 @@ export class FakeRuntime {
     await this.connectGate;
   }
   async startMicrophone() {
+    this.micCalls += 1;
+    await this.micGate;
     this.micStarts += 1;
     if (this.micError) throw this.micError;
   }

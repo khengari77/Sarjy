@@ -7,24 +7,31 @@ class FakeAudio {
   muted = false;
   preload = '';
   src = '';
-  private listeners = new Map<string, Set<() => void>>();
+  private active = new Map<string, Set<() => void>>();
+  private registered = new Map<string, Set<() => void>>();
 
   constructor() {
     audios.push(this);
   }
 
+  private key(name: string, src = this.src) {
+    return `${src}\u0000${name}`;
+  }
   addEventListener(name: string, handler: () => void) {
-    if (!this.listeners.has(name)) this.listeners.set(name, new Set());
-    this.listeners.get(name)!.add(handler);
+    for (const map of [this.active, this.registered]) {
+      const key = this.key(name);
+      if (!map.has(key)) map.set(key, new Set());
+      map.get(key)!.add(handler);
+    }
   }
   removeEventListener(name: string, handler: () => void) {
-    this.listeners.get(name)?.delete(handler);
-  }
-  handler(name: string) {
-    return [...(this.listeners.get(name) ?? [])][0];
+    this.active.get(this.key(name))?.delete(handler);
   }
   emit(name: string) {
-    for (const handler of this.listeners.get(name) ?? []) handler();
+    this.emitFrom(this.src, name);
+  }
+  emitFrom(src: string, name: string) {
+    for (const handler of this.registered.get(this.key(name, src)) ?? []) handler();
   }
   load() {}
   pause() {}
@@ -62,11 +69,10 @@ describe('browser greeting playback cap', () => {
     expect(player.playing).toBe(false);
   });
 
-  it('a stale ended from the previous clip cannot resolve the new playback', async () => {
+  it('a stale ended from the previous source cannot resolve the new playback', async () => {
     const audio = installAudio();
     const player = createBrowserGreetingPlayer();
     void player.play('/greetings/voice/old.mp3');
-    const staleEnded = audio().handler('ended');
     const pause = vi.spyOn(audio(), 'pause');
 
     const second = player.play('/greetings/voice/new.mp3');
@@ -74,12 +80,12 @@ describe('browser greeting playback cap', () => {
     let outcome: 'ended' | 'failed' | undefined;
     void second.then((value) => (outcome = value));
 
-    staleEnded?.();
+    audio().emitFrom('/greetings/voice/old.mp3', 'ended');
     await Promise.resolve();
     expect(outcome).toBeUndefined();
     expect(player.playing).toBe(true);
 
-    audio().handler('ended')?.();
+    audio().emit('ended');
     await expect(second).resolves.toBe('ended');
   });
 

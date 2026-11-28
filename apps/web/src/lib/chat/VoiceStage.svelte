@@ -211,7 +211,7 @@
           </p>
         {/if}
         {#if greeting}
-          <p class="sr-only">{words.greeting}</p>
+          <p class="sr-only" role="status">{words.greeting}</p>
         {/if}
         <div class="caption-slot">
           {#if hasNotice}

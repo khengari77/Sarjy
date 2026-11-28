@@ -72,6 +72,49 @@ describe('call lifecycle during the greeting', () => {
     expect(mocks.mark).not.toHaveBeenCalled();
   });
 
+  it('a transport drop during a hanging mic start keeps muted true and never marks', async () => {
+    mocks.start.mockResolvedValueOnce(full);
+    const { state, runtime, player, connection } = harness();
+    const gate = deferred();
+    runtime.micGate = gate.promise;
+
+    const connecting = connection.connect(true);
+    await vi.waitFor(() => expect(player.play).toHaveBeenCalled());
+    player.finish('ended');
+    await vi.waitFor(() => expect(runtime.micCalls).toBe(1));
+
+    connection.handleEvent({ type: 'status', source: 'transport', text: 'disconnected', epoch: 1 });
+    expect(state.connectionLost).toBe(true);
+    gate.resolve();
+    await connecting;
+
+    expect(state.muted).toBe(true);
+    expect(mocks.mark).not.toHaveBeenCalled();
+    expect(runtime.micStarts).toBe(1);
+  });
+
+  it('a superseded attempt does not clear connecting after a replacement started', async () => {
+    const firstSession = deferred<SessionConfig>();
+    const secondSession = deferred<SessionConfig>();
+    mocks.start.mockReturnValueOnce(firstSession.promise).mockReturnValueOnce(secondSession.promise);
+    const { state, connection } = harness();
+
+    const first = connection.connect(true);
+    await vi.waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1));
+    await connection.cancelConnect();
+    const replacement = connection.connect(true);
+    await vi.waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(2));
+    expect(state.connecting).toBe(true);
+
+    firstSession.resolve(config);
+    await first;
+    expect(state.connecting).toBe(true);
+
+    secondSession.resolve({ ...config, id: 'sess-2' });
+    await replacement;
+    expect(state.live?.id).toBe('sess-2');
+  });
+
   it('a deliberate End during the clip does not warn about a failed greeting', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mocks.start.mockResolvedValueOnce(full);
@@ -94,6 +137,7 @@ describe('text path', () => {
     await connection.connect(false);
 
     expect(mocks.start).toHaveBeenCalledWith('c1', 'en', false);
+    expect(player.prepare).not.toHaveBeenCalled();
     expect(player.play).not.toHaveBeenCalled();
     expect(state.greeting).toBeNull();
   });

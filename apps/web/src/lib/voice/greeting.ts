@@ -119,11 +119,16 @@ export function createBrowserGreetingPlayer(options: GreetingPlayerOptions = {})
               }, maxPlayMs)
             : null;
         active = { audio, resolve, onEnded, onError, timeout };
-        audio.addEventListener('ended', onEnded);
-        audio.addEventListener('error', onError);
         try {
           audio.muted = false;
           audio.src = url;
+        } catch {
+          if (token === playToken) finish('failed');
+          return;
+        }
+        audio.addEventListener('ended', onEnded);
+        audio.addEventListener('error', onError);
+        try {
           const started = audio.play();
           if (started && typeof started.catch === 'function') {
             started.catch(() => {

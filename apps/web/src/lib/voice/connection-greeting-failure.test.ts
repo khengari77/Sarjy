@@ -91,7 +91,7 @@ describe('stop paths and interruption', () => {
 });
 
 describe('startup failure after the greeting', () => {
-  it('uses the distinct GREETING_UNCONNECTED code and copy', async () => {
+  it('keeps the ordinary startup error when the clip is cut off mid-way', async () => {
     mocks.start.mockResolvedValueOnce(full);
     const { state, runtime, player, connection } = harness();
     const gate = deferred();
@@ -102,15 +102,12 @@ describe('startup failure after the greeting', () => {
     gate.reject(new Error('AGENT_START_TIMEOUT'));
     await connecting;
 
-    expect(state.voiceErrorCode).toBe('GREETING_UNCONNECTED');
+    expect(state.voiceErrorCode).toBe('AGENT_START_TIMEOUT');
     expect(player.stop).toHaveBeenCalled();
     expect(mocks.mark).not.toHaveBeenCalled();
-    expect(friendlyVoiceError('GREETING_UNCONNECTED', false)).toBe(
-      'You heard the introduction, but the call did not connect. Try again.',
-    );
   });
 
-  it('uses the distinct code when the call fails after the clip ended', async () => {
+  it('uses the distinct code and copy when the call fails after the clip ended', async () => {
     mocks.start.mockResolvedValueOnce(full);
     const { state, runtime, player, connection } = harness();
     const gate = deferred();
@@ -125,6 +122,9 @@ describe('startup failure after the greeting', () => {
 
     expect(state.voiceErrorCode).toBe('GREETING_UNCONNECTED');
     expect(mocks.mark).not.toHaveBeenCalled();
+    expect(friendlyVoiceError('GREETING_UNCONNECTED', false)).toBe(
+      'You heard the introduction, but the call did not connect. Try again.',
+    );
   });
 
   it('keeps the ordinary startup error when the greeting never played', async () => {
