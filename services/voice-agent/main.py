@@ -1830,7 +1830,7 @@ def _record_call_stage(stages: dict[str, int | None] | None, name: str, call_sta
 def _log_call_start_stages(stages: dict[str, int | None] | None) -> None:
     if stages is None:
         return
-    logging.info("call_start_stages", extra=stages)
+    logging.info("call_start_stages %s", json.dumps(stages, sort_keys=True), extra=stages)
 
 
 async def play_greeting(

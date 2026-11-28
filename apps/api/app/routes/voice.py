@@ -1,5 +1,6 @@
 """Voice-session admission, dispatch and cleanup endpoints."""
 
+import contextlib
 import json
 import time
 from datetime import UTC, datetime, timedelta
@@ -33,6 +34,12 @@ from app.services.voices import (
 )
 
 logger = timing_logger("sarjy.voice")
+
+
+def _log_session_created(fields: dict[str, int]) -> None:
+    # Timing must never affect the response, whatever a logging handler does.
+    with contextlib.suppress(Exception):
+        logger.info("voice_session_created %s", json.dumps(fields, sort_keys=True, separators=(",", ":")))
 
 
 class StartVoice(BaseModel):
@@ -195,6 +202,7 @@ def register_voice_routes(
         commit_started = time.perf_counter()
         await db.commit()
         commit_ms = round((time.perf_counter() - commit_started) * 1000)
+        log_fields = {"pre_commit_ms": pre_commit_ms, "commit_ms": commit_ms}
         from livekit import api
 
         try:
@@ -223,30 +231,6 @@ def register_voice_routes(
                 )
                 .to_jwt()
             )
-            logger.info(
-                "voice_session_created %s",
-                json.dumps(
-                    {
-                        "server_ms": round((time.perf_counter() - started) * 1000),
-                        "pre_commit_ms": pre_commit_ms,
-                        "commit_ms": commit_ms,
-                        "dispatch_ms": dispatch_ms,
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-            )
-            return {
-                "id": voice.id,
-                "url": config.livekit_url,
-                "token": token,
-                "expires_at": voice.expires_at,
-                "voice": selected_voice.model_dump(),
-                "voice_language": voice_language,
-                "voice_source": voice_source,
-                "saved_voice_unavailable": saved_voice_unavailable,
-                **intro_response,
-            }
         except Exception:
             await db.execute(update(VoiceSession).where(VoiceSession.id == voice.id).values(status="failed"))
             await db.commit()
@@ -256,6 +240,24 @@ def register_voice_routes(
             except ValueError:
                 await db.rollback()
             raise HTTPException(503, detail={"code": "VOICE_DISPATCH_FAILED"}) from None
+        _log_session_created(
+            {
+                **log_fields,
+                "server_ms": round((time.perf_counter() - started) * 1000),
+                "dispatch_ms": dispatch_ms,
+            }
+        )
+        return {
+            "id": voice.id,
+            "url": config.livekit_url,
+            "token": token,
+            "expires_at": voice.expires_at,
+            "voice": selected_voice.model_dump(),
+            "voice_language": voice_language,
+            "voice_source": voice_source,
+            "saved_voice_unavailable": saved_voice_unavailable,
+            **intro_response,
+        }
 
     @app.post("/v1/voice/sessions/{session_id}/end")
     async def end_voice(session_id: str, user=Depends(cleanup_identity), db: AsyncSession = Depends(database)):

@@ -159,12 +159,14 @@ def test_call_start_stages_are_logged_once_since_job_accept(caplog):
     with caplog.at_level(logging.INFO):
         assert asyncio.run(run()) == "played"
 
-    records = [record for record in caplog.records if record.getMessage() == "call_start_stages"]
+    records = [record for record in caplog.records if record.getMessage().startswith("call_start_stages ")]
     assert len(records) == 1
+    payload = json.loads(records[0].getMessage().split(" ", 1)[1])
     for key in ("bootstrap_done", "session_started", "participant_joined", "greeting_say_called", "greeting_done"):
-        value = getattr(records[0], key)
+        value = payload[key]
         assert isinstance(value, int)
         assert value >= 0
+    assert records[0].bootstrap_done == payload["bootstrap_done"]  # extra fields stay available
 
 
 def test_failed_mark_is_reported_without_breaking_the_call():
