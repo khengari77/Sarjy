@@ -838,3 +838,63 @@ def test_undo_still_refuses_when_a_visible_same_subject_fact_is_active(tmp_path,
         assert memory_by_id(file, second["memory_id"])[0] == "active"
     finally:
         cm.__exit__(None, None, None)
+
+
+def test_undoing_a_replace_promotion_restores_the_previous_fact(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        owner, chat = session_identity(file)
+        seed_memory(
+            file,
+            memory_id="temp-location",
+            owner_id=owner,
+            conversation_id=chat,
+            content="I live in Benghazi",
+            subject="location",
+            scope="conversation",
+        )
+
+        change = save_via_auto(client, headers, "I live in Tripoli", "fact-1")
+        assert change["memory_id"] == "temp-location"
+        assert change["kind"] == "memory_saved"
+        assert change["label"].startswith("Updated:")
+        payload = json.loads(operation_payloads(file)[0])
+        assert payload["promoted_from"] == "conversation"
+        assert payload["previous_content"] == "I live in Benghazi"
+        assert payload["previous_subject"] == "location"
+        assert memory_by_id(file, "temp-location") == ("active", "I live in Tripoli", "location", 2)
+
+        response = client.post(f"/v1/changes/{change['id']}/undo")
+        assert response.status_code == 200, response.text
+        assert memory_by_id(file, "temp-location") == ("active", "I live in Benghazi", "location", 3)
+        with closing(sqlite3.connect(file)) as db:
+            assert db.execute("SELECT scope FROM memories WHERE id='temp-location'").fetchone() == ("conversation",)
+        terms = memory_terms(file, "temp-location")
+        assert "benghazi" in terms and "tripoli" not in terms
+        assert operations(file) == [("memory_auto_save", "undone")]
+    finally:
+        cm.__exit__(None, None, None)
+
+
+def test_deleting_a_promoted_fact_scrubs_the_journaled_previous_text(tmp_path):
+    cm, client, file, headers = started(tmp_path, "auto")
+    try:
+        owner, chat = session_identity(file)
+        seed_memory(
+            file,
+            memory_id="temp-location",
+            owner_id=owner,
+            conversation_id=chat,
+            content="I live in Benghazi",
+            subject="location",
+            scope="conversation",
+        )
+        change = save_via_auto(client, headers, "I live in Tripoli", "fact-1")
+        assert "Benghazi" in operation_payloads(file)[0]
+
+        deleted = client.delete(f"/v1/memories/{change['memory_id']}")
+        assert deleted.status_code == 200, deleted.text
+        assert memory_by_id(file, change["memory_id"])[0] == "deleted"
+        assert "Benghazi" not in operation_payloads(file)[0]
+    finally:
+        cm.__exit__(None, None, None)

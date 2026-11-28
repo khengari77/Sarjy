@@ -162,12 +162,22 @@ def _norm(value: object) -> str:
     return " ".join(str(value).casefold().split()) if isinstance(value, str) else ""
 
 
-async def _scrub_proposals(db: AsyncSession, owner_id: str, deleted: set[str], texts: set[str]) -> set[str]:
+async def _scrub_proposals(
+    db: AsyncSession,
+    owner_id: str,
+    deleted: set[str],
+    texts: set[str],
+    *,
+    include_text_matches: bool = True,
+) -> set[str]:
     """Tombstone the proposal rows of the deleted facts.
 
     A row belongs to the deletion when its saved memory is in the lineage, or when it proposed exactly the deleted
     text (a proposal left claimed by a crash or a racing confirm never recorded its memory id). A tombstoned row is
     marked discarded, so a confirm that finishes later cannot write the fact back into it.
+
+    Internal cap/duplicate retirement passes ``include_text_matches=False``: it may only touch rows bound to this
+    memory id, never another chat's unbound proposal and never the proposal currently being resolved.
     """
     proposals = (await db.scalars(select(MemoryWriteRequest).where(MemoryWriteRequest.owner_id == owner_id))).all()
     proposal_keys: set[str] = set()
@@ -180,7 +190,7 @@ async def _scrub_proposals(db: AsyncSession, owner_id: str, deleted: set[str], t
         proposed_text = _norm(stored.get("text")) if isinstance(stored, dict) else ""
         bound = _request_memory_id(result)
         # Text alone matches only a row that never recorded a memory; one bound to another live memory is kept.
-        if bound not in deleted and (bound is not None or proposed_text not in wanted):
+        if bound not in deleted and (not include_text_matches or bound is not None or proposed_text not in wanted):
             continue
         if isinstance(stored, dict) and isinstance(stored.get("confirmation_id"), str):
             proposal_keys.add(stored["confirmation_id"])
@@ -308,7 +318,9 @@ def _scrubbed_operation_response(*, payload: dict) -> dict:
     ).model_dump(mode="json")
 
 
-async def scrub_copies(db: AsyncSession, owner_id: str, erased: list[Erased]) -> None:
+async def scrub_copies(
+    db: AsyncSession, owner_id: str, erased: list[Erased], *, include_text_matches: bool = True
+) -> None:
     """Wipe every stored copy of facts whose memory rows are being tombstoned (delete and undo both call this)."""
     ids = [item.id for item in erased]
     deleted = set(ids)
@@ -322,7 +334,7 @@ async def scrub_copies(db: AsyncSession, owner_id: str, erased: list[Erased]) ->
             .where(MemoryWriteRequest.owner_id == owner_id, MemoryWriteRequest.request_key.in_(keys))
             .values(embedding=None, result=None)
         )
-    proposal_keys = await _scrub_proposals(db, owner_id, deleted, texts)
+    proposal_keys = await _scrub_proposals(db, owner_id, deleted, texts, include_text_matches=include_text_matches)
     await _scrub_decisions(db, owner_id, deleted, proposal_keys)
     await _scrub_turns(db, owner_id, erased, proposal_keys)
     await _scrub_snapshots(db, owner_id, deleted, texts)
@@ -345,6 +357,8 @@ async def scrub_copies(db: AsyncSession, owner_id: str, erased: list[Erased]) ->
             # The topic query and the spoken line can quote the erased fact; drop the query and keep
             # only a generic response, so a later undo replays without the erased text.
             payload.pop("query", None)
+            payload.pop("previous_content", None)
+            payload.pop("previous_subject", None)
             payload["memory_ids"] = remaining
             payload["count"] = max(len(remaining), int(payload.get("count") or 0))
             payload["erased_count"] = int(payload.get("erased_count") or 0) + erased_in_list
@@ -374,8 +388,14 @@ async def scrub_copies(db: AsyncSession, owner_id: str, erased: list[Erased]) ->
                 operation.payload = payload
 
 
-async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> VisibilityResult:
-    """Idempotent permanent tombstone; wipes content everywhere this service stores it."""
+async def delete_memory(
+    db: AsyncSession, owner_id: str, memory_id: str, *, scrub_proposals: bool = True
+) -> VisibilityResult:
+    """Idempotent permanent tombstone; wipes content everywhere this service stores it.
+
+    ``scrub_proposals=False`` is the quiet path for internal cap eviction and duplicate retirement: it never
+    text-matches an unbound proposal (another chat's pending fact, or the proposal being resolved right now).
+    """
     # First: a write that is committing for this owner finishes before this delete reads anything, and a write that
     # starts later waits for this delete and then sees the discarded proposal (the commit guard refuses it).
     await lock_owner_memories(db, owner_id)
@@ -389,5 +409,5 @@ async def delete_memory(db: AsyncSession, owner_id: str, memory_id: str) -> Visi
         .where(Memory.id.in_([item.id for item in erased]), Memory.owner_id == owner_id)
         .values(status=DELETED, content="", subject=None, embedding=None, updated_at=now())
     )
-    await scrub_copies(db, owner_id, erased)
+    await scrub_copies(db, owner_id, erased, include_text_matches=scrub_proposals)
     return VisibilityResult(memory_id, DELETED, True)

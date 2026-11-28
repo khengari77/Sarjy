@@ -23,6 +23,7 @@ from app.services.memory_capture import (
 )
 from app.services.memory_erasure_lock import lock_owner_memories
 from app.services.memory_scope import visible_in
+from app.services.memory_terms import delete_terms, write_terms
 from app.services.memory_visibility import Erased, scrub_copies
 
 APPLIED = "applied"
@@ -154,7 +155,8 @@ async def auto_commit_memory(
         "superseded_version": superseded_version,
     }
     if promoted:
-        # In-place promotion: undo demotes the same row back to this chat instead of removing it.
+        # In-place promotion: undo demotes the same row back to this chat instead of removing it. A replace also
+        # carries the earlier fact so undo can restore it.
         payload = {
             "kind": "memory_saved",
             "label": label,
@@ -162,6 +164,9 @@ async def auto_commit_memory(
             "memory_id": memory["id"],
             "version": memory["version"],
         }
+        if kind == "memory_updated":
+            payload["previous_content"] = result.get("previous_content")
+            payload["previous_subject"] = result.get("previous_subject")
     operation = ContextOperation(
         id=str(uuid4()),
         owner_id=owner_id,
@@ -185,6 +190,55 @@ async def auto_commit_memory(
     return {"status": result.get("status", "saved"), "change": _change_payload(operation)}
 
 
+async def _undo_promotion(
+    db: AsyncSession, *, operation: ContextOperation, payload: dict, owner_id: str
+) -> dict | None:
+    """Undo an in-place promotion by demoting the same row; a replace also restores the earlier fact."""
+    if payload.get("promoted_from") != "conversation":
+        return None
+    values = {
+        "scope": SCOPE_CONVERSATION,
+        "version": Memory.version + 1,
+        "embedding": null(),
+        "updated_at": now(),
+    }
+    if "previous_content" in payload:
+        values["content"] = payload["previous_content"]
+        values["subject"] = payload.get("previous_subject")
+    demoted = await db.execute(
+        update(Memory)
+        .where(
+            Memory.id == payload.get("memory_id"),
+            Memory.owner_id == owner_id,
+            Memory.status == "active",
+            Memory.scope == SCOPE_GLOBAL,
+            Memory.source_conversation_id == operation.conversation_id,
+            Memory.version == payload["version"],
+        )
+        .values(**values)
+    )
+    if demoted.rowcount != 1:
+        await db.rollback()
+        raise ChangeConflict
+    if "previous_content" in payload and isinstance(payload["previous_content"], str):
+        await delete_terms(db, [payload["memory_id"]])
+        await write_terms(
+            db,
+            memory_id=payload["memory_id"],
+            owner_id=owner_id,
+            content=payload["previous_content"],
+        )
+    operation.outcome = UNDONE
+    operation.payload = {
+        "kind": payload.get("kind"),
+        "label": "",
+        "memory_id": payload.get("memory_id"),
+        "scrubbed": True,
+    }
+    await db.commit()
+    return {**_change_payload(operation), "undoable": False, "changed": True}
+
+
 async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dict:
     """Undo one auto-saved change by id. Idempotent; refuses (``ChangeConflict``) if the rows moved on."""
     await lock_owner_memories(db, owner_id)
@@ -204,37 +258,9 @@ async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dic
         # Permanently deleted (the journal was scrubbed) or otherwise no longer an applied change: nothing to revert.
         raise ChangeConflict
 
-    if payload.get("promoted_from") == "conversation":
-        # The fact was promoted in place: undo demotes it back to this chat instead of deleting it.
-        demoted = await db.execute(
-            update(Memory)
-            .where(
-                Memory.id == payload.get("memory_id"),
-                Memory.owner_id == owner_id,
-                Memory.status == "active",
-                Memory.scope == SCOPE_GLOBAL,
-                Memory.source_conversation_id == operation.conversation_id,
-                Memory.version == payload["version"],
-            )
-            .values(
-                scope=SCOPE_CONVERSATION,
-                version=Memory.version + 1,
-                embedding=null(),
-                updated_at=now(),
-            )
-        )
-        if demoted.rowcount != 1:
-            await db.rollback()
-            raise ChangeConflict
-        operation.outcome = UNDONE
-        operation.payload = {
-            "kind": payload.get("kind"),
-            "label": "",
-            "memory_id": payload.get("memory_id"),
-            "scrubbed": True,
-        }
-        await db.commit()
-        return {**_change_payload(operation), "undoable": False, "changed": True}
+    promoted_undo = await _undo_promotion(db, operation=operation, payload=payload, owner_id=owner_id)
+    if promoted_undo is not None:
+        return promoted_undo
 
     change = MemoryChange(
         memory_id=payload["memory_id"],

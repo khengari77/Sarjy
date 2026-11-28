@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.contracts import EMBEDDING_MODEL, SCOPE_CONVERSATION, SCOPE_GLOBAL
 from app.domain.memory_capture import is_referential, resolve_subject
-from app.domain.memory_policy import Sensitivity, classify_sensitivity, has_long_number
+from app.domain.memory_policy import Sensitivity, classify_sensitivity, has_long_number, looks_like_phone
 from app.infrastructure.database import Memory, MemoryWriteRequest, now
 from app.services.authorization import owned_conversation
 from app.services.memory import MemoryResult, MemoryService, memory_result, validate_embedding
@@ -36,7 +36,6 @@ MAX_TEMPORARY_PER_CHAT = 30
 logger = logging.getLogger(__name__)
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", re.UNICODE)
-_PHONE = re.compile(r"\+?\d[\d\s().-]{5,}\d", re.UNICODE)
 
 
 class TemporaryFactOutcome(StrEnum):
@@ -79,19 +78,13 @@ def _clean_text(text) -> str | None:
     return cleaned
 
 
-def _is_phone_like(text: str) -> bool:
-    return any(sum(character.isdigit() for character in match.group()) >= 7 for match in _PHONE.finditer(text))
-
-
 def _rejected(text: str) -> bool:
     """The credential/ID floor: a fact carrying one of these is never written automatically."""
     if classify_sensitivity(text) is Sensitivity.CREDENTIAL:
         return True
-    if has_long_number(text):
+    if has_long_number(text) or looks_like_phone(text):
         return True
     if _EMAIL.search(text) is not None:
-        return True
-    if _is_phone_like(text):
         return True
     return is_referential(text)
 
@@ -180,7 +173,7 @@ async def _enforce_cap(service: MemoryService, *, owner_id: str, conversation_id
                 )
                 if oldest_id is None:
                     return
-                await delete_memory(db, owner_id, oldest_id)
+                await delete_memory(db, owner_id, oldest_id, scrub_proposals=False)
                 await db.commit()
         except Exception:
             # The fact is already committed. A cap overrun is preferable to failing the producer's write, and the
@@ -206,6 +199,8 @@ async def _embed_promoted(service: MemoryService, embedder, result: MemoryResult
                     Memory.id == result.id,
                     Memory.owner_id == owner_id,
                     Memory.version == result.version,
+                    Memory.status == "active",
+                    Memory.scope == SCOPE_GLOBAL,
                     Memory.embedding.is_(None),
                 )
                 .values(embedding=list(vector), embedding_model=EMBEDDING_MODEL)

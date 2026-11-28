@@ -42,12 +42,20 @@ _ORDER = (
 # match. A bare Arabic noun ("credit card") belongs in FINANCE, not here.
 _ARABIC_CREDENTIAL = (
     r"(?:[وفبلك]\s*)?(?:كلمة\s+(?:ال)?(?:مرور|سر)|رمز\s+(?:التحقق|الدخول|الأمان|سري|السر)|"
-    r"الرمز\s+السري|الرقم\s+السري|رقم\s+(?:الهوية|البطاقة)|عبارة\s+الاسترداد|مفتاح\s+(?:سري|الapi|ssh))"
+    r"الرمز\s+السري|للرمز\s+السري|الرقم\s+السري|للرقم\s+السري|رقم\s+(?:الهوية|البطاقة)|"
+    r"عبارة\s+الاسترداد|مفتاح\s+(?:سري|الapi|ssh))"
+)
+# The assignment markers are words too: "سهو" must not read as "هو". Arabic letters (not digits/punctuation) bound them.
+_ARABIC_LETTER = r"\u0621-\u064A\u066E-\u06D3\u06FA-\u06FF"
+_ARABIC_MARKER = (
+    rf"(?:(?<![{_ARABIC_LETTER}])هو(?![{_ARABIC_LETTER}])|"
+    rf"(?<![{_ARABIC_LETTER}])هي(?![{_ARABIC_LETTER}])|:|=)"
 )
 # The value may follow directly, after up to a few ordinary words, or after an assignment marker. A term with no
 # value or assignment ("I forgot the password") is ordinary prose and stays out.
 _ARABIC_CREDENTIAL_VALUE = (
-    r"(?:[^\n]{0,20}?(?:هو|هي|:|=)\s*\S{1,20}|\s+(?:[^\s]+\s+){0,3}[0-9٠-٩A-Za-z][\w!@#$%^&*._-]{0,19})"
+    rf"(?:[^\n]{{0,20}}?{_ARABIC_MARKER}\s*\S{{1,20}}|"
+    r"\s+(?:[^\s]+\s+){0,3}[0-9٠-٩A-Za-z][\w!@#$%^&*._-]{0,19})"
 )
 
 _CREDENTIAL = re.compile(
@@ -74,12 +82,53 @@ _HEALTH = re.compile(
     r"hiv|allerg\w+|surgery|disorder|illness|disease|doctor|medical|blood pressure|metformin|insulin)\b",
     re.IGNORECASE,
 )
-_LONG_NUMBER = re.compile(r"\d(?:[\s.-]?\d){8,}")
+# Arabic-Indic and Persian digits become ASCII before any count, and punctuation (comma, en/em dash, Arabic comma,
+# NBSP, slash, underscore, ...) is a separator rather than a break. A run therefore spans "4,012–8888–8888–1881".
+_DIGIT_TRANSLATION = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+_MONTH = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+_DATE_TIME = re.compile(
+    r"\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:[T\s]\d{1,2}:\d{2}(?::\d{2})?)?\b"
+    r"|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b"
+    r"|\b\d{1,2}:\d{2}(?::\d{2})?\b"
+    rf"|\b{_MONTH}\s+\d{{1,2}},?\s+\d{{4}}\b"
+    rf"|\b\d{{1,2}}\s+{_MONTH}\.?,?\s+\d{{4}}\b",
+    re.IGNORECASE,
+)
+
+
+def _digit_runs(text: str) -> list[tuple[str, bool]]:
+    """Digit runs after date/time exclusion; separators do not break a run, letters do. ``plus`` tracks a leading +."""
+    normalised = _DATE_TIME.sub(" ", text.translate(_DIGIT_TRANSLATION))
+    runs: list[tuple[str, bool]] = []
+    current: list[str] = []
+    plus = False
+    pending_plus = False
+    for character in normalised:
+        if character.isdigit():
+            if not current:
+                plus = pending_plus
+            current.append(character)
+            pending_plus = False
+        elif character.isalpha():
+            if current:
+                runs.append(("".join(current), plus))
+                current = []
+            pending_plus = False
+        elif character == "+":
+            pending_plus = True
+    if current:
+        runs.append(("".join(current), plus))
+    return runs
+
+
+def looks_like_phone(text: str) -> bool:
+    """A card/phone/ID run: >= 9 digits, or a leading + with a country-shaped run of at least 7 digits."""
+    return any(len(run) >= 9 or (plus and len(run) >= 7) for run, plus in _digit_runs(text))
 
 
 def has_long_number(text: str) -> bool:
     """Nine or more digits in a row (a card, phone or ID number): never saved without asking, whatever the words say."""
-    return _LONG_NUMBER.search(text) is not None
+    return looks_like_phone(text)
 
 
 _THIRD_PARTY = re.compile(
@@ -91,6 +140,8 @@ _THIRD_PARTY = re.compile(
 
 def classify_sensitivity(text: str) -> Sensitivity:
     """Keyword safety net. Deterministic; the strongest matching class wins."""
+    if has_long_number(text):
+        return Sensitivity.CREDENTIAL
     if _CREDENTIAL.search(text):
         return Sensitivity.CREDENTIAL
     if _FINANCE.search(text):

@@ -13,18 +13,18 @@
   },
   "credential_recall": {
     "n": 33,
-    "hits": 27,
-    "rate": 0.8182,
-    "low": 0.6561,
-    "high": 0.9139
+    "hits": 28,
+    "rate": 0.8485,
+    "low": 0.6908,
+    "high": 0.9335
   },
   "credential_recall_by_language": {
     "en": {
       "n": 21,
-      "hits": 16,
-      "rate": 0.7619,
-      "low": 0.5491,
-      "high": 0.8937
+      "hits": 17,
+      "rate": 0.8095,
+      "low": 0.6,
+      "high": 0.9233
     },
     "ar": {
       "n": 12,
@@ -51,10 +51,10 @@
   "decision_accuracy": {
     "overall": {
       "n": 250,
-      "hits": 102,
-      "rate": 0.408,
-      "low": 0.3489,
-      "high": 0.4699
+      "hits": 103,
+      "rate": 0.412,
+      "low": 0.3528,
+      "high": 0.4739
     },
     "by_category": {
       "arabic": {
@@ -66,10 +66,10 @@
       },
       "credential": {
         "n": 33,
-        "hits": 31,
-        "rate": 0.9394,
-        "low": 0.8039,
-        "high": 0.9832
+        "hits": 32,
+        "rate": 0.9697,
+        "low": 0.8468,
+        "high": 0.9946
       },
       "false_refusal": {
         "n": 22,
@@ -124,10 +124,10 @@
     "by_language": {
       "en": {
         "n": 206,
-        "hits": 90,
-        "rate": 0.4369,
-        "low": 0.3709,
-        "high": 0.5052
+        "hits": 91,
+        "rate": 0.4417,
+        "low": 0.3756,
+        "high": 0.51
       },
       "ar": {
         "n": 44,
@@ -171,8 +171,8 @@
       "normal": 5,
       "third_party": 0,
       "health": 0,
-      "finance": 1,
-      "credential": 27
+      "finance": 0,
+      "credential": 28
     }
   }
 }

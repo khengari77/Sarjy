@@ -18,7 +18,7 @@ from app.services.temporary_memory import (
     write_temporary_fact,
 )
 from fastapi import HTTPException
-from sqlalchemy import func, select, update
+from sqlalchemy import func, null, select, update
 from test_memory import FakeEmbedder
 from test_memory import setup as memory_setup
 
@@ -339,11 +339,17 @@ def test_a_permanent_fact_with_the_same_subject_or_content_wins(tmp_path):
         "وكلمة المرور هي hunter2",
         "بالرقم السري 8877",
         "ورمز التحقق 4567",
+        "للرقم السري 1234",
         "my openai token is sk-proj-abcd1234",
         "the github key is ghp_abcdEFGH12345678",
         "the aws key is AKIAABCDEFGH12345678",
         "the jwt is eyJhbGciOiJIUzI1NiJ9.payload",
         "my card is 4012 8888 8888 1881",
+        "my card is 4,012,8888,8888,1881",
+        "my card is 4012–8888–8888–1881",
+        "my card is 4012٬8888٬8888٬1881",
+        "my card is 4012\u00a08888\u00a08888\u00a01881",
+        "my card is ٤٠١٢-٨٨٨٨-٨٨٨٨-١٨٨١",
         "email me at person@example.com",
         "call me on 091 234 5678",
         "remember it",
@@ -373,7 +379,18 @@ def test_the_credential_and_contact_floor_writes_nothing(tmp_path, text):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("text", ["أريد بطاقة ائتمان جديدة", "the token budget is low"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "أريد بطاقة ائتمان جديدة",
+        "the token budget is low",
+        "I start my new job on 2026-11-28",
+        "the meeting is on 28/11/2026 at 14:30",
+        "it costs 1,234,567",
+        "my favorite number is 7",
+        "I live at 12 Rose Street",
+    ],
+)
 def test_ordinary_prose_about_a_card_or_budget_is_still_written(tmp_path, text):
     async def run():
         engine, sessions = await memory_setup(tmp_path / "ordinary.db")
@@ -824,6 +841,141 @@ def test_promote_temporary_memory_changes_the_same_row_in_place(tmp_path):
                     expected_version=1,
                     content="I live in Tripoli",
                 )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_cap_eviction_is_quiet_for_unbound_proposals_and_scrubs_bound_rows(tmp_path):
+    async def run():
+        engine, sessions = await memory_setup(tmp_path / "quiet-cap.db")
+        await add_turn(sessions, "turn-new", "a1")
+        try:
+            async with sessions() as db:
+                db.add(
+                    Memory(
+                        id="evict-me",
+                        owner_id="alice",
+                        content="I prefer tea",
+                        subject="preference:beverage",
+                        source_conversation_id="a1",
+                        version=1,
+                        status="active",
+                        scope=SCOPE_CONVERSATION,
+                        request_key="temp-request",
+                        created_at="2020-01-01T00:00:00+00:00",
+                        updated_at="2020-01-01T00:00:00+00:00",
+                    )
+                )
+                db.add(
+                    MemoryWriteRequest(
+                        id="bound-request",
+                        owner_id="alice",
+                        conversation_id="a1",
+                        request_key="temp-request",
+                        fingerprint="bound",
+                        scope=SCOPE_CONVERSATION,
+                        state="completed",
+                        result={"id": "evict-me", "owner_id": "alice", "content": "I prefer tea"},
+                        created_at="2020-01-01T00:00:00+00:00",
+                        updated_at="2020-01-01T00:00:00+00:00",
+                    )
+                )
+                db.add(
+                    MemoryWriteRequest(
+                        id="other-chat-proposal",
+                        owner_id="alice",
+                        conversation_id="a2",
+                        request_key="other-chat-proposal",
+                        fingerprint="proposal",
+                        scope=SCOPE_GLOBAL,
+                        state="proposed",
+                        result={"proposal": {"text": "I prefer tea", "confirmation_id": "confirmation-1"}},
+                        created_at="2026-01-01T00:00:00+00:00",
+                        updated_at="2026-01-01T00:00:00+00:00",
+                    )
+                )
+                for number in range(30):
+                    db.add(
+                        Memory(
+                            id=f"seed-{number}",
+                            owner_id="alice",
+                            content=f"Seed fact {number}",
+                            subject=f"seed:{number}",
+                            source_conversation_id="a1",
+                            version=1,
+                            status="active",
+                            scope=SCOPE_CONVERSATION,
+                            created_at=f"2026-01-01T00:00:{number:02d}+00:00",
+                            updated_at=f"2026-01-01T00:00:{number:02d}+00:00",
+                        )
+                    )
+                await db.commit()
+
+            result = await write_temporary_fact(
+                sessions,
+                owner_id="alice",
+                conversation_id="a1",
+                turn_id="turn-new",
+                text="Newest fact",
+                subject="newest",
+            )
+            assert result.outcome is TemporaryFactOutcome.WRITTEN
+            async with sessions() as db:
+                evicted = await db.get(Memory, "evict-me")
+                assert evicted.status == "deleted" and evicted.content == ""
+                bound = await db.get(MemoryWriteRequest, "bound-request")
+                assert bound.result is None and bound.embedding is None
+                proposal = await db.get(MemoryWriteRequest, "other-chat-proposal")
+                assert proposal.state == "proposed"
+                assert proposal.result["proposal"]["text"] == "I prefer tea"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_embedding_after_promotion_never_writes_back_a_deleted_row(tmp_path):
+    async def run():
+        engine, sessions = await memory_setup(tmp_path / "promotion-delete-embed.db")
+        await add_turn(sessions, "turn-promote", "a1")
+        try:
+            written = await write_temporary_fact(
+                sessions,
+                owner_id="alice",
+                conversation_id="a1",
+                turn_id="turn-promote",
+                text="I live in Benghazi",
+                subject="location",
+            )
+
+            class DeletingEmbedder(FakeEmbedder):
+                async def embed(self, db, text):
+                    async with sessions() as other:
+                        await other.execute(
+                            update(Memory)
+                            .where(Memory.id == written.memory.id)
+                            .values(status="deleted", content="", embedding=null())
+                        )
+                        await other.commit()
+                    return await super().embed(db, text)
+
+            await promote_temporary_memory(
+                sessions,
+                owner_id="alice",
+                conversation_id="a1",
+                memory_id=written.memory.id,
+                expected_version=1,
+                content="I live in Tripoli",
+                subject="location",
+                embedder=DeletingEmbedder(),
+            )
+            async with sessions() as db:
+                row = await db.get(Memory, written.memory.id)
+                assert row.status == "deleted" and row.content == ""
+                embedding = await db.scalar(select(Memory.embedding).where(Memory.id == written.memory.id))
+                assert embedding is None
         finally:
             await engine.dispose()
 

@@ -25,8 +25,10 @@ from app.domain.memory_capture import (
 from app.domain.memory_policy import Decision, plan_for_proposal
 from app.infrastructure.database import Memory, MemoryWriteRequest, now
 from app.infrastructure.upsert import insert_ignore
+from app.services.authorization import owned_conversation
 from app.services.leases import lease_expired, lease_expiry
 from app.services.memory import MemoryService, memory_result
+from app.services.memory_erasure_lock import lock_owner_memories
 from app.services.memory_scope import visible_in
 from app.services.memory_visibility import delete_memory
 from app.services.temporary_memory import PromotionConflict, promote_temporary_memory
@@ -1483,8 +1485,8 @@ def _temporary_in_chat(row: Memory | None, conversation_id: str) -> Memory | Non
 
 
 async def _retire_temporary(db: AsyncSession, owner_id: str, row: Memory) -> None:
-    """Permanent wins: tombstone and scrub a temporary duplicate (same path as a permanent delete)."""
-    await delete_memory(db, owner_id, row.id)
+    """Permanent wins: quietly tombstone a temporary duplicate without touching unbound proposals."""
+    await delete_memory(db, owner_id, row.id, scrub_proposals=False)
 
 
 async def _visible_temporary_duplicate(
@@ -1503,6 +1505,45 @@ async def _visible_temporary_duplicate(
     return await db.scalar(statement.where(condition).order_by(Memory.updated_at.desc(), Memory.id.desc()).limit(1))
 
 
+async def _reconcile_promotion_conflict(
+    service: MemoryService,
+    *,
+    owner_id: str,
+    conversation_id: str,
+    memory_id: str,
+    capture: MemoryCapture,
+) -> tuple[dict | None, list[str]]:
+    """Re-read a row whose in-place UPDATE lost its race, under the conversation and owner locks.
+
+    Returns an ``already_saved`` response when nothing may be written (hidden/deleted, global, or a different fact),
+    or the ids of active temporary rows of this subject that the caller must quietly retire after writing.
+    """
+    async with service.sessions() as db, db.begin():
+        await owned_conversation(db, owner_id, conversation_id, lock=True, key_share=True)
+        await lock_owner_memories(db, owner_id)
+        row = await db.scalar(
+            select(Memory)
+            .where(Memory.id == memory_id, Memory.owner_id == owner_id)
+            .execution_options(populate_existing=True)
+        )
+        if row is None or row.status != "active":
+            return {"status": "already_saved", "memory": asdict(memory_result(row)) if row is not None else None}, []
+        if row.scope != SCOPE_CONVERSATION or row.source_conversation_id != conversation_id:
+            return {"status": "already_saved", "memory": asdict(memory_result(row))}, []
+        statement = select(Memory).where(
+            Memory.owner_id == owner_id,
+            Memory.status == "active",
+            Memory.scope == SCOPE_CONVERSATION,
+            Memory.source_conversation_id == conversation_id,
+        )
+        content_match = func.lower(Memory.content) == capture.text.casefold()
+        condition = or_(Memory.subject == capture.subject, content_match) if capture.subject else content_match
+        rows = list((await db.scalars(statement.where(condition))).all())
+        if rows:
+            return None, [item.id for item in rows]
+        return {"status": "already_saved", "memory": asdict(memory_result(row))}, []
+
+
 async def _promote_or_create(
     db: AsyncSession,
     memory_service: MemoryService,
@@ -1516,7 +1557,7 @@ async def _promote_or_create(
     conflicting: list[Memory],
     key: str,
     guard,
-) -> tuple[object, bool]:
+) -> tuple[object | None, bool, dict | None]:
     """Promote the visible temporary row in place, or create a normal permanent row when there is none."""
     if temporary is not None and not conflicting:
         try:
@@ -1531,10 +1572,28 @@ async def _promote_or_create(
                 embedder=memory_service.embedder,
                 guard=guard,
             )
-            return result, True
+            return result, True, None
         except PromotionConflict:
-            # The row moved on before the lock; the ordinary permanent create path is the safe fallback.
-            pass
+            handled, retire_ids = await _reconcile_promotion_conflict(
+                memory_service,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                memory_id=temporary.id,
+                capture=capture,
+            )
+            if handled is not None:
+                return None, False, handled
+            result = await memory_service.create_memory(
+                owner_id,
+                conversation_id,
+                source_turn_id or proposed_turn,
+                capture.text,
+                key,
+                guard=guard,
+            )
+            for identifier in retire_ids:
+                await delete_memory(db, owner_id, identifier, scrub_proposals=False)
+            return result, False, None
     result = await memory_service.create_memory(
         owner_id,
         conversation_id,
@@ -1543,7 +1602,7 @@ async def _promote_or_create(
         key,
         guard=guard,
     )
-    return result, False
+    return result, False, None
 
 
 def _conflict_rows(rows: list[Memory], capture: MemoryCapture) -> list[Memory]:
@@ -1728,7 +1787,7 @@ async def _write_consented(
         return _replay_response(claim.replay, "save", payload)
     await _require_lease(db, payload, claim.lease_id)
     try:
-        result, promoted = await _promote_or_create(
+        result, promoted, handled = await _promote_or_create(
             db,
             memory_service,
             owner_id=owner_id,
@@ -1746,7 +1805,7 @@ async def _write_consented(
         # proceed. A crash (not an observed failure) leaves it ``applying``.
         await _release_claim(db, payload=payload, decision="save", lease_id=claim.lease_id)
         raise
-    response = {"status": "saved", "memory": asdict(result)}
+    response = handled if handled is not None else {"status": "saved", "memory": asdict(result)}
     if promoted:
         response["promoted"] = True
     await _record_decision(
@@ -1829,7 +1888,7 @@ async def _replace_or_promote(
     target_version: int,
     key: str,
     guard,
-) -> tuple[object, bool]:
+) -> tuple[object | None, bool, dict | None]:
     """Replace the target; a temporary target is promoted in place on the same row."""
     if target.scope == SCOPE_CONVERSATION and target.source_conversation_id == conversation_id:
         try:
@@ -1844,10 +1903,31 @@ async def _replace_or_promote(
                 embedder=memory_service.embedder,
                 guard=guard,
             )
-            return result, True
+            return result, True, None
         except PromotionConflict:
-            # The row moved on; fall back to the ordinary correction path.
-            pass
+            handled, retire_ids = await _reconcile_promotion_conflict(
+                memory_service,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                memory_id=target_id,
+                capture=capture,
+            )
+            if handled is not None:
+                return None, False, handled
+            result = await memory_service.correct_memory(
+                owner_id,
+                target_id,
+                target_version,
+                capture.text,
+                key,
+                source_turn_id=source_turn_id or proposed_turn,
+                conversation_id=conversation_id,
+                scope=SCOPE_GLOBAL,
+                guard=guard,
+            )
+            for identifier in retire_ids:
+                await delete_memory(db, owner_id, identifier, scrub_proposals=False)
+            return result, False, None
     result = await memory_service.correct_memory(
         owner_id,
         target_id,
@@ -1859,7 +1939,7 @@ async def _replace_or_promote(
         scope=SCOPE_GLOBAL,
         guard=guard,
     )
-    return result, False
+    return result, False, None
 
 
 async def _replace_recovery(
@@ -1981,8 +2061,9 @@ async def _replace_target(
                 lease_id=claim.lease_id,
             )
         key = _request_key(owner_id, f"{proposed_turn}:replace:{payload['revision']}", capture.text)
+        previous_content, previous_subject = target.content, target.subject
         try:
-            result, promoted = await _replace_or_promote(
+            result, promoted, handled = await _replace_or_promote(
                 memory_service,
                 db=db,
                 owner_id=owner_id,
@@ -2004,9 +2085,12 @@ async def _replace_target(
             ):
                 raise MemoryCaptureError("TARGET_CHANGED", 409, target_id=target_id) from exc
             raise
-        response = {"status": "corrected", "memory": asdict(result)}
+        response = handled if handled is not None else {"status": "corrected", "memory": asdict(result)}
         if promoted:
             response["promoted"] = True
+            # A replace that promoted in place must be undoable back to the previous fact.
+            response["previous_content"] = previous_content
+            response["previous_subject"] = previous_subject
         await _record_decision(
             db,
             payload=payload,

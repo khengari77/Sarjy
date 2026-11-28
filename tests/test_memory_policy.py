@@ -3,7 +3,14 @@
 import pytest
 from app.domain.commands import parse_exact_command
 from app.domain.contracts import SetMemoryMode, UserSettings, apply_settings_action
-from app.domain.memory_policy import Decision, Sensitivity, classify_sensitivity, combine, decide
+from app.domain.memory_policy import (
+    Decision,
+    Sensitivity,
+    classify_sensitivity,
+    combine,
+    decide,
+    has_long_number,
+)
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -168,3 +175,48 @@ def test_auto_mode_matches_its_documented_table():
     }
     for (sensitivity, explicit), expected in table.items():
         assert decide("auto", sensitivity, explicit=explicit) is expected, (sensitivity, explicit)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "my card is 4,012,8888,8888,1881",
+        "my card is 4012–8888–8888–1881",
+        "my card is 4012٬8888٬8888٬1881",
+        "my card is 4012\u00a08888\u00a08888\u00a01881",
+        "my card is ٤٠١٢-٨٨٨٨-٨٨٨٨-١٨٨١",
+        "my card is 4012/8888/8888/1881",
+    ],
+)
+def test_long_digit_runs_are_credential_after_normalisation(text):
+    assert has_long_number(text) is True
+    assert classify_sensitivity(text) is Sensitivity.CREDENTIAL
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I start my new job on 2026-11-28",
+        "the meeting is on 28/11/2026 at 14:30",
+        "the meeting is on Nov 28, 2026",
+        "it costs 1,234,567",
+        "my favorite number is 7",
+        "I live at 12 Rose Street",
+        "version 2.0.1 is out",
+    ],
+)
+def test_dates_times_prices_and_short_numbers_are_not_phone_like(text):
+    assert has_long_number(text) is False
+    assert classify_sensitivity(text) is not Sensitivity.CREDENTIAL
+
+
+def test_arabic_definite_article_proclitic_is_a_credential():
+    assert classify_sensitivity("للرقم السري 1234") is Sensitivity.CREDENTIAL
+
+
+def test_the_arabic_assignment_marker_must_be_a_whole_word():
+    assert classify_sensitivity("كلمة المرور سهو") is Sensitivity.NORMAL
+
+
+def test_the_english_password_net_deliberately_refuses_a_password_manager():
+    assert classify_sensitivity("I use a password manager") is Sensitivity.CREDENTIAL

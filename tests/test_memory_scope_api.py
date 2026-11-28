@@ -570,6 +570,12 @@ def test_already_saved_permanent_fact_retires_a_temporary_copy(tmp_path):
         ).json()["items"]
         assert active_temporary == []
 
+        # The quiet retirement must leave the claimed proposal and its replay intact.
+        replay = decide(client, chat, proposal["confirmation_id"], "save")
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["status"] == "already_saved"
+        assert replay.json()["memory"]["content"] == "My name is Sam"
+
 
 def test_decision_rechecks_credential_sensitivity(tmp_path):
     file, settings = configured(tmp_path)
@@ -828,6 +834,66 @@ def test_a_promotion_conflict_falls_back_to_a_normal_permanent_row(tmp_path, mon
         assert saved.json()["memory"]["id"] != "temp-same"
         records = memory_records(file)
         assert ("My name is Sam", chat, "global", "active", 1) in records
+        # The fallback retires the temporary row quietly, so only one active fact of the subject remains.
+        assert ("", chat, "conversation", "deleted", 1) in records
+        assert [row for row in records if row[3] == "active"] == [("My name is Sam", chat, "global", "active", 1)]
+
+
+def _raise_after(action):
+    async def conflict(*args, **kwargs):
+        action()
+        import app.services.memory_capture as capture_module
+
+        raise capture_module.PromotionConflict()
+
+    return conflict
+
+
+@pytest.mark.parametrize("status", ["hidden", "deleted"])
+def test_a_promotion_conflict_with_a_hidden_or_deleted_row_writes_nothing(tmp_path, monkeypatch, status):
+    import app.services.memory_capture as capture_module
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-same", "My name is Sam", subject="attribute:name")
+        proposal = arm(client, file, chat, owner, "My name is Sam", "promotion-hidden-race")
+
+        def hide():
+            with closing(sqlite3.connect(file)) as db, db:
+                db.execute("UPDATE memories SET status=? WHERE id='temp-same'", (status,))
+
+        monkeypatch.setattr(capture_module, "promote_temporary_memory", _raise_after(hide))
+        saved = decide(client, chat, proposal["confirmation_id"], "save")
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["status"] == "already_saved"
+        assert not [row for row in memory_records(file) if row[2] == "global"]
+        assert ("My name is Sam", chat, "conversation", status, 1) in memory_records(file)
+
+
+def test_a_promotion_conflict_retires_a_concurrent_temporary_replacement(tmp_path, monkeypatch):
+    import app.services.memory_capture as capture_module
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-same", "My name is Sam", subject="attribute:name")
+        proposal = arm(client, file, chat, owner, "My name is Sam", "promotion-new-temp-race")
+
+        def replace():
+            seed_temporary(file, chat, "temp-new", "My name is Sam", subject="attribute:name")
+
+        monkeypatch.setattr(capture_module, "promote_temporary_memory", _raise_after(replace))
+        saved = decide(client, chat, proposal["confirmation_id"], "save")
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["status"] == "saved"
+        records = memory_records(file)
+        assert [row for row in records if row[3] == "active"] == [("My name is Sam", chat, "global", "active", 1)]
+        assert len([row for row in records if row[3] == "deleted"]) == 2
 
 
 def test_a_promotion_race_with_a_deleted_chat_writes_nothing(tmp_path, monkeypatch):
@@ -952,3 +1018,27 @@ def test_replace_rejects_a_visible_non_conflict_target(tmp_path):
         assert refused.status_code == 409
         assert refused.json()["detail"]["code"] == "MEMORY_PROPOSAL_TARGET_CHANGED"
         assert memory_records(file) == before
+
+
+def test_a_promotion_conflict_after_the_row_became_a_different_fact_writes_nothing(tmp_path, monkeypatch):
+    import app.services.memory_capture as capture_module
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-same", "My name is Sam", subject="attribute:name")
+        proposal = arm(client, file, chat, owner, "My name is Sam", "promotion-different-fact")
+
+        def change():
+            with closing(sqlite3.connect(file)) as db, db:
+                db.execute("UPDATE memories SET content='Something else', subject='other' WHERE id='temp-same'")
+
+        monkeypatch.setattr(capture_module, "promote_temporary_memory", _raise_after(change))
+        saved = decide(client, chat, proposal["confirmation_id"], "save")
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["status"] == "already_saved"
+        records = memory_records(file)
+        assert not [row for row in records if row[2] == "global"]
+        assert ("Something else", chat, "conversation", "active", 1) in records
