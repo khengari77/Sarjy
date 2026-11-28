@@ -118,6 +118,11 @@ class MemoryProposalDecisionResult(BaseModel):
     status: str
     memory: MemoryResult | None = None
     idempotent: bool | None = None
+    # True when the same temporary row was made permanent in place.
+    promoted: bool | None = None
+    # A replace promotion carries the fact it replaced so the auto journal can restore it on undo.
+    previous_content: str | None = None
+    previous_subject: str | None = None
 
 
 def memory_router(database, identity, embedder):

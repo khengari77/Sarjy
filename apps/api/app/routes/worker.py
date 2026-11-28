@@ -1,7 +1,6 @@
 """Worker-only endpoints for bootstrap, turns, weather and budget reservations."""
 
 import logging
-import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -25,7 +24,15 @@ from app.domain.contracts import (
     resolve_response_policy,
 )
 from app.domain.intro import intro_for
-from app.domain.memory_policy import Decision, Sensitivity, classify_sensitivity, plan_for_proposal
+from app.domain.memory_policy import (
+    Decision,
+    Sensitivity,
+    classify_sensitivity,
+    plan_for_proposal,
+)
+from app.domain.memory_policy import (
+    has_long_number as _has_long_number,
+)
 from app.domain.policy import normalize_pipeline, pipeline_instructions
 from app.domain.secrets import secret_matches
 from app.domain.sessions import call_is_live
@@ -1109,14 +1116,6 @@ AUTO_SAVE_FAILED_NOTE = (
     "The save could not be confirmed. Tell the user you could not confirm it was saved; do not claim it was saved "
     "and do not ask them to confirm."
 )
-
-
-_LONG_NUMBER = re.compile(r"\d(?:[\s.-]?\d){8,}")
-
-
-def _has_long_number(text: str) -> bool:
-    """Nine or more digits in a row (a card, phone or ID number): never saved without asking, whatever the words say."""
-    return _LONG_NUMBER.search(text) is not None
 
 
 def _latin_only(text: str) -> bool:

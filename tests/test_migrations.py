@@ -463,6 +463,40 @@ def test_memory_mode_migration_is_additive_and_reversible(tmp_path):
         )
 
 
+def test_memory_write_scope_migration_defaults_existing_rows_and_drops(tmp_path):
+    path = tmp_path / "memory-write-scope.db"
+    url = f"sqlite+aiosqlite:///{path}"
+    run_alembic(url, "upgrade", "0020_memory_terms")
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "INSERT INTO identities (id, token_hash, expires_at)"
+            " VALUES ('owner-1', 'hash', '2030-01-01T00:00:00+00:00')"
+        )
+        connection.execute(
+            "INSERT INTO conversations (id, owner_id, title, revision, created_at)"
+            " VALUES ('conversation-1', 'owner-1', 'Tripoli trip', 3, '2026-11-11T00:00:00+00:00')"
+        )
+        connection.execute(
+            "INSERT INTO memory_write_requests"
+            " (id, owner_id, conversation_id, request_key, fingerprint, state, created_at, updated_at)"
+            " VALUES ('write-1', 'owner-1', 'conversation-1', 'key-1', 'fp-1', 'completed',"
+            " '2026-11-11T00:00:00+00:00', '2026-11-11T00:00:00+00:00')"
+        )
+
+    run_alembic(url, "upgrade", "head")
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("SELECT scope FROM memory_write_requests").fetchall() == [("global",)]
+    run_alembic(url, "check")
+
+    run_alembic(url, "downgrade", "0020_memory_terms")
+    with closing(sqlite3.connect(path)) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(memory_write_requests)")}
+        assert "scope" not in columns
+        assert connection.execute("SELECT id, request_key FROM memory_write_requests").fetchall() == [
+            ("write-1", "key-1")
+        ]
+
+
 def test_memory_terms_migration_creates_backfills_and_drops(tmp_path):
     from app.services.memory_terms import terms_of
 

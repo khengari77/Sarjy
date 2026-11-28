@@ -395,6 +395,57 @@ def test_a_temporary_memory_lineage_is_erased_but_a_global_memory_is_not(tmp_pat
     asyncio.run(main())
 
 
+def test_delete_scrubs_a_temporary_fact_written_by_the_temporary_service(tmp_path):
+    from app.infrastructure.database import Identity, MemoryTerm, Turn
+    from app.services.conversation_delete import delete_conversation
+    from app.services.temporary_memory import TemporaryFactOutcome, write_temporary_fact
+
+    async def main():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/written-lineage.db")
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as db:
+                db.add(Identity(id="owner", token_hash="hash", expires_at="2030"))
+                await db.commit()
+                db.add(Conversation(id="chat", owner_id="owner", title="Trip", revision=0))
+                await db.commit()
+                db.add(
+                    Turn(
+                        id="turn",
+                        conversation_id="chat",
+                        request_id="turn",
+                        role="user",
+                        text="hello",
+                        status="completed",
+                    )
+                )
+                await db.commit()
+
+            written = await write_temporary_fact(
+                sessions,
+                owner_id="owner",
+                conversation_id="chat",
+                turn_id="turn",
+                text="I live in Benghazi",
+                subject="location",
+            )
+            assert written.outcome is TemporaryFactOutcome.WRITTEN
+
+            async with sessions() as db:
+                await delete_conversation(db, owner_id="owner", conversation_id="chat")
+                row = await db.get(Memory, written.memory.id)
+                assert row.status == "deleted"
+                assert row.content == ""
+                terms = await db.scalar(select(MemoryTerm).where(MemoryTerm.memory_id == written.memory.id))
+                assert terms is None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(main())
+
+
 def test_a_global_memory_can_still_be_corrected_after_its_source_chat_is_deleted(tmp_path):
     _, settings = configured(tmp_path)
     with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
@@ -494,3 +545,128 @@ def test_finalize_takes_the_shared_conversation_lock(tmp_path, monkeypatch):
             json={"turn_id": turn_id, "text": "hi", "status": "completed"},
         )
         assert done.status_code == 200 and seen == [True]
+
+
+async def _promoted_snapshot_case(tmp_path, name, *, journal_previous=True):
+    from app.infrastructure.database import ContextOperation, Identity, Turn
+    from app.services.conversation_delete import delete_conversation
+    from app.services.memory_visibility import delete_memory
+    from app.services.temporary_memory import promote_temporary_memory, write_temporary_fact
+
+    old_text = "I live in OLD-PROMOTION-MARKER"
+    new_text = "I live in NEW-PROMOTION-MARKER"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/{name}.db")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessions() as db:
+        db.add(Identity(id="owner", token_hash="hash", expires_at="2030"))
+        await db.commit()
+        db.add(Conversation(id="chat", owner_id="owner", title="Trip", revision=0))
+        await db.commit()
+        db.add(
+            Turn(
+                id="turn",
+                conversation_id="chat",
+                request_id="turn",
+                role="user",
+                text="hello",
+                status="completed",
+            )
+        )
+        await db.commit()
+
+    written = await write_temporary_fact(
+        sessions,
+        owner_id="owner",
+        conversation_id="chat",
+        turn_id="turn",
+        text=old_text,
+        subject="location",
+    )
+    async with sessions() as db:
+        turn_row = await db.get(Turn, "turn")
+        turn_row.snapshot = {"messages": [{"role": "system", "content": [{"id": written.memory.id, "text": old_text}]}]}
+        if journal_previous:
+            db.add(
+                ContextOperation(
+                    id="change-1",
+                    owner_id="owner",
+                    conversation_id="chat",
+                    command_type="memory_auto_save",
+                    payload={
+                        "kind": "memory_saved",
+                        "promoted_from": "conversation",
+                        "memory_id": written.memory.id,
+                        "version": 2,
+                        "previous_content": old_text,
+                    },
+                    idempotency_key="change-1",
+                    outcome="applied",
+                )
+            )
+        await db.commit()
+
+    await promote_temporary_memory(
+        sessions,
+        owner_id="owner",
+        conversation_id="chat",
+        memory_id=written.memory.id,
+        expected_version=1,
+        content=new_text,
+        subject="location",
+        embedder=FakeEmbedder(),
+    )
+    return engine, sessions, written.memory.id, old_text, delete_memory, delete_conversation
+
+
+def test_deleting_a_replace_promotion_removes_the_old_text_from_snapshots(tmp_path):
+    async def run():
+        engine, sessions, memory_id, old_text, delete_memory, _ = await _promoted_snapshot_case(
+            tmp_path, "promotion-delete-memory", journal_previous=False
+        )
+        try:
+            async with sessions() as db:
+                await delete_memory(db, "owner", memory_id)
+                await db.commit()
+            assert marker_locations(tmp_path / "promotion-delete-memory.db", old_text) == []
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_deleting_the_source_chat_removes_the_old_promotion_text(tmp_path):
+    async def run():
+        engine, sessions, _, old_text, _, delete_conversation = await _promoted_snapshot_case(
+            tmp_path, "promotion-delete-chat"
+        )
+        try:
+            async with sessions() as db:
+                await delete_conversation(db, owner_id="owner", conversation_id="chat")
+            assert marker_locations(tmp_path / "promotion-delete-chat.db", old_text) == []
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_journal_previous_content_blanks_the_old_text_in_a_real_snapshot_shape(tmp_path):
+    async def run():
+        from app.infrastructure.database import Turn
+
+        engine, sessions, memory_id, old_text, delete_memory, _ = await _promoted_snapshot_case(
+            tmp_path, "promotion-snapshot-needle"
+        )
+        try:
+            async with sessions() as db:
+                turn_row = await db.get(Turn, "turn")
+                turn_row.snapshot = {"model_request": {"memories": [{"id": memory_id, "content": old_text}]}}
+                await db.commit()
+                await delete_memory(db, "owner", memory_id)
+                await db.commit()
+            assert marker_locations(tmp_path / "promotion-snapshot-needle.db", old_text) == []
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.commands import CommandKind
+from app.domain.contracts import SCOPE_CONVERSATION
 from app.domain.memory_capture import clean_tool_query, parse_tool_fact
 from app.infrastructure.database import Memory
 from app.services.context_operations import MemorySearcher, query_tokens, recent_memories
@@ -51,7 +52,10 @@ async def _already_saved(db: AsyncSession, owner_id: str, conversation_id: str, 
     wanted = " ".join(content.split()).casefold()
     rows = await db.scalars(
         select(Memory.content).where(
-            Memory.owner_id == owner_id, Memory.status == "active", visible_in(conversation_id)
+            Memory.owner_id == owner_id,
+            Memory.status == "active",
+            Memory.scope != SCOPE_CONVERSATION,
+            visible_in(conversation_id),
         )
     )
     return any(" ".join(row.split()).casefold() == wanted for row in rows)

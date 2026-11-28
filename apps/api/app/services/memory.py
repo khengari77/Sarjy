@@ -171,7 +171,16 @@ class MemoryListPage:
     next_offset: int | None
 
 
-def _fingerprint(conversation_id, source_turn_id, content, previous_id, expected_version):
+def _fingerprint(
+    conversation_id,
+    source_turn_id,
+    content,
+    previous_id,
+    expected_version,
+    *,
+    scope=SCOPE_GLOBAL,
+    embed=True,
+):
     payload = {
         "kind": "correct" if previous_id else "create",
         "conversation_id": conversation_id,
@@ -182,14 +191,35 @@ def _fingerprint(conversation_id, source_turn_id, content, previous_id, expected
         "embedding_model": EMBEDDING_MODEL,
         "embedding_dimensions": EMBEDDING_DIMENSIONS,
     }
+    # Keep the pre-temporary-memory hash for permanent claims: an idempotent retry across the deploy must replay, not
+    # 409. Only a non-default scope or a non-embedded row changes the hash.
+    if scope != SCOPE_GLOBAL:
+        payload["scope"] = scope
+    if not embed:
+        payload["embed"] = False
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def _claim_value(row):
     return {
         name: getattr(row, name)
-        for name in ("id", "fingerprint", "state", "embedding", "result", "error_code", "error_status", "created_at")
+        for name in (
+            "id",
+            "fingerprint",
+            "scope",
+            "state",
+            "embedding",
+            "result",
+            "error_code",
+            "error_status",
+            "created_at",
+        )
     }
+
+
+def _require_scope(scope: str) -> None:
+    if scope not in {SCOPE_GLOBAL, SCOPE_CONVERSATION}:
+        raise HTTPException(422, detail={"code": "INVALID_MEMORY_SCOPE"})
 
 
 def _validate_write(content, key, previous_id, expected_version) -> None:
@@ -249,10 +279,33 @@ class MemoryService:
         async with self.sessions() as db:
             return await owned_memory(db, owner_id, memory_id)
 
-    async def create_memory(self, owner_id, conversation_id, source_turn_id, content, idempotency_key, *, guard=None):
+    async def create_memory(
+        self,
+        owner_id,
+        conversation_id,
+        source_turn_id,
+        content,
+        idempotency_key,
+        *,
+        scope=SCOPE_GLOBAL,
+        subject=None,
+        embed=True,
+        guard=None,
+    ):
         self._require_isolated_caller()
+        _require_scope(scope)
         return await self._write(
-            owner_id, conversation_id, source_turn_id, content, idempotency_key, None, None, guard=guard
+            owner_id,
+            conversation_id,
+            source_turn_id,
+            content,
+            idempotency_key,
+            None,
+            None,
+            scope=scope,
+            subject=subject,
+            embed=embed,
+            guard=guard,
         )
 
     async def correct_memory(
@@ -265,10 +318,21 @@ class MemoryService:
         *,
         source_turn_id=None,
         conversation_id=None,
+        scope=None,
+        subject=None,
+        embed=None,
         guard=None,
     ):
+        """Correct one fact; ``scope=None`` keeps the scope the fact already has.
+
+        An explicit permanent save promotes a temporary row in place; this method is the fallback that creates a new
+        permanent row when promotion cannot run.
+        """
         self._require_isolated_caller()
         previous = await self.get_memory(owner_id, memory_id)
+        effective_scope = previous.scope if scope is None else scope
+        _require_scope(effective_scope)
+        effective_embed = (effective_scope != SCOPE_CONVERSATION) if embed is None else embed
         return await self._write(
             owner_id,
             conversation_id or previous.source_conversation_id,
@@ -277,10 +341,25 @@ class MemoryService:
             idempotency_key,
             memory_id,
             expected_version,
+            scope=effective_scope,
+            subject=subject,
+            embed=effective_embed,
             guard=guard,
         )
 
-    async def _claim(self, owner_id, conversation_id, source_turn_id, key, previous_id, expected_version, fingerprint):
+    async def _claim(
+        self,
+        owner_id,
+        conversation_id,
+        source_turn_id,
+        key,
+        previous_id,
+        expected_version,
+        fingerprint,
+        *,
+        scope=SCOPE_GLOBAL,
+        embed=True,
+    ):
         # The claim transaction owns authorization and source reads as well as
         # the reservation, so no caller transaction is touched.
         async with self.sessions() as db, db.begin():
@@ -291,8 +370,10 @@ class MemoryService:
             )
             if existing is not None:
                 return _claim_value(existing), False
-            # A correction may stay attributed to a source chat that was deleted since: the fact outlives its chat.
-            await owned_conversation(db, owner_id, conversation_id, include_deleted=previous_id is not None)
+            # A global fact outlives its source chat; a temporary fact dies with it.
+            await owned_conversation(
+                db, owner_id, conversation_id, include_deleted=previous_id is not None and scope == SCOPE_GLOBAL
+            )
             await _require_source_turn(db, source_turn_id, conversation_id)
             legacy = await db.scalar(select(Memory).where(Memory.owner_id == owner_id, Memory.request_key == key))
             if legacy is not None:
@@ -302,6 +383,8 @@ class MemoryService:
                     legacy.content,
                     legacy.supersedes_id,
                     legacy.version - 1 if legacy.supersedes_id else None,
+                    scope=legacy.scope,
+                    embed=legacy.scope != SCOPE_CONVERSATION,
                 )
                 if legacy_fingerprint != fingerprint:
                     raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
@@ -312,7 +395,8 @@ class MemoryService:
                 conversation_id=conversation_id,
                 request_key=key,
                 fingerprint=fingerprint,
-                state="completed" if legacy else "reserved",
+                scope=scope,
+                state="completed" if legacy else ("embedded" if not embed else "reserved"),
                 result=asdict(memory_result(legacy)) if legacy else None,
                 created_at=now(),
                 updated_at=now(),
@@ -326,8 +410,6 @@ class MemoryService:
                 )
                 return _claim_value(existing), False
             if legacy is None:
-                if hasattr(self.embedder, "require_configuration"):
-                    self.embedder.require_configuration()
                 if previous_id is not None:
                     previous = await db.get(Memory, previous_id)
                     if (
@@ -337,8 +419,11 @@ class MemoryService:
                         or previous.version != expected_version
                     ):
                         raise HTTPException(409, detail={"code": "MEMORY_VERSION_CONFLICT"})
-                # This helper never commits: claim and allowance become durable together.
-                await reserve_in_transaction(db, "openai")
+                if embed:
+                    if hasattr(self.embedder, "require_configuration"):
+                        self.embedder.require_configuration()
+                    # This helper never commits: claim and allowance become durable together.
+                    await reserve_in_transaction(db, "openai")
             row = await db.get(MemoryWriteRequest, identifier)
             return _claim_value(row), legacy is None
 
@@ -386,10 +471,17 @@ class MemoryService:
         previous_id,
         expected_version,
         *,
+        scope=SCOPE_GLOBAL,
+        subject=None,
+        embed=True,
         guard=None,
     ):
         async with self.sessions() as db, db.begin():
-            # First in the transaction: a delete of this owner's memories cannot interleave with this write.
+            if scope == SCOPE_CONVERSATION:
+                # Same order as every erase path: the conversation row first (shared), then the owner lock. A delete
+                # that won the race has tombstoned the row, so this select returns nothing and no text is written.
+                await owned_conversation(db, owner_id, conversation_id, lock=True, key_share=True)
+            # A delete of this owner's memories cannot interleave with this write.
             await lock_owner_memories(db, owner_id)
             # Short row-local write lock (also effective on SQLite), never held across inference.
             await db.execute(
@@ -404,8 +496,10 @@ class MemoryService:
                 raise HTTPException(503, detail={"code": "MEMORY_REQUEST_UNKNOWN"})
             if claim["fingerprint"] != fingerprint:
                 raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-            # A correction may stay attributed to a source chat that was deleted since: the fact outlives its chat.
-            await owned_conversation(db, owner_id, conversation_id, include_deleted=previous_id is not None)
+            # A global fact outlives its source chat; a temporary fact dies with it.
+            await owned_conversation(
+                db, owner_id, conversation_id, include_deleted=previous_id is not None and scope == SCOPE_GLOBAL
+            )
             if source_turn_id is not None:
                 source = await db.scalar(
                     select(Turn).where(Turn.id == source_turn_id, Turn.conversation_id == conversation_id)
@@ -433,19 +527,19 @@ class MemoryService:
                 if changed.rowcount != 1:
                     raise HTTPException(409, detail={"code": "MEMORY_VERSION_CONFLICT"})
                 version = expected_version + 1
-            # A correction stays where the fact lived: a temporary fact is not
-            # promoted to global, and a temporary fact keeps its source chat.
-            scope = SCOPE_GLOBAL if previous is None else previous.scope
+            # ``scope`` is decided by the caller: a plain correction keeps the fact's scope. Explicit permanent
+            # saves normally promote in place through ``promote_temporary_memory``.
             source_conversation_id = conversation_id
             if previous is not None and previous.scope == SCOPE_CONVERSATION:
                 source_conversation_id = previous.source_conversation_id
+            embedding = list(validate_embedding(claim["embedding"])) if embed else None
             memory = Memory(
                 id=str(uuid4()),
                 owner_id=owner_id,
                 # New rows always resolve a subject; only pre-migration rows stay NULL.
-                subject=resolve_subject(content),
+                subject=subject or resolve_subject(content),
                 content=content,
-                embedding=list(validate_embedding(claim["embedding"])),
+                embedding=embedding,
                 embedding_model=EMBEDDING_MODEL,
                 source_turn_id=source_turn_id,
                 source_conversation_id=source_conversation_id,
@@ -463,7 +557,19 @@ class MemoryService:
             return result
 
     async def _write(
-        self, owner_id, conversation_id, source_turn_id, content, key, previous_id, expected_version, *, guard=None
+        self,
+        owner_id,
+        conversation_id,
+        source_turn_id,
+        content,
+        key,
+        previous_id,
+        expected_version,
+        *,
+        scope=SCOPE_GLOBAL,
+        subject=None,
+        embed=True,
+        guard=None,
     ):
         self._require_isolated_caller()
         _validate_write(content, key, previous_id, expected_version)
@@ -475,10 +581,20 @@ class MemoryService:
             # SQLite cannot co-exist with an independent writer. Never autoflush
             # or roll back caller work; reject before touching any ledger row.
             raise HTTPException(409, detail={"code": "MEMORY_CALLER_TRANSACTION_ACTIVE"})
-        fingerprint = _fingerprint(conversation_id, source_turn_id, content, previous_id, expected_version)
+        fingerprint = _fingerprint(
+            conversation_id, source_turn_id, content, previous_id, expected_version, scope=scope, embed=embed
+        )
         try:
             claim, winner = await self._claim(
-                owner_id, conversation_id, source_turn_id, key, previous_id, expected_version, fingerprint
+                owner_id,
+                conversation_id,
+                source_turn_id,
+                key,
+                previous_id,
+                expected_version,
+                fingerprint,
+                scope=scope,
+                embed=embed,
             )
         except OperationalError as exc:
             # SQLite cannot open an independent writer while the caller holds a
@@ -491,7 +607,7 @@ class MemoryService:
             result = self._replay(claim, fingerprint)
             if result is not None:
                 return result
-        else:
+        elif embed:
             await self._embed_claim(claim, content)
         try:
             return await self._finalize(
@@ -504,6 +620,9 @@ class MemoryService:
                 key,
                 previous_id,
                 expected_version,
+                scope=scope,
+                subject=subject,
+                embed=embed,
                 guard=guard,
             )
         except HTTPException as exc:

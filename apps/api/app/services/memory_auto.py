@@ -7,14 +7,15 @@ change is journalled as a ``ContextOperation`` so it can be shown ("Remembered: 
 
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from fastapi import HTTPException
+from sqlalchemy import null, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.contracts import SCOPE_GLOBAL, MemoryMode
+from app.domain.contracts import SCOPE_CONVERSATION, SCOPE_GLOBAL, MemoryMode
 from app.domain.memory_changes import AUTO_SAVE, MemoryChange, Revert, RowState, revert_decision
 from app.domain.memory_policy import Decision, plan_for_proposal
-from app.infrastructure.database import ContextOperation, Memory, now
+from app.infrastructure.database import ContextOperation, Conversation, Memory, now
 from app.services.memory import MemoryService
 from app.services.memory_capture import (
     MemoryCaptureError,
@@ -23,7 +24,8 @@ from app.services.memory_capture import (
 )
 from app.services.memory_erasure_lock import lock_owner_memories
 from app.services.memory_scope import visible_in
-from app.services.memory_visibility import Erased, scrub_copies
+from app.services.memory_terms import delete_terms, write_terms
+from app.services.memory_visibility import Erased, delete_memory, scrub_copies
 
 APPLIED = "applied"
 UNDONE = "undone"
@@ -123,9 +125,10 @@ async def auto_commit_memory(
     if result.get("status") == "already_saved" or not memory:
         return {"status": result.get("status", "saved"), "change": None}
 
+    promoted = bool(result.get("promoted"))
     superseded_id = memory.get("supersedes_id")
     superseded_version = None
-    if superseded_id:
+    if superseded_id and not promoted:
         old = await db.get(Memory, superseded_id)
         superseded_version = old.version if old is not None else None
     # The journal quotes the fact. Write it under the owner lock, so a permanent delete either finished first (the
@@ -144,19 +147,33 @@ async def auto_commit_memory(
         if current == "active"
         else ""
     )
+    payload = {
+        "kind": kind,
+        "label": label,
+        "memory_id": memory["id"],
+        "version": memory["version"],
+        "superseded_id": superseded_id,
+        "superseded_version": superseded_version,
+    }
+    if promoted:
+        # In-place promotion: undo demotes the same row back to this chat instead of removing it. A replace also
+        # carries the earlier fact so undo can restore it.
+        payload = {
+            "kind": "memory_saved",
+            "label": label,
+            "promoted_from": "conversation",
+            "memory_id": memory["id"],
+            "version": memory["version"],
+        }
+        if kind == "memory_updated":
+            payload["previous_content"] = result.get("previous_content")
+            payload["previous_subject"] = result.get("previous_subject")
     operation = ContextOperation(
         id=str(uuid4()),
         owner_id=owner_id,
         conversation_id=conversation_id,
         command_type=AUTO_SAVE,
-        payload={
-            "kind": kind,
-            "label": label,
-            "memory_id": memory["id"],
-            "version": memory["version"],
-            "superseded_id": superseded_id,
-            "superseded_version": superseded_version,
-        },
+        payload=payload,
         idempotency_key=key,
         outcome=APPLIED,
     )
@@ -172,6 +189,81 @@ async def auto_commit_memory(
             raise
         return {"status": "saved", "change": _change_payload(replayed)}
     return {"status": result.get("status", "saved"), "change": _change_payload(operation)}
+
+
+async def _undo_promotion(
+    db: AsyncSession, *, operation: ContextOperation, payload: dict, owner_id: str
+) -> dict | None:
+    """Undo an in-place promotion by demoting the same row; a replace also restores the earlier fact."""
+    if payload.get("promoted_from") != "conversation":
+        return None
+    conversation = await db.get(Conversation, operation.conversation_id)
+    if conversation is None or conversation.deleted_at is not None:
+        # The source chat is gone: demoting would leave an invisible active row, so tombstone it instead.
+        try:
+            deleted = await delete_memory(
+                db,
+                owner_id,
+                payload.get("memory_id"),
+                scrub_proposals=False,
+                expected_version=payload["version"],
+            )
+        except HTTPException as exc:
+            await db.rollback()
+            raise ChangeConflict from exc
+        if not deleted.changed:
+            await db.rollback()
+            raise ChangeConflict
+        operation.outcome = UNDONE
+        operation.payload = {
+            "kind": payload.get("kind"),
+            "label": "",
+            "memory_id": payload.get("memory_id"),
+            "scrubbed": True,
+        }
+        await db.commit()
+        return {**_change_payload(operation), "undoable": False, "changed": True}
+    values = {
+        "scope": SCOPE_CONVERSATION,
+        "version": Memory.version + 1,
+        "embedding": null(),
+        "updated_at": now(),
+    }
+    if "previous_content" in payload:
+        values["content"] = payload["previous_content"]
+        values["subject"] = payload.get("previous_subject")
+    demoted = await db.execute(
+        update(Memory)
+        .where(
+            Memory.id == payload.get("memory_id"),
+            Memory.owner_id == owner_id,
+            Memory.status == "active",
+            Memory.scope == SCOPE_GLOBAL,
+            Memory.source_conversation_id == operation.conversation_id,
+            Memory.version == payload["version"],
+        )
+        .values(**values)
+    )
+    if demoted.rowcount != 1:
+        await db.rollback()
+        raise ChangeConflict
+    if "previous_content" in payload and isinstance(payload["previous_content"], str):
+        await delete_terms(db, [payload["memory_id"]])
+        await write_terms(
+            db,
+            memory_id=payload["memory_id"],
+            owner_id=owner_id,
+            content=payload["previous_content"],
+        )
+    operation.outcome = UNDONE
+    operation.payload = {
+        "kind": payload.get("kind"),
+        "label": "",
+        "memory_id": payload.get("memory_id"),
+        "scrubbed": True,
+    }
+    await db.commit()
+    return {**_change_payload(operation), "undoable": False, "changed": True}
 
 
 async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dict:
@@ -192,6 +284,10 @@ async def undo_change(db: AsyncSession, *, owner_id: str, change_id: str) -> dic
     if operation.outcome != APPLIED or "version" not in payload:
         # Permanently deleted (the journal was scrubbed) or otherwise no longer an applied change: nothing to revert.
         raise ChangeConflict
+
+    promoted_undo = await _undo_promotion(db, operation=operation, payload=payload, owner_id=owner_id)
+    if promoted_undo is not None:
+        return promoted_undo
 
     change = MemoryChange(
         memory_id=payload["memory_id"],

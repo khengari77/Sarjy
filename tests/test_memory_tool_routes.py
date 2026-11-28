@@ -1,5 +1,6 @@
 """Model-facing memory tools: propose-only routes with durable operation keys."""
 
+import json
 import sqlite3
 from contextlib import closing
 
@@ -420,7 +421,7 @@ def test_already_saved_fact_is_rejected_but_a_hidden_one_is_not_counted(tmp_path
         assert again["status"] == "proposed"
 
 
-def test_already_saved_ignores_a_temporary_memory_in_another_chat(tmp_path):
+def test_already_saved_only_counts_permanent_memories(tmp_path):
     file, settings = configured(tmp_path)
     with TestClient(create_app(settings)) as client:
         owner, chat, headers, turn = setup(client, file)
@@ -449,8 +450,10 @@ def test_already_saved_ignores_a_temporary_memory_in_another_chat(tmp_path):
             )
             db.commit()
 
+        # A temporary row is not a permanent duplicate: an explicit remember must arm a promotion proposal.
         again = call(client, headers, PROPOSE, turn, "p2", fact="My name is Abdulrahma").json()
-        assert again["status"] == "rejected" and again["error"] == "MEMORY_ALREADY_SAVED"
+        assert again["status"] == "proposed"
+        assert again["proposal"]["text"] == "My name is Abdulrahma"
 
 
 def test_forgetting_and_recalling_keep_working_when_memory_is_off(tmp_path):
@@ -477,3 +480,29 @@ def test_forgetting_and_recalling_keep_working_when_memory_is_off(tmp_path):
         assert table_count(file, "memories", "status='hidden'") == 1
         assert table_count(file, "memories", "status='active'") == 1
         assert table_count(file, "memory_write_requests") == 0
+
+
+def test_deleting_a_memory_scrubs_recall_tool_results_and_the_prompt_lens(tmp_path):
+    from test_memory_capture import _proposal_blobs
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        _, chat, headers, turn = setup(client, file, [("tea", "I prefer tea with mint")])
+        recalled = call(client, headers, RECALL, turn, "recall-tea", query="tea").json()
+        assert [item["content"] for item in recalled["memories"]] == ["I prefer tea with mint"]
+        assert "tea with mint" in json.dumps(call(client, headers, RECALL, turn, "recall-tea-2", query="tea").json())
+
+        listed = client.get(f"/v1/conversations/{chat}/tool-calls").json()
+        assert any("tea with mint" in json.dumps(item["result"]) for item in listed)
+
+        assert client.delete("/v1/memories/tea").status_code == 200
+        listed = client.get(f"/v1/conversations/{chat}/tool-calls").json()
+        assert all("tea with mint" not in json.dumps(item["result"]) for item in listed)
+        assert all(item["result"] == {"scrubbed": True} for item in listed if item["result"] is not None)
+        assert all("tea with mint" not in json.dumps(blob) for blob in _proposal_blobs(file))
+
+        after = client.post(
+            "/internal/agent/turn/start", headers=headers, json={"request_id": "after-delete", "text": "hello"}
+        )
+        assert after.status_code == 200, after.text
+        assert "tea with mint" not in after.text

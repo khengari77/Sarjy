@@ -3,7 +3,14 @@
 import pytest
 from app.domain.commands import parse_exact_command
 from app.domain.contracts import SetMemoryMode, UserSettings, apply_settings_action
-from app.domain.memory_policy import Decision, Sensitivity, classify_sensitivity, combine, decide
+from app.domain.memory_policy import (
+    Decision,
+    Sensitivity,
+    classify_sensitivity,
+    combine,
+    decide,
+    has_long_number,
+)
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -70,11 +77,26 @@ def test_the_keyword_net_can_only_raise_sensitivity(model_label, net_label):
         ("my password is hunter2", Sensitivity.CREDENTIAL),
         ("my pin code is 1234", Sensitivity.CREDENTIAL),
         ("my api key is abc", Sensitivity.CREDENTIAL),
+        ("my openai token is sk-proj-abcd1234", Sensitivity.CREDENTIAL),
+        ("value sk-proj-abcd1234", Sensitivity.CREDENTIAL),
+        ("my github key is ghp_abcdEFGH12345678", Sensitivity.CREDENTIAL),
+        ("the bucket key is AKIAABCDEFGH12345678", Sensitivity.CREDENTIAL),
+        ("the slack hook is xoxb-not-a-real-token", Sensitivity.CREDENTIAL),
+        ("the jwt is eyJhbGciOiJIUzI1NiJ9.payload", Sensitivity.CREDENTIAL),
+        ("وكلمة المرور هي hunter2", Sensitivity.CREDENTIAL),
+        ("بالرقم السري 8877", Sensitivity.CREDENTIAL),
+        ("ورمز التحقق 4567", Sensitivity.CREDENTIAL),
+        ("رقم الهوية 1234", Sensitivity.CREDENTIAL),
+        ("رقم البطاقة 4567", Sensitivity.CREDENTIAL),
         ("I make a salary of ninety thousand", Sensitivity.FINANCE),
+        ("أريد بطاقة ائتمان جديدة", Sensitivity.FINANCE),
         ("my doctor put me on metformin", Sensitivity.HEALTH),
         ("my boss is called Sam", Sensitivity.THIRD_PARTY),
         ("my favorite color is blue", Sensitivity.NORMAL),
+        ("the token budget is low", Sensitivity.NORMAL),
         ("I live in Benghazi", Sensitivity.NORMAL),
+        ("رقم الهوية", Sensitivity.NORMAL),
+        ("رقم البطاقة", Sensitivity.NORMAL),
     ],
 )
 def test_classifier_examples(text, expected):
@@ -85,6 +107,8 @@ def test_decisions_for_the_demo_script():
     assert decide("auto", classify_sensitivity("my favorite color is blue"), explicit=True) is Decision.SAVE
     assert decide("auto", classify_sensitivity("my doctor put me on metformin"), explicit=False) is Decision.ASK
     assert decide("auto", classify_sensitivity("my password is hunter2"), explicit=True) is Decision.SKIP
+    assert decide("auto", classify_sensitivity("my openai token is sk-proj-abcd1234"), explicit=True) is Decision.SKIP
+    assert decide("auto", classify_sensitivity("أريد بطاقة ائتمان جديدة"), explicit=True) is Decision.ASK
     assert decide("ask", classify_sensitivity("my favorite color is blue"), explicit=True) is Decision.ASK
     assert decide("off", classify_sensitivity("my favorite color is blue"), explicit=True) is Decision.SKIP
 
@@ -151,3 +175,48 @@ def test_auto_mode_matches_its_documented_table():
     }
     for (sensitivity, explicit), expected in table.items():
         assert decide("auto", sensitivity, explicit=explicit) is expected, (sensitivity, explicit)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "my card is 4,012,8888,8888,1881",
+        "my card is 4012–8888–8888–1881",
+        "my card is 4012٬8888٬8888٬1881",
+        "my card is 4012\u00a08888\u00a08888\u00a01881",
+        "my card is ٤٠١٢-٨٨٨٨-٨٨٨٨-١٨٨١",
+        "my card is 4012/8888/8888/1881",
+    ],
+)
+def test_long_digit_runs_are_credential_after_normalisation(text):
+    assert has_long_number(text) is True
+    assert classify_sensitivity(text) is Sensitivity.CREDENTIAL
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I start my new job on 2026-11-28",
+        "the meeting is on 28/11/2026 at 14:30",
+        "the meeting is on Nov 28, 2026",
+        "it costs 1,234,567",
+        "my favorite number is 7",
+        "I live at 12 Rose Street",
+        "version 2.0.1 is out",
+    ],
+)
+def test_dates_times_prices_and_short_numbers_are_not_phone_like(text):
+    assert has_long_number(text) is False
+    assert classify_sensitivity(text) is not Sensitivity.CREDENTIAL
+
+
+def test_arabic_definite_article_proclitic_is_a_credential():
+    assert classify_sensitivity("للرقم السري 1234") is Sensitivity.CREDENTIAL
+
+
+def test_the_arabic_assignment_marker_must_be_a_whole_word():
+    assert classify_sensitivity("كلمة المرور سهو") is Sensitivity.NORMAL
+
+
+def test_the_english_password_net_deliberately_refuses_a_password_manager():
+    assert classify_sensitivity("I use a password manager") is Sensitivity.CREDENTIAL
