@@ -15,6 +15,11 @@ export interface Turn {
   text: string;
   status: string;
 }
+export interface SessionIntro {
+  kind: 'full' | 'short';
+  text: string;
+  asset: string;
+}
 export interface SessionConfig {
   id: string;
   url: string;
@@ -24,6 +29,8 @@ export interface SessionConfig {
   voice_language: 'ar' | 'en';
   voice_source: 'requested' | 'saved' | 'default';
   saved_voice_unavailable?: 'removed' | 'transient' | null;
+  /** Present when the browser opted into playing the greeting itself. */
+  intro?: SessionIntro | null;
 }
 export interface SettingsActionResult {
   kind: 'SelectApprovedVoice' | 'AdjustSpeakingSpeed' | 'SetSpeakingSpeed' | 'SetCaptionsVisible' | 'SetMemoryMode';
