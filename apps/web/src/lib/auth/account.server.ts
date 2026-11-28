@@ -7,7 +7,9 @@ const VERIFY_TIMEOUT_MS = 5_000;
 // Longer than the API's own deadline for the credential provider.
 const SUBMIT_TIMEOUT_MS = 12_000;
 
-function call(path: string, options: { token?: string; method?: string; headers?: object; body?: string; ms: number }) {
+type CallOptions = { token?: string; method?: string; headers?: object; body?: string; ms: number };
+
+function call(path: string, options: CallOptions) {
   return fetch(new URL(path, API_INTERNAL_URL), {
     method: options.method ?? 'GET',
     headers: {
@@ -21,6 +23,29 @@ function call(path: string, options: { token?: string; method?: string; headers?
   });
 }
 
+const RETRYABLE_STATUSES = new Set([502, 503, 504]);
+
+function isTimeout(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('name' in error)) return false;
+  return error.name === 'TimeoutError' || error.name === 'AbortError';
+}
+
+/**
+ * GET is idempotent, so one immediate retry is safe: a kept-alive connection to
+ * the API's ingress can be stale, and an ingress 502/503/504 during a deploy is
+ * transient. A timeout is not retried: the visitor already waited the deadline.
+ */
+async function getWithRetry(path: string, options: CallOptions): Promise<Response> {
+  try {
+    const response = await call(path, options);
+    if (!RETRYABLE_STATUSES.has(response.status)) return response;
+    await response.body?.cancel();
+  } catch (error) {
+    if (isTimeout(error)) throw error;
+  }
+  return call(path, { ...options, headers: { ...options.headers, connection: 'close' } });
+}
+
 /** Cookie values are only forwarded in the exact shape the API issues. */
 function sessionToken(cookies: Cookies): string | undefined {
   const value = cookies.get(ACCOUNT_COOKIE);
@@ -31,7 +56,7 @@ export async function accountSession(cookies: Cookies): Promise<'valid' | 'none'
   const token = sessionToken(cookies);
   if (!token) return 'none';
   try {
-    const response = await call('/v1/auth/session', { token, ms: VERIFY_TIMEOUT_MS });
+    const response = await getWithRetry('/v1/auth/session', { token, ms: VERIFY_TIMEOUT_MS });
     await response.body?.cancel();
     if (response.ok) return 'valid';
     return response.status === 401 ? 'none' : 'unavailable';
