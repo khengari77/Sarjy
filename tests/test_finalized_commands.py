@@ -150,7 +150,7 @@ def test_captions_and_voice_use_the_one_settings_path(tmp_path):
         assert client.get("/v1/settings").json()["approved_voice_id"] == "approved"
 
 
-def test_memory_mode_by_voice_is_stored_through_the_one_settings_path(tmp_path):
+def test_memory_mode_by_voice_is_chat_scoped_and_account_is_explicit(tmp_path):
     app, path = app_for(tmp_path)
     with TestClient(app) as client:
         conversation = chat(client)
@@ -158,18 +158,26 @@ def test_memory_mode_by_voice_is_stored_through_the_one_settings_path(tmp_path):
 
         off = voice(client, conversation, "Turn memory off.").json()["result"]
         assert off["kind"] == "executed" and off["action"] == "SetMemoryMode"
-        assert off["settings"]["memory_mode"] == "off" and off["settings"]["revision"] == 1
-        assert off["spoken"] == "Memory is off. I won't save anything."
-        assert client.get("/v1/settings").json()["memory_mode"] == "off"
-        assert counts(path) == (1, 0, 1)
+        assert off["settings"]["memory_mode"] == "auto"
+        assert off["spoken"] == "Memory is off for this chat."
+        assert client.get("/v1/settings").json()["memory_mode"] == "auto"
+        listed = {row["id"]: row for row in client.get("/v1/conversations").json()}
+        assert listed[conversation]["memory_mode"] == "off"
+        assert listed[conversation]["effective_memory_mode"] == "off"
+        assert counts(path)[0] == 0  # the account setting was not written
 
         again = voice(client, conversation, "turn memory off", request="r2", revision=1).json()["result"]
-        assert again["kind"] == "unchanged" and again["spoken"] == "Memory is already off."
-        assert counts(path)[0] == 1  # no second settings revision for an unchanged mode
+        assert again["kind"] == "unchanged" and again["spoken"] == "Memory is already off for this chat."
 
         ask = voice(client, conversation, "Ask me before remembering.", request="r3", revision=1).json()["result"]
-        assert ask["settings"]["memory_mode"] == "ask" and ask["spoken"] == "I'll ask before remembering."
-        assert client.get("/v1/settings").json()["memory_mode"] == "ask"
+        assert ask["settings"]["memory_mode"] == "auto"
+        assert ask["spoken"] == "I'll ask before remembering in this chat."
+        assert client.get("/v1/settings").json()["memory_mode"] == "auto"
+
+        account = voice(client, conversation, "Turn memory off by default.", request="r4", revision=0).json()["result"]
+        assert account["settings"]["memory_mode"] == "off" and account["settings"]["revision"] == 1
+        assert account["spoken"] == "Memory is off by default."
+        assert client.get("/v1/settings").json()["memory_mode"] == "off"
 
 
 def test_a_sentence_that_merely_mentions_memory_changes_nothing(tmp_path):
@@ -306,6 +314,17 @@ def test_unwired_rows_refuse_with_the_exact_sentence_and_mutate_nothing(tmp_path
         assert body["result"]["settings"] is None
         assert body["result"]["changed"] is False
         assert client.get("/v1/settings").json()["revision"] == 0
+        assert counts(path) == (0, 0, 0)
+
+
+@pytest.mark.parametrize("text", ["Forget Paris.", "Forget everything about me.", "Forget what I said."])
+def test_forget_wording_is_not_a_regex_command(tmp_path, text):
+    app, path = app_for(tmp_path, "no-forget-grammar")
+    with TestClient(app) as client:
+        conversation = chat(client)
+        response = voice(client, conversation, text)
+        assert response.status_code == 200
+        assert response.json() == {"handled": False}
         assert counts(path) == (0, 0, 0)
 
 

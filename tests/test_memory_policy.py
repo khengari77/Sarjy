@@ -90,18 +90,27 @@ def test_decisions_for_the_demo_script():
 
 
 @pytest.mark.parametrize(
-    ("text", "mode"),
+    ("text", "mode", "scope"),
     [
-        ("turn memory off", "off"),
-        ("Turn off memory.", "off"),
-        ("ask before remembering", "ask"),
-        ("Can you ask me before remembering?", "ask"),
-        ("remember things automatically", "auto"),
-        ("turn memory on, please", "auto"),
+        ("turn memory off", "off", "chat"),
+        ("Turn off memory.", "off", "chat"),
+        ("don't save anything in this chat", "off", "chat"),
+        ("ask before remembering", "ask", "chat"),
+        ("Can you ask me before remembering?", "ask", "chat"),
+        ("remember things automatically", "auto", "chat"),
+        ("turn memory on, please", "auto", "chat"),
+        ("turn memory off by default", "off", "account"),
+        ("always keep memory off", "off", "account"),
+        ("turn memory off in my settings", "off", "account"),
+        ("remember things automatically for my account", "auto", "account"),
     ],
 )
-def test_memory_mode_phrases_parse_to_the_action(text, mode):
-    assert parse_exact_command(text) == SetMemoryMode(mode=mode)
+def test_memory_mode_phrases_parse_to_the_action(text, mode, scope):
+    assert parse_exact_command(text) == SetMemoryMode(mode=mode, scope=scope)
+
+
+def test_clearing_the_chat_override_is_a_chat_scope_action():
+    assert parse_exact_command("go back to my default memory setting") == SetMemoryMode(mode=None, scope="chat")
 
 
 @pytest.mark.parametrize(

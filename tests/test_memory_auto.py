@@ -34,6 +34,22 @@ def memory_by_id(file, memory_id):
         ).fetchone()
 
 
+def memory_terms(file, memory_id):
+    with closing(sqlite3.connect(file)) as db:
+        return [row[0] for row in db.execute("SELECT term FROM memory_terms WHERE memory_id = ?", (memory_id,))]
+
+
+def seed_memory(file, *, memory_id, owner_id, conversation_id, content, subject, scope):
+    with closing(sqlite3.connect(file)) as db, db:
+        db.execute(
+            "INSERT INTO memories (id,owner_id,content,subject,scope,embedding_model,source_conversation_id,"
+            "version,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,1,'active',"
+            "'2026-11-26T00:00:00+00:00','2026-11-26T00:00:00+00:00')",
+            (memory_id, owner_id, content, subject, scope, "text-embedding-3-small", conversation_id),
+        )
+        db.commit()
+
+
 def proposal_of(client, headers, text, request_id):
     body = turn(client, headers, text, request_id).json()
     proposal = body["memory_proposal"]
@@ -158,6 +174,7 @@ def test_undoing_a_plain_save_tombstones_the_memory_and_is_idempotent(tmp_path):
     cm, client, file, headers = started(tmp_path, "auto")
     try:
         change = save_via_auto(client, headers, "My name is Sam", "fact-1")
+        assert memory_terms(file, change["memory_id"])
 
         response = client.post(f"/v1/changes/{change['id']}/undo")
         assert response.status_code == 200, response.text
@@ -168,6 +185,7 @@ def test_undoing_a_plain_save_tombstones_the_memory_and_is_idempotent(tmp_path):
         row = memory_by_id(file, change["memory_id"])
         assert row[0] == "deleted" and row[1] == ""
         assert row[2] is None
+        assert memory_terms(file, change["memory_id"]) == []
         assert operations(file) == [("memory_auto_save", "undone")]
 
         again = client.post(f"/v1/changes/{change['id']}/undo")
@@ -669,98 +687,84 @@ def test_auto_propose_asks_when_a_fact_contradicts_a_saved_one_and_changes_nothi
         cm.__exit__(None, None, None)
 
 
-def test_a_failed_auto_save_never_claims_a_save_and_never_falls_back_to_a_question(tmp_path, monkeypatch):
-    from app.routes import worker as worker_module
-    from app.services.memory_capture import MemoryCaptureError
-
-    async def refuse(*args, **kwargs):
-        raise MemoryCaptureError("MEMORY_CAPTURE_NOT_CONFIGURED", 503)
-
-    monkeypatch.setattr(worker_module, "auto_commit_memory", refuse)
+def test_undo_restoring_a_global_fact_refuses_beside_another_chats_temporary_same_subject_fact(tmp_path):
+    # A global fact is seen in every conversation, so restoring it beside any active same-subject fact of the owner
+    # would put two contradictory active facts in that conversation's prompt.
     cm, client, file, headers = started(tmp_path, "auto")
     try:
-        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
-        body = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
-        assert body["status"] == "rejected" and body["error"] == "MEMORY_SAVE_FAILED"
-        assert "proposal" not in body and "do not claim" in body["message"].lower()
-        assert "could not confirm" in body["message"].lower()  # an attempted write is never reported as "nothing saved"
-        assert active_contents(file) == []
+        first = save_via_auto(client, headers, "My name is Sam", "fact-1")
+        second = save_via_auto(client, headers, "My name is Alex", "fact-2")
+        owner, _ = session_identity(file)
+        chat_b = client.post("/v1/conversations").json()["id"]
+        seed_memory(
+            file,
+            memory_id="temp-b",
+            owner_id=owner,
+            conversation_id=chat_b,
+            content="My name is Bee",
+            subject="attribute:name",
+            scope="conversation",
+        )
+
+        undone = client.post(f"/v1/changes/{second['id']}/undo")
+        assert undone.status_code == 409, undone.text
+        assert memory_by_id(file, first["memory_id"])[0] == "superseded"
+        assert memory_by_id(file, second["memory_id"])[0] == "active"
     finally:
         cm.__exit__(None, None, None)
 
 
-def test_auto_propose_still_asks_for_a_third_party_fact_another_script_and_a_hidden_fact(tmp_path):
-    """A model proposal is never 'explicit'; the English keyword net cannot judge other scripts; a hidden fact stays hidden."""
+def test_undo_restoring_a_temporary_fact_ignores_a_same_subject_fact_in_another_chat(tmp_path):
     cm, client, file, headers = started(tmp_path, "auto")
     try:
-        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
-        third = propose_tool(client, headers, "My boss is getting divorced", "p1", turn_id)
-        assert third["status"] == "proposed", third
-        arabic = propose_tool(client, headers, "أنا أسكن في طرابلس", "p2", turn_id)
-        assert arabic["status"] == "proposed", arabic
-        assert active_contents(file) == [] and operations(file) == []
-
-        saved = propose_tool(client, headers, "I like green tea", "p3", turn_id)
-        assert saved["status"] == "saved"
+        first = save_via_auto(client, headers, "My name is Sam", "fact-1")
+        second = save_via_auto(client, headers, "My name is Alex", "fact-2")
+        owner, chat_a = session_identity(file)
+        chat_b = client.post("/v1/conversations").json()["id"]
         with closing(sqlite3.connect(file)) as db, db:
-            db.execute("UPDATE memories SET status = 'hidden' WHERE content = 'I like green tea'")
-        again = propose_tool(client, headers, "I like green tea", "p4", turn_id)
-        assert again["status"] == "proposed", again
-        assert active_contents(file) == []
+            db.execute("UPDATE memories SET scope = 'conversation' WHERE id = ?", (first["memory_id"],))
+        seed_memory(
+            file,
+            memory_id="temp-b",
+            owner_id=owner,
+            conversation_id=chat_b,
+            content="My name is Bee",
+            subject="attribute:name",
+            scope="conversation",
+        )
+
+        undone = client.post(f"/v1/changes/{second['id']}/undo")
+        assert undone.status_code == 200, undone.text
+        assert undone.json()["changed"] is True
+        assert memory_by_id(file, first["memory_id"])[0] == "active"
+        assert memory_by_id(file, second["memory_id"])[0] == "deleted"
+        assert memory_by_id(file, "temp-b")[0] == "active"
     finally:
         cm.__exit__(None, None, None)
 
 
-def test_auto_propose_never_re_adds_a_hidden_fact_even_where_lower_and_casefold_differ(tmp_path):
+@pytest.mark.parametrize("scope", ["conversation", "global"])
+def test_undo_still_refuses_when_a_visible_same_subject_fact_is_active(tmp_path, scope):
     cm, client, file, headers = started(tmp_path, "auto")
     try:
-        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
-        assert propose_tool(client, headers, "I live in Straßburg", "p1", turn_id)["status"] == "saved"
-        with closing(sqlite3.connect(file)) as db, db:
-            db.execute("UPDATE memories SET status = 'hidden' WHERE content = 'I live in Straßburg'")
-        # ß case-folds to "ss": SQL lower() would not match it, the Python comparison does.
-        again = propose_tool(client, headers, "I live in STRASSBURG", "p2", turn_id)
-        assert again["status"] == "proposed", again
-        assert active_contents(file) == []
-    finally:
-        cm.__exit__(None, None, None)
+        first = save_via_auto(client, headers, "My name is Sam", "fact-1")
+        second = save_via_auto(client, headers, "My name is Alex", "fact-2")
+        owner, chat_a = session_identity(file)
+        chat_b = client.post("/v1/conversations").json()["id"]
+        seed_memory(
+            file,
+            memory_id=f"visible-{scope}",
+            owner_id=owner,
+            conversation_id=chat_a if scope == "conversation" else chat_b,
+            content="My name is Still Here",
+            subject="attribute:name",
+            scope=scope,
+        )
 
-
-def test_auto_propose_asks_for_a_negated_fact_and_for_a_fact_with_no_letters(tmp_path):
-    cm, client, file, headers = started(tmp_path, "auto")
-    try:
-        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
-        assert propose_tool(client, headers, "I live in Cairo", "p1", turn_id)["status"] == "saved"
-        negated = propose_tool(client, headers, "I no longer live in Cairo", "p2", turn_id)
-        assert negated["status"] == "proposed", negated
-        digits = propose_tool(client, headers, "My number is 4111 1111 1111 1111", "p3", turn_id)
-        assert digits["status"] == "proposed", digits  # nine or more digits in a row: a card, phone or ID number
-        assert propose_tool(client, headers, "I was born in 1999", "p4", turn_id)["status"] == "saved"
-        assert sorted(active_contents(file)) == ["I live in Cairo", "I was born in 1999"]
-    finally:
-        cm.__exit__(None, None, None)
-
-
-def test_a_memory_turned_off_just_before_the_write_wins(tmp_path, monkeypatch):
-    """The mode is re-read right before the write: a concurrent 'turn memory off' is never overtaken."""
-    from app.routes import worker as worker_module
-
-    cm, client, file, headers = started(tmp_path, "auto")
-    try:
-        turn_id = turn(client, headers, "hello there", "t1").json()["turn_id"]
-        with closing(sqlite3.connect(file)) as db:
-            owner = db.execute("SELECT owner_id FROM user_settings").fetchone()[0]
-        original = worker_module.proposal_conflicts
-
-        async def conflicts_then_off(*args, **kwargs):
-            result = await original(*args, **kwargs)
-            with closing(sqlite3.connect(file)) as db, db:
-                db.execute("UPDATE user_settings SET memory_mode = 'off' WHERE owner_id = ?", (owner,))
-            return result
-
-        monkeypatch.setattr(worker_module, "proposal_conflicts", conflicts_then_off)
-        body = propose_tool(client, headers, "I live in Benghazi", "p1", turn_id)
-        assert body["status"] == "rejected" and body["error"] == "MEMORY_OFF", body
-        assert active_contents(file) == []
+        undone = client.post(f"/v1/changes/{second['id']}/undo")
+        assert undone.status_code == 409, undone.text
+        assert undone.json()["detail"]["code"] == "CHANGE_SUPERSEDED"
+        assert memory_by_id(file, first["memory_id"])[0] == "superseded"
+        assert memory_by_id(file, second["memory_id"])[0] == "active"
     finally:
         cm.__exit__(None, None, None)

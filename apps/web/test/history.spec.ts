@@ -135,7 +135,17 @@ test('switching chats mid-call requires an explicit end and switch', async ({ pa
 
   // A live call for this chat blocks deletion until it ends.
   await page.getByRole('button', { name: 'Conversation actions for Trip to Paris' }).click();
-  await expect(page.getByRole('menu').getByRole('menuitem', { name: 'Delete' })).toBeDisabled();
+  const callMenu = page.getByRole('menu');
+  const blockedDelete = callMenu.getByRole('menuitem', { name: 'Delete' });
+  await expect(blockedDelete).toHaveAttribute('aria-disabled', 'true');
+  // aria-disabled keeps the item focusable, so keyboard and AT users can reach
+  // the reason instead of having Delete skipped as a native disabled control.
+  await expect(blockedDelete).toBeFocused();
+  await expect(blockedDelete).toHaveAccessibleDescription('End the call before deleting this chat');
+  await expect(callMenu.getByText('End the call before deleting this chat')).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(callMenu.getByText('Delete this chat?')).toHaveCount(0);
+  await expect(blockedDelete).toBeFocused();
   await page.keyboard.press('Escape');
 
   await page.getByRole('button', { name: 'Work ideas', exact: true }).click();
@@ -181,8 +191,8 @@ test('delete confirms inline, removes the chat and refreshes the list', async ({
   await page.getByRole('button', { name: 'Conversation actions for Trip to Paris' }).click();
   const menu = page.getByRole('menu');
 
-  await expect(menu.getByRole('menuitem', { name: 'Rename' })).toBeDisabled();
-  await expect(menu).toContainText('Rename needs backend support.');
+  // The row menu offers delete only: no disabled or renamed leftovers.
+  await expect(menu.getByRole('menuitem')).toHaveText(['Delete']);
   const deleteItem = menu.getByRole('menuitem', { name: 'Delete' });
   await expect(deleteItem).toBeEnabled();
 
@@ -207,6 +217,9 @@ test('delete confirms inline, removes the chat and refreshes the list', async ({
 });
 
 test('the delete confirmation cannot be dismissed while the delete is in flight', async ({ page }) => {
+  // Below the dock breakpoint the left rail is an overlay drawer, so the shell
+  // would close it on Escape and could trap Tab outside the confirm group.
+  await page.setViewportSize({ width: 900, height: 720 });
   await mockHistory(page);
   let release: (() => void) | undefined;
   const gate = new Promise<void>((resolve) => (release = resolve));
@@ -221,20 +234,38 @@ test('the delete confirmation cannot be dismissed while the delete is in flight'
   });
   try {
     await gotoHistory(page);
+    const left = page.getByRole('button', { name: 'Show conversations' });
+    await left.click();
     await page.getByRole('button', { name: 'Conversation actions for Trip to Paris' }).click();
     const menu = page.getByRole('menu');
     await menu.getByRole('menuitem', { name: 'Delete' }).click();
     await menu.getByRole('button', { name: 'Delete this chat' }).click();
     await expect(menu.getByText('Deleting…')).toBeVisible();
 
-    // With focus inside the sidebar the shell would close this dock on Escape: the menu must consume it.
+    const confirm = menu.getByRole('group', { name: 'Delete this chat?' });
+    const focusInConfirm = () => confirm.evaluate((el) => el.contains(document.activeElement));
+    // The disabled Delete button must not drop focus to <body>.
+    await expect.poll(focusInConfirm).toBe(true);
+
+    // Tab must not dismiss the pending delete or leave the confirmation.
+    await page.keyboard.press('Tab');
+    await expect(menu).toBeVisible();
+    await expect.poll(focusInConfirm).toBe(true);
+
+    // The shell would close this drawer on Escape: the confirm must consume it.
+    await page.keyboard.press('Escape');
+    await expect(left).toHaveAttribute('aria-expanded', 'true');
+    await expect.poll(focusInConfirm).toBe(true);
+
+    // With focus inside the sidebar the shell would still close the drawer; the
+    // document-level menu handler must consume Escape wherever focus is.
     const search = page.getByRole('searchbox', { name: 'Search conversations' });
     await search.focus();
     await page.keyboard.press('Escape');
     await expect(search).toHaveCount(1);
+    await expect(left).toHaveAttribute('aria-expanded', 'true');
     await search.click();
     await expect(menu).toBeVisible();
-    await expect(menu.getByText('Deleting…')).toBeVisible();
 
     release?.();
     await expect(page.getByRole('button', { name: 'Trip to Paris', exact: true })).toHaveCount(0);

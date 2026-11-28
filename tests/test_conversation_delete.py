@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from app.config import Settings
 from app.infrastructure.database import Base, Conversation, Memory
 from app.main import create_app
+from app.services.memory_terms import terms_of
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -67,6 +68,11 @@ def seed_copy(file, chat, owner, turn_id):
             " 'temp-request-key', ?, ?)",
             (owner, MARKER, turn_id, chat, stamp(), stamp()),
         )
+        for term in terms_of(MARKER):
+            db.execute(
+                "INSERT INTO memory_terms (memory_id, owner_id, term) VALUES ('m-temp', ?, ?)",
+                (owner, term),
+            )
         db.execute(
             "INSERT INTO memory_write_requests"
             " (id, owner_id, conversation_id, request_key, fingerprint, state, embedding, result, error_code, error_status,"
@@ -147,6 +153,15 @@ def test_delete_erases_every_stored_copy_of_the_conversation_text(tmp_path):
 
         assert client.delete(f"/v1/conversations/{chat}").status_code == 204
         assert marker_locations(file, MARKER) == []
+        with closing(sqlite3.connect(file)) as db:
+            # Terms are derived copies of the marker text too: the temporary memory must take them with it.
+            assert (
+                db.execute(
+                    "SELECT term FROM memory_terms WHERE memory_id='m-temp' AND term IN (?, ?, ?, ?)",
+                    tuple(terms_of(MARKER)),
+                ).fetchall()
+                == []
+            )
 
 
 def test_a_global_memory_from_the_chat_survives_and_stays_readable(tmp_path):

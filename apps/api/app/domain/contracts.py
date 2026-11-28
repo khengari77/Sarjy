@@ -378,7 +378,15 @@ class SetCaptionsVisible(Contract):
 
 class SetMemoryMode(Contract):
     kind: Literal["SetMemoryMode"] = "SetMemoryMode"
-    mode: MemoryMode
+    # ``None`` clears a per-chat override and follows the account default again.
+    mode: MemoryMode | None = None
+    scope: Literal["chat", "account"] = "account"
+
+    @model_validator(mode="after")
+    def clearing_is_chat_only(self) -> "SetMemoryMode":
+        if self.mode is None and self.scope != "chat":
+            raise ValueError("MEMORY_MODE_CLEAR_REQUIRES_CHAT")
+        return self
 
 
 ThemeName = Literal["light", "dark", "system"]
@@ -454,6 +462,8 @@ def apply_settings_action(settings: UserSettings, action: Action) -> UserSetting
             return settings
         return settings.model_copy(update={"captions_visible": action.visible, "revision": settings.revision + 1})
     if isinstance(action, SetMemoryMode):
+        if action.scope != "account" or action.mode is None:
+            return settings
         if action.mode == settings.memory_mode:
             return settings
         return settings.model_copy(update={"memory_mode": action.mode, "revision": settings.revision + 1})

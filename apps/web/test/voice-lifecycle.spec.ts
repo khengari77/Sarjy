@@ -239,7 +239,7 @@ test('muting the microphone keeps the assistant envelope and speaking state live
   await expect(page.locator('.status-line')).toHaveAttribute('data-phase', 'speaking');
   await expect(page.locator('.status-line')).toContainText('Speaking');
   await expect(page.locator('.mic-slash')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Enable microphone', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Unmute microphone', exact: true })).toBeVisible();
 });
 
 test('events from a replaced session epoch are ignored', async ({ page }) => {

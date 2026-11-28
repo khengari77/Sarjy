@@ -49,6 +49,7 @@ from app.infrastructure.database import (
 from app.services.authorization import owned_conversation
 from app.services.memory_eligibility import blocked_memory_ids
 from app.services.memory_scope import visible_in
+from app.services.memory_terms import REFERENTIAL, STOPWORDS
 
 SCOPE = "conversation"
 EXCLUDE = "exclude"
@@ -56,56 +57,6 @@ RESTORE = "restore"
 # Preview scoring is bounded at the database boundary.  This cap is larger than
 # the proposal result limit but prevents a lifetime owner-memory load.
 PREVIEW_SEARCH_ROW_LIMIT = 500
-STOPWORDS = frozenset(
-    [
-        "a",
-        "an",
-        "and",
-        "about",
-        "all",
-        "anything",
-        "are",
-        "as",
-        "at",
-        "be",
-        "but",
-        "by",
-        "chat",
-        "conversation",
-        "do",
-        "does",
-        "everything",
-        "for",
-        "from",
-        "get",
-        "has",
-        "have",
-        "i",
-        "in",
-        "is",
-        "it",
-        "its",
-        "me",
-        "my",
-        "of",
-        "on",
-        "or",
-        "please",
-        "remember",
-        "that",
-        "the",
-        "this",
-        "to",
-        "was",
-        "what",
-        "when",
-        "where",
-        "which",
-        "with",
-        "you",
-        "your",
-    ]
-)
 TOKEN = re.compile(r"\d+(?:\.\d+)+|[0-9A-Za-z\u0600-\u06ff]+")
 
 
@@ -142,40 +93,13 @@ def _tokens(text: str) -> set[str]:
     return {token for token in TOKEN.findall(cleaned) if token not in STOPWORDS}
 
 
-# Words that point at something without naming it; a target made of these (and stopwords) is no target.
-_REFERENTIAL = frozenset(
-    {
-        "them",
-        "they",
-        "us",
-        "we",
-        "our",
-        "his",
-        "her",
-        "him",
-        "their",
-        "those",
-        "these",
-        "stuff",
-        "things",
-        "thing",
-        "something",
-        "anything",
-        "nothing",
-        "everything",
-        "one",
-        "ones",
-    }
-)
-
-
 def query_tokens(query: str) -> set[str]:
     """Tokens a keyword search may match on: the guard's content rule applied to the query itself.
 
     A single character never elects a memory next to other words ("vitamin D" must not match "got a D in
     math" on the "d"); it is a search term only when it is the whole query ("X").
     """
-    tokens = _tokens(query) - _REFERENTIAL
+    tokens = _tokens(query) - REFERENTIAL
     if len(query.strip()) == 1:
         return tokens
     return {token for token in tokens if len(token) > 1}

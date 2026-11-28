@@ -32,6 +32,7 @@ from app.infrastructure.database import (
 )
 from app.infrastructure.upsert import insert_ignore
 from app.services.leases import LEASE_SECONDS, lease_expired, lease_expiry
+from app.services.memory_mode import effective_memory_mode
 from app.services.voices import VoiceCatalogError
 
 SETTING_ACTIONS = (
@@ -351,7 +352,9 @@ async def dispatch_setting(db, *, owner_id, request_id, expected_revision, actio
     resurfacing a stale-revision conflict for a write that already committed.
     """
 
-    if not isinstance(action, SETTING_ACTIONS):
+    if not isinstance(action, SETTING_ACTIONS) or (isinstance(action, SetMemoryMode) and action.scope != "account"):
+        # A chat-scoped memory mode belongs to one conversation: it never goes through the owner-level settings path
+        # (it would be a silent no-op there).
         raise HTTPException(422, detail={"code": "INVALID_SETTING_ACTION"})
     key = _setting_key(owner_id, request_id)
     fingerprint = _setting_fingerprint(expected_revision, action)
@@ -442,6 +445,8 @@ async def _dispatch_transaction(
                 raise HTTPException(409, detail={"code": "ACTION_LEASE_LOST"})
     if isinstance(action, CONVERSATION_SETTING_ACTIONS):
         result = await _apply_setting(db, owner_id, expected_revision, action)
+    elif isinstance(action, SetMemoryMode) and action.scope == "chat":
+        result = await _apply_conversation_memory_mode(db, conversation, expected_revision, action)
     elif isinstance(action, (ShowConversationHistory, OpenMemoryExplorer)):
         result = _navigation_result(action)
     else:
@@ -533,6 +538,40 @@ def _navigation_result(action) -> dict:
     return {
         "kind": action.kind,
         "navigation": "history" if isinstance(action, ShowConversationHistory) else "memory_explorer",
+    }
+
+
+async def _apply_conversation_memory_mode(db, conversation, expected_revision, action):
+    """Set or clear one conversation's override; the account default is never written.
+
+    One conditional UPDATE (revision compare-and-set, live conversation only), so a concurrent PUT or command cannot
+    both win from the same revision.
+    """
+    before = conversation.memory_mode
+    after = action.mode
+    changed = before != after
+    if changed:
+        updated = await db.execute(
+            update(Conversation)
+            .where(
+                Conversation.id == conversation.id,
+                Conversation.revision == expected_revision,
+                Conversation.deleted_at.is_(None),
+            )
+            .values(memory_mode=after, revision=Conversation.revision + 1)
+        )
+        if updated.rowcount != 1:
+            raise HTTPException(409, detail={"code": "REVISION_CONFLICT"})
+    elif conversation.revision != expected_revision:
+        raise HTTPException(409, detail={"code": "REVISION_CONFLICT"})
+    row = await db.get(UserSetting, conversation.owner_id)
+    return {
+        "kind": action.kind,
+        "scope": "chat",
+        "settings": settings_value(row).model_dump(mode="json"),
+        "memory_mode": after,
+        "effective_memory_mode": effective_memory_mode(after, row.memory_mode if row is not None else None),
+        "changed": changed,
     }
 
 

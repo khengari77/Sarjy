@@ -1,6 +1,7 @@
 /*
- * Wordle stage. Colours come from the Living Cloud tokens only; light/dark
- * overrides are declared here so a tile never needs an ad-hoc colour value.
+ * Wordle stage. Correct/present tile pairs come from tokens.css so they keep
+ * an explicit text/background contrast instead of inheriting semantic orb
+ * colours. The absent pair is derived from the shared shell tokens.
  */
 .wordle-backdrop {
   position: fixed;
@@ -14,10 +15,6 @@
 }
 
 .wordle-stage {
-  --wordle-correct-bg: color-mix(in srgb, var(--status-success) 50%, var(--bg-app));
-  --wordle-correct-text: var(--text-primary);
-  --wordle-present-bg: color-mix(in srgb, var(--orb-memory) 55%, var(--bg-app));
-  --wordle-present-text: var(--text-primary);
   --wordle-absent-bg: color-mix(in srgb, var(--text-muted) 28%, var(--surface-elevated));
   --wordle-absent-text: var(--text-primary);
   width: min(560px, 100%);
@@ -32,22 +29,6 @@
   background: var(--surface-elevated);
   color: var(--text-primary);
   box-shadow: 0 24px 60px color-mix(in srgb, var(--bg-app) 60%, transparent);
-}
-
-[data-theme='light'] .wordle-stage {
-  --wordle-correct-bg: var(--status-success);
-  --wordle-correct-text: var(--text-primary);
-  --wordle-present-bg: var(--orb-memory);
-  --wordle-present-text: var(--text-primary);
-}
-
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) .wordle-stage {
-    --wordle-correct-bg: var(--status-success);
-    --wordle-correct-text: var(--text-primary);
-    --wordle-present-bg: var(--orb-memory);
-    --wordle-present-text: var(--text-primary);
-  }
 }
 
 .wordle-head {
@@ -387,7 +368,7 @@
   line-height: 1;
 }
 
-.wordle-key:hover:enabled {
+.wordle-key[data-mark='none']:hover:enabled {
   background: var(--surface-hover);
 }
 
@@ -474,6 +455,14 @@
   display: flex;
   justify-content: flex-end;
   padding: 10px 12px 0;
+}
+
+/* At phone-landscape heights the entry would take the stage's whole height;
+   the game stays one tap away from the normal-height layout. */
+@media (max-height: 480px) {
+  .wordle-quick-entry {
+    display: none;
+  }
 }
 
 .wordle-quick-entry .wordle-entry {

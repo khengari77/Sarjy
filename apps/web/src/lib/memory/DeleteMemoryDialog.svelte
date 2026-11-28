@@ -35,6 +35,27 @@
     };
   });
 
+  // Disabling the focused Delete button drops focus to <body>; the dialog
+  // itself (tabindex="-1") takes keyboard ownership while the call is in flight.
+  $effect(() => {
+    if (!busy) return;
+    void tick().then(() => dialog?.focus({ preventScroll: true }));
+  });
+
+  // While busy, capture Escape and Tab at the window so the drawer behind the
+  // portalled dialog never sees them. The dialog is the only modal layer then.
+  $effect(() => {
+    if (!busy) return;
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' && event.key !== 'Tab') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.key === 'Tab' && dialog) wrapTab(event, [dialog]);
+    };
+    window.addEventListener('keydown', onKeydown, true);
+    return () => window.removeEventListener('keydown', onKeydown, true);
+  });
+
   function onkeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -64,7 +85,15 @@
       This permanently deletes the memory and cannot be undone. It can only be done here, never by voice.
     </p>
     <div class="memory-dialog-actions">
-      <button type="button" class="ghost-button" bind:this={cancelButton} disabled={busy} onclick={oncancel}>
+      <button
+        type="button"
+        class="ghost-button"
+        bind:this={cancelButton}
+        aria-disabled={busy ? 'true' : undefined}
+        onclick={() => {
+          if (!busy) oncancel();
+        }}
+      >
         Cancel
       </button>
       <button type="button" class="danger-button" disabled={busy} onclick={ondelete}>

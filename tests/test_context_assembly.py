@@ -12,6 +12,7 @@ from app.domain.context import (
     validate_assembly,
 )
 from app.main import create_app
+from app.services.memory_terms import terms_of
 from fastapi.testclient import TestClient
 from hypothesis import given
 from hypothesis import strategies as st
@@ -194,12 +195,18 @@ def configured(tmp_path):
 def seed_memories(file, chat, memories, exclusions=()):
     with closing(sqlite3.connect(file)) as db, db:
         db.execute("INSERT OR IGNORE INTO development_budgets VALUES ('2026-11-12','openai',0)")
+        owner_id = db.execute("SELECT owner_id FROM conversations WHERE id=?", (chat,)).fetchone()[0]
         for record_id, content, status in memories:
             db.execute(
                 "INSERT INTO memories (id,owner_id,content,embedding_model,source_conversation_id,version,status,created_at,updated_at) "
                 "VALUES (?, (SELECT owner_id FROM conversations WHERE id=?), ?, 'text-embedding-3-small', ?, 1, ?, ?, ?)",
                 (record_id, chat, content, chat, status, "2026-11-12T00:00:00+00:00", "2026-11-12T00:00:00+00:00"),
             )
+            for term in terms_of(content):
+                db.execute(
+                    "INSERT INTO memory_terms (memory_id, owner_id, term) VALUES (?, ?, ?)",
+                    (record_id, owner_id, term),
+                )
         for memory_id in exclusions:
             db.execute(
                 "INSERT INTO context_operations (id,owner_id,conversation_id,command_type,payload,revision_before,revision_after,idempotency_key,outcome,created_at) "

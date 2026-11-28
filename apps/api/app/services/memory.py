@@ -18,7 +18,7 @@ from sqlalchemy.orm import undefer
 from sqlalchemy.pool import StaticPool
 
 from app.domain.context_operations import classify as _classify
-from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
+from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, SCOPE_CONVERSATION, SCOPE_GLOBAL
 from app.domain.memory_capture import is_referential, resolve_subject
 from app.infrastructure.database import Memory, MemoryWriteRequest, Turn, now
 from app.infrastructure.upsert import insert_ignore
@@ -28,6 +28,7 @@ from app.services.context_assembly import orm_memory_candidates
 from app.services.memory_eligibility import blocked_memory_ids
 from app.services.memory_erasure_lock import lock_owner_memories
 from app.services.memory_scope import visible_in
+from app.services.memory_terms import write_terms
 
 EMBEDDING_TIMEOUT_SECONDS = 20
 CLAIM_TIMEOUT_SECONDS = 30
@@ -152,6 +153,7 @@ class MemoryListItem:
     kind: str
     version: int
     status: str
+    scope: str
     source_conversation_id: str
     source_turn_id: str | None
     supersedes_id: str | None
@@ -415,7 +417,9 @@ class MemoryService:
                 # over cannot commit the memory row it protects.
                 await guard(db)
             version = 1
+            previous = None
             if previous_id is not None:
+                previous = await db.get(Memory, previous_id)
                 changed = await db.execute(
                     update(Memory)
                     .where(
@@ -429,6 +433,12 @@ class MemoryService:
                 if changed.rowcount != 1:
                     raise HTTPException(409, detail={"code": "MEMORY_VERSION_CONFLICT"})
                 version = expected_version + 1
+            # A correction stays where the fact lived: a temporary fact is not
+            # promoted to global, and a temporary fact keeps its source chat.
+            scope = SCOPE_GLOBAL if previous is None else previous.scope
+            source_conversation_id = conversation_id
+            if previous is not None and previous.scope == SCOPE_CONVERSATION:
+                source_conversation_id = previous.source_conversation_id
             memory = Memory(
                 id=str(uuid4()),
                 owner_id=owner_id,
@@ -438,7 +448,8 @@ class MemoryService:
                 embedding=list(validate_embedding(claim["embedding"])),
                 embedding_model=EMBEDDING_MODEL,
                 source_turn_id=source_turn_id,
-                source_conversation_id=conversation_id,
+                source_conversation_id=source_conversation_id,
+                scope=scope,
                 version=version,
                 status="active",
                 supersedes_id=previous_id,
@@ -446,6 +457,7 @@ class MemoryService:
             )
             db.add(memory)
             await db.flush()
+            await write_terms(db, memory_id=memory.id, owner_id=owner_id, content=content)
             result = memory_result(memory)
             row.state, row.result, row.updated_at = "completed", asdict(result), now()
             return result
@@ -537,6 +549,7 @@ class MemoryService:
         offset: int = 0,
         conversation_id: str | None = None,
         status: str | None = None,
+        scope: str | None = None,
     ) -> MemoryListPage:
         """Owner-scoped stored-fact page; never scans another owner's rows.
 
@@ -549,6 +562,8 @@ class MemoryService:
         """
         if not isinstance(limit, int) or not 1 <= limit <= 100 or not isinstance(offset, int) or offset < 0:
             raise HTTPException(422, detail={"code": "INVALID_MEMORY_QUERY"})
+        if scope is not None and scope not in {SCOPE_GLOBAL, SCOPE_CONVERSATION}:
+            raise HTTPException(422, detail={"code": "INVALID_MEMORY_QUERY"})
         self._require_isolated_caller()
         async with self.sessions() as db:
             if conversation_id is not None:
@@ -557,6 +572,12 @@ class MemoryService:
             visible = (Memory.owner_id == owner_id, Memory.status != "deleted")
             if status is not None:
                 visible = (*visible, Memory.status == status)
+            if scope is not None:
+                visible = (*visible, Memory.scope == scope)
+            if scope == SCOPE_CONVERSATION and conversation_id is not None:
+                # The panel may list every chat's temporary facts, but a scoped
+                # request must never reveal another chat's temporary memory.
+                visible = (*visible, Memory.source_conversation_id == conversation_id)
             total = await db.scalar(select(func.count()).select_from(Memory).where(*visible))
             rows = list(
                 (
@@ -587,6 +608,7 @@ class MemoryService:
                     kind="budget" if _classify(row.content) == "budget" else "memory",
                     version=row.version,
                     status=row.status,
+                    scope=row.scope,
                     source_conversation_id=row.source_conversation_id,
                     source_turn_id=row.source_turn_id,
                     supersedes_id=row.supersedes_id,

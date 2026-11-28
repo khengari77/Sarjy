@@ -38,6 +38,7 @@ from app.services.budget import reserve as reserve_development_budget
 from app.services.command_classification import StoredClassifier, classification_key
 from app.services.commands import command_request_id, handle_finalized_utterance
 from app.services.context_assembly import location_evidence, read_context_inputs
+from app.services.intro import mark_intro_seen
 from app.services.memory import MemoryService
 from app.services.memory_auto import auto_commit_memory
 from app.services.memory_capture import (
@@ -49,6 +50,7 @@ from app.services.memory_capture import (
     propose_memory,
     record_proposal,
 )
+from app.services.memory_mode import effective_memory_mode, load_effective_memory_mode
 from app.services.memory_scope import visible_in
 from app.services.memory_tools import (
     hidden_fact_exists,
@@ -164,6 +166,13 @@ class MemoryProposeInput(MemoryToolBase):
 
 class MemoryQueryInput(MemoryToolBase):
     query: str = Field(min_length=1, max_length=500)
+
+
+class MemoryForgetInput(MemoryToolBase):
+    topic: str = Field(default="", max_length=500)
+    scope: Literal["topic", "this_chat", "everything"] = "topic"
+    # Deploy-window compatibility: an older worker sends query instead of topic.
+    query: str = Field(default="", max_length=500)
 
 
 class CommandInput(BaseModel):
@@ -373,13 +382,12 @@ async def _replayed_turn_response(db: AsyncSession, *, owner_id: str, turn):
     }
 
 
-def _refuse_unsaveable(token: str, config: Settings, owner_id: str, conversation_id: str, row) -> None:
+def _refuse_unsaveable(token: str, config: Settings, owner_id: str, conversation_id: str, mode: str) -> None:
     """A credential is never saved in any mode, so even a spoken "yes" cannot confirm one."""
     try:
         _, text, explicit, negated = proposal_summary(token, _memory_secret(config), owner_id, conversation_id)
     except MemoryCaptureError:
         return  # confirm_memory reports an invalid token itself
-    mode = row.memory_mode if row is not None else "auto"
     if plan_for_proposal(mode, text, explicit=explicit, negated=negated) is Decision.SKIP:
         raise HTTPException(409, detail={"code": "MEMORY_SENSITIVE"})
 
@@ -390,11 +398,11 @@ def _register_memory_routes(app, *, config: Settings, database, guard, embedder)
         voice = await guard(request, db, allow_ended=True)
         conversation = await _live_conversation(db, voice.conversation_id)
         if body.decision != "discard":
-            # A proposal armed before the user turned memory off must not be savable afterwards.
-            row = await db.get(UserSetting, conversation.owner_id)
-            if row is not None and row.memory_mode == "off":
+            # A proposal armed before the user turned memory off in this chat must not be savable afterwards.
+            mode = await load_effective_memory_mode(db, voice.conversation_id)
+            if mode == "off":
                 raise HTTPException(409, detail={"code": "MEMORY_OFF"})
-            _refuse_unsaveable(body.token, config, conversation.owner_id, voice.conversation_id, row)
+            _refuse_unsaveable(body.token, config, conversation.owner_id, voice.conversation_id, mode)
         try:
             return await confirm_memory(
                 db,
@@ -420,8 +428,7 @@ def _register_auto_memory_route(app, *, config: Settings, database, guard, embed
         """Commit a proposal without a spoken question. Only valid in ``auto`` mode and only when the policy says save."""
         voice = await guard(request, db, allow_ended=True)
         conversation = await _live_conversation(db, voice.conversation_id)
-        row = await db.get(UserSetting, conversation.owner_id)
-        mode = row.memory_mode if row is not None else "auto"
+        mode = await load_effective_memory_mode(db, voice.conversation_id)
         if mode == "off":
             raise HTTPException(409, detail={"code": "MEMORY_OFF"})
         try:
@@ -492,6 +499,7 @@ def _register_session_routes(app, *, database, guard):
     @app.post("/internal/agent/bootstrap")
     async def bootstrap(request: Request, db: AsyncSession = Depends(database)):
         voice = await guard(request, db)
+        stored = {**voice.pipeline, "bootstrapped": True}
         changed = await db.execute(
             update(VoiceSession)
             .where(
@@ -499,18 +507,21 @@ def _register_session_routes(app, *, database, guard):
                 VoiceSession.status.in_(["starting", "active"]),
                 VoiceSession.expires_at > datetime.now(UTC).isoformat(),
             )
-            .values(status="active")
+            .values(status="active", pipeline=stored)
         )
         await db.commit()
         if not changed.rowcount:
             raise HTTPException(403, detail={"code": "SESSION_NOT_ACTIVE"})
-        pipeline = normalize_pipeline(voice.pipeline)
+        pipeline = normalize_pipeline(stored)
         row = await db.get(UserSetting, voice.owner_id)
-        intro = intro_for(
-            pipeline.get("llm", {}).get("language", "en"),
-            seen=row is not None and row.intro_seen_at is not None,
-            tts_provider=(pipeline.get("tts") or {}).get("provider"),
-        )
+        if stored.get("intro_delivery") == "browser":
+            intro = None
+        else:
+            intro = intro_for(
+                pipeline.get("llm", {}).get("language", "en"),
+                seen=row is not None and row.intro_seen_at is not None,
+                tts_provider=(pipeline.get("tts") or {}).get("provider"),
+            )
         return {
             "pipeline": pipeline,
             "instructions": pipeline_instructions(pipeline),
@@ -522,13 +533,7 @@ def _register_session_routes(app, *, database, guard):
     async def intro_played(request: Request, db: AsyncSession = Depends(database)):
         """Worker confirmation that the full introduction played to the end. Idempotent."""
         voice = await guard(request, db)
-        row = await db.get(UserSetting, voice.owner_id)
-        if row is None:
-            row = UserSetting(owner_id=voice.owner_id)
-            db.add(row)
-        if row.intro_seen_at is None:
-            row.intro_seen_at = datetime.now(UTC).isoformat()
-            await db.commit()
+        await mark_intro_seen(db, voice.owner_id)
         return {"ok": True}
 
 
@@ -701,7 +706,9 @@ def _register_turn_routes(app, *, config: Settings, database, guard, sessions):
             # Wordle mode: a guess such as "crane" is never a fact about the user, so nothing is proposed.
             memory_mode="off"
             if body.wordle_open
-            else (settings_row.memory_mode if settings_row is not None else "auto"),
+            else effective_memory_mode(
+                conversation.memory_mode, settings_row.memory_mode if settings_row is not None else None
+            ),
             owner_id=conversation.owner_id,
             conversation_id=voice.conversation_id,
             turn=turn,
@@ -1142,10 +1149,7 @@ async def _save_without_asking(db, config: Settings, embedder, proposed: dict, *
         return proposed
     if await hidden_fact_exists(db, owner_id, fact):
         return proposed
-    setting = await db.scalar(
-        select(UserSetting).where(UserSetting.owner_id == owner_id).execution_options(populate_existing=True)
-    )
-    mode = setting.memory_mode if setting is not None else "auto"
+    mode = await load_effective_memory_mode(db, conversation_id)
     if mode == "off":
         return {"status": "rejected", "error": "MEMORY_OFF", "message": MEMORY_OFF_NOTE}
     if mode != "auto":
@@ -1177,8 +1181,8 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
     @app.post("/internal/agent/tool/memory-propose")
     async def agent_memory_propose(body: MemoryProposeInput, request: Request, db: AsyncSession = Depends(database)):
         async def effect(owner_id, conversation_id):
-            row = await db.get(UserSetting, owner_id)
-            if row is not None and row.memory_mode == "off":
+            mode = await load_effective_memory_mode(db, conversation_id)
+            if mode == "off":
                 return {"status": "rejected", "error": "MEMORY_OFF", "message": MEMORY_OFF_NOTE}
             if classify_sensitivity(body.fact) is Sensitivity.CREDENTIAL:
                 # Never record it as a proposal: that would store the text we promise not to keep.
@@ -1191,7 +1195,6 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
                 fact=body.fact,
                 secret=secret,
             )
-            mode = row.memory_mode if row is not None else "auto"
             if result.get("status") == "proposed" and mode == "auto":
                 return await _save_without_asking(
                     db, config, embedder, result, owner_id=owner_id, conversation_id=conversation_id
@@ -1201,17 +1204,30 @@ def _register_memory_tool_routes(app, *, config: Settings, database, guard, embe
         return await _run_memory_tool(guard, db, request, body, "memory_propose", {"fact": body.fact}, effect)
 
     @app.post("/internal/agent/tool/memory-forget")
-    async def agent_memory_forget(body: MemoryQueryInput, request: Request, db: AsyncSession = Depends(database)):
+    async def agent_memory_forget(body: MemoryForgetInput, request: Request, db: AsyncSession = Depends(database)):
+        topic = body.topic or body.query
+        scope = "topic" if body.query and not body.topic else body.scope
+
         async def effect(owner_id, conversation_id):
             return await memory_forget_tool(
                 db,
                 owner_id=owner_id,
                 conversation_id=conversation_id,
                 request_id=body.request_id,
-                query=body.query,
+                topic=topic,
+                scope=scope,
+                secret=secret,
             )
 
-        return await _run_memory_tool(guard, db, request, body, "memory_forget", {"query": body.query}, effect)
+        return await _run_memory_tool(
+            guard,
+            db,
+            request,
+            body,
+            "memory_forget",
+            {"topic": topic, "scope": scope},
+            effect,
+        )
 
     @app.post("/internal/agent/tool/memory-recall")
     async def agent_memory_recall(body: MemoryQueryInput, request: Request, db: AsyncSession = Depends(database)):

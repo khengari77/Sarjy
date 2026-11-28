@@ -1,8 +1,9 @@
 import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: 'test',
-  // The token gate has its own servers/configs; keep it out of the default suite.
-  testIgnore: ['auth.spec.ts', 'auth-expired.spec.ts', 'auth-prod.spec.ts'],
+  // The token gate and account pages have their own servers/configs; keep them
+  // out of the default suite. Account mode is off here, so /sign-in is a 404.
+  testIgnore: ['account-form.spec.ts', 'auth.spec.ts', 'auth-expired.spec.ts', 'auth-prod.spec.ts'],
   expect: { timeout: 15000 },
   use: { baseURL: 'http://127.0.0.1:4173' },
   webServer: [

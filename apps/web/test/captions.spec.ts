@@ -118,6 +118,8 @@ test.beforeEach(async ({ page }) => {
 
 test('the caption shows one quoted assistant line and opens the transcript tab', async ({ page }) => {
   await mockData(page);
+  // Below the dock breakpoint the drawer is an overlay, so Escape owns closing.
+  await page.setViewportSize({ width: 900, height: 720 });
   await page.goto('/');
 
   await expect(page.locator('.orb-button')).toBeVisible();
@@ -145,6 +147,29 @@ test('the caption shows one quoted assistant line and opens the transcript tab',
   await page.keyboard.press('Escape');
   await expect(drawer).toBeHidden();
   await expect(bubble).toBeFocused();
+});
+
+test('closing the transcript after its opener unmounts focuses a live control', async ({ page }) => {
+  await mockData(page);
+  await page.setViewportSize({ width: 900, height: 720 });
+  await page.goto('/');
+
+  const bubble = page.locator('.caption-bubble');
+  await expect(bubble).toHaveCount(1);
+  await bubble.click();
+  const drawer = page.locator('#shell-right');
+  await expect(drawer).toBeVisible();
+
+  // Simulate the opener unmounting while the drawer is open (as the caption
+  // bubble does when a call ends): the old reference is no longer connected.
+  await bubble.evaluate((element) => element.remove());
+  await page.keyboard.press('Escape');
+
+  await expect(drawer).toBeHidden();
+  const trigger = page.getByRole('button', { name: 'Show memory and settings' });
+  await expect(trigger).toBeVisible();
+  await expect(trigger).toBeFocused();
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
 });
 
 test('tool results render only in the transcript tab, never on the stage or as raw payloads', async ({ page }) => {
@@ -200,7 +225,7 @@ test('turning captions off keeps the session and the transcript reachable', asyn
   await startCall(page);
 
   await page.getByRole('button', { name: 'Show memory and settings', exact: true }).click();
-  await page.locator('#shell-right').getByRole('tab', { name: 'Controls' }).click();
+  await page.locator('#shell-right').getByRole('tab', { name: 'Settings' }).click();
   await page.getByRole('checkbox', { name: 'Show captions' }).uncheck();
   // The quote goes away but the bubble stays as the way into the transcript.
   const bubble = page.getByRole('button', { name: 'Transcript', exact: true });
@@ -218,6 +243,7 @@ test('a live session with no turns still exposes the transcript', async ({ page 
   await mockData(page, []);
   await allowMicrophone(page);
   await installFakeRuntime(page);
+  await page.setViewportSize({ width: 900, height: 720 });
   await page.goto('/');
   await startCall(page);
 
