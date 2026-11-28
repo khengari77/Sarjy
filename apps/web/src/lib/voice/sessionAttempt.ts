@@ -1,6 +1,7 @@
 import type { SessionConfig } from '../api';
 import { startVoiceSession } from '../chat/session';
 import type { ConnectionDeps, VoiceState } from './connection';
+import type { CallTimer } from './callTiming';
 import { errorCode } from './errors';
 
 export async function startSessionAttempt(
@@ -10,6 +11,7 @@ export async function startSessionAttempt(
     microphone: boolean;
     conversationId: string;
     attempt: number;
+    timer?: CallTimer;
     isCurrent(): boolean;
     releaseSession(session: SessionConfig | null): Promise<boolean>;
     clearOwnedLive(sessionId: string): void;
@@ -17,7 +19,9 @@ export async function startSessionAttempt(
   },
 ) {
   const voice = deps.getVoice();
+  context.timer?.mark('session_request_start');
   const config = await startVoiceSession(context.conversationId, deps.getLanguage());
+  context.timer?.mark('session_response');
   if (config.saved_voice_unavailable) deps.onVoiceFallback?.(config.saved_voice_unavailable);
   // Register the server session before awaiting the transport so cancel/end
   // can release it even while runtime.connect() is still pending.
@@ -42,7 +46,8 @@ export async function startSessionAttempt(
     state.transportStatus = 'connecting';
     state.agentState = null;
     const runtime = deps.getRuntime();
-    await runtime.connect(config);
+    await runtime.connect(config, context.timer);
+    context.timer?.mark('room_connected');
     if (!context.isCurrent()) {
       await release('superseded-during-connect');
       return;
@@ -50,7 +55,10 @@ export async function startSessionAttempt(
     state.live = config;
     state.activeVoiceName = voice.name;
     state.muted = !context.microphone;
-    if (context.microphone) await runtime.startMicrophone();
+    if (context.microphone) {
+      await runtime.startMicrophone();
+      context.timer?.mark('mic_started');
+    }
     if (!context.isCurrent()) {
       context.clearOwnedLive(config.id);
       await release('superseded-during-microphone');

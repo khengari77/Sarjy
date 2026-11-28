@@ -9,15 +9,22 @@ from dataclasses import dataclass
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
-logger = logging.getLogger("sarjy.statements")
+
+def timing_logger(name: str) -> logging.Logger:
+    """A dedicated INFO logger: uvicorn leaves app loggers at WARNING and prints only the message."""
+    configured = logging.getLogger(name)
+    if not configured.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(f"%(levelname)s {name} %(message)s"))
+        configured.addHandler(handler)
+        configured.propagate = False
+        configured.setLevel(logging.INFO)
+    return configured
+
+
+logger = timing_logger("sarjy.statements")
 # A statement this slow is a network or pooler stall: Postgres itself executes ours in about a millisecond.
 SLOW_STATEMENT_MS = 250.0
-if not logger.handlers:  # the root logger only prints warnings, so INFO lines would vanish without this
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter("%(levelname)s sarjy.statements %(message)s"))
-    logger.addHandler(_handler)
-    logger.propagate = False
-    logger.setLevel(logging.INFO)
 
 
 @dataclass
