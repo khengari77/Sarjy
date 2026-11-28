@@ -43,4 +43,23 @@ describe('api proxy route', () => {
     expect(response.headers.get('cache-control')).toBe('no-store');
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
+
+  it('passes a retried response through with its status, content-type, set-cookie and no-store', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response('{"ok":true}', {
+          status: 201,
+          headers: { 'content-type': 'application/problem+json', 'set-cookie': 's=1; Path=/; HttpOnly' },
+        }),
+      );
+    vi.stubGlobal('fetch', fetch);
+    const response = await GET(event());
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(response.status).toBe(201);
+    expect(response.headers.get('content-type')).toBe('application/problem+json');
+    expect(response.headers.getSetCookie()).toEqual(['s=1; Path=/; HttpOnly']);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+  });
 });

@@ -7,20 +7,34 @@ export type ProxyFetchRequest = {
   timeoutMs: number;
 };
 
+export type ProxyFetchOptions = {
+  /** Jittered delay before the lone status retry. Tests inject `() => 0`. */
+  statusRetryDelayMs?: () => number;
+};
+
 const RETRYABLE_STATUSES = new Set([502, 503, 504]);
 const UNAVAILABLE_LOG_INTERVAL_MS = 10_000;
 const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const STATUS_RETRY_JITTER_MIN_MS = 150;
+const STATUS_RETRY_JITTER_MAX_MS = 300;
 
 /**
- * Mutating POSTs that may be repeated without an idempotency key because the
- * API implements them as idempotent transitions of stored state:
- * `POST /v1/memories/{id}/hide` and `/unhide` call `_transition` in
- * apps/api/app/services/memory_visibility.py, which returns the target status
- * with `changed: false` for a repeated call (409 only when the row is deleted
- * or in an unexpected state). Every other POST (session creation, auth
- * exchanges, context confirm/undo, memory write/correct) is never repeated.
+ * Mutating POSTs that may be repeated after a lost response. This is an exact
+ * allow-list of API pathnames the server implements idempotently; a client
+ * header or body field can never widen it. Everything else stays
+ * non-repeatable, in particular `/v1/conversations`, `/v1/voice/sessions`,
+ * auth, reviewer, context confirm/undo, memory write/correct and wordle.
  */
-const REPEATABLE_POST_PATH = /^v1\/memories\/[^/]+\/(hide|unhide)$/;
+const REPEATABLE_POST_PATHS = [
+  // routes/memory.py hide/unhide -> memory_visibility._transition answers changed:false on a repeat.
+  /^v1\/memories\/[^/]+\/(hide|unhide)$/,
+  // routes/voice.py end_voice -> session_cleanup.cleanup_room answers already_complete after the first cleanup.
+  /^v1\/voice\/sessions\/[^/]+\/end$/,
+  // routes/voice.py intro_complete -> intro.mark_intro_seen inserts ON CONFLICT DO NOTHING, then updates conditionally.
+  /^v1\/voice\/sessions\/[^/]+\/intro-complete$/,
+  // routes/memory.py undo -> memory_auto.undo_change answers changed:false once the change is already UNDONE.
+  /^v1\/changes\/[^/]+\/undo$/,
+] as const;
 
 let lastUnavailableLogAt: number | undefined;
 let suppressedUnavailableLogs = 0;
@@ -63,17 +77,15 @@ function isTimeout(error: unknown): boolean {
 }
 
 /**
- * GET, DELETE, POST carrying an idempotency key and POSTs in the safe
- * idempotent-by-state allow-list may be repeated. Any other POST may have
- * reached the API without a way to deduplicate it, so it is never retried.
+ * GET, DELETE and POSTs whose normalized path is in the exact allow-list may
+ * be repeated. Any other POST may have reached the API without a way to
+ * deduplicate it, so it is never retried.
  */
 function isRepeatable(request: ProxyFetchRequest): boolean {
-  return (
-    request.method === 'GET' ||
-    request.method === 'DELETE' ||
-    (request.method === 'POST' &&
-      (request.headers.has('idempotency-key') || REPEATABLE_POST_PATH.test(request.url.pathname.replace(/^\//, ''))))
-  );
+  if (request.method === 'GET' || request.method === 'DELETE') return true;
+  if (request.method !== 'POST') return false;
+  const path = request.url.pathname.replace(/^\//, '');
+  return REPEATABLE_POST_PATHS.some((pattern) => pattern.test(path));
 }
 
 function diagnosticPath(pathname: string): string {
@@ -115,16 +127,28 @@ async function discard(response: Response): Promise<void> {
   }
 }
 
+function statusRetryDelay(): number {
+  const span = STATUS_RETRY_JITTER_MAX_MS - STATUS_RETRY_JITTER_MIN_MS + 1;
+  return STATUS_RETRY_JITTER_MIN_MS + Math.floor(Math.random() * span);
+}
+
+function wait(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
- * Make the upstream request, retrying once immediately when the first attempt
- * fails on the flaky web-to-API leg: a thrown connection error (a stale
- * kept-alive socket is dropped by undici, so the retry opens a healthy one) or
- * an ingress 502/503/504. Timeouts are not retried; the caller already waited
- * the deadline.
+ * Make the upstream request, retrying once when the first attempt fails on the
+ * flaky web-to-API leg: a thrown connection error, or an ingress 502/503/504
+ * after a short jittered delay. The connection retry is immediate because
+ * undici has already dropped the stale socket; the status retry waits so a
+ * deploying ingress can settle. Timeouts are not retried; the caller already
+ * waited the deadline.
  */
-export async function proxyFetch(request: ProxyFetchRequest): Promise<Response> {
+export async function proxyFetch(request: ProxyFetchRequest, options: ProxyFetchOptions = {}): Promise<Response> {
   const startedAt = Date.now();
   const repeatable = isRepeatable(request);
+  const retryDelay = options.statusRetryDelayMs ?? statusRetryDelay;
   let attempts = 0;
   for (;;) {
     attempts += 1;
@@ -151,6 +175,7 @@ export async function proxyFetch(request: ProxyFetchRequest): Promise<Response> 
     if (!RETRYABLE_STATUSES.has(response.status)) return response;
     if (repeatable && attempts === 1) {
       await discard(response);
+      await wait(retryDelay());
       continue;
     }
     warnFailed(request, { reason: 'status', status: response.status }, attempts, Date.now() - startedAt);

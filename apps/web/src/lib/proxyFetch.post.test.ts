@@ -7,6 +7,7 @@ const connectionError = () =>
   });
 const answer = (status: number) => new Response(null, { status });
 const body = new TextEncoder().encode('{}').buffer;
+const noStatusDelay = { statusRetryDelayMs: () => 0 };
 
 function postRequest(path: string): ProxyFetchRequest {
   return {
@@ -41,16 +42,22 @@ afterEach(() => {
 
 describe('idempotent-by-state POSTs', () => {
   it.each([
-    ['hide', 'connection error'],
-    ['hide', '503'],
-    ['unhide', 'connection error'],
-    ['unhide', '503'],
-  ] as const)('retries POST %s once after a %s', async (action, failure) => {
+    ['/v1/memories/abc/hide', 'connection error'],
+    ['/v1/memories/abc/hide', '503'],
+    ['/v1/memories/abc/unhide', 'connection error'],
+    ['/v1/memories/abc/unhide', '503'],
+    ['/v1/voice/sessions/abc/end', 'connection error'],
+    ['/v1/voice/sessions/abc/end', '503'],
+    ['/v1/voice/sessions/abc/intro-complete', 'connection error'],
+    ['/v1/voice/sessions/abc/intro-complete', '503'],
+    ['/v1/changes/abc/undo', 'connection error'],
+    ['/v1/changes/abc/undo', '503'],
+  ] as const)('retries POST %s once after a %s', async (path, failure) => {
     const fetch = stubFetch(
       failure === '503' ? () => Promise.resolve(answer(503)) : () => Promise.reject(connectionError()),
       () => Promise.resolve(answer(200)),
     );
-    const response = await proxyFetch(postRequest(`/v1/memories/abc/${action}`));
+    const response = await proxyFetch(postRequest(path), noStatusDelay);
     expect(response.status).toBe(200);
     expect(fetch).toHaveBeenCalledTimes(2);
     const firstInit = fetch.mock.calls[0]![1] as RequestInit;
@@ -64,17 +71,32 @@ describe('idempotent-by-state POSTs', () => {
       () => Promise.resolve(answer(503)),
       () => Promise.resolve(answer(200)),
     );
-    const response = await proxyFetch(postRequest('/v1/memories/abc/unhide?token=secret'));
+    const response = await proxyFetch(postRequest('/v1/memories/abc/unhide?token=secret'), noStatusDelay);
     expect(response.status).toBe(200);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
+});
 
-  it.each(['/v1/memories/abc/hide/extra', '/v1/memories/abc/correct', '/v1/memories/abc/delete', '/v1/voice/sessions'])(
-    'does not retry POST %s after a connection error',
-    async (path) => {
-      const fetch = stubFetch(() => Promise.reject(connectionError()));
-      await expect(proxyFetch(postRequest(path))).rejects.toThrow();
-      expect(fetch).toHaveBeenCalledTimes(1);
-    },
-  );
+describe('POSTs outside the allow-list', () => {
+  it.each([
+    '/v1/memories/abc/hide/extra',
+    '/v1/memories/abc/hide/',
+    '/v1/memories/abc%2Fhide',
+    '/v1/memories/abc/correct',
+    '/v1/memories/abc/delete',
+    '/v1/conversations',
+    '/v1/voice/sessions',
+  ])('does not retry POST %s after a connection error', async (path) => {
+    const fetch = stubFetch(() => Promise.reject(connectionError()));
+    await expect(proxyFetch(postRequest(path))).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not match a dot segment, which URL normalization removes before matching', async () => {
+    const fetch = stubFetch(() => Promise.reject(connectionError()));
+    const target = postRequest('/v1/memories/../hide');
+    expect(target.url.pathname).toBe('/v1/hide');
+    await expect(proxyFetch(target)).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
 });

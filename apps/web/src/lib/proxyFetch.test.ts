@@ -64,22 +64,40 @@ describe('retryable requests', () => {
     const [retryUrl, retryInit] = fetch.mock.calls[1]!;
     expect(retryUrl).toEqual(firstUrl);
     expect(retryInit.method).toBe(firstInit.method);
-    expect(retryInit.headers).toEqual(firstInit.headers);
+    const firstHeaders = firstInit.headers as Headers;
+    const retryHeaders = retryInit.headers as Headers;
+    expect([...retryHeaders.entries()]).toEqual([...firstHeaders.entries()]);
+    expect(retryHeaders.get('cookie')).toBe(COOKIE);
+    expect(retryHeaders.get('x-web-service-secret')).toBe(SECRET);
+    expect(firstHeaders.get('cookie')).toBe(retryHeaders.get('cookie'));
+    expect(firstHeaders.get('x-web-service-secret')).toBe(retryHeaders.get('x-web-service-secret'));
     // A fresh deadline per attempt; the first signal must not be reused.
     expect(retryInit.signal).not.toBe(firstInit.signal);
     expect(retryInit.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('retries GET once after a 503 and cancels the discarded body', async () => {
+  it('retries GET once after a 503, waits the injected jitter, and cancels the discarded body', async () => {
     const first = answerWithBody(503);
     const fetch = stubFetch(
       () => Promise.resolve(first.response),
       () => Promise.resolve(answer(200)),
     );
-    const response = await proxyFetch(request());
+    const statusRetryDelayMs = vi.fn(() => 0);
+    const response = await proxyFetch(request(), { statusRetryDelayMs });
     expect(response.status).toBe(200);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(first.cancel).toHaveBeenCalledTimes(1);
+    expect(statusRetryDelayMs).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a connection error immediately without the status delay', async () => {
+    stubFetch(
+      () => Promise.reject(connectionError()),
+      () => Promise.resolve(answer(200)),
+    );
+    const statusRetryDelayMs = vi.fn(() => 0);
+    await expect(proxyFetch(request(), { statusRetryDelayMs })).resolves.toHaveProperty('status', 200);
+    expect(statusRetryDelayMs).not.toHaveBeenCalled();
   });
 
   it.each([502, 503, 504])('retries GET once after an ingress %s', async (status) => {
@@ -87,7 +105,7 @@ describe('retryable requests', () => {
       () => Promise.resolve(answer(status)),
       () => Promise.resolve(answer(200)),
     );
-    await expect(proxyFetch(request())).resolves.toHaveProperty('status', 200);
+    await expect(proxyFetch(request(), { statusRetryDelayMs: () => 0 })).resolves.toHaveProperty('status', 200);
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
   });
 
@@ -101,23 +119,12 @@ describe('retryable requests', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
-  it('retries POST with an idempotency key and resends the same body', async () => {
-    const body = new TextEncoder().encode(JSON.stringify({ memory_ids: ['memory-1'] })).buffer;
-    const headers = new Headers({
-      'content-type': 'application/json',
-      'idempotency-key': 'confirm-1',
-      'x-web-service-secret': SECRET,
-    });
-    const fetch = stubFetch(
-      () => Promise.reject(connectionError()),
-      () => Promise.resolve(answer(200)),
-    );
-    const response = await proxyFetch(request({ method: 'POST', headers, body }));
-    expect(response.status).toBe(200);
-    expect(fetch).toHaveBeenCalledTimes(2);
-    const firstInit = fetch.mock.calls[0]![1] as RequestInit;
-    const retryInit = fetch.mock.calls[1]![1] as RequestInit;
-    expect(new Uint8Array(retryInit.body as ArrayBuffer)).toEqual(new Uint8Array(firstInit.body as ArrayBuffer));
+  it('does not retry POST carrying an Idempotency-Key header on a non-allow-listed path', async () => {
+    const body = new TextEncoder().encode('{}').buffer;
+    const headers = new Headers({ 'content-type': 'application/json', 'idempotency-key': 'client-supplied' });
+    const fetch = stubFetch(() => Promise.reject(connectionError()));
+    await expect(proxyFetch(request({ method: 'POST', headers, body }))).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -128,7 +135,7 @@ describe('non-retryable requests', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('does not retry POST without an idempotency key, even on a connection error', async () => {
+  it('does not retry a POST outside the allow-list, even on a connection error', async () => {
     const fetch = stubFetch(() => Promise.reject(connectionError()));
     await expect(proxyFetch(request({ method: 'POST', headers: new Headers() }))).rejects.toHaveProperty(
       'name',
@@ -137,7 +144,7 @@ describe('non-retryable requests', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('does not retry POST without an idempotency key after a 503', async () => {
+  it('does not retry a POST outside the allow-list after a 503', async () => {
     const fetch = stubFetch(() => Promise.resolve(answer(503)));
     const response = await proxyFetch(request({ method: 'POST', headers: new Headers() }));
     expect(response.status).toBe(503);
@@ -185,7 +192,7 @@ describe('proxy failure diagnostics', () => {
       () => Promise.resolve(answer(503)),
       () => Promise.resolve(answer(503)),
     );
-    const response = await proxyFetch(request());
+    const response = await proxyFetch(request(), { statusRetryDelayMs: () => 0 });
     expect(response.status).toBe(503);
     expect(warn).toHaveBeenCalledTimes(1);
     const logged = warn.mock.calls[0]![1] as Record<string, unknown>;
@@ -229,8 +236,8 @@ describe('proxy failure diagnostics', () => {
       () => Promise.resolve(answer(503)),
       () => Promise.resolve(answer(503)),
     );
-    await proxyFetch(request());
-    await proxyFetch(request());
+    await proxyFetch(request(), { statusRetryDelayMs: () => 0 });
+    await proxyFetch(request(), { statusRetryDelayMs: () => 0 });
     expect(warn).toHaveBeenCalledTimes(1);
 
     vi.advanceTimersByTime(10_000);
@@ -238,7 +245,7 @@ describe('proxy failure diagnostics', () => {
       () => Promise.resolve(answer(503)),
       () => Promise.resolve(answer(503)),
     );
-    await proxyFetch(request());
+    await proxyFetch(request(), { statusRetryDelayMs: () => 0 });
     expect(warn).toHaveBeenCalledTimes(2);
     const logged = warn.mock.calls[1]![1] as Record<string, unknown>;
     expect(logged).toMatchObject({ reason: 'status', status: 503, suppressed: 1 });
