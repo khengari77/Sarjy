@@ -6,7 +6,15 @@ import json
 
 import pytest
 from app.domain.contracts import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, SCOPE_CONVERSATION, SCOPE_GLOBAL
-from app.infrastructure.database import Conversation, Memory, MemoryTerm, MemoryWriteRequest, Turn, now
+from app.infrastructure.database import (
+    Conversation,
+    Memory,
+    MemoryTerm,
+    MemoryWriteRequest,
+    ToolCall,
+    Turn,
+    now,
+)
 from app.services import memory as memory_module
 from app.services.memory import MemoryService, _fingerprint
 from app.services.memory_terms import terms_of
@@ -884,6 +892,16 @@ def test_cap_eviction_is_quiet_for_unbound_proposals_and_scrubs_bound_rows(tmp_p
                     )
                 )
                 db.add(
+                    ToolCall(
+                        id="recall-call",
+                        turn_id="turn-new",
+                        request_id="recall-call",
+                        name="memory_recall",
+                        state="completed",
+                        result={"memories": [{"id": "evict-me", "content": "I prefer tea"}]},
+                    )
+                )
+                db.add(
                     MemoryWriteRequest(
                         id="other-chat-proposal",
                         owner_id="alice",
@@ -931,6 +949,8 @@ def test_cap_eviction_is_quiet_for_unbound_proposals_and_scrubs_bound_rows(tmp_p
                 proposal = await db.get(MemoryWriteRequest, "other-chat-proposal")
                 assert proposal.state == "proposed"
                 assert proposal.result["proposal"]["text"] == "I prefer tea"
+                call = await db.get(ToolCall, "recall-call")
+                assert call.result == {"scrubbed": True}
         finally:
             await engine.dispose()
 
@@ -1020,6 +1040,49 @@ def test_quiet_tombstone_does_not_wipe_a_row_promoted_after_selection(tmp_path):
                 row = await db.get(Memory, written.memory.id)
                 assert row.status == "active" and row.scope == SCOPE_GLOBAL
                 assert row.content == "I live in Tripoli"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_cap_eviction_blanks_the_evicted_text_from_a_turn_snapshot(tmp_path):
+    async def run():
+        import json
+
+        engine, sessions = await memory_setup(tmp_path / "cap-snapshot.db")
+        await add_turn(sessions, "turn-evict", "a1")
+        try:
+            evicted = await write_temporary_fact(
+                sessions,
+                owner_id="alice",
+                conversation_id="a1",
+                turn_id="turn-evict",
+                text="I live in Old Marker Town",
+                subject="location",
+            )
+            async with sessions() as db:
+                turn = await db.get(Turn, "turn-evict")
+                turn.snapshot = {
+                    "model_request": {"memories": [{"id": evicted.memory.id, "content": "I live in Old Marker Town"}]}
+                }
+                await db.execute(
+                    update(Memory).where(Memory.id == evicted.memory.id).values(updated_at="2020-01-01T00:00:00+00:00")
+                )
+                await db.commit()
+            await _seed_active(sessions, 30)
+            result = await write_temporary_fact(
+                sessions,
+                owner_id="alice",
+                conversation_id="a1",
+                turn_id="turn-evict",
+                text="Newest fact",
+                subject="newest",
+            )
+            assert result.outcome is TemporaryFactOutcome.WRITTEN
+            async with sessions() as db:
+                turn = await db.get(Turn, "turn-evict")
+                assert "Old Marker Town" not in json.dumps(turn.snapshot)
         finally:
             await engine.dispose()
 

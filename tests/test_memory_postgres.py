@@ -201,9 +201,9 @@ async def _postgres_setup(sessions, *, chats: int = 1):
         await db.commit()
         db.add(
             Turn(
-                id=f"turn-{owner}",
+                id=f"turn-{owner[:31]}",
                 conversation_id=chat_ids[0],
-                request_id=f"turn-{owner}",
+                request_id=f"turn-{owner[:31]}",
                 role="user",
                 text="hello",
                 status="completed",
@@ -227,7 +227,7 @@ def test_postgres_promote_temporary_memory_happy_path_and_stale_version():
                 sessions,
                 owner_id=owner,
                 conversation_id=chat,
-                turn_id=f"turn-{owner}",
+                turn_id=f"turn-{owner[:31]}",
                 text="I live in Benghazi",
                 subject="location",
             )
@@ -280,7 +280,7 @@ def test_postgres_promoted_undo_demotes_the_row():
                 sessions,
                 owner_id=owner,
                 conversation_id=chat,
-                turn_id=f"turn-{owner}",
+                turn_id=f"turn-{owner[:31]}",
                 text="My name is Sam",
                 subject="attribute:name",
             )
@@ -382,7 +382,7 @@ def test_postgres_cap_eviction_leaves_another_chats_proposal():
                 sessions,
                 owner_id=owner,
                 conversation_id=chat,
-                turn_id=f"turn-{owner}",
+                turn_id=f"turn-{owner[:31]}",
                 text="Newest fact",
                 subject="newest",
             )
@@ -391,7 +391,9 @@ def test_postgres_cap_eviction_leaves_another_chats_proposal():
                 evicted = await db.get(Memory, "evict-me")
                 assert evicted.status == "deleted" and evicted.content == ""
                 proposal = await db.scalar(
-                    select(MemoryWriteRequest).where(MemoryWriteRequest.request_key == "other-chat-proposal")
+                    select(MemoryWriteRequest).where(
+                        MemoryWriteRequest.owner_id == owner, MemoryWriteRequest.request_key == "other-chat-proposal"
+                    )
                 )
                 assert proposal.state == "proposed"
                 assert proposal.result["proposal"]["text"] == "I prefer tea"
@@ -464,11 +466,15 @@ def test_postgres_quiet_retirement_keeps_unbound_proposals():
                 row = await db.get(Memory, "temp-duplicate")
                 assert row.status == "deleted" and row.content == ""
                 bound = await db.scalar(
-                    select(MemoryWriteRequest).where(MemoryWriteRequest.request_key == "temp-request")
+                    select(MemoryWriteRequest).where(
+                        MemoryWriteRequest.owner_id == owner, MemoryWriteRequest.request_key == "temp-request"
+                    )
                 )
                 assert bound.result is None
                 proposal = await db.scalar(
-                    select(MemoryWriteRequest).where(MemoryWriteRequest.request_key == "other-chat-proposal")
+                    select(MemoryWriteRequest).where(
+                        MemoryWriteRequest.owner_id == owner, MemoryWriteRequest.request_key == "other-chat-proposal"
+                    )
                 )
                 assert proposal.state == "proposed"
                 assert proposal.result["proposal"]["text"] == "My name is Sam"
@@ -498,7 +504,7 @@ def test_postgres_two_concurrent_promotions_of_one_row_only_one_wins():
                 sessions,
                 owner_id=owner,
                 conversation_id=chat,
-                turn_id=f"turn-{owner}",
+                turn_id=f"turn-{owner[:31]}",
                 text="My name is Sam",
                 subject="attribute:name",
             )

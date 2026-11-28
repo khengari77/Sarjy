@@ -2186,7 +2186,7 @@ def _proposal_blobs(file):
     """Serialized proposal copies only: not the user's turn text or compiled context."""
     with closing(sqlite3.connect(file)) as db:
         blobs = []
-        for table in ("memory_write_requests", "memory_capture_decisions"):
+        for table in ("memory_write_requests", "memory_capture_decisions", "tool_calls"):
             blobs.extend(row[0] for row in db.execute(f"SELECT result FROM {table}") if row[0] is not None)
         for (snapshot,) in db.execute("SELECT snapshot FROM turns"):
             proposal = json.loads(snapshot).get("memory_proposal") if snapshot else None

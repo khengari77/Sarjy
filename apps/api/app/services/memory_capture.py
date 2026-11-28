@@ -1932,17 +1932,31 @@ async def _replace_or_promote(
             )
             if handled is not None:
                 return None, False, handled
-            result = await memory_service.correct_memory(
-                owner_id,
-                target_id,
-                target_version,
-                capture.text,
-                key,
-                source_turn_id=source_turn_id or proposed_turn,
-                conversation_id=conversation_id,
-                scope=SCOPE_GLOBAL,
-                guard=guard,
-            )
+            # The row moved on: use its current version for the ordinary correction, or create when it is no longer
+            # active (a concurrent replace superseded it).
+            async with memory_service.sessions() as fresh:
+                current = await fresh.get(Memory, target_id)
+            if current is None or current.owner_id != owner_id or current.status != "active":
+                result = await memory_service.create_memory(
+                    owner_id,
+                    conversation_id,
+                    source_turn_id or proposed_turn,
+                    capture.text,
+                    key,
+                    guard=guard,
+                )
+            else:
+                result = await memory_service.correct_memory(
+                    owner_id,
+                    target_id,
+                    current.version,
+                    capture.text,
+                    key,
+                    source_turn_id=source_turn_id or proposed_turn,
+                    conversation_id=conversation_id,
+                    scope=SCOPE_GLOBAL,
+                    guard=guard,
+                )
             for identifier in retire_ids:
                 await delete_memory(db, owner_id, identifier, scrub_proposals=False, conversation_id=conversation_id)
             return result, False, None

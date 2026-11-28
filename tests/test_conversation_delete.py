@@ -649,3 +649,24 @@ def test_deleting_the_source_chat_removes_the_old_promotion_text(tmp_path):
             await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_journal_previous_content_blanks_the_old_text_in_a_real_snapshot_shape(tmp_path):
+    async def run():
+        from app.infrastructure.database import Turn
+
+        engine, sessions, memory_id, old_text, delete_memory, _ = await _promoted_snapshot_case(
+            tmp_path, "promotion-snapshot-needle"
+        )
+        try:
+            async with sessions() as db:
+                turn_row = await db.get(Turn, "turn")
+                turn_row.snapshot = {"model_request": {"memories": [{"id": memory_id, "content": old_text}]}}
+                await db.commit()
+                await delete_memory(db, "owner", memory_id)
+                await db.commit()
+            assert marker_locations(tmp_path / "promotion-snapshot-needle.db", old_text) == []
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())

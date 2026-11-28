@@ -555,9 +555,21 @@ def test_already_saved_permanent_fact_retires_a_temporary_copy(tmp_path):
         seed_temporary(file, chat, "temp-sam", "My name is Sam", subject="attribute:name")
 
         proposal = arm(client, file, chat, owner, "My name is Sam", "permanent-duplicate")
+        with closing(sqlite3.connect(file)) as db, db:
+            turn_id = db.execute("SELECT id FROM turns WHERE conversation_id=? LIMIT 1", (chat,)).fetchone()[0]
+            db.execute(
+                "UPDATE turns SET snapshot=? WHERE id=?",
+                (
+                    json.dumps({"model_request": {"memories": [{"id": "temp-sam", "content": "My name is Sam"}]}}),
+                    turn_id,
+                ),
+            )
         saved = decide(client, chat, proposal["confirmation_id"], "save")
         assert saved.status_code == 200, saved.text
         assert saved.json()["status"] == "already_saved"
+        with closing(sqlite3.connect(file)) as db:
+            snapshot = db.execute("SELECT snapshot FROM turns WHERE id=?", (turn_id,)).fetchone()[0]
+            assert "My name is Sam" not in snapshot
 
         records = memory_records(file)
         assert ("My name is Sam", chat, "global", "active", 1) in records
@@ -1118,3 +1130,29 @@ def test_a_replace_conflict_retires_a_concurrent_temporary_replacement(tmp_path,
         assert len(active) == 1 and active[0][2] == "global" and active[0][0] == "I live in Tripoli"
         assert ("I live in Benghazi", chat, "conversation", "superseded", 1) in records
         assert len([row for row in records if row[3] == "deleted"]) == 1
+
+
+def test_a_stale_replace_target_is_retried_at_its_current_version(tmp_path, monkeypatch):
+    import app.services.memory_capture as capture_module
+
+    file, settings = configured(tmp_path)
+    with TestClient(create_app(settings, embedding_adapter=FakeEmbedder())) as client:
+        owner = client.post("/v1/demo-session").json()["id"]
+        chat = client.post("/v1/conversations").json()["id"]
+        set_mode(file, owner, "ask")
+        seed_temporary(file, chat, "temp-location", "I live in Benghazi", subject="location")
+        proposal = arm(client, file, chat, owner, "I live in Tripoli", "replace-stale-race")
+
+        def bump():
+            with closing(sqlite3.connect(file)) as db, db:
+                db.execute("UPDATE memories SET version=2 WHERE id='temp-location'")
+
+        monkeypatch.setattr(capture_module, "promote_temporary_memory", _raise_after(bump))
+        replaced = decide(
+            client, chat, proposal["confirmation_id"], "replace", target_id="temp-location", target_version=1
+        )
+        assert replaced.status_code == 200, replaced.text
+        records = memory_records(file)
+        active = [row for row in records if row[3] == "active"]
+        assert len(active) == 1 and active[0][2] == "global" and active[0][0] == "I live in Tripoli"
+        assert ("I live in Benghazi", chat, "conversation", "superseded", 2) in records
