@@ -1,0 +1,2 @@
+apps/web/static/greetings/*.mp3 -text
+apps/web/static/greetings/**/*.mp3 -text

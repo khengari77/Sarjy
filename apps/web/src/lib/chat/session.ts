@@ -56,6 +56,8 @@ export async function startVoiceSession(conversationId: string, language: 'ar' |
     conversation_id: conversationId,
     language,
     response_preference: 'automatic',
+    // The worker still speaks the greeting; the browser-played greeting opts in separately.
+    intro_delivery: 'worker',
   } satisfies StartVoice;
   return request<SessionConfig>('voice/sessions', body);
 }
