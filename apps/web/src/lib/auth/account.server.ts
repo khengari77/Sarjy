@@ -9,6 +9,52 @@ const SUBMIT_TIMEOUT_MS = 12_000;
 
 type CallOptions = { token?: string; method?: string; headers?: object; body?: string; ms: number };
 
+const UNAVAILABLE_LOG_INTERVAL_MS = 10_000;
+let lastUnavailableLogAt: number | undefined;
+let suppressedUnavailableLogs = 0;
+
+type UnavailableDetails = {
+  reason: 'timeout' | 'network' | 'status';
+  status?: number;
+  name?: string;
+  code?: string;
+  attempts: number;
+  ms: number;
+};
+
+function errorName(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('name' in error)) return undefined;
+  return typeof error.name === 'string' ? error.name : undefined;
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const cause = 'cause' in error ? error.cause : undefined;
+  const candidate =
+    typeof cause === 'object' && cause !== null && 'code' in cause
+      ? cause.code
+      : 'code' in error
+        ? error.code
+        : undefined;
+  return typeof candidate === 'string' ? candidate : undefined;
+}
+
+/**
+ * One structured warning per outage, rate-limited so a failing API cannot flood
+ * the web log. Never include the cookie, token, secret, URL or headers.
+ */
+function warnUnavailable(details: UnavailableDetails): void {
+  const now = Date.now();
+  if (lastUnavailableLogAt !== undefined && now - lastUnavailableLogAt < UNAVAILABLE_LOG_INTERVAL_MS) {
+    suppressedUnavailableLogs += 1;
+    return;
+  }
+  lastUnavailableLogAt = now;
+  const suppressed = suppressedUnavailableLogs;
+  suppressedUnavailableLogs = 0;
+  console.warn('[Sarjy] account session check unavailable', suppressed > 0 ? { ...details, suppressed } : details);
+}
+
 function call(path: string, options: CallOptions) {
   return fetch(new URL(path, API_INTERNAL_URL), {
     method: options.method ?? 'GET',
@@ -37,8 +83,9 @@ function isTimeout(error: unknown): boolean {
  * 502/503/504 during a deploy is equally transient. A timeout is not retried:
  * the visitor already waited the deadline.
  */
-async function getWithRetry(path: string, options: CallOptions): Promise<Response> {
+async function getWithRetry(path: string, options: CallOptions, progress: { attempts: number }): Promise<Response> {
   try {
+    progress.attempts += 1;
     const response = await call(path, options);
     if (!RETRYABLE_STATUSES.has(response.status)) return response;
     try {
@@ -49,6 +96,7 @@ async function getWithRetry(path: string, options: CallOptions): Promise<Respons
   } catch (error) {
     if (isTimeout(error)) throw error;
   }
+  progress.attempts += 1;
   return call(path, options);
 }
 
@@ -61,12 +109,31 @@ function sessionToken(cookies: Cookies): string | undefined {
 export async function accountSession(cookies: Cookies): Promise<'valid' | 'none' | 'unavailable'> {
   const token = sessionToken(cookies);
   if (!token) return 'none';
+  const startedAt = Date.now();
+  const progress = { attempts: 0 };
   try {
-    const response = await getWithRetry('/v1/auth/session', { token, ms: VERIFY_TIMEOUT_MS });
+    const response = await getWithRetry('/v1/auth/session', { token, ms: VERIFY_TIMEOUT_MS }, progress);
     await response.body?.cancel();
     if (response.ok) return 'valid';
-    return response.status === 401 ? 'none' : 'unavailable';
-  } catch {
+    if (response.status === 401) return 'none';
+    warnUnavailable({
+      reason: 'status',
+      status: response.status,
+      attempts: progress.attempts,
+      ms: Date.now() - startedAt,
+    });
+    return 'unavailable';
+  } catch (error) {
+    const details: UnavailableDetails = {
+      reason: isTimeout(error) ? 'timeout' : 'network',
+      attempts: progress.attempts,
+      ms: Date.now() - startedAt,
+    };
+    const name = errorName(error);
+    const code = errorCode(error);
+    if (name) details.name = name;
+    if (code) details.code = code;
+    warnUnavailable(details);
     return 'unavailable';
   }
 }
