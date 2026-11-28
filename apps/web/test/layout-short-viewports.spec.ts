@@ -210,6 +210,9 @@ test('the toast sits below an open drawer', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Show memory and settings' }).click();
   await expect(page.locator('#shell-right')).toHaveAttribute('data-open', 'true');
+  // data-open flips at once but the drawer slides in: hit-testing before the
+  // transition ends sees the toast still on top (a flake on slow CI runners).
+  await page.waitForFunction(() => document.querySelector('#shell-right')!.getAnimations().length === 0);
 
   const zIndexes = await page.evaluate(() => ({
     toast: Number(getComputedStyle(document.querySelector('.change-toast-layer')!).zIndex),
