@@ -11,6 +11,7 @@ function fact(id: string, content: string, status = 'active', extra: Record<stri
     kind: 'memory',
     version: 1,
     status,
+    scope: 'global',
     source_conversation_id: 'c1',
     source_turn_id: 'turn-1',
     supersedes_id: null,

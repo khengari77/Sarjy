@@ -148,6 +148,7 @@
       setArabic: (value) => (arabic = value),
       hydrateSettings: (settings) => commands.hydrate(settings),
       applyCommand: commands.apply,
+      newConversation: () => selection.create(),
       setDevOverlay: (value) => (devOverlay = value),
       getLanguage: () => (arabic ? 'ar' : 'en'),
       run: (work, onError) => run(work, onError),

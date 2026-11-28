@@ -47,24 +47,28 @@ export function createSelectionController(deps: SelectionDeps) {
     });
   }
 
-  async function create() {
+  async function create(): Promise<boolean> {
     const conversations = deps.getConversations();
     if (deps.voice.live) {
       deps.setPending({ type: 'create' });
-      return;
+      return false;
     }
+    let created = false;
     if (deps.voice.connecting) {
       await deps.run(async () => {
         await deps.cancelConnect();
         const chat = await conversations.createChat();
         await conversations.select(chat.id);
+        created = true;
       });
-      return;
+      return created;
     }
     await deps.run(async () => {
       const chat = await conversations.createChat();
       await conversations.select(chat.id);
+      created = true;
     });
+    return created;
   }
 
   async function remove(id: string): Promise<string> {

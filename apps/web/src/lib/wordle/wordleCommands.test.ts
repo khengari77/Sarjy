@@ -66,6 +66,13 @@ describe('parseWordleCommand', () => {
     expect(parseWordleCommand('play the wordle with my friends')?.kind).toBe('ambiguous');
   });
 
+  it.each(['end the call', 'mute the mic', 'new conversation'])(
+    'does not swallow %s while the game is open',
+    (text) => {
+      expect(parseWordleCommand(text, { active: true })).toBeNull();
+    },
+  );
+
   it('leaves unrelated speech to the conversation', () => {
     for (const text of [
       "what's the weather",

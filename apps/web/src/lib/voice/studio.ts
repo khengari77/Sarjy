@@ -22,7 +22,9 @@ export interface StudioBoot {
   restoreLanguage: boolean;
   setArabic(value: boolean): void;
   hydrateSettings(settings: Partial<SettingsSnapshot>): void;
-  applyCommand(result: CommandResult): void;
+  applyCommand(result: CommandResult): boolean | void;
+  /** The sidebar's New conversation flow; false means creation failed. */
+  newConversation(): Promise<boolean>;
   setDevOverlay(value: DevOverlay): void;
   run(work: () => Promise<void>, onError?: (error: unknown) => void): Promise<void>;
   getLanguage(): 'ar' | 'en';
@@ -69,6 +71,7 @@ export function bootStudio(options: StudioBoot) {
     getRuntime: () => runtime,
     getLanguage: () => options.getLanguage(),
     applyCommand: (result) => options.applyCommand(result),
+    newConversation: () => options.newConversation(),
     resyncSettings: () => void catalogStore.loadSettings(),
     // The server fell back from a dead or unreachable saved voice: adopt its settings.
     onVoiceFallback: () => void catalogStore.loadSettings(),
@@ -104,6 +107,7 @@ export function bootStudio(options: StudioBoot) {
     conversations,
     catalogStore,
     cleanup: () => {
+      connection.dispose();
       meters.teardownMeters();
       dispose();
     },

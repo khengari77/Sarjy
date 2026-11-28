@@ -18,6 +18,9 @@ from app.domain.contracts import (
     Action,
     AdjustSpeakingSpeed,
     Contract,
+    EndCall,
+    MuteMicrophone,
+    NewConversation,
     OpenMemoryExplorer,
     SelectApprovedVoice,
     SetCaptionsVisible,
@@ -59,6 +62,35 @@ _EXACT_COMMANDS: dict[str, Action] = {
     "show my conversations": ShowConversationHistory(),
     "open the memory explorer": OpenMemoryExplorer(),
     "show the memory explorer": OpenMemoryExplorer(),
+    # Call controls are whole utterances with no free-form payload. "goodbye",
+    # "bye", "thanks", "end", "stop" and "end the conversation" stay conversational.
+    "end the call": EndCall(),
+    "end call": EndCall(),
+    "end this call": EndCall(),
+    "hang up": EndCall(),
+    "stop the call": EndCall(),
+    # There is deliberately no voice "unmute": a muted microphone is not
+    # published, so the agent cannot hear it.
+    "mute": MuteMicrophone(),
+    "mute the mic": MuteMicrophone(),
+    "mute the microphone": MuteMicrophone(),
+    "mute my mic": MuteMicrophone(),
+    "mute my microphone": MuteMicrophone(),
+    "mute myself": MuteMicrophone(),
+    "mute me": MuteMicrophone(),
+    "turn off the mic": MuteMicrophone(),
+    "turn off the microphone": MuteMicrophone(),
+    "turn the mic off": MuteMicrophone(),
+    "turn the microphone off": MuteMicrophone(),
+    # "start over" belongs to the Wordle reset and is deliberately absent.
+    "new conversation": NewConversation(),
+    "new chat": NewConversation(),
+    "start a new conversation": NewConversation(),
+    "start a new chat": NewConversation(),
+    "open a new conversation": NewConversation(),
+    "open a new chat": NewConversation(),
+    "start a fresh conversation": NewConversation(),
+    "start a fresh chat": NewConversation(),
     # Memory mode, whole utterances only. An unqualified request applies to this
     # chat; "by default", "always", "in my settings" and similar phrases change
     # the account default instead. "Don't remember anything" is deliberately
@@ -513,7 +545,10 @@ def command_result(
         settings=settings,
         navigation=navigation,
         theme=theme,
-        changed=changed or navigation is not None or theme is not None,
+        changed=changed
+        or navigation is not None
+        or theme is not None
+        or isinstance(action, (EndCall, MuteMicrophone, NewConversation)),
         spoken=spoken or spoken_outcome(action, kind=kind),
     )
 
@@ -579,6 +614,15 @@ def _memory_mode_outcome(action: SetMemoryMode, kind: CommandKind) -> str:
     }[action.mode]
 
 
+_NAVIGATION_OUTCOMES = {
+    "ShowConversationHistory": "Opening your previous conversations.",
+    "OpenMemoryExplorer": "Opening the memory explorer.",
+    "EndCall": "Ending the call.",
+    "MuteMicrophone": "Muted. Tap the microphone to unmute.",
+    "NewConversation": "Starting a new conversation.",
+}
+
+
 def spoken_outcome(
     action: Action,
     *,
@@ -607,10 +651,9 @@ def spoken_outcome(
             "light": "Light mode on.",
             "system": "Following the system theme.",
         }[action.theme]
-    if isinstance(action, ShowConversationHistory):
-        return "Opening your previous conversations."
-    if isinstance(action, OpenMemoryExplorer):
-        return "Opening the memory explorer."
+    navigation_outcome = _NAVIGATION_OUTCOMES.get(action.kind)
+    if navigation_outcome is not None:
+        return navigation_outcome
     if isinstance(action, SelectApprovedVoice):
         return "Voice preference saved for the next call."
     return "Done."

@@ -371,6 +371,18 @@ class OpenMemoryExplorer(Contract):
     kind: Literal["OpenMemoryExplorer"] = "OpenMemoryExplorer"
 
 
+class EndCall(Contract):
+    kind: Literal["EndCall"] = "EndCall"
+
+
+class MuteMicrophone(Contract):
+    kind: Literal["MuteMicrophone"] = "MuteMicrophone"
+
+
+class NewConversation(Contract):
+    kind: Literal["NewConversation"] = "NewConversation"
+
+
 class SetCaptionsVisible(Contract):
     kind: Literal["SetCaptionsVisible"] = "SetCaptionsVisible"
     visible: bool
@@ -428,6 +440,9 @@ ActionType = (
     | SelectApprovedVoice
     | ShowConversationHistory
     | OpenMemoryExplorer
+    | EndCall
+    | MuteMicrophone
+    | NewConversation
     | SetCaptionsVisible
     | SetMemoryMode
     | SetTheme
@@ -510,11 +525,14 @@ __all__ = [
     "Decision",
     "DecisionSource",
     "EMBEDDING_DIMENSIONS",
+    "EndCall",
     "Intent",
     "MemoryMode",
     "MemoryRecord",
     "MemorySource",
     "ModelRequest",
+    "MuteMicrophone",
+    "NewConversation",
     "OpenMemoryExplorer",
     "PREFERENCE_MAX_TIER",
     "ProposeContextExclusion",

@@ -1409,7 +1409,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MemoryQueryInput"
+                "$ref": "#/components/schemas/MemoryForgetInput"
               }
             }
           },
@@ -2298,6 +2298,15 @@
                     "$ref": "#/components/schemas/OpenMemoryExplorer"
                   },
                   {
+                    "$ref": "#/components/schemas/EndCall"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MuteMicrophone"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NewConversation"
+                  },
+                  {
                     "$ref": "#/components/schemas/SetCaptionsVisible"
                   },
                   {
@@ -2320,6 +2329,9 @@
                   "propertyName": "kind",
                   "mapping": {
                     "AdjustSpeakingSpeed": "#/components/schemas/AdjustSpeakingSpeed",
+                    "EndCall": "#/components/schemas/EndCall",
+                    "MuteMicrophone": "#/components/schemas/MuteMicrophone",
+                    "NewConversation": "#/components/schemas/NewConversation",
                     "OpenMemoryExplorer": "#/components/schemas/OpenMemoryExplorer",
                     "ProposeContextExclusion": "#/components/schemas/ProposeContextExclusion",
                     "RestoreContextOperation": "#/components/schemas/RestoreContextOperation",
@@ -3359,6 +3371,19 @@
         ],
         "title": "ContextUndoResult"
       },
+      "EndCall": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "EndCall",
+            "default": "EndCall",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "EndCall",
+        "type": "object"
+      },
       "GuessCheckInput": {
         "properties": {
           "word": {
@@ -3526,6 +3551,50 @@
           "idempotency_key"
         ],
         "title": "MemoryCorrection"
+      },
+      "MemoryForgetInput": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Turn Id"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "topic": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Topic",
+            "default": ""
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "topic",
+              "this_chat",
+              "everything"
+            ],
+            "title": "Scope",
+            "default": "topic"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Query",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "turn_id",
+          "request_id"
+        ],
+        "title": "MemoryForgetInput"
       },
       "MemoryList": {
         "properties": {
@@ -4111,6 +4180,19 @@
         ],
         "title": "ModelChoice"
       },
+      "MuteMicrophone": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "MuteMicrophone",
+            "default": "MuteMicrophone",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "MuteMicrophone",
+        "type": "object"
+      },
       "NavigationActionResult": {
         "properties": {
           "kind": {
@@ -4136,6 +4218,19 @@
           "navigation"
         ],
         "title": "NavigationActionResult"
+      },
+      "NewConversation": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "NewConversation",
+            "default": "NewConversation",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "NewConversation",
+        "type": "object"
       },
       "OpenMemoryExplorer": {
         "additionalProperties": false,
@@ -4520,6 +4615,15 @@
                 "$ref": "#/components/schemas/OpenMemoryExplorer"
               },
               {
+                "$ref": "#/components/schemas/EndCall"
+              },
+              {
+                "$ref": "#/components/schemas/MuteMicrophone"
+              },
+              {
+                "$ref": "#/components/schemas/NewConversation"
+              },
+              {
                 "$ref": "#/components/schemas/SetCaptionsVisible"
               },
               {
@@ -4543,6 +4647,9 @@
               "propertyName": "kind",
               "mapping": {
                 "AdjustSpeakingSpeed": "#/components/schemas/AdjustSpeakingSpeed",
+                "EndCall": "#/components/schemas/EndCall",
+                "MuteMicrophone": "#/components/schemas/MuteMicrophone",
+                "NewConversation": "#/components/schemas/NewConversation",
                 "OpenMemoryExplorer": "#/components/schemas/OpenMemoryExplorer",
                 "ProposeContextExclusion": "#/components/schemas/ProposeContextExclusion",
                 "RestoreContextOperation": "#/components/schemas/RestoreContextOperation",
@@ -6178,6 +6285,15 @@
           },
           {
             "$ref": "#/components/schemas/OpenMemoryExplorer"
+          },
+          {
+            "$ref": "#/components/schemas/EndCall"
+          },
+          {
+            "$ref": "#/components/schemas/MuteMicrophone"
+          },
+          {
+            "$ref": "#/components/schemas/NewConversation"
           },
           {
             "$ref": "#/components/schemas/SetCaptionsVisible"
